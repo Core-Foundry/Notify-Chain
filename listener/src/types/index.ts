@@ -6,6 +6,8 @@ export interface ContractConfig {
 export interface DiscordConfig {
   webhookUrl: string;
   webhookId: string;
+  retryCount?: number;
+  backoffBaseSeconds?: number;
 }
 
 export interface Config {

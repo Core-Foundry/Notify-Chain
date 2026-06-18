@@ -12,7 +12,14 @@ function loadDiscordConfig(): DiscordConfig | undefined {
   if (!webhookUrl || !webhookId) {
     return undefined;
   }
-  return { webhookUrl, webhookId };
+  const retryCount = process.env.DISCORD_RETRY_COUNT
+    ? parseInt(process.env.DISCORD_RETRY_COUNT, 10)
+    : undefined;
+  const backoffBaseSeconds = process.env.DISCORD_BACKOFF_BASE_SECONDS
+    ? parseFloat(process.env.DISCORD_BACKOFF_BASE_SECONDS)
+    : undefined;
+
+  return { webhookUrl, webhookId, retryCount, backoffBaseSeconds };
 }
 
 function loadConfig(): Config {

@@ -56,13 +56,30 @@ export class DiscordNotificationService {
     logger.info('Sending Discord notification', logContext);
 
     const message = this.formatEventMessage(event, contractConfig);
-    const startTime = Date.now();
+    const maxRetries = this.config.retryCount ?? 5;
+    const backoffBaseSeconds = this.config.backoffBaseSeconds ?? 1;
 
-    try {
-      const response = await this.sendWebhook(message);
-      const durationMs = Date.now() - startTime;
+    let attempt = 0;
+    while (attempt <= maxRetries) {
+      const attemptStart = Date.now();
+      try {
+        const response = await this.sendWebhook(message);
+        const durationMs = Date.now() - attemptStart;
 
-      if (!response.ok) {
+        if (response.ok) {
+          this.deduplicator.markSent(fingerprint);
+          logger.info('Discord notification sent successfully', {
+            eventId: event.id,
+            contractAddress: contractConfig.address,
+          });
+          logger.info('Discord notification delivered', {
+            ...logContext,
+            durationMs,
+            attempt,
+          });
+          return true;
+        }
+
         const errorText = await response.text();
         logger.error('Discord webhook failed', {
           ...logContext,
@@ -70,27 +87,38 @@ export class DiscordNotificationService {
           statusText: response.statusText,
           error: errorText,
           durationMs,
+          attempt,
         });
-        return false;
+      } catch (error) {
+        const durationMs = Date.now() - attemptStart;
+        logger.error('Error sending Discord notification', {
+          ...logContext,
+          error,
+          durationMs,
+          attempt,
+        });
       }
 
-      this.deduplicator.markSent(fingerprint);
-      logger.info('Discord notification sent successfully', {
-        eventId: event.id,
-        contractAddress: contractConfig.address,
-      logger.info('Discord notification delivered', {
+      // If we've exhausted retries, break and return false
+      if (attempt >= maxRetries) break;
+
+      // Exponential backoff: base * 2^attempt (seconds)
+      const delayMs = Math.pow(2, attempt) * backoffBaseSeconds * 1000;
+      logger.warn('Retrying Discord webhook', {
         ...logContext,
-        durationMs,
+        attempt: attempt + 1,
+        nextDelayMs: delayMs,
+        maxRetries,
       });
-      return true;
-    } catch (error) {
-      logger.error('Error sending Discord notification', {
-        ...logContext,
-        error,
-        durationMs: Date.now() - startTime,
-      });
-      return false;
+      await this.delay(delayMs);
+      attempt++;
     }
+
+    logger.error('Exceeded max Discord retry attempts', {
+      ...logContext,
+      maxRetries,
+    });
+    return false;
   }
 
   async sendTestMessage(requestId?: string): Promise<boolean> {
@@ -132,6 +160,10 @@ export class DiscordNotificationService {
       });
       return false;
     }
+  }
+
+  private delay(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
   private async sendWebhook(message: DiscordMessage): Promise<Response> {
