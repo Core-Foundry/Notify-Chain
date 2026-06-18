@@ -2,6 +2,7 @@ import * as StellarSDK from '@stellar/stellar-sdk';
 import logger from '../utils/logger';
 import { ContractConfig, DiscordConfig } from '../types';
 import { getEventName } from '../utils/event-utils';
+import { NotificationDeduplicator, generateFingerprint } from './notification-deduplicator';
 
 export interface DiscordMessage {
   content?: string;
@@ -23,9 +24,11 @@ export function createDiscordService(config: DiscordConfig): DiscordNotification
 
 export class DiscordNotificationService {
   private config: DiscordConfig;
+  private deduplicator: NotificationDeduplicator;
 
-  constructor(config: DiscordConfig) {
+  constructor(config: DiscordConfig, deduplicator?: NotificationDeduplicator) {
     this.config = config;
+    this.deduplicator = deduplicator ?? new NotificationDeduplicator();
   }
 
   async sendEventNotification(
@@ -33,6 +36,16 @@ export class DiscordNotificationService {
     contractConfig: ContractConfig,
     requestId?: string
   ): Promise<boolean> {
+    const fingerprint = generateFingerprint(event.id, contractConfig.address);
+
+    if (this.deduplicator.isDuplicate(fingerprint)) {
+      logger.info('Skipping duplicate notification', {
+        eventId: event.id,
+        contractAddress: contractConfig.address,
+        fingerprint,
+      });
+      return false;
+    }
     const logContext = {
       requestId,
       eventId: event.id,
@@ -61,6 +74,10 @@ export class DiscordNotificationService {
         return false;
       }
 
+      this.deduplicator.markSent(fingerprint);
+      logger.info('Discord notification sent successfully', {
+        eventId: event.id,
+        contractAddress: contractConfig.address,
       logger.info('Discord notification delivered', {
         ...logContext,
         durationMs,
