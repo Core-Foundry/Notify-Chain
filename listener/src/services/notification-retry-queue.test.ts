@@ -63,6 +63,25 @@ describe('NotificationRetryQueue', () => {
         expect.objectContaining({ eventId: 'evt-q', requestId: 'req-1' })
       );
     });
+
+    it('skips duplicate retry queue entries for the same event', () => {
+      const logger = jest.requireMock('../utils/logger').default;
+      const notificationFn: NotificationFn = jest.fn();
+      const queue = new NotificationRetryQueue(notificationFn, { baseDelayMs: 1000 });
+      const event = createMockEvent({ id: 'evt-dup' });
+
+      queue.enqueue(event, mockContractConfig, 'req-1');
+      queue.enqueue(event, mockContractConfig, 'req-2');
+
+      expect(queue.size()).toBe(1);
+      expect(logger.info).toHaveBeenCalledWith(
+        'Skipping duplicate retry queue entry',
+        expect.objectContaining({
+          eventId: 'evt-dup',
+          contractAddress: mockContractConfig.address,
+        })
+      );
+    });
   });
 
   describe('processQueue', () => {

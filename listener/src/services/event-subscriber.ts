@@ -34,6 +34,11 @@ export class EventSubscriber {
   }
 
   async start(): Promise<void> {
+    if (this.isRunning) {
+      logger.warn('Event subscriber already running');
+      return;
+    }
+
     this.isRunning = true;
     logger.info('Starting event subscriber service');
     this.retryQueue?.start();

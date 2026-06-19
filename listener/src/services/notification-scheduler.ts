@@ -23,7 +23,7 @@ export class NotificationScheduler {
   constructor(
     repository: ScheduledNotificationRepository,
     config: SchedulerConfig,
-    discordService?: DiscordNotificationService
+    discordService?: DiscordNotificationService | null
   ) {
     this.repository = repository;
     this.config = config;
