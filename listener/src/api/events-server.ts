@@ -5,6 +5,8 @@ import { NotificationAPI } from '../services/notification-api';
 import { NotificationType } from '../types/scheduled-notification';
 import logger from '../utils/logger';
 import { generateRequestId } from '../utils/request-id';
+import { TemplateService } from '../services/template-service';
+import { handleTemplateRoutes } from './template-routes';
 
 export interface EventsServerOptions {
   port: number;
@@ -12,6 +14,7 @@ export interface EventsServerOptions {
   stellarRpcUrl: string;
   discordWebhookUrl?: string;
   notificationAPI?: NotificationAPI | null;
+  templateService?: TemplateService | null;
 }
 
 type ServiceStatus = 'ok' | 'error' | 'not_configured';
@@ -123,13 +126,30 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
     const startTime = Date.now();
 
     res.setHeader('Access-Control-Allow-Origin', corsOrigin);
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
     res.setHeader('X-Request-Id', requestId);
 
     if (req.method === 'OPTIONS') {
       res.writeHead(204);
       res.end();
+      return;
+    }
+
+    // Template API routes (handled first for priority)
+    if (options.templateService && req.url?.startsWith('/api/templates')) {
+      handleTemplateRoutes(req, res, requestId, options.templateService)
+        .then((handled) => {
+          if (!handled) {
+            res.writeHead(404, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Not found' }));
+          }
+        })
+        .catch((error) => {
+          logger.error('Template route handler error', { error, requestId });
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Internal server error' }));
+        });
       return;
     }
 
