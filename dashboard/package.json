@@ -9,6 +9,7 @@
     "dev": "node ./node_modules/vite/bin/vite.js",
     "lint": "eslint 'src/**/*.{ts,tsx}' --max-warnings=0",
     "test": "node ./node_modules/jest/bin/jest.js",
+    "test:a11y": "node ./node_modules/jest/bin/jest.js --config jest.a11y.config.cjs",
     "benchmark": "node ./node_modules/jest/bin/jest.js src/benchmark"
   },
   "dependencies": {
@@ -22,14 +23,12 @@
     "@typescript-eslint/parser": "^6.10.0",
     "eslint": "^8.46.0",
     "eslint-plugin-react": "^7.33.0",
-    "@testing-library/react": "^16.3.0",
-    "@testing-library/user-event": "^14.6.1",
-    "@types/jest": "^29.5.14",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.1",
     "@types/jest": "^29.5.14",
     "@types/jest-axe": "^3.5.9",
+    "@types/node": "^20.14.0",
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",
     "@vitejs/plugin-react": "^4.7.0",
