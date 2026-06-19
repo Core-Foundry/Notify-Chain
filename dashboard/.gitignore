@@ -1,3 +1,4 @@
 node_modules
 dist
 .DS_Store
+a11y-report.md

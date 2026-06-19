@@ -27,6 +27,33 @@ jobs:
         working-directory: dashboard
         run: npm test --silent
 
+  accessibility:
+    name: Accessibility (axe audit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
+          cache: 'npm'
+          cache-dependency-path: dashboard/package-lock.json
+      - name: Install dependencies
+        working-directory: dashboard
+        run: npm ci
+      # Audits key UI components with axe-core. Fails the build on critical
+      # violations; all findings are written to dashboard/a11y-report.md.
+      - name: Run accessibility audit
+        working-directory: dashboard
+        run: npm run test:a11y
+      - name: Upload accessibility report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: accessibility-report
+          path: dashboard/a11y-report.md
+          if-no-files-found: warn
+
   rust:
     name: Rust (fmt check, tests)
     runs-on: ubuntu-latest
