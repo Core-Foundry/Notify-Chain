@@ -6,6 +6,10 @@ import { ScheduledNotificationRepository } from './services/scheduled-notificati
 import { NotificationAPI } from './services/notification-api';
 import { initializeDatabase } from './database/database';
 import { DiscordNotificationService } from './services/discord-notification';
+import { TemplateService } from './services/template-service';
+import { TemplateRepository } from './services/template-repository';
+import { TemplateValidator } from './services/template-validator';
+import { TemplateRenderer } from './services/template-renderer';
 import logger from './utils/logger';
 import { loadConfig, ConfigError } from './config';
 
@@ -14,17 +18,30 @@ dotenv.config();
 async function main() {
   const config = loadConfig();
 
-  // Initialize database for scheduled notifications
+  // Initialize database for scheduled notifications and templates
   let scheduler: NotificationScheduler | null = null;
   let notificationAPI: NotificationAPI | null = null;
+  let templateService: TemplateService | null = null;
 
   if (config.scheduler?.enabled) {
     try {
-      logger.info('Initializing database for scheduled notifications');
+      logger.info('Initializing database for scheduled notifications and templates');
       const db = await initializeDatabase(config.databasePath);
 
       const repository = new ScheduledNotificationRepository(db);
       notificationAPI = new NotificationAPI(repository);
+
+      // Initialize template service
+      const templateRepository = new TemplateRepository(db);
+      const templateValidator = new TemplateValidator();
+      const templateRenderer = new TemplateRenderer();
+      templateService = new TemplateService(
+        templateRepository,
+        templateValidator,
+        templateRenderer
+      );
+
+      logger.info('Template service initialized successfully');
 
       // Initialize scheduler with Discord service if available
       let discordService: DiscordNotificationService | null = null;
@@ -49,6 +66,7 @@ async function main() {
     stellarRpcUrl: config.stellarRpcUrl,
     discordWebhookUrl: config.discord?.webhookUrl,
     notificationAPI, // Pass API to events server for scheduling endpoints
+    templateService, // Pass template service for template endpoints
   });
 
   const subscriber = new EventSubscriber(config);
