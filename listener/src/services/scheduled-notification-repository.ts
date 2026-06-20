@@ -317,6 +317,117 @@ export class ScheduledNotificationRepository {
   }
 
   /**
+   * Get execution metrics with proper deduplication
+   * Returns ONE result per notification, representing the FINAL outcome
+   * This prevents double-counting of retried notifications
+   */
+  async getExecutionMetrics(): Promise<{
+    totalNotifications: number;
+    successfulFirstAttempt: number;
+    successfulAfterRetry: number;
+    permanentFailures: number;
+    totalRetryAttempts: number;
+    averageRetriesPerNotification: number;
+    averageSuccessDurationMs: number;
+    averageFailureDurationMs: number;
+  }> {
+    // Get final outcome for each notification (one row per notification)
+    const finalOutcomeSql = `
+      WITH final_outcomes AS (
+        SELECT 
+          sn.id,
+          sn.status,
+          sn.retry_count,
+          log.status as final_execution_status,
+          log.duration_ms
+        FROM scheduled_notifications sn
+        LEFT JOIN notification_execution_log log 
+          ON log.scheduled_notification_id = sn.id 
+          AND log.execution_attempt = (
+            SELECT MAX(execution_attempt) 
+            FROM notification_execution_log 
+            WHERE scheduled_notification_id = sn.id
+          )
+        WHERE sn.status IN (?, ?)
+      )
+      SELECT
+        COUNT(*) as total_notifications,
+        SUM(CASE WHEN final_execution_status = 'SUCCESS' AND retry_count = 0 THEN 1 ELSE 0 END) as success_first_attempt,
+        SUM(CASE WHEN final_execution_status = 'SUCCESS' AND retry_count > 0 THEN 1 ELSE 0 END) as success_after_retry,
+        SUM(CASE WHEN status = 'FAILED' OR final_execution_status = 'FAILED' THEN 1 ELSE 0 END) as permanent_failures,
+        SUM(retry_count) as total_retry_attempts,
+        AVG(CASE WHEN final_execution_status = 'SUCCESS' THEN duration_ms ELSE NULL END) as avg_success_duration,
+        AVG(CASE WHEN status = 'FAILED' OR final_execution_status = 'FAILED' THEN duration_ms ELSE NULL END) as avg_failure_duration
+      FROM final_outcomes
+    `;
+
+    const result = await this.db.get<{
+      total_notifications: number;
+      success_first_attempt: number;
+      success_after_retry: number;
+      permanent_failures: number;
+      total_retry_attempts: number;
+      avg_success_duration: number | null;
+      avg_failure_duration: number | null;
+    }>(finalOutcomeSql, [NotificationStatus.COMPLETED, NotificationStatus.FAILED]);
+
+    const totalNotifications = result?.total_notifications ?? 0;
+    const totalRetryAttempts = result?.total_retry_attempts ?? 0;
+
+    return {
+      totalNotifications,
+      successfulFirstAttempt: result?.success_first_attempt ?? 0,
+      successfulAfterRetry: result?.success_after_retry ?? 0,
+      permanentFailures: result?.permanent_failures ?? 0,
+      totalRetryAttempts,
+      averageRetriesPerNotification:
+        totalNotifications > 0 ? totalRetryAttempts / totalNotifications : 0,
+      averageSuccessDurationMs: result?.avg_success_duration ?? 0,
+      averageFailureDurationMs: result?.avg_failure_duration ?? 0,
+    };
+  }
+
+  /**
+   * Get detailed execution breakdown by retry count
+   * Shows distribution of notifications by number of retries needed
+   */
+  async getRetryDistribution(): Promise<
+    Array<{
+      retryCount: number;
+      successCount: number;
+      failureCount: number;
+    }>
+  > {
+    const sql = `
+      SELECT 
+        retry_count,
+        SUM(CASE WHEN status = ? THEN 1 ELSE 0 END) as success_count,
+        SUM(CASE WHEN status = ? THEN 1 ELSE 0 END) as failure_count
+      FROM scheduled_notifications
+      WHERE status IN (?, ?)
+      GROUP BY retry_count
+      ORDER BY retry_count ASC
+    `;
+
+    const rows = await this.db.all<{
+      retry_count: number;
+      success_count: number;
+      failure_count: number;
+    }>(sql, [
+      NotificationStatus.COMPLETED,
+      NotificationStatus.FAILED,
+      NotificationStatus.COMPLETED,
+      NotificationStatus.FAILED,
+    ]);
+
+    return rows.map((row) => ({
+      retryCount: row.retry_count,
+      successCount: row.success_count,
+      failureCount: row.failure_count,
+    }));
+  }
+
+  /**
    * Convert database row to model
    */
   private rowToModel(row: ScheduledNotificationRow): ScheduledNotification {

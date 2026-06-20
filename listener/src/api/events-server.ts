@@ -271,6 +271,48 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
       return;
     }
 
+    // Get execution metrics with deduplication (prevents double-counting)
+    if (req.method === 'GET' && req.url === '/api/schedule/execution-metrics') {
+      if (!options.notificationAPI) {
+        res.writeHead(503, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Scheduler not enabled' }));
+        return;
+      }
+
+      options.notificationAPI.getExecutionMetrics()
+        .then((metrics) => {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(metrics));
+        })
+        .catch((error) => {
+          logger.error('Failed to get execution metrics', { error, requestId });
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: (error as Error).message }));
+        });
+      return;
+    }
+
+    // Get retry distribution breakdown
+    if (req.method === 'GET' && req.url === '/api/schedule/retry-distribution') {
+      if (!options.notificationAPI) {
+        res.writeHead(503, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Scheduler not enabled' }));
+        return;
+      }
+
+      options.notificationAPI.getRetryDistribution()
+        .then((distribution) => {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(distribution));
+        })
+        .catch((error) => {
+          logger.error('Failed to get retry distribution', { error, requestId });
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: (error as Error).message }));
+        });
+      return;
+    }
+
     // Get specific notification endpoint
     if (req.method === 'GET' && req.url?.startsWith('/api/schedule/')) {
       if (!options.notificationAPI) {

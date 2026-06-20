@@ -81,17 +81,57 @@ export class Database {
 
     const schema = fs.readFileSync(schemaPath, 'utf-8');
     
-    // Split by semicolon and execute each statement
-    const statements = schema
-      .split(';')
-      .map(s => s.trim())
-      .filter(s => s.length > 0);
+    // Smart SQL statement splitting that handles BEGIN...END blocks
+    const statements = this.splitSqlStatements(schema);
 
     for (const statement of statements) {
       await this.run(statement);
     }
 
     logger.info('Database migrations completed', { statements: statements.length });
+  }
+
+  /**
+   * Split SQL statements intelligently, preserving BEGIN...END blocks
+   */
+  private splitSqlStatements(sql: string): string[] {
+    const statements: string[] = [];
+    let current = '';
+    let inBeginBlock = false;
+    
+    const lines = sql.split(/\r?\n/);
+    
+    for (const line of lines) {
+      const trimmed = line.trim();
+      
+      // Check for BEGIN keyword (case insensitive)
+      if (/^\s*BEGIN\s*$/i.test(trimmed)) {
+        inBeginBlock = true;
+      }
+      
+      current += line + '\n';
+      
+      // Check for END; which closes the BEGIN block
+      if (inBeginBlock && /^\s*END\s*;/i.test(trimmed)) {
+        inBeginBlock = false;
+        statements.push(current.trim());
+        current = '';
+        continue;
+      }
+      
+      // If not in BEGIN block and line ends with semicolon, it's a complete statement
+      if (!inBeginBlock && trimmed.endsWith(';')) {
+        statements.push(current.trim());
+        current = '';
+      }
+    }
+    
+    // Add any remaining content
+    if (current.trim().length > 0) {
+      statements.push(current.trim());
+    }
+    
+    return statements.filter(s => s.length > 0 && !s.startsWith('--'));
   }
 
   /**

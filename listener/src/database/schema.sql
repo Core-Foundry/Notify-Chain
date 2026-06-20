@@ -39,19 +39,16 @@ CREATE TABLE IF NOT EXISTS scheduled_notifications (
 
 -- Indexes for performance optimization
 CREATE INDEX IF NOT EXISTS idx_scheduled_notifications_status_execute_at 
-  ON scheduled_notifications(status, execute_at) 
-  WHERE status = 'PENDING';
+  ON scheduled_notifications(status, execute_at);
 
 CREATE INDEX IF NOT EXISTS idx_scheduled_notifications_lock_expires 
-  ON scheduled_notifications(lock_expires_at, status) 
-  WHERE status = 'PROCESSING';
+  ON scheduled_notifications(lock_expires_at, status);
 
 CREATE INDEX IF NOT EXISTS idx_scheduled_notifications_created_at 
   ON scheduled_notifications(created_at);
 
 CREATE INDEX IF NOT EXISTS idx_scheduled_notifications_event_id 
-  ON scheduled_notifications(event_id) 
-  WHERE event_id IS NOT NULL;
+  ON scheduled_notifications(event_id);
 
 CREATE INDEX IF NOT EXISTS idx_scheduled_notifications_target 
   ON scheduled_notifications(target_recipient, status);
@@ -125,8 +122,7 @@ CREATE INDEX IF NOT EXISTS idx_templates_unique_key
   ON notification_templates(unique_key);
 
 CREATE INDEX IF NOT EXISTS idx_templates_channel_type 
-  ON notification_templates(channel_type, is_active) 
-  WHERE is_active = 1;
+  ON notification_templates(channel_type, is_active);
 
 CREATE INDEX IF NOT EXISTS idx_templates_active 
   ON notification_templates(is_active, created_at);
