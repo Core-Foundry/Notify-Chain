@@ -6,6 +6,10 @@ import { ScheduledNotificationRepository } from './services/scheduled-notificati
 import { NotificationAPI } from './services/notification-api';
 import { initializeDatabase } from './database/database';
 import { DiscordNotificationService } from './services/discord-notification';
+import { TemplateService } from './services/template-service';
+import { TemplateRepository } from './services/template-repository';
+import { TemplateValidator } from './services/template-validator';
+import { TemplateRenderer } from './services/template-renderer';
 import logger from './utils/logger';
 import { loadConfig, ConfigError } from './config';
 

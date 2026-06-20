@@ -84,4 +84,19 @@ export class NotificationAPI {
   async getStatistics() {
     return await this.repository.getStats();
   }
+
+  /**
+   * Get execution metrics with deduplication
+   * Use this for dashboard metrics to prevent double-counting retried notifications
+   */
+  async getExecutionMetrics() {
+    return await this.repository.getExecutionMetrics();
+  }
+
+  /**
+   * Get retry distribution breakdown
+   */
+  async getRetryDistribution() {
+    return await this.repository.getRetryDistribution();
+  }
 }
