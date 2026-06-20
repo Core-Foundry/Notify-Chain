@@ -8,7 +8,7 @@
     "start": "node dist/index.js",
     "test": "node ./node_modules/jest/bin/jest.js",
     "migrate": "ts-node src/scripts/migrate-db.ts",
-    "migrate:templates": "ts-node src/scripts/migrate-templates.ts"
+    "validate:batch": "ts-node src/utils/batch-validator.ts"
   },
   "keywords": [],
   "author": "",

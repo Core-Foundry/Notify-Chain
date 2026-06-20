@@ -215,7 +215,7 @@ describe('NotificationScheduler (Refactored)', () => {
       await repository.create(
         NotificationFixtureBuilder
           .aScheduledNotificationInput()
-          .forFutureExecution()
+          .withExecuteAt(new Date(Date.now() + 3600000))
           .build()
       );
 
@@ -236,7 +236,7 @@ describe('NotificationScheduler (Refactored)', () => {
     test('should schedule notification via API', async () => {
       const input = NotificationFixtureBuilder
         .aScheduledNotificationInput()
-        .forFutureExecution()
+        .withExecuteAt(new Date(Date.now() + 3600000))
         .withPayload({ message: 'API test' })
         .build();
 
@@ -264,7 +264,7 @@ describe('NotificationScheduler (Refactored)', () => {
     test('should schedule Discord notification', async () => {
       // ✅ Using deterministic constants
       const webhookUrl = NotificationFixtureBuilder.constants.webhookUrl;
-      const executeAt = NotificationFixtureBuilder.dates.future(3600000);
+      const executeAt = new Date(Date.now() + 3600000);
 
       const id = await api.scheduleDiscordNotification(
         webhookUrl,
@@ -293,6 +293,7 @@ describe('NotificationScheduler (Refactored)', () => {
         const input = NotificationFixtureBuilder
           .aScheduledNotificationInput()
           .withType(type)
+          .withExecuteAt(new Date(Date.now() + 3600000))
           .build();
 
         const id = await api.scheduleNotification(input);
@@ -307,6 +308,7 @@ describe('NotificationScheduler (Refactored)', () => {
       await api.scheduleNotification(
         NotificationFixtureBuilder
           .aScheduledNotificationInput()
+          .withExecuteAt(new Date(Date.now() + 3600000))
           .build()
       );
 

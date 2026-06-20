@@ -90,7 +90,7 @@ export interface SchedulerConfig {
   enabled: boolean;
   pollIntervalMs: number;
   lockTimeoutMs: number;
-  processorId: string;
+  processorId?: string;
   batchSize: number;
   timingBufferMs: number;
 }

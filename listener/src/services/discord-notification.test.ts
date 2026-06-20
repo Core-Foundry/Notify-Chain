@@ -106,7 +106,10 @@ describe('DiscordNotificationService', () => {
       const secondResult = await service.sendEventNotification(mockEvent, mockContractConfig);
 
       expect(mockFetch).toHaveBeenCalledTimes(1);
-      expect(secondResult).toBe(false);
+      expect(secondResult).toBe(true);
+      expect(service.getDeduplicationMetrics()).toEqual(
+        expect.objectContaining({ skippedDuplicates: 1, cacheSize: 1 })
+      );
     });
 
     it('logs a duplicate detection event', async () => {
@@ -126,6 +129,27 @@ describe('DiscordNotificationService', () => {
           eventId: 'event-dup-log',
           contractAddress: 'CA123',
         })
+      );
+    });
+
+
+    it('allows the same notification request after the configured window expires', async () => {
+      mockFetch.mockResolvedValue({ ok: true });
+      let now = 1000;
+      const deduplicator = new NotificationDeduplicator({ windowMs: 500, now: () => now });
+      const service = new DiscordNotificationService(mockConfig, deduplicator);
+      const mockEvent = createMockEvent({ id: 'event-windowed' });
+      const mockContractConfig = { address: 'CA123', events: ['test'] };
+
+      await service.sendEventNotification(mockEvent, mockContractConfig);
+      await service.sendEventNotification(mockEvent, mockContractConfig);
+      now = 1501;
+      const result = await service.sendEventNotification(mockEvent, mockContractConfig);
+
+      expect(result).toBe(true);
+      expect(mockFetch).toHaveBeenCalledTimes(2);
+      expect(service.getDeduplicationMetrics()).toEqual(
+        expect.objectContaining({ acceptedRequests: 2, skippedDuplicates: 1 })
       );
     });
 

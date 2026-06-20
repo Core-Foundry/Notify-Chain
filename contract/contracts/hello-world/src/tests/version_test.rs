@@ -1,5 +1,5 @@
-use soroban_sdk::Env;
 use crate::{AutoShareContract, AutoShareContractClient};
+use soroban_sdk::Env;
 
 #[test]
 fn test_version() {

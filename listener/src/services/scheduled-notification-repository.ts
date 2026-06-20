@@ -18,7 +18,7 @@ export class ScheduledNotificationRepository {
   /**
    * Create a new scheduled notification
    */
-  async create(input: CreateScheduledNotificationInput): Promise<number> {
+  async create(input: CreateScheduledNotificationInput, requestId?: string): Promise<number> {
     const sql = `
       INSERT INTO scheduled_notifications (
         payload, notification_type, target_recipient, execute_at,
@@ -40,6 +40,7 @@ export class ScheduledNotificationRepository {
 
     const result = await this.db.run(sql, params);
     logger.info('Scheduled notification created', {
+      requestId,
       id: result.lastID,
       executeAt: input.executeAt,
       type: input.notificationType,
@@ -55,7 +56,8 @@ export class ScheduledNotificationRepository {
   async fetchAndLockPendingNotifications(
     processorId: string,
     lockTimeoutMs: number,
-    batchSize: number = 10
+    batchSize: number = 10,
+    requestId?: string
   ): Promise<ScheduledNotification[]> {
     const now = new Date();
     const lockExpiresAt = new Date(now.getTime() + lockTimeoutMs);
@@ -106,6 +108,7 @@ export class ScheduledNotificationRepository {
     ]);
 
     logger.info('Fetched and locked pending notifications', {
+      requestId,
       count: rows.length,
       processorId,
     });
@@ -117,7 +120,7 @@ export class ScheduledNotificationRepository {
    * Recover stale locks (when a processor crashes)
    * Returns notifications with expired locks back to PENDING
    */
-  async recoverStaleLocks(): Promise<number> {
+  async recoverStaleLocks(requestId?: string): Promise<number> {
     const now = new Date();
 
     const sql = `
@@ -138,7 +141,7 @@ export class ScheduledNotificationRepository {
     ]);
 
     if (result.changes > 0) {
-      logger.warn('Recovered stale locks', { count: result.changes });
+      logger.warn('Recovered stale locks', { requestId, count: result.changes });
     }
 
     return result.changes;
@@ -147,7 +150,7 @@ export class ScheduledNotificationRepository {
   /**
    * Mark notification as completed
    */
-  async markAsCompleted(id: number): Promise<void> {
+  async markAsCompleted(id: number, requestId?: string): Promise<void> {
     const sql = `
       UPDATE scheduled_notifications
       SET 
@@ -164,7 +167,7 @@ export class ScheduledNotificationRepository {
       id,
     ]);
 
-    logger.info('Notification marked as completed', { id });
+    logger.info('Notification marked as completed', { requestId, id });
   }
 
   /**

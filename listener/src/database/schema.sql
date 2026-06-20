@@ -83,75 +83,21 @@ BEGIN
   WHERE id = NEW.id;
 END;
 
--- ===============================================
--- NOTIFICATION TEMPLATE SYSTEM SCHEMA
--- ===============================================
-
--- Main table for notification templates
-CREATE TABLE IF NOT EXISTS notification_templates (
+-- Rate limit events table for auditing
+CREATE TABLE IF NOT EXISTS rate_limit_events (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  
-  -- Template identification
-  unique_key VARCHAR(100) NOT NULL UNIQUE,  -- e.g., 'welcome_email', 'payment_confirmation'
-  name VARCHAR(255) NOT NULL,               -- Human-readable name
-  description TEXT,                         -- Template purpose/usage description
-  
-  -- Template content
-  channel_type VARCHAR(50) NOT NULL,        -- EMAIL, SMS, DISCORD, PUSH, WEBHOOK
-  subject_template TEXT,                    -- Optional subject (for EMAIL, PUSH)
-  body_template TEXT NOT NULL,              -- Main template content with {{placeholders}}
-  
-  -- Variable definitions
-  variables TEXT NOT NULL,                  -- JSON array of required variable names
-  default_values TEXT,                      -- JSON object with default values for optional variables
-  
-  -- Metadata
-  is_active BOOLEAN NOT NULL DEFAULT 1,
-  version INTEGER NOT NULL DEFAULT 1,       -- Template versioning for A/B testing
-  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  created_by VARCHAR(100),                  -- User/system that created template
-  
-  -- Validation
-  last_validated_at DATETIME,
-  validation_status VARCHAR(20) DEFAULT 'PENDING' -- VALID, INVALID, PENDING
+  client_id TEXT NOT NULL,                  -- IP address or API key
+  client_type VARCHAR(20) NOT NULL,         -- 'IP' or 'API_KEY'
+  endpoint TEXT NOT NULL,                   -- Request path/method
+  method VARCHAR(10) NOT NULL,              -- Request method
+  timestamp DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  limit_threshold INTEGER NOT NULL,
+  window_ms INTEGER NOT NULL
 );
 
--- Indexes for template lookups
-CREATE INDEX IF NOT EXISTS idx_templates_unique_key 
-  ON notification_templates(unique_key);
+CREATE INDEX IF NOT EXISTS idx_rate_limit_events_timestamp 
+  ON rate_limit_events(timestamp);
 
-CREATE INDEX IF NOT EXISTS idx_templates_channel_type 
-  ON notification_templates(channel_type, is_active);
+CREATE INDEX IF NOT EXISTS idx_rate_limit_events_client_id 
+  ON rate_limit_events(client_id);
 
-CREATE INDEX IF NOT EXISTS idx_templates_active 
-  ON notification_templates(is_active, created_at);
-
--- Template usage tracking for analytics
-CREATE TABLE IF NOT EXISTS template_usage_log (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  template_id INTEGER NOT NULL,
-  rendered_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  context_hash VARCHAR(64),                 -- Hash of the context data for deduplication
-  success BOOLEAN NOT NULL DEFAULT 1,
-  error_message TEXT,
-  render_duration_ms INTEGER,
-  
-  FOREIGN KEY (template_id) REFERENCES notification_templates(id) ON DELETE CASCADE
-);
-
-CREATE INDEX IF NOT EXISTS idx_template_usage_template_id 
-  ON template_usage_log(template_id, rendered_at);
-
-CREATE INDEX IF NOT EXISTS idx_template_usage_rendered_at 
-  ON template_usage_log(rendered_at);
-
--- Trigger to update template updated_at timestamp
-CREATE TRIGGER IF NOT EXISTS update_notification_templates_timestamp 
-AFTER UPDATE ON notification_templates
-FOR EACH ROW
-BEGIN
-  UPDATE notification_templates 
-  SET updated_at = CURRENT_TIMESTAMP 
-  WHERE id = NEW.id;
-END;

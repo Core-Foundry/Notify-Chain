@@ -56,6 +56,8 @@ describe('Config validation', () => {
     delete process.env.RETRY_MAX_RETRIES;
     delete process.env.DISCORD_WEBHOOK_URL;
     delete process.env.DISCORD_WEBHOOK_ID;
+    delete process.env.NOTIFICATION_DEDUPLICATION_WINDOW_MS;
+    delete process.env.NOTIFICATION_DEDUPLICATION_MAX_SIZE;
 
     const config = loadConfig();
 
@@ -72,6 +74,22 @@ describe('Config validation', () => {
         baseDelayMs: 5000,
         maxRetries: 5,
       },
+    });
+  });
+
+  it('loads notification deduplication settings when Discord is configured', () => {
+    process.env.DISCORD_WEBHOOK_URL = 'https://discord.com/api/webhooks/123/abc';
+    process.env.DISCORD_WEBHOOK_ID = '123';
+    process.env.NOTIFICATION_DEDUPLICATION_WINDOW_MS = '15000';
+    process.env.NOTIFICATION_DEDUPLICATION_MAX_SIZE = '250';
+
+    const config = loadConfig();
+
+    expect(config.discord).toMatchObject({
+      webhookUrl: 'https://discord.com/api/webhooks/123/abc',
+      webhookId: '123',
+      deduplicationWindowMs: 15000,
+      deduplicationMaxSize: 250,
     });
   });
 });
