@@ -1520,7 +1520,7 @@ fn test_create_fails_unsupported_token() {
     let name = String::from_str(&test_env.env, "Test Group");
 
     // Create an unsupported token (not added to supported tokens)
-    let unsupported_token = test_utils::deploy_mock_token(
+    let unsupported_token = crate::test_utils::deploy_mock_token(
         &test_env.env,
         &String::from_str(&test_env.env, "Unsupported"),
         &String::from_str(&test_env.env, "UNSUP"),
@@ -1574,7 +1574,7 @@ fn test_topup_fails_unsupported_token() {
     );
 
     // Create an unsupported token
-    let unsupported_token = test_utils::deploy_mock_token(
+    let unsupported_token = crate::test_utils::deploy_mock_token(
         &test_env.env,
         &String::from_str(&test_env.env, "Unsupported"),
         &String::from_str(&test_env.env, "UNSUP"),
