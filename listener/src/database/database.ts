@@ -2,6 +2,7 @@ import * as sqlite3 from 'sqlite3';
 import { promisify } from 'util';
 import * as fs from 'fs';
 import * as path from 'path';
+import * as crypto from 'crypto';
 import logger from '../utils/logger';
 
 /**
@@ -71,10 +72,14 @@ export class Database {
 
   /**
    * Run database migrations from schema.sql
+   *
+   * After applying the schema, the script's hash is recorded in the
+   * `schema_migrations` table so that the migration-check script (and CI)
+   * can detect when source has drifted from the database. See issue #103.
    */
   private async runMigrations(): Promise<void> {
     const schemaPath = path.join(__dirname, 'schema.sql');
-    
+
     if (!fs.existsSync(schemaPath)) {
       throw new Error(`Schema file not found: ${schemaPath}`);
     }
@@ -84,7 +89,37 @@ export class Database {
     // Execute the schema as one script so trigger bodies with semicolons work.
     await this.exec(schema);
 
+    // Record the applied schema hash so future runs of `migrate:check`
+    // can detect when the on-disk schema has drifted from the database.
+    await this.recordSchemaMigration(schema, 'migrate');
+
     logger.info('Database migrations completed');
+  }
+
+  /**
+   * Insert (or refresh) a row in schema_migrations for the schema contents
+   * just applied. The hash is the SHA-256 of the schema text with
+   * CRLF normalised to LF so editors and CI runners agree on a single value.
+   */
+  private async recordSchemaMigration(
+    schemaSql: string,
+    source: 'migrate' | 'migrate:check'
+  ): Promise<void> {
+    const normalized = schemaSql.replace(/\r\n/g, '\n');
+    const hash = crypto
+      .createHash('sha256')
+      .update(normalized, 'utf-8')
+      .digest('hex');
+
+    // Use a simple timestamp-based version so successive migrations are
+    // distinguishable without an external version registry.
+    const version = `v-${Date.now()}`;
+
+    await this.run(
+      `INSERT OR REPLACE INTO schema_migrations (version, schema_hash, source)
+       VALUES (?, ?, ?)`,
+      [version, hash, source]
+    );
   }
 
   /**
