@@ -1,20 +1,8 @@
 import NodeCache from 'node-cache';
 import logger from '../utils/logger';
+import { NotificationTemplate } from '../types/notification-template';
 
-/**
- * Notification template structure
- */
-export interface NotificationTemplate {
-  id: string;
-  name: string;
-  type: string;
-  subject?: string;
-  body: string;
-  variables?: string[];
-  metadata?: Record<string, unknown>;
-  createdAt: Date;
-  updatedAt: Date;
-}
+export type { NotificationTemplate } from '../types/notification-template';
 
 /**
  * Cache statistics for monitoring hit rate

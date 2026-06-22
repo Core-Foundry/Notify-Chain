@@ -2,7 +2,7 @@ import { v4 as uuidv4 } from 'uuid';
 import logger from '../utils/logger';
 import { generateRequestId } from '../utils/request-id';
 import { ScheduledNotificationRepository } from './scheduled-notification-repository';
-import { SchedulerConfig, NotificationStatus, ScheduledNotification } from '../types/scheduled-notification';
+import { SchedulerConfig, ScheduledNotification } from '../types/scheduled-notification';
 import { DiscordNotificationService } from './discord-notification';
 
 /**

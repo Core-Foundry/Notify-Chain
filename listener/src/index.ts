@@ -3,6 +3,10 @@ import { startEventsServer } from './api/events-server';
 import { EventSubscriber } from './services/event-subscriber';
 import { NotificationScheduler } from './services/notification-scheduler';
 import { ScheduledNotificationRepository } from './services/scheduled-notification-repository';
+import { NotificationTemplateRepository } from './services/notification-template-repository';
+import { NotificationTemplateService } from './services/notification-template-service';
+import { TemplateAuditTrail } from './services/template-audit-trail';
+import { getTemplateCache } from './services/notification-template-cache';
 import { NotificationAPI } from './services/notification-api';
 import { initializeDatabase } from './database/database';
 import { DiscordNotificationService } from './services/discord-notification';
@@ -14,35 +18,40 @@ dotenv.config();
 async function main() {
   const config = loadConfig();
 
-  // Initialize database if scheduler or rate limiting is enabled
+  // Initialize database for templates, scheduler, and rate limiting
   let scheduler: NotificationScheduler | null = null;
   let notificationAPI: NotificationAPI | null = null;
-  const needDb = config.scheduler?.enabled || config.rateLimit?.enabled;
+  let templateService: NotificationTemplateService | null = null;
 
-  if (needDb) {
-    try {
-      logger.info('Initializing database');
-      const db = await initializeDatabase(config.databasePath);
+  try {
+    logger.info('Initializing database');
+    const db = await initializeDatabase(config.databasePath);
 
-      if (config.scheduler?.enabled) {
-        const repository = new ScheduledNotificationRepository(db);
-        notificationAPI = new NotificationAPI(repository);
+    const templateRepository = new NotificationTemplateRepository(
+      db,
+      new TemplateAuditTrail(db),
+      getTemplateCache(),
+    );
+    templateService = new NotificationTemplateService(templateRepository);
 
-        // Initialize scheduler with Discord service if available
-        let discordService: DiscordNotificationService | null = null;
-        if (config.discord) {
-          discordService = new DiscordNotificationService(config.discord);
-        }
+    if (config.scheduler?.enabled) {
+      const repository = new ScheduledNotificationRepository(db);
+      notificationAPI = new NotificationAPI(repository);
 
-        scheduler = new NotificationScheduler(repository, config.scheduler, discordService);
-        await scheduler.start();
-
-        logger.info('Notification scheduler started successfully');
+      // Initialize scheduler with Discord service if available
+      let discordService: DiscordNotificationService | null = null;
+      if (config.discord) {
+        discordService = new DiscordNotificationService(config.discord);
       }
-    } catch (error) {
-      logger.error('Failed to initialize database or scheduler', { error });
-      throw error;
+
+      scheduler = new NotificationScheduler(repository, config.scheduler, discordService);
+      await scheduler.start();
+
+      logger.info('Notification scheduler started successfully');
     }
+  } catch (error) {
+    logger.error('Failed to initialize database or scheduler', { error });
+    throw error;
   }
 
   // Start events server and subscriber
@@ -51,7 +60,8 @@ async function main() {
     corsOrigin: config.eventsApiCorsOrigin,
     stellarRpcUrl: config.stellarRpcUrl,
     discordWebhookUrl: config.discord?.webhookUrl,
-    notificationAPI, // Pass API to events server for scheduling endpoints
+    notificationAPI,
+    templateService,
     rateLimit: config.rateLimit,
   });
 

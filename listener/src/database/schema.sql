@@ -110,3 +110,60 @@ CREATE INDEX IF NOT EXISTS idx_rate_limit_events_timestamp
 CREATE INDEX IF NOT EXISTS idx_rate_limit_events_client_id 
   ON rate_limit_events(client_id);
 
+-- Notification templates
+CREATE TABLE IF NOT EXISTS notification_templates (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  type TEXT NOT NULL,
+  subject TEXT,
+  body TEXT NOT NULL,
+  variables TEXT,
+  metadata TEXT,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_notification_templates_type
+  ON notification_templates(type);
+
+CREATE TRIGGER IF NOT EXISTS update_notification_templates_timestamp
+AFTER UPDATE ON notification_templates
+FOR EACH ROW
+BEGIN
+  UPDATE notification_templates
+  SET updated_at = CURRENT_TIMESTAMP
+  WHERE id = NEW.id;
+END;
+
+-- Immutable audit trail for template modifications
+CREATE TABLE IF NOT EXISTS notification_template_audit_log (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  template_id TEXT NOT NULL,
+  actor TEXT NOT NULL,
+  action TEXT NOT NULL DEFAULT 'UPDATE',
+  changed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  previous_snapshot TEXT NOT NULL,
+  new_snapshot TEXT NOT NULL,
+  FOREIGN KEY (template_id) REFERENCES notification_templates(id) ON DELETE RESTRICT
+);
+
+CREATE INDEX IF NOT EXISTS idx_template_audit_template_id
+  ON notification_template_audit_log(template_id);
+
+CREATE INDEX IF NOT EXISTS idx_template_audit_changed_at
+  ON notification_template_audit_log(changed_at);
+
+CREATE TRIGGER IF NOT EXISTS prevent_template_audit_update
+BEFORE UPDATE ON notification_template_audit_log
+FOR EACH ROW
+BEGIN
+  SELECT RAISE(ABORT, 'Audit records are immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS prevent_template_audit_delete
+BEFORE DELETE ON notification_template_audit_log
+FOR EACH ROW
+BEGIN
+  SELECT RAISE(ABORT, 'Audit records are immutable');
+END;
+

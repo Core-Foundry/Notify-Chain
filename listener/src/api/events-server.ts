@@ -19,9 +19,20 @@ import { WebhookSecret, RateLimitConfig } from '../types';
 import { RateLimiter } from './rate-limiter';
 import {
   getNotificationAnalyticsAggregator,
-  setNotificationAnalyticsAggregator,
   NotificationAnalyticsAggregator,
 } from '../services/notification-analytics-aggregator';
+import { NotificationTemplateService } from '../services/notification-template-service';
+import {
+  TemplateNotFoundError,
+  TemplateValidationError,
+} from '../services/notification-template-repository';
+import {
+  parseTemplateUpdateBody,
+  resolveRequestActor,
+  serializeAuditRecord,
+  serializeTemplate,
+} from './template-api';
+import { CreateNotificationTemplateInput } from '../types/notification-template';
 
 export interface EventsServerOptions {
   port: number;
@@ -37,6 +48,7 @@ export interface EventsServerOptions {
    * process-wide default aggregator is used.
    */
   analyticsAggregator?: NotificationAnalyticsAggregator | null;
+  templateService?: NotificationTemplateService | null;
 }
 
 type ServiceStatus = 'ok' | 'error' | 'not_configured';
@@ -138,6 +150,10 @@ async function buildHealthResponse(options: EventsServerOptions): Promise<Health
       eventRegistry: eventRegistryHealth,
     },
   };
+}
+
+function isRateLimitExempt(pathname: string): boolean {
+  return pathname === '/health' || pathname === '/api/rate-limit/metrics';
 }
 
 export function createEventsServer(options: EventsServerOptions): http.Server {
@@ -479,11 +495,171 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
       return;
     }
 
-    logger.warn('Unhandled request', {
-      requestId,
-      method: req.method,
-      url: req.url,
-    });
+    // GET /api/templates/:id/audit
+    const templateAuditMatch = url.pathname.match(/^\/api\/templates\/([^/]+)\/audit$/);
+    if (req.method === 'GET' && templateAuditMatch) {
+      if (!options.templateService) {
+        res.writeHead(503, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Template service not enabled' }));
+        return;
+      }
+
+      const templateId = decodeURIComponent(templateAuditMatch[1]);
+      logger.info('Handling GET /api/templates/:id/audit', { requestId, correlationId, templateId });
+
+      options.templateService.getAuditHistory(templateId)
+        .then(async (records) => {
+          const template = await options.templateService!.getById(templateId);
+          if (!template && records.length === 0) {
+            res.writeHead(404, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Template not found' }));
+            return;
+          }
+
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            templateId,
+            records: records.map(serializeAuditRecord),
+          }));
+        })
+        .catch((error) => {
+          logger.error('Failed to load template audit history', { error, requestId, correlationId, templateId });
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: (error as Error).message }));
+        });
+      return;
+    }
+
+    // GET /api/templates/:id
+    const getTemplateMatch = url.pathname.match(/^\/api\/templates\/([^/]+)$/);
+    if (req.method === 'GET' && getTemplateMatch) {
+      if (!options.templateService) {
+        res.writeHead(503, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Template service not enabled' }));
+        return;
+      }
+
+      const templateId = decodeURIComponent(getTemplateMatch[1]);
+      logger.info('Handling GET /api/templates/:id', { requestId, correlationId, templateId });
+
+      options.templateService.getById(templateId)
+        .then((template) => {
+          if (!template) {
+            res.writeHead(404, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Template not found' }));
+            return;
+          }
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(serializeTemplate(template)));
+        })
+        .catch((error) => {
+          logger.error('Failed to load template', { error, requestId, correlationId, templateId });
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: (error as Error).message }));
+        });
+      return;
+    }
+
+    // PUT /api/templates/:id
+    if (req.method === 'PUT' && getTemplateMatch) {
+      if (!options.templateService) {
+        res.writeHead(503, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Template service not enabled' }));
+        return;
+      }
+
+      const templateId = decodeURIComponent(getTemplateMatch[1]);
+      const actor = resolveRequestActor(req);
+      logger.info('Handling PUT /api/templates/:id', { requestId, correlationId, templateId, actor });
+
+      let body = '';
+      req.on('data', (chunk) => { body += chunk; });
+      req.on('end', () => {
+        void (async () => {
+          try {
+            const parsed = JSON.parse(body) as unknown;
+            const input = parseTemplateUpdateBody(parsed);
+            const updated = await options.templateService!.update(templateId, input, actor);
+            logger.info('PUT /api/templates/:id complete', {
+              requestId,
+              correlationId,
+              templateId,
+              actor,
+              durationMs: Date.now() - startTime,
+            });
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify(serializeTemplate(updated)));
+          } catch (error) {
+            if (error instanceof SyntaxError) {
+              res.writeHead(400, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ error: 'Invalid JSON' }));
+              return;
+            }
+            if (error instanceof TemplateNotFoundError) {
+              res.writeHead(404, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ error: error.message }));
+              return;
+            }
+            if (error instanceof TemplateValidationError || (error instanceof Error && error.message.startsWith('Invalid body'))) {
+              res.writeHead(400, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ error: (error as Error).message }));
+              return;
+            }
+            logger.error('Failed to update template', { error, requestId, correlationId, templateId, actor });
+            res.writeHead(500, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: (error as Error).message }));
+          }
+        })();
+      });
+      return;
+    }
+
+    // POST /api/templates
+    if (req.method === 'POST' && url.pathname === '/api/templates') {
+      if (!options.templateService) {
+        res.writeHead(503, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Template service not enabled' }));
+        return;
+      }
+
+      logger.info('Handling POST /api/templates', { requestId, correlationId });
+      let body = '';
+      req.on('data', (chunk) => { body += chunk; });
+      req.on('end', () => {
+        void (async () => {
+          try {
+            const parsed = JSON.parse(body) as CreateNotificationTemplateInput;
+            if (!parsed?.id || !parsed?.name || !parsed?.type || !parsed?.body) {
+              res.writeHead(400, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({
+                error: 'Invalid body: id, name, type, and body are required',
+              }));
+              return;
+            }
+
+            const created = await options.templateService!.create(parsed);
+            res.writeHead(201, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify(serializeTemplate(created)));
+          } catch (error) {
+            if (error instanceof SyntaxError) {
+              res.writeHead(400, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ error: 'Invalid JSON' }));
+              return;
+            }
+            if (error instanceof TemplateValidationError) {
+              res.writeHead(400, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ error: error.message }));
+              return;
+            }
+            logger.error('Failed to create template', { error, requestId, correlationId });
+            res.writeHead(500, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: (error as Error).message }));
+          }
+        })();
+      });
+      return;
+    }
+
     // GET /api/preferences/:userId
     const getPrefsMatch = url.pathname.match(/^\/api\/preferences\/([^/]+)$/);
     if (req.method === 'GET' && getPrefsMatch) {
@@ -523,7 +699,12 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
       });
       return;
     }
-    logger.warn('Unhandled request', { requestId, correlationId, method: req.method, url: req.url });
+
+    logger.warn('Unhandled request', {
+      requestId,
+      method: req.method,
+      url: req.url,
+    });
     res.writeHead(404, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: 'Not found' }));
   });
