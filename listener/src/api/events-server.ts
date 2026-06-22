@@ -6,6 +6,8 @@ import { PreferencesUpdateInput } from '../types/preferences';
 import { NotificationAPI } from '../services/notification-api';
 import { NotificationType } from '../types/scheduled-notification';
 import logger from '../utils/logger';
+import { generateRequestId } from '../utils/request-id';
+import { NotificationHistoryService } from '../services/notification-history';
 import { generateRequestId, resolveCorrelationId } from '../utils/request-id';
 import {
   verifySignature,
@@ -141,6 +143,7 @@ async function buildHealthResponse(options: EventsServerOptions): Promise<Health
 
 export function createEventsServer(options: EventsServerOptions): http.Server {
   const corsOrigin = options.corsOrigin ?? 'http://localhost:5173';
+  const historyService = new NotificationHistoryService();
   const rateLimiter = options.rateLimit ? new RateLimiter(options.rateLimit) : undefined;
 
   const server = http.createServer(async (req, res) => {
@@ -397,6 +400,55 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
       return;
     }
 
+    // Get notification delivery history endpoint
+    if (req.method === 'GET' && req.url?.startsWith('/api/notifications/history')) {
+      const url = new URL(req.url, 'http://localhost');
+      const limit = url.searchParams.get('limit') ? parseInt(url.searchParams.get('limit')!, 10) : undefined;
+      const offset = url.searchParams.get('offset') ? parseInt(url.searchParams.get('offset')!, 10) : undefined;
+      const status = url.searchParams.get('status') as 'SUCCESS' | 'FAILED' | 'RETRY' | null;
+      const startDate = url.searchParams.get('startDate');
+      const endDate = url.searchParams.get('endDate');
+
+      logger.info('Handling GET /api/notifications/history', {
+        requestId,
+        limit,
+        offset,
+        status,
+        startDate,
+        endDate,
+      });
+
+      historyService.getHistory({
+        limit,
+        offset,
+        status: status || undefined,
+        startDate: startDate || undefined,
+        endDate: endDate || undefined,
+      })
+        .then((result) => {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(result));
+
+          logger.info('GET /api/notifications/history complete', {
+            requestId,
+            returned: result.records.length,
+            total: result.total,
+            durationMs: Date.now() - startTime,
+          });
+        })
+        .catch((error) => {
+          logger.error('Failed to retrieve notification history', { error, requestId });
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: (error as Error).message }));
+        });
+      return;
+    }
+
+    logger.warn('Unhandled request', {
+      requestId,
+      method: req.method,
+      url: req.url,
+    });
     // GET /api/preferences/:userId
     const getPrefsMatch = url.pathname.match(/^\/api\/preferences\/([^/]+)$/);
     if (req.method === 'GET' && getPrefsMatch) {
