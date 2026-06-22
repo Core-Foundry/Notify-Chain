@@ -12,10 +12,17 @@ export class NotificationAPI {
   /**
    * Schedule a notification for future delivery
    */
-  async scheduleNotification(input: CreateScheduledNotificationInput): Promise<number> {
+  async scheduleNotification(
+    input: CreateScheduledNotificationInput,
+    requestId?: string
+  ): Promise<number> {
     // Validate input
-    if (!input.executeAt || input.executeAt < new Date()) {
-      throw new Error('executeAt must be a future date');
+    if (!input.executeAt || !(input.executeAt instanceof Date) || isNaN(input.executeAt.getTime())) {
+      throw new Error('executeAt must be a valid date');
+    }
+
+    if (input.executeAt <= new Date()) {
+      throw new Error('executeAt must be a future timestamp — the provided date has already expired');
     }
 
     if (!input.payload || typeof input.payload !== 'object') {
@@ -27,12 +34,13 @@ export class NotificationAPI {
     }
 
     logger.info('Scheduling new notification', {
+      requestId,
       type: input.notificationType,
       executeAt: input.executeAt,
       recipient: input.targetRecipient,
     });
 
-    return await this.repository.create(input);
+    return await this.repository.create(input, requestId);
   }
 
   /**
@@ -62,8 +70,8 @@ export class NotificationAPI {
   /**
    * Cancel a scheduled notification
    */
-  async cancelNotification(id: number): Promise<boolean> {
-    logger.info('Cancelling scheduled notification', { id });
+  async cancelNotification(id: number, requestId?: string): Promise<boolean> {
+    logger.info('Cancelling scheduled notification', { requestId, id });
     return await this.repository.cancel(id);
   }
 

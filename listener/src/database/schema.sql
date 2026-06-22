@@ -85,3 +85,22 @@ BEGIN
   SET updated_at = CURRENT_TIMESTAMP 
   WHERE id = NEW.id;
 END;
+
+-- Rate limit events table for auditing
+CREATE TABLE IF NOT EXISTS rate_limit_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  client_id TEXT NOT NULL,                  -- IP address or API key
+  client_type VARCHAR(20) NOT NULL,         -- 'IP' or 'API_KEY'
+  endpoint TEXT NOT NULL,                   -- Request path/method
+  method VARCHAR(10) NOT NULL,              -- Request method
+  timestamp DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  limit_threshold INTEGER NOT NULL,
+  window_ms INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_rate_limit_events_timestamp 
+  ON rate_limit_events(timestamp);
+
+CREATE INDEX IF NOT EXISTS idx_rate_limit_events_client_id 
+  ON rate_limit_events(client_id);
+

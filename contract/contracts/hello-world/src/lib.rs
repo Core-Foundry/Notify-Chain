@@ -109,8 +109,14 @@ impl AutoShareContract {
     }
 
     /// Adds a member to a group with specified percentage.
-    pub fn add_group_member(env: Env, id: BytesN<32>, address: Address, percentage: u32) {
-        autoshare_logic::add_group_member(env, id, address, percentage).unwrap();
+    pub fn add_group_member(
+        env: Env,
+        id: BytesN<32>,
+        caller: Address,
+        address: Address,
+        percentage: u32,
+    ) {
+        autoshare_logic::add_group_member(env, id, caller, address, percentage).unwrap();
     }
 
     /// Deactivates a group. Only the creator can deactivate.
@@ -233,6 +239,19 @@ impl AutoShareContract {
     /// Reduces the usage count by 1 (dummy function for testing).
     pub fn reduce_usage(env: Env, id: BytesN<32>) {
         autoshare_logic::reduce_usage(env, id).unwrap();
+    }
+
+    // ============================================================================
+    // Scheduled Notification Management
+    // ============================================================================
+
+    /// Cancels a scheduled notification and emits a ScheduledNotificationCancelled event.
+    ///
+    /// The `notification_id` uniquely identifies the notification being cancelled.
+    /// Callers must authenticate. The contract is paused-aware: cancellations are
+    /// rejected while the contract is paused.
+    pub fn cancel_notification(env: Env, notification_id: BytesN<32>, caller: Address) {
+        autoshare_logic::cancel_notification(env, notification_id, caller).unwrap();
     }
 }
 

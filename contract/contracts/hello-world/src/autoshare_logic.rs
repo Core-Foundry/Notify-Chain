@@ -1,7 +1,10 @@
 use crate::base::errors::Error;
 use crate::base::events::{
-    AdminTransferred, AutoshareCreated, AutoshareUpdated, ContractPaused, ContractUnpaused,
-    GroupActivated, GroupDeactivated, NotificationCategory, Withdrawal,
+    AdminTransferred, AuthorizationFailure, AutoshareCreated, AutoshareUpdated, ContractPaused,
+    ContractUnpaused, GroupActivated, GroupDeactivated, NotificationCategory,
+    ScheduledNotificationCancelled, Withdrawal,
+    ContractUnpaused, GroupActivated, GroupDeactivated, NotificationCategory, NotificationPriority,
+    Withdrawal,
 };
 use crate::base::types::{AutoShareDetails, GroupMember, PaymentHistory};
 use soroban_sdk::{contracttype, token, Address, BytesN, Env, String, Vec};
@@ -109,6 +112,7 @@ pub fn create_autoshare(
     AutoshareCreated {
         creator: creator.clone(),
         category: NotificationCategory::Group,
+        priority: NotificationPriority::Medium,
         id: id.clone(),
     }
     .publish(&env);
@@ -183,9 +187,12 @@ pub fn get_group_members(env: Env, id: BytesN<32>) -> Result<Vec<GroupMember>, E
 pub fn add_group_member(
     env: Env,
     id: BytesN<32>,
+    caller: Address,
     address: Address,
     percentage: u32,
 ) -> Result<(), Error> {
+    caller.require_auth();
+
     // Check if contract is paused
     if get_paused_status(&env) {
         return Err(Error::ContractPaused);
@@ -197,6 +204,11 @@ pub fn add_group_member(
         .persistent()
         .get(&key)
         .ok_or(Error::NotFound)?;
+
+    if details.creator != caller {
+        publish_authorization_failure(&env, &caller, "add_group_member");
+        return Err(Error::Unauthorized);
+    }
 
     // Check if already a member
     for member in details.members.iter() {
@@ -247,6 +259,16 @@ pub fn initialize_admin(env: Env, admin: Address) {
     }
 }
 
+fn publish_authorization_failure(env: &Env, caller: &Address, action: &str) {
+    AuthorizationFailure {
+        caller: caller.clone(),
+        category: NotificationCategory::Admin,
+        priority: NotificationPriority::Critical,
+        action: String::from_str(env, action),
+    }
+    .publish(env);
+}
+
 fn require_admin(env: &Env, caller: &Address) -> Result<(), Error> {
     let admin_key = DataKey::Admin;
     let admin: Address = env
@@ -256,6 +278,7 @@ fn require_admin(env: &Env, caller: &Address) -> Result<(), Error> {
         .ok_or(Error::Unauthorized)?;
 
     if admin != *caller {
+        publish_authorization_failure(env, caller, "require_admin");
         return Err(Error::Unauthorized);
     }
 
@@ -277,6 +300,7 @@ pub fn transfer_admin(env: Env, current_admin: Address, new_admin: Address) -> R
     AdminTransferred {
         old_admin: current_admin,
         category: NotificationCategory::Admin,
+        priority: NotificationPriority::Critical,
         new_admin,
     }
     .publish(&env);
@@ -301,6 +325,7 @@ pub fn pause(env: Env, admin: Address) -> Result<(), Error> {
     env.storage().persistent().set(&pause_key, &true);
     ContractPaused {
         category: NotificationCategory::Admin,
+        priority: NotificationPriority::High,
     }
     .publish(&env);
     Ok(())
@@ -320,6 +345,7 @@ pub fn unpause(env: Env, admin: Address) -> Result<(), Error> {
     env.storage().persistent().set(&pause_key, &false);
     ContractUnpaused {
         category: NotificationCategory::Admin,
+        priority: NotificationPriority::High,
     }
     .publish(&env);
     Ok(())
@@ -610,6 +636,7 @@ pub fn update_members(
         .ok_or(Error::NotFound)?;
 
     if details.creator != caller {
+        publish_authorization_failure(&env, &caller, "update_members");
         return Err(Error::Unauthorized);
     }
 
@@ -656,6 +683,7 @@ pub fn update_members(
     AutoshareUpdated {
         updater: caller,
         category: NotificationCategory::Group,
+        priority: NotificationPriority::Medium,
         id: id.clone(),
     }
     .publish(&env);
@@ -678,6 +706,7 @@ pub fn deactivate_group(env: Env, id: BytesN<32>, caller: Address) -> Result<(),
         .ok_or(Error::NotFound)?;
 
     if details.creator != caller {
+        publish_authorization_failure(&env, &caller, "deactivate_group");
         return Err(Error::Unauthorized);
     }
 
@@ -691,6 +720,7 @@ pub fn deactivate_group(env: Env, id: BytesN<32>, caller: Address) -> Result<(),
     GroupDeactivated {
         creator: caller,
         category: NotificationCategory::Group,
+        priority: NotificationPriority::Low,
         id: id.clone(),
     }
     .publish(&env);
@@ -713,6 +743,7 @@ pub fn activate_group(env: Env, id: BytesN<32>, caller: Address) -> Result<(), E
         .ok_or(Error::NotFound)?;
 
     if details.creator != caller {
+        publish_authorization_failure(&env, &caller, "activate_group");
         return Err(Error::Unauthorized);
     }
 
@@ -726,6 +757,7 @@ pub fn activate_group(env: Env, id: BytesN<32>, caller: Address) -> Result<(), E
     GroupActivated {
         creator: caller,
         category: NotificationCategory::Group,
+        priority: NotificationPriority::Low,
         id: id.clone(),
     }
     .publish(&env);
@@ -774,9 +806,43 @@ pub fn withdraw(
         token,
         recipient,
         category: NotificationCategory::Financial,
+        priority: NotificationPriority::High,
         amount,
     }
     .publish(&env);
+    Ok(())
+}
+
+// ============================================================================
+// Scheduled Notification Cancellation
+// ============================================================================
+
+/// Cancels a scheduled notification identified by `notification_id` and emits
+/// a [`ScheduledNotificationCancelled`] event so off-chain consumers can track
+/// the lifecycle of every scheduled notification in real time.
+///
+/// The contract does not keep a registry of scheduled notifications; callers are
+/// responsible for submitting the correct identifier. Any authenticated address
+/// may cancel a notification — access control beyond authentication is left to
+/// the application layer.
+pub fn cancel_notification(
+    env: Env,
+    notification_id: BytesN<32>,
+    caller: Address,
+) -> Result<(), Error> {
+    caller.require_auth();
+
+    if get_paused_status(&env) {
+        return Err(Error::ContractPaused);
+    }
+
+    ScheduledNotificationCancelled {
+        caller,
+        category: NotificationCategory::Notification,
+        notification_id,
+    }
+    .publish(&env);
+
     Ok(())
 }
 

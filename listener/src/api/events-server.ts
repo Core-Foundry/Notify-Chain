@@ -1,18 +1,43 @@
 import http from 'http';
 import * as StellarSDK from '@stellar/stellar-sdk';
 import { eventRegistry } from '../store/event-registry';
+import { preferenceStore } from '../store/preference-store';
+import { PreferencesUpdateInput } from '../types/preferences';
 import { NotificationAPI } from '../services/notification-api';
 import { NotificationType } from '../types/scheduled-notification';
 import logger from '../utils/logger';
 import { generateRequestId } from '../utils/request-id';
 import { NotificationHistoryService } from '../services/notification-history';
+import { generateRequestId, resolveCorrelationId } from '../utils/request-id';
+import {
+  verifySignature,
+  extractSignature,
+  extractKeyId,
+  getSecretForKey,
+  collectRawBody,
+} from '../services/webhook-verifier';
+import { WebhookSecret, RateLimitConfig } from '../types';
+import { RateLimiter } from './rate-limiter';
+import {
+  getNotificationAnalyticsAggregator,
+  setNotificationAnalyticsAggregator,
+  NotificationAnalyticsAggregator,
+} from '../services/notification-analytics-aggregator';
 
 export interface EventsServerOptions {
   port: number;
   corsOrigin?: string;
   stellarRpcUrl: string;
   discordWebhookUrl?: string;
+  webhookSecrets?: WebhookSecret[];
   notificationAPI?: NotificationAPI | null;
+  rateLimit?: RateLimitConfig;
+  /**
+   * Optional override for the analytics aggregator. Tests use this to inject
+   * a controlled instance and reset state between cases. When omitted, the
+   * process-wide default aggregator is used.
+   */
+  analyticsAggregator?: NotificationAnalyticsAggregator | null;
 }
 
 type ServiceStatus = 'ok' | 'error' | 'not_configured';
@@ -119,15 +144,23 @@ async function buildHealthResponse(options: EventsServerOptions): Promise<Health
 export function createEventsServer(options: EventsServerOptions): http.Server {
   const corsOrigin = options.corsOrigin ?? 'http://localhost:5173';
   const historyService = new NotificationHistoryService();
+  const rateLimiter = options.rateLimit ? new RateLimiter(options.rateLimit) : undefined;
 
-  return http.createServer((req, res) => {
+  const server = http.createServer(async (req, res) => {
     const requestId = generateRequestId();
+    const correlationId = resolveCorrelationId(req.headers['x-correlation-id']);
     const startTime = Date.now();
 
     res.setHeader('Access-Control-Allow-Origin', corsOrigin);
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-API-Key, Authorization, X-Correlation-Id');
     res.setHeader('X-Request-Id', requestId);
+    res.setHeader('X-Correlation-Id', correlationId);
+
+    if (rateLimiter) {
+      const allowed = await rateLimiter.handle(req, res as any);
+      if (!allowed) return;
+    }
 
     if (req.method === 'OPTIONS') {
       res.writeHead(204);
@@ -135,52 +168,134 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
       return;
     }
 
-    if (req.method === 'GET' && req.url === '/health') {
+    const url = new URL(req.url ?? '/', 'http://localhost');
+
+    // GET /health
+    if (req.method === 'GET' && url.pathname === '/health') {
       buildHealthResponse(options).then((health) => {
         const httpStatus = health.status === 'error' ? 503 : 200;
         res.writeHead(httpStatus, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(health));
       }).catch((err) => {
-        logger.error('Health check failed unexpectedly', { error: err });
+        logger.error('Health check failed unexpectedly', { error: err, requestId, correlationId });
         res.writeHead(500, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ status: 'error', detail: 'Internal health check failure' }));
       });
       return;
     }
 
-    if (req.method === 'GET' && req.url?.startsWith('/api/events')) {
-      const url = new URL(req.url, 'http://localhost');
+    // GET /api/events
+    if (req.method === 'GET' && url.pathname.startsWith('/api/events')) {
       const limitParam = url.searchParams.get('limit');
       const limit = limitParam ? parseInt(limitParam, 10) : undefined;
-
-      logger.info('Handling GET /api/events', {
-        requestId,
-        limit: limit ?? 'all',
-      });
-
       const events =
         limit !== undefined && !Number.isNaN(limit)
           ? eventRegistry.getEvents(limit)
           : eventRegistry.getEvents();
 
+      logger.info('Handling GET /api/events', { requestId, correlationId, limit: limit ?? 'all' });
+
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(
-        JSON.stringify({
-          count: eventRegistry.count(),
-          events,
-        })
-      );
+      res.end(JSON.stringify({ count: eventRegistry.count(), events }));
 
       logger.info('GET /api/events complete', {
         requestId,
+        correlationId,
         returned: events.length,
         durationMs: Date.now() - startTime,
       });
       return;
     }
 
-    // Schedule notification endpoint
-    if (req.method === 'POST' && req.url === '/api/schedule') {
+    // GET /api/analytics
+    if (req.method === 'GET' && url.pathname.startsWith('/api/analytics')) {
+      const aggregator =
+        options.analyticsAggregator !== undefined
+          ? options.analyticsAggregator
+          : getNotificationAnalyticsAggregator();
+
+      if (!aggregator) {
+        res.writeHead(503, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Analytics aggregator unavailable' }));
+        return;
+      }
+
+      const snapshot = aggregator.snapshot();
+      const reset = url.searchParams.get('reset') === 'true';
+
+      logger.info('Handling GET /api/analytics', {
+        requestId,
+        correlationId,
+        totalRecorded: snapshot.totalRecorded,
+        reset,
+        durationMs: Date.now() - startTime,
+      });
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(
+        JSON.stringify({
+          ...snapshot,
+          ...(reset ? {} : {}),
+        }),
+      );
+
+      if (reset) {
+        aggregator.reset();
+        logger.info('Analytics snapshot reset after read', { requestId, correlationId });
+      }
+      return;
+    }
+
+    // POST /api/webhooks
+    if (req.method === 'POST' && url.pathname === '/api/webhooks') {
+      collectRawBody(req).then((rawBody) => {
+        const signatureHeader = extractSignature(req.headers);
+        const keyId = extractKeyId(req.headers);
+
+        if (!signatureHeader) {
+          logger.warn('Webhook missing signature header', { requestId, correlationId });
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Missing signature header' }));
+          return;
+        }
+
+        if (!keyId) {
+          logger.warn('Webhook missing key-id header', { requestId, correlationId });
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Missing key-id header' }));
+          return;
+        }
+
+        const secrets = options.webhookSecrets ?? [];
+        const secret = getSecretForKey(secrets, keyId);
+
+        if (!secret) {
+          logger.warn('Webhook unknown key-id', { requestId, correlationId, keyId });
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Unknown key-id' }));
+          return;
+        }
+
+        if (!verifySignature(rawBody, signatureHeader, secret)) {
+          logger.warn('Webhook invalid signature', { requestId, correlationId, keyId });
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Invalid signature' }));
+          return;
+        }
+
+        logger.info('Webhook received and verified', { requestId, correlationId, keyId });
+        res.writeHead(202, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ status: 'accepted' }));
+      }).catch((err) => {
+        logger.error('Failed to read webhook body', { requestId, correlationId, error: err });
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Failed to read request body' }));
+      });
+      return;
+    }
+
+    // POST /api/schedule
+    if (req.method === 'POST' && url.pathname === '/api/schedule') {
       if (!options.notificationAPI) {
         res.writeHead(503, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'Scheduler not enabled' }));
@@ -188,18 +303,21 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
       }
 
       let body = '';
-      req.on('data', (chunk) => {
-        body += chunk.toString();
-      });
-
+      req.on('data', (chunk) => { body += chunk.toString(); });
       req.on('end', async () => {
         try {
           const data = JSON.parse(body);
-          
-          // Validate required fields
+
           if (!data.executeAt || !data.payload || !data.targetRecipient) {
             res.writeHead(400, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ error: 'Missing required fields: executeAt, payload, targetRecipient' }));
+            return;
+          }
+
+          const executeAt = new Date(data.executeAt);
+          if (isNaN(executeAt.getTime())) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'executeAt is not a valid date' }));
             return;
           }
 
@@ -207,7 +325,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
             payload: data.payload,
             notificationType: data.notificationType || NotificationType.DISCORD,
             targetRecipient: data.targetRecipient,
-            executeAt: new Date(data.executeAt),
+            executeAt,
             maxRetries: data.maxRetries,
             priority: data.priority,
             eventId: data.eventId,
@@ -218,13 +336,9 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
           res.writeHead(201, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ id: notificationId }));
 
-          logger.info('Notification scheduled via API', {
-            requestId,
-            notificationId,
-            executeAt: data.executeAt,
-          });
+          logger.info('Notification scheduled via API', { requestId, correlationId, notificationId, executeAt: data.executeAt });
         } catch (error) {
-          logger.error('Failed to schedule notification', { error, requestId });
+          logger.error('Failed to schedule notification', { error, requestId, correlationId });
           res.writeHead(500, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ error: (error as Error).message }));
         }
@@ -232,8 +346,8 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
       return;
     }
 
-    // Get scheduler statistics endpoint
-    if (req.method === 'GET' && req.url === '/api/schedule/stats') {
+    // GET /api/schedule/stats
+    if (req.method === 'GET' && url.pathname === '/api/schedule/stats') {
       if (!options.notificationAPI) {
         res.writeHead(503, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'Scheduler not enabled' }));
@@ -246,22 +360,22 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
           res.end(JSON.stringify(stats));
         })
         .catch((error) => {
-          logger.error('Failed to get scheduler stats', { error, requestId });
+          logger.error('Failed to get scheduler stats', { error, requestId, correlationId });
           res.writeHead(500, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ error: (error as Error).message }));
         });
       return;
     }
 
-    // Get specific notification endpoint
-    if (req.method === 'GET' && req.url?.startsWith('/api/schedule/')) {
+    // GET /api/schedule/:id
+    if (req.method === 'GET' && url.pathname.startsWith('/api/schedule/')) {
       if (!options.notificationAPI) {
         res.writeHead(503, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'Scheduler not enabled' }));
         return;
       }
 
-      const id = parseInt(req.url.split('/').pop() || '', 10);
+      const id = parseInt(url.pathname.split('/').pop() || '', 10);
       if (isNaN(id)) {
         res.writeHead(400, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'Invalid notification ID' }));
@@ -279,7 +393,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
           res.end(JSON.stringify(notification));
         })
         .catch((error) => {
-          logger.error('Failed to get notification', { error, requestId, id });
+          logger.error('Failed to get notification', { error, requestId, correlationId, id });
           res.writeHead(500, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ error: (error as Error).message }));
         });
@@ -335,10 +449,55 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
       method: req.method,
       url: req.url,
     });
+    // GET /api/preferences/:userId
+    const getPrefsMatch = url.pathname.match(/^\/api\/preferences\/([^/]+)$/);
+    if (req.method === 'GET' && getPrefsMatch) {
+      const userId = decodeURIComponent(getPrefsMatch[1]);
+      const prefs = preferenceStore.get(userId);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(prefs));
+      return;
+    }
 
+    // PUT /api/preferences/:userId
+    const putPrefsMatch = url.pathname.match(/^\/api\/preferences\/([^/]+)$/);
+    if (req.method === 'PUT' && putPrefsMatch) {
+      const userId = decodeURIComponent(putPrefsMatch[1]);
+      let body = '';
+      req.on('data', (chunk) => { body += chunk; });
+      req.on('end', () => {
+        try {
+          const input: PreferencesUpdateInput = JSON.parse(body);
+          if (!input || typeof input.categories !== 'object') {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Invalid body: expected { categories: { [key]: boolean } }' }));
+            return;
+          }
+          const updated = preferenceStore.update(userId, input);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(updated));
+        } catch {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Invalid JSON' }));
+        }
+      });
+      return;
+    }
+
+    logger.warn('Unhandled request', { requestId, correlationId, method: req.method, url: req.url });
     res.writeHead(404, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: 'Not found' }));
   });
+
+  if (rateLimiter) {
+    const originalClose = server.close.bind(server);
+    server.close = (callback?: (err?: Error) => void) => {
+      rateLimiter.destroy();
+      return originalClose(callback);
+    };
+  }
+
+  return server;
 }
 
 export function startEventsServer(options: EventsServerOptions): http.Server {

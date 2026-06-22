@@ -14,30 +14,33 @@ dotenv.config();
 async function main() {
   const config = loadConfig();
 
-  // Initialize database for scheduled notifications
+  // Initialize database if scheduler or rate limiting is enabled
   let scheduler: NotificationScheduler | null = null;
   let notificationAPI: NotificationAPI | null = null;
+  const needDb = config.scheduler?.enabled || config.rateLimit?.enabled;
 
-  if (config.scheduler?.enabled) {
+  if (needDb) {
     try {
-      logger.info('Initializing database for scheduled notifications');
+      logger.info('Initializing database');
       const db = await initializeDatabase(config.databasePath);
 
-      const repository = new ScheduledNotificationRepository(db);
-      notificationAPI = new NotificationAPI(repository);
+      if (config.scheduler?.enabled) {
+        const repository = new ScheduledNotificationRepository(db);
+        notificationAPI = new NotificationAPI(repository);
 
-      // Initialize scheduler with Discord service if available
-      let discordService: DiscordNotificationService | null = null;
-      if (config.discord) {
-        discordService = new DiscordNotificationService(config.discord);
+        // Initialize scheduler with Discord service if available
+        let discordService: DiscordNotificationService | null = null;
+        if (config.discord) {
+          discordService = new DiscordNotificationService(config.discord);
+        }
+
+        scheduler = new NotificationScheduler(repository, config.scheduler, discordService);
+        await scheduler.start();
+
+        logger.info('Notification scheduler started successfully');
       }
-
-      scheduler = new NotificationScheduler(repository, config.scheduler, discordService);
-      await scheduler.start();
-
-      logger.info('Notification scheduler started successfully');
     } catch (error) {
-      logger.error('Failed to initialize scheduler', { error });
+      logger.error('Failed to initialize database or scheduler', { error });
       throw error;
     }
   }
@@ -49,6 +52,7 @@ async function main() {
     stellarRpcUrl: config.stellarRpcUrl,
     discordWebhookUrl: config.discord?.webhookUrl,
     notificationAPI, // Pass API to events server for scheduling endpoints
+    rateLimit: config.rateLimit,
   });
 
   const subscriber = new EventSubscriber(config);
