@@ -320,8 +320,9 @@ describe('NotificationRetryQueue (Refactored)', () => {
       events.forEach(event => queue.enqueue(event, mockContractConfig));
 
       jest.advanceTimersByTime(200);
-      await Promise.resolve();
-      await Promise.resolve();
+      for (let i = 0; i < 10; i++) {
+        await Promise.resolve();
+      }
 
       expect(notificationFn).toHaveBeenCalledTimes(3);
       queue.stop();

@@ -309,3 +309,8 @@ For issues or questions:
 2. Review application logs
 3. Inspect the database directly
 4. Open an issue on the project repository
+
+## See also
+
+- [API Usage Cookbook](API_USAGE_COOKBOOK.md) — practical end-to-end examples for every endpoint, including curl/Node.js signing and recovery workflows
+- [API Reference](API.md) — full request/response schema for every endpoint

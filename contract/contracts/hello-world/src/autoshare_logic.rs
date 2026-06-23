@@ -1,9 +1,10 @@
 use crate::base::errors::Error;
 use crate::base::events::{
-    AdminTransferred, AutoshareCreated, AutoshareUpdated, ContractPaused, ContractUnpaused,
-    GroupActivated, GroupDeactivated, Withdrawal,
+    AdminTransferred, AuthorizationFailure, AutoshareCreated, AutoshareUpdated, ContractPaused,
+    ContractUnpaused, GroupActivated, GroupDeactivated, NotificationCategory, NotificationExpired,
+    NotificationPriority, NotificationScheduled, ScheduledNotificationCancelled, Withdrawal,
 };
-use crate::base::types::{AutoShareDetails, GroupMember, PaymentHistory};
+use crate::base::types::{AutoShareDetails, GroupMember, PaymentHistory, ScheduledNotification};
 use soroban_sdk::{contracttype, token, Address, BytesN, Env, String, Vec};
 
 /// Maximum allowed length for AutoShare group names.
@@ -22,6 +23,7 @@ pub enum DataKey {
     GroupPaymentHistory(BytesN<32>),
     GroupMembers(BytesN<32>),
     IsPaused,
+    ScheduledNotification(BytesN<32>),
 }
 
 pub fn create_autoshare(
@@ -73,6 +75,7 @@ pub fn create_autoshare(
         id: id.clone(),
         name,
         creator: creator.clone(),
+        priority: NotificationPriority::Medium,
         usage_count,
         total_usages_paid: usage_count,
         members: Vec::new(&env),
@@ -108,6 +111,8 @@ pub fn create_autoshare(
 
     AutoshareCreated {
         creator: creator.clone(),
+        category: NotificationCategory::Group,
+        priority: NotificationPriority::Medium,
         id: id.clone(),
     }
     .publish(&env);
@@ -182,9 +187,12 @@ pub fn get_group_members(env: Env, id: BytesN<32>) -> Result<Vec<GroupMember>, E
 pub fn add_group_member(
     env: Env,
     id: BytesN<32>,
+    caller: Address,
     address: Address,
     percentage: u32,
 ) -> Result<(), Error> {
+    caller.require_auth();
+
     // Check if contract is paused
     if get_paused_status(&env) {
         return Err(Error::ContractPaused);
@@ -196,6 +204,11 @@ pub fn add_group_member(
         .persistent()
         .get(&key)
         .ok_or(Error::NotFound)?;
+
+    if details.creator != caller {
+        publish_authorization_failure(&env, &caller, "add_group_member");
+        return Err(Error::Unauthorized);
+    }
 
     // Check if already a member
     for member in details.members.iter() {
@@ -246,6 +259,16 @@ pub fn initialize_admin(env: Env, admin: Address) {
     }
 }
 
+fn publish_authorization_failure(env: &Env, caller: &Address, action: &str) {
+    AuthorizationFailure {
+        caller: caller.clone(),
+        category: NotificationCategory::Admin,
+        priority: NotificationPriority::Critical,
+        action: String::from_str(env, action),
+    }
+    .publish(env);
+}
+
 fn require_admin(env: &Env, caller: &Address) -> Result<(), Error> {
     let admin_key = DataKey::Admin;
     let admin: Address = env
@@ -255,6 +278,7 @@ fn require_admin(env: &Env, caller: &Address) -> Result<(), Error> {
         .ok_or(Error::Unauthorized)?;
 
     if admin != *caller {
+        publish_authorization_failure(env, caller, "require_admin");
         return Err(Error::Unauthorized);
     }
 
@@ -275,6 +299,8 @@ pub fn transfer_admin(env: Env, current_admin: Address, new_admin: Address) -> R
     env.storage().persistent().set(&DataKey::Admin, &new_admin);
     AdminTransferred {
         old_admin: current_admin,
+        category: NotificationCategory::Admin,
+        priority: NotificationPriority::Critical,
         new_admin,
     }
     .publish(&env);
@@ -297,7 +323,11 @@ pub fn pause(env: Env, admin: Address) -> Result<(), Error> {
     }
 
     env.storage().persistent().set(&pause_key, &true);
-    ContractPaused {}.publish(&env);
+    ContractPaused {
+        category: NotificationCategory::Admin,
+        priority: NotificationPriority::High,
+    }
+    .publish(&env);
     Ok(())
 }
 
@@ -313,7 +343,11 @@ pub fn unpause(env: Env, admin: Address) -> Result<(), Error> {
     }
 
     env.storage().persistent().set(&pause_key, &false);
-    ContractUnpaused {}.publish(&env);
+    ContractUnpaused {
+        category: NotificationCategory::Admin,
+        priority: NotificationPriority::High,
+    }
+    .publish(&env);
     Ok(())
 }
 
@@ -602,6 +636,7 @@ pub fn update_members(
         .ok_or(Error::NotFound)?;
 
     if details.creator != caller {
+        publish_authorization_failure(&env, &caller, "update_members");
         return Err(Error::Unauthorized);
     }
 
@@ -646,8 +681,10 @@ pub fn update_members(
     env.storage().persistent().set(&members_key, &new_members);
 
     AutoshareUpdated {
-        id: id.clone(),
         updater: caller,
+        category: NotificationCategory::Group,
+        priority: NotificationPriority::Medium,
+        id: id.clone(),
     }
     .publish(&env);
     Ok(())
@@ -669,6 +706,7 @@ pub fn deactivate_group(env: Env, id: BytesN<32>, caller: Address) -> Result<(),
         .ok_or(Error::NotFound)?;
 
     if details.creator != caller {
+        publish_authorization_failure(&env, &caller, "deactivate_group");
         return Err(Error::Unauthorized);
     }
 
@@ -680,8 +718,10 @@ pub fn deactivate_group(env: Env, id: BytesN<32>, caller: Address) -> Result<(),
     env.storage().persistent().set(&key, &details);
 
     GroupDeactivated {
-        id: id.clone(),
         creator: caller,
+        category: NotificationCategory::Group,
+        priority: NotificationPriority::Low,
+        id: id.clone(),
     }
     .publish(&env);
     Ok(())
@@ -703,6 +743,7 @@ pub fn activate_group(env: Env, id: BytesN<32>, caller: Address) -> Result<(), E
         .ok_or(Error::NotFound)?;
 
     if details.creator != caller {
+        publish_authorization_failure(&env, &caller, "activate_group");
         return Err(Error::Unauthorized);
     }
 
@@ -714,8 +755,10 @@ pub fn activate_group(env: Env, id: BytesN<32>, caller: Address) -> Result<(), E
     env.storage().persistent().set(&key, &details);
 
     GroupActivated {
-        id: id.clone(),
         creator: caller,
+        category: NotificationCategory::Group,
+        priority: NotificationPriority::Low,
+        id: id.clone(),
     }
     .publish(&env);
     Ok(())
@@ -761,8 +804,10 @@ pub fn withdraw(
 
     Withdrawal {
         token,
-        amount,
         recipient,
+        category: NotificationCategory::Financial,
+        priority: NotificationPriority::High,
+        amount,
     }
     .publish(&env);
     Ok(())
@@ -793,5 +838,159 @@ fn validate_members(members: &Vec<GroupMember>) -> Result<(), Error> {
     if total_percentage != 100 {
         return Err(Error::InvalidTotalPercentage);
     }
+    Ok(())
+}
+
+// ============================================================================
+// Notification Scheduling & Expiration
+// ============================================================================
+
+/// Default priority attached to notification lifecycle events.
+const NOTIFICATION_PRIORITY: NotificationPriority = NotificationPriority::Medium;
+
+/// Reads a scheduled notification from storage, if one is tracked for `id`.
+fn load_notification(env: &Env, id: &BytesN<32>) -> Option<ScheduledNotification> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::ScheduledNotification(id.clone()))
+}
+
+/// Returns true if `notification` has reached or passed its expiry instant.
+fn is_expired(env: &Env, notification: &ScheduledNotification) -> bool {
+    env.ledger().timestamp() >= notification.expires_at
+}
+
+/// Schedules a notification on-chain that becomes invalid after `ttl_seconds`.
+///
+/// The notification is stored with an `expires_at` of `now + ttl_seconds`. A
+/// zero duration (or one that overflows the ledger clock) is rejected, as is a
+/// duplicate identifier. Emits [`NotificationScheduled`].
+pub fn schedule_notification(
+    env: Env,
+    notification_id: BytesN<32>,
+    creator: Address,
+    ttl_seconds: u64,
+) -> Result<(), Error> {
+    creator.require_auth();
+
+    if get_paused_status(&env) {
+        return Err(Error::ContractPaused);
+    }
+
+    if ttl_seconds == 0 {
+        return Err(Error::InvalidExpirationDuration);
+    }
+
+    let key = DataKey::ScheduledNotification(notification_id.clone());
+    if env.storage().persistent().has(&key) {
+        return Err(Error::AlreadyExists);
+    }
+
+    let created_at = env.ledger().timestamp();
+    let expires_at = created_at
+        .checked_add(ttl_seconds)
+        .ok_or(Error::InvalidExpirationDuration)?;
+
+    let notification = ScheduledNotification {
+        id: notification_id.clone(),
+        creator: creator.clone(),
+        created_at,
+        expires_at,
+    };
+    env.storage().persistent().set(&key, &notification);
+
+    NotificationScheduled {
+        creator,
+        category: NotificationCategory::Notification,
+        priority: NOTIFICATION_PRIORITY,
+        notification_id,
+    }
+    .publish(&env);
+
+    Ok(())
+}
+
+/// Retrieves a scheduled notification. Returns [`Error::NotFound`] if no
+/// notification is tracked for `notification_id` (including one already expired
+/// and reaped via [`expire_notification`]).
+pub fn get_notification(
+    env: Env,
+    notification_id: BytesN<32>,
+) -> Result<ScheduledNotification, Error> {
+    load_notification(&env, &notification_id).ok_or(Error::NotFound)
+}
+
+/// Returns whether a tracked notification has expired. Errors with
+/// [`Error::NotFound`] if the notification is not tracked.
+pub fn is_notification_expired(env: Env, notification_id: BytesN<32>) -> Result<bool, Error> {
+    let notification = get_notification(env.clone(), notification_id)?;
+    Ok(is_expired(&env, &notification))
+}
+
+/// Expires a notification whose lifetime has elapsed: removes it from storage
+/// and emits [`NotificationExpired`].
+///
+/// Permissionless by design — any party (e.g. an off-chain keeper) may finalize
+/// the expiry of an elapsed notification. A notification that has not yet
+/// reached its expiry is rejected with [`Error::NotificationNotExpired`]; an
+/// unknown one with [`Error::NotFound`].
+pub fn expire_notification(env: Env, notification_id: BytesN<32>) -> Result<(), Error> {
+    let key = DataKey::ScheduledNotification(notification_id.clone());
+    let notification = load_notification(&env, &notification_id).ok_or(Error::NotFound)?;
+
+    if !is_expired(&env, &notification) {
+        return Err(Error::NotificationNotExpired);
+    }
+
+    env.storage().persistent().remove(&key);
+
+    NotificationExpired {
+        notification_id,
+        category: NotificationCategory::Notification,
+        priority: NOTIFICATION_PRIORITY,
+        expires_at: notification.expires_at,
+    }
+    .publish(&env);
+
+    Ok(())
+}
+
+/// Cancels a scheduled notification identified by `notification_id` and emits a
+/// [`ScheduledNotificationCancelled`] event so off-chain consumers can track the
+/// lifecycle of every scheduled notification in real time.
+///
+/// If the notification is tracked on-chain, cancelling reaps its storage entry —
+/// but an **expired** notification is invalid and cannot be cancelled; such an
+/// attempt is rejected with [`Error::NotificationExpired`]. Identifiers that are
+/// not tracked on-chain are accepted (and simply emit the event) so callers can
+/// signal cancellation of notifications managed entirely off-chain.
+pub fn cancel_notification(
+    env: Env,
+    notification_id: BytesN<32>,
+    caller: Address,
+) -> Result<(), Error> {
+    caller.require_auth();
+
+    if get_paused_status(&env) {
+        return Err(Error::ContractPaused);
+    }
+
+    if let Some(notification) = load_notification(&env, &notification_id) {
+        if is_expired(&env, &notification) {
+            return Err(Error::NotificationExpired);
+        }
+        env.storage()
+            .persistent()
+            .remove(&DataKey::ScheduledNotification(notification_id.clone()));
+    }
+
+    ScheduledNotificationCancelled {
+        caller,
+        category: NotificationCategory::Notification,
+        priority: NotificationPriority::Low,
+        notification_id,
+    }
+    .publish(&env);
+
     Ok(())
 }

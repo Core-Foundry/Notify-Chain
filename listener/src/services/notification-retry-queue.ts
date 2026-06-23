@@ -1,6 +1,9 @@
 import * as StellarSDK from '@stellar/stellar-sdk';
 import { ContractConfig } from '../types';
 import logger from '../utils/logger';
+import { getEventName } from '../utils/event-utils';
+import { getNotificationAnalyticsAggregator, NotificationAnalyticsAggregator } from './notification-analytics-aggregator';
+import { NotificationType } from '../types/scheduled-notification';
 
 export interface RetryQueueOptions {
   baseDelayMs?: number;
@@ -30,17 +33,20 @@ export type NotificationFn = (
 
 export class NotificationRetryQueue {
   private queue: RetryItem[] = [];
+  private readonly queuedFingerprints: Set<string> = new Set();
   private readonly baseDelayMs: number;
   private readonly maxRetries: number;
   private readonly processIntervalMs: number;
   private timer: ReturnType<typeof setInterval> | null = null;
   private readonly notificationFn: NotificationFn;
+  private readonly analytics: NotificationAnalyticsAggregator | null;
 
   constructor(notificationFn: NotificationFn, options?: RetryQueueOptions) {
     this.notificationFn = notificationFn;
     this.baseDelayMs = options?.baseDelayMs ?? DEFAULTS.baseDelayMs;
     this.maxRetries = options?.maxRetries ?? DEFAULTS.maxRetries;
     this.processIntervalMs = options?.processIntervalMs ?? DEFAULTS.processIntervalMs;
+    this.analytics = getNotificationAnalyticsAggregator();
   }
 
   enqueue(
@@ -48,6 +54,18 @@ export class NotificationRetryQueue {
     contractConfig: ContractConfig,
     requestId?: string
   ): void {
+    const fingerprint = buildRetryFingerprint(event, contractConfig.address);
+
+    if (this.queuedFingerprints.has(fingerprint)) {
+      logger.info('Skipping duplicate retry queue entry', {
+        requestId,
+        eventId: event.id,
+        contractAddress: contractConfig.address,
+        fingerprint,
+      });
+      return;
+    }
+
     const delayMs = this.calculateDelay(0);
     const nextRetryAt = Date.now() + delayMs;
 
@@ -60,6 +78,7 @@ export class NotificationRetryQueue {
       maxRetries: this.maxRetries,
     });
 
+    this.queuedFingerprints.add(fingerprint);
     this.queue.push({ event, contractConfig, retryCount: 0, nextRetryAt, requestId });
   }
 
@@ -95,6 +114,8 @@ export class NotificationRetryQueue {
 
   private async retryItem(item: RetryItem): Promise<void> {
     const attempt = item.retryCount + 1;
+    const fingerprint = buildRetryFingerprint(item.event, item.contractConfig.address);
+    const retryStart = Date.now();
 
     logger.info('Retrying failed notification', {
       requestId: item.requestId,
@@ -104,9 +125,18 @@ export class NotificationRetryQueue {
       maxRetries: this.maxRetries,
     });
 
+    this.analytics?.record({
+      notificationType: NotificationType.DISCORD,
+      contractAddress: item.contractConfig.address,
+      outcome: 'retry',
+      durationMs: 0,
+      timestamp: retryStart,
+    });
+
     const success = await this.notificationFn(item.event, item.contractConfig, item.requestId);
 
     if (success) {
+      this.queuedFingerprints.delete(fingerprint);
       logger.info('Retry succeeded', {
         requestId: item.requestId,
         eventId: item.event.id,
@@ -117,6 +147,15 @@ export class NotificationRetryQueue {
     }
 
     if (attempt >= this.maxRetries) {
+      this.queuedFingerprints.delete(fingerprint);
+      this.analytics?.record({
+        notificationType: NotificationType.DISCORD,
+        contractAddress: item.contractConfig.address,
+        outcome: 'failure',
+        durationMs: Date.now() - retryStart,
+        errorReason: `exhausted ${this.maxRetries} retries`,
+        timestamp: Date.now(),
+      });
       logger.error('Notification permanently failed after max retries', {
         requestId: item.requestId,
         eventId: item.event.id,
@@ -144,4 +183,13 @@ export class NotificationRetryQueue {
   private calculateDelay(retryCount: number): number {
     return this.baseDelayMs * Math.pow(2, retryCount);
   }
+}
+
+function buildRetryFingerprint(
+  event: StellarSDK.rpc.Api.EventResponse,
+  contractAddress: string
+): string {
+  const eventName =
+    getEventName(event.topic) ?? event.topic.map((entry) => entry.toString()).join('|');
+  return `${contractAddress}:${event.id}:${eventName}:${event.txHash ?? ''}`;
 }

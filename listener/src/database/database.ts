@@ -1,5 +1,4 @@
 import * as sqlite3 from 'sqlite3';
-import { promisify } from 'util';
 import * as fs from 'fs';
 import * as path from 'path';
 import logger from '../utils/logger';
@@ -80,15 +79,11 @@ export class Database {
     }
 
     const schema = fs.readFileSync(schemaPath, 'utf-8');
-    
-    // Smart SQL statement splitting that handles BEGIN...END blocks
-    const statements = this.splitSqlStatements(schema);
 
-    for (const statement of statements) {
-      await this.run(statement);
-    }
+    // Execute the schema as one script so trigger bodies with semicolons work.
+    await this.exec(schema);
 
-    logger.info('Database migrations completed', { statements: statements.length });
+    logger.info('Database migrations completed');
   }
 
   /**
@@ -183,6 +178,24 @@ export class Database {
           reject(err);
         } else {
           resolve(rows as T[]);
+        }
+      });
+    });
+  }
+
+  /**
+   * Execute a SQL script that may contain multiple statements.
+   */
+  async exec(sql: string): Promise<void> {
+    if (!this.db) throw new Error('Database not initialized');
+
+    return new Promise((resolve, reject) => {
+      this.db!.exec(sql, (err) => {
+        if (err) {
+          logger.error('Database exec error', { sql, error: err });
+          reject(err);
+        } else {
+          resolve();
         }
       });
     });

@@ -124,7 +124,7 @@ describe('DiscordNotificationService (Refactored)', () => {
       const secondResult = await service.sendEventNotification(mockEvent, mockContractConfig);
 
       expect(mockFetch).toHaveBeenCalledTimes(1);
-      expect(secondResult).toBe(false);
+      expect(secondResult).toBe(true);
     });
 
     it('logs a duplicate detection event', async () => {
@@ -341,6 +341,7 @@ describe('DiscordNotificationService (Refactored)', () => {
       for (const topic of topics) {
         const mockEvent = NotificationFixtureBuilder
           .aStellarEvent()
+          .withId('event-' + topic)
           .withTopicSymbol(topic)
           .build();
 

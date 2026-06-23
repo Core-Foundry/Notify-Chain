@@ -47,6 +47,24 @@ The following messages mark each stage of the notification pipeline:
 | API request done       | `info`  | `GET /api/events complete`                            |
 | Reconnect attempt      | `warn`  | `Attempting to reconnect`                             |
 | Max retries exceeded   | `error` | `Max reconnection attempts exceeded, stopping service`|
+| Scheduler batch start  | `info`  | `Processing batch of scheduled notifications`         |
+| Scheduler batch done   | `info`  | `Scheduler batch complete`                            |
+| Scheduled notification | `info`  | `Processing scheduled notification`                   |
+| Registry at capacity   | `warn`  | `Event registry at capacity, evicting oldest events`  |
+
+## Error Formatting
+
+Errors passed in the `error` metadata field are automatically normalized into a structured object with `message`, `name`, `stack`, and optional `cause` fields. Use the exported `formatError()` helper when formatting errors outside the logger.
+
+```typescript
+import logger, { formatError } from '../utils/logger';
+
+try {
+  await deliverNotification();
+} catch (error) {
+  logger.error('Delivery failed', { requestId, error });
+}
+```
 
 ## Configuration
 

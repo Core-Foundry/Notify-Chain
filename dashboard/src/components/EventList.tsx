@@ -42,7 +42,9 @@ export const EventList = memo(function EventList({ events }: EventListProps) {
 
   const windowState = useMemo(() => {
     const visibleCount = Math.ceil(viewportHeight / ROW_HEIGHT) + OVERSCAN;
-    const startIndex = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - OVERSCAN);
+    const maxScrollTop = Math.max(0, events.length * ROW_HEIGHT - viewportHeight);
+    const clampedScrollTop = Math.min(scrollTop, maxScrollTop);
+    const startIndex = Math.max(0, Math.floor(clampedScrollTop / ROW_HEIGHT) - OVERSCAN);
     const endIndex = Math.min(events.length, startIndex + visibleCount + OVERSCAN);
 
     return {

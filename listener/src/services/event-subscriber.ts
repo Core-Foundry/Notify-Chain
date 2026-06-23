@@ -1,6 +1,7 @@
 import * as StellarSDK from '@stellar/stellar-sdk';
 import { Config, ContractConfig } from '../types';
 import { eventRegistry } from '../store/event-registry';
+import { preferenceStore } from '../store/preference-store';
 import logger from '../utils/logger';
 import { generateRequestId } from '../utils/request-id';
 import {
@@ -34,6 +35,11 @@ export class EventSubscriber {
   }
 
   async start(): Promise<void> {
+    if (this.isRunning) {
+      logger.warn('Event subscriber already running');
+      return;
+    }
+
     this.isRunning = true;
     logger.info('Starting event subscriber service');
     this.retryQueue?.start();
@@ -200,6 +206,15 @@ export class EventSubscriber {
     });
 
     if (this.discordService) {
+      const userId = contractConfig.userId ?? 'global';
+      if (!preferenceStore.isCategoryEnabled(userId, 'discord')) {
+        logger.info('Skipping Discord notification: category disabled by user preferences', {
+          eventId: event.id,
+          userId,
+        });
+        return;
+      }
+
       const success = await this.discordService.sendEventNotification(
         event,
         contractConfig,

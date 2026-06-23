@@ -10,7 +10,18 @@ function shortenAddress(address: string): string {
 export const WalletConnectButton = memo(function WalletConnectButton() {
   const address = useWalletStore((state) => state.address);
   const isConnecting = useWalletStore((state) => state.isConnecting);
+  const isReconnecting = useWalletStore((state) => state.isReconnecting);
   const error = useWalletStore((state) => state.error);
+
+  if (!address && isReconnecting) {
+    return (
+      <div className="wallet-connect">
+        <button type="button" className="wallet-connect__button" disabled aria-busy="true">
+          Reconnecting…
+        </button>
+      </div>
+    );
+  }
 
   if (address) {
     return (

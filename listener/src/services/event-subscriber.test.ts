@@ -35,6 +35,12 @@ jest.mock('./discord-notification', () => ({
   DiscordNotificationService: jest.fn().mockImplementation(() => mockDiscordService),
 }));
 
+jest.mock('../store/preference-store', () => ({
+  preferenceStore: {
+    isCategoryEnabled: jest.fn().mockReturnValue(true),
+  },
+}));
+
 const mockLogger = logger as jest.Mocked<typeof logger>;
 
 const contractConfig: ContractConfig = {
@@ -98,6 +104,23 @@ describe('EventSubscriber', () => {
       const subscriber = new EventSubscriber(testConfig);
       await subscriber.start();
       await jest.advanceTimersByTimeAsync(0);
+      await subscriber.stop();
+    });
+
+    it('does not start a second poll loop when start is called twice', async () => {
+      jest.useFakeTimers();
+      mockGetEvents.mockResolvedValue({ events: [], cursor: '' });
+
+      const subscriber = new EventSubscriber(testConfig);
+      await subscriber.start();
+      await subscriber.start();
+
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(mockGetEvents).toHaveBeenCalledTimes(1);
+      expect(mockLogger.warn).toHaveBeenCalledWith('Event subscriber already running');
+
       await subscriber.stop();
     });
   });
@@ -538,6 +561,76 @@ describe('EventSubscriber', () => {
         'Discord notification failed, adding to retry queue',
         expect.objectContaining({ eventId: 'event-1' })
       );
+    });
+  });
+
+  describe('notification preferences gate', () => {
+    const discordConfig = {
+      webhookUrl: 'https://discord.com/api/webhooks/test/webhook',
+      webhookId: 'test',
+    };
+    const configWithDiscord: Config = { ...testConfig, discord: discordConfig };
+
+    beforeEach(() => {
+      const { DiscordNotificationService } = jest.requireMock('./discord-notification');
+      DiscordNotificationService.mockImplementation(() => mockDiscordService);
+      mockDiscordService.sendEventNotification.mockResolvedValue(true);
+      mockGetEvents.mockResolvedValue({
+        events: [createMockEvent({ id: 'pref-event' })],
+        cursor: 'cursor-pref',
+      });
+    });
+
+    it('skips Discord notification when discord category is disabled for the user', async () => {
+      const { preferenceStore } = jest.requireMock('../store/preference-store');
+      preferenceStore.isCategoryEnabled.mockReturnValue(false);
+
+      const subscriber = new EventSubscriber(configWithDiscord);
+      await (subscriber as any).checkForEvents();
+
+      expect(mockDiscordService.sendEventNotification).not.toHaveBeenCalled();
+      expect(mockLogger.info).toHaveBeenCalledWith(
+        'Skipping Discord notification: category disabled by user preferences',
+        expect.objectContaining({ eventId: 'pref-event' })
+      );
+    });
+
+    it('sends Discord notification when discord category is enabled', async () => {
+      const { preferenceStore } = jest.requireMock('../store/preference-store');
+      preferenceStore.isCategoryEnabled.mockReturnValue(true);
+      mockDiscordService.sendEventNotification.mockResolvedValue(true);
+
+      const subscriber = new EventSubscriber(configWithDiscord);
+      await (subscriber as any).checkForEvents();
+
+      expect(mockDiscordService.sendEventNotification).toHaveBeenCalled();
+    });
+
+    it('uses contractConfig.userId when present', async () => {
+      const { preferenceStore } = jest.requireMock('../store/preference-store');
+      preferenceStore.isCategoryEnabled.mockReturnValue(true);
+      mockDiscordService.sendEventNotification.mockResolvedValue(true);
+
+      const configWithUserId: Config = {
+        ...configWithDiscord,
+        contractAddresses: [{ ...contractConfig, userId: 'alice' }],
+      };
+
+      const subscriber = new EventSubscriber(configWithUserId);
+      await (subscriber as any).checkForEvents();
+
+      expect(preferenceStore.isCategoryEnabled).toHaveBeenCalledWith('alice', 'discord');
+    });
+
+    it('defaults to "global" userId when contractConfig.userId is absent', async () => {
+      const { preferenceStore } = jest.requireMock('../store/preference-store');
+      preferenceStore.isCategoryEnabled.mockReturnValue(true);
+      mockDiscordService.sendEventNotification.mockResolvedValue(true);
+
+      const subscriber = new EventSubscriber(configWithDiscord);
+      await (subscriber as any).checkForEvents();
+
+      expect(preferenceStore.isCategoryEnabled).toHaveBeenCalledWith('global', 'discord');
     });
   });
 });

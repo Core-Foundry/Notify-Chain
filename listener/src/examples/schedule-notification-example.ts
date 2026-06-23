@@ -1,6 +1,6 @@
 /**
  * Example: How to schedule notifications
- * 
+ *
  * This file demonstrates various ways to schedule notifications
  * for future delivery using the NotificationAPI
  */
@@ -9,6 +9,7 @@ import { NotificationAPI } from '../services/notification-api';
 import { ScheduledNotificationRepository } from '../services/scheduled-notification-repository';
 import { initializeDatabase } from '../database/database';
 import { NotificationType } from '../types/scheduled-notification';
+import logger from '../utils/logger';
 
 async function examples() {
   // Initialize database and API
@@ -37,7 +38,7 @@ async function examples() {
     oneHourLater
   );
 
-  console.log(`Scheduled notification ID: ${notification1}`);
+  logger.info('Scheduled notification created', { id: notification1 });
 
   // ====================================================================
   // Example 2: Schedule a high-priority notification for tomorrow 9 AM
@@ -69,7 +70,7 @@ async function examples() {
     },
   });
 
-  console.log(`High-priority notification scheduled for ${tomorrow9AM}`);
+  logger.info('High-priority notification scheduled', { executeAt: tomorrow9AM });
 
   // ====================================================================
   // Example 3: Schedule multiple notifications (batch scheduling)
@@ -89,13 +90,13 @@ async function examples() {
     scheduleIds.push(id);
   }
 
-  console.log(`Scheduled ${scheduleIds.length} reminder notifications`);
+  logger.info('Batch reminder notifications scheduled', { count: scheduleIds.length });
 
   // ====================================================================
   // Example 4: Cancel a scheduled notification
   // ====================================================================
   const cancelled = await api.cancelNotification(notification1);
-  console.log(`Notification ${notification1} cancelled: ${cancelled}`);
+  logger.info('Notification cancellation result', { id: notification1, cancelled });
 
   // ====================================================================
   // Example 5: Check notification status
@@ -103,7 +104,7 @@ async function examples() {
   const notification = await api.getNotification(notification2);
 
   if (notification) {
-    console.log('Notification details:', {
+    logger.info('Notification details', {
       id: notification.id,
       status: notification.status,
       executeAt: notification.executeAt,
@@ -116,8 +117,7 @@ async function examples() {
   // Example 6: Get scheduler statistics
   // ====================================================================
   const stats = await api.getStatistics();
-  console.log('Scheduler statistics:', stats);
-  // Output: { pending: 10, processing: 2, completed: 100, failed: 5, overdue: 1 }
+  logger.info('Scheduler statistics', stats);
 
   // ====================================================================
   // Example 7: Schedule notification based on blockchain event
@@ -154,7 +154,10 @@ async function examples() {
   };
 
   const scheduledEventNotification = await scheduleEventNotification(mockEvent, 30);
-  console.log(`Event notification scheduled for 30 minutes: ${scheduledEventNotification}`);
+  logger.info('Event notification scheduled', {
+    id: scheduledEventNotification,
+    delayMinutes: 30,
+  });
 
   // ====================================================================
   // Example 8: Schedule with custom retry configuration
@@ -172,7 +175,7 @@ async function examples() {
     },
   });
 
-  console.log(`Critical notification scheduled: ${criticalNotification}`);
+  logger.info('Critical notification scheduled', { id: criticalNotification });
 
   // Clean up
   await db.close();
@@ -182,11 +185,11 @@ async function examples() {
 if (require.main === module) {
   examples()
     .then(() => {
-      console.log('Examples completed successfully');
+      logger.info('Examples completed successfully');
       process.exit(0);
     })
     .catch((error) => {
-      console.error('Examples failed:', error);
+      logger.error('Examples failed', { error });
       process.exit(1);
     });
 }
