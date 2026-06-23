@@ -10,6 +10,10 @@ import { getTemplateCache } from './services/notification-template-cache';
 import { NotificationAPI } from './services/notification-api';
 import { initializeDatabase } from './database/database';
 import { DiscordNotificationService } from './services/discord-notification';
+import { TemplateService } from './services/template-service';
+import { TemplateRepository } from './services/template-repository';
+import { TemplateValidator } from './services/template-validator';
+import { TemplateRenderer } from './services/template-renderer';
 import logger from './utils/logger';
 import { loadConfig, ConfigError } from './config';
 
@@ -37,6 +41,18 @@ async function main() {
     if (config.scheduler?.enabled) {
       const repository = new ScheduledNotificationRepository(db);
       notificationAPI = new NotificationAPI(repository);
+
+      // Initialize template service
+      const templateRepository = new TemplateRepository(db);
+      const templateValidator = new TemplateValidator();
+      const templateRenderer = new TemplateRenderer();
+      templateService = new TemplateService(
+        templateRepository,
+        templateValidator,
+        templateRenderer
+      );
+
+      logger.info('Template service initialized successfully');
 
       // Initialize scheduler with Discord service if available
       let discordService: DiscordNotificationService | null = null;
