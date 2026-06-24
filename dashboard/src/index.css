@@ -36,6 +36,439 @@ body {
   padding: 24px;
 }
 
+.app__topbar {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: center;
+  margin-bottom: 24px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.app__brand {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.app__brand-eyebrow {
+  margin: 0;
+  color: #9aa0a6;
+  font-size: 0.85rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.app__nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.app__tab {
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.03);
+  color: inherit;
+  padding: 10px 16px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.app__tab:hover,
+.app__tab:focus-visible {
+  border-color: rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.06);
+  outline: none;
+}
+
+.app__tab--active {
+  background: rgba(255, 255, 255, 0.12);
+  border-color: rgba(255, 255, 255, 0.25);
+}
+
+.button {
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 10px;
+  padding: 10px 16px;
+  background: rgba(255, 255, 255, 0.04);
+  color: inherit;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, transform 0.15s ease;
+}
+
+.button:hover,
+.button:focus-visible {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.2);
+  transform: translateY(-1px);
+  outline: none;
+}
+
+.button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.button--primary {
+  background: #5b7dff;
+  border-color: #5b7dff;
+  color: #0b1224;
+}
+
+.button--primary:hover,
+.button--primary:focus-visible {
+  background: #4d6ded;
+  border-color: #4d6ded;
+}
+
+.button--secondary {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.button--full {
+  width: 100%;
+}
+
+.notification-preferences-page {
+  display: grid;
+  gap: 24px;
+}
+
+.notification-preferences__header,
+.notification-preferences__panel-header {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 20px;
+  align-items: flex-start;
+}
+
+.notification-preferences__eyebrow {
+  margin: 0;
+  color: #9aa0a6;
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.notification-preferences__lead {
+  margin: 10px 0 0;
+  max-width: 60rem;
+  color: #b0b8c2;
+}
+
+.notification-preferences__header-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.notification-preferences__status-row {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.notification-preferences__status-text {
+  margin: 0;
+  color: #c2c8d3;
+  font-size: 0.95rem;
+}
+
+.notification-preferences__pill {
+  display: inline-flex;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  color: #e8eaed;
+  font-size: 0.85rem;
+}
+
+.notification-preferences__pill--error {
+  background: rgba(244, 180, 0, 0.18);
+  color: #f4b400;
+}
+
+.notification-preferences__pill--success {
+  background: rgba(52, 199, 89, 0.16);
+  color: #b4f5a1;
+}
+
+.notification-preferences__skeleton {
+  display: grid;
+  gap: 16px;
+}
+
+.skeleton-block {
+  height: 80px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.04);
+  position: relative;
+  overflow: hidden;
+}
+
+.skeleton-block::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.08), transparent);
+  animation: shimmer 1.4s infinite;
+}
+
+.skeleton-block--header {
+  height: 116px;
+}
+
+.skeleton-block--row {
+  height: 64px;
+}
+
+@keyframes shimmer {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+.notification-preferences__error-panel,
+.notification-preferences__validation-panel {
+  padding: 18px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.notification-preferences__error-panel strong,
+.notification-preferences__validation-panel strong {
+  display: block;
+  margin-bottom: 8px;
+}
+
+.notification-preferences__validation-panel ul {
+  margin: 10px 0 0;
+  padding-left: 20px;
+  color: #c5cbd6;
+}
+
+.notification-preferences__workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1.75fr) minmax(280px, 1fr);
+  gap: 24px;
+}
+
+.notification-preferences__matrix-panel,
+.notification-preferences__control-panel {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 18px;
+  padding: 22px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.notification-preferences__matrix-note {
+  margin: 0;
+  color: #9aa0a6;
+  max-width: 38rem;
+}
+
+.notification-preferences__matrix {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) repeat(4, 88px);
+  gap: 10px;
+  margin-top: 20px;
+}
+
+.matrix-cell {
+  min-height: 72px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 14px;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.03);
+  text-align: center;
+}
+
+.matrix-cell--corner {
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.matrix-cell--header {
+  font-weight: 600;
+  font-size: 0.95rem;
+}
+
+.matrix-cell--category {
+  text-align: left;
+  display: grid;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.matrix-cell--category p {
+  margin: 0;
+  color: #9aa0a6;
+  font-size: 0.9rem;
+  line-height: 1.4;
+}
+
+.matrix-cell--toggle {
+  cursor: pointer;
+  position: relative;
+  justify-content: center;
+}
+
+.matrix-cell--toggle input {
+  position: absolute;
+  opacity: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  cursor: pointer;
+}
+
+.matrix-toggle {
+  position: relative;
+  width: 44px;
+  height: 26px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  transition: background 0.15s ease;
+}
+
+.matrix-toggle::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #0b0d12;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
+  transition: transform 0.15s ease;
+}
+
+.matrix-cell--toggle input:checked + .matrix-toggle {
+  background: #5b7dff;
+}
+
+.matrix-cell--toggle input:checked + .matrix-toggle::after {
+  transform: translateX(18px);
+}
+
+.notification-preferences__control-panel {
+  display: grid;
+  gap: 18px;
+}
+
+.notification-preferences__panel-block h2 {
+  margin: 0 0 8px;
+}
+
+.notification-preferences__panel-block p {
+  margin: 0;
+  color: #9aa0a6;
+}
+
+.notification-preferences__field {
+  display: grid;
+  gap: 10px;
+}
+
+.notification-preferences__field label {
+  color: #c2c8d3;
+  font-size: 0.95rem;
+}
+
+.notification-preferences__field input {
+  width: 100%;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 12px;
+  padding: 12px 14px;
+  background: #12151c;
+  color: inherit;
+}
+
+.notification-preferences__field input:focus-visible {
+  outline: 2px solid rgba(91, 125, 255, 0.4);
+}
+
+.notification-preferences__field-error {
+  margin: 0;
+  color: #f4b400;
+  font-size: 0.9rem;
+}
+
+.notification-preferences__actions-panel {
+  display: grid;
+  gap: 12px;
+}
+
+.notification-preferences__save-note {
+  margin: 0;
+  color: #9aa0a6;
+  font-size: 0.92rem;
+}
+
+@media (max-width: 980px) {
+  .notification-preferences__workspace {
+    grid-template-columns: 1fr;
+  }
+
+  .notification-preferences__matrix {
+    grid-template-columns: minmax(140px, 1fr) repeat(4, 1fr);
+  }
+}
+
+@media (max-width: 720px) {
+  .app,
+  .events-page {
+    padding: 16px;
+  }
+
+  .app__topbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .app__nav {
+    justify-content: stretch;
+  }
+
+  .app__tab {
+    flex: 1 1 auto;
+  }
+
+  .notification-preferences__matrix {
+    grid-template-columns: 1fr;
+  }
+
+  .matrix-cell--header,
+  .matrix-cell--toggle {
+    justify-content: flex-start;
+  }
+
+  .notification-preferences__status-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}
+
 .events-page__header h1 {
   margin: 0 0 8px;
   font-size: 1.75rem;
