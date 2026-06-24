@@ -2,8 +2,8 @@ use crate::base::errors::Error;
 use crate::base::events::{
     AdminTransferred, AuthorizationFailure, AutoshareCreated, AutoshareUpdated, ContractPaused,
     ContractUnpaused, GroupActivated, GroupDeactivated, NotificationCategory, NotificationExpired,
-    NotificationPriority, NotificationRevoked, NotificationScheduled, ScheduledNotificationCancelled,
-    Withdrawal,
+    NotificationPriority, NotificationRevoked, NotificationScheduled,
+    ScheduledNotificationCancelled, Withdrawal,
 };
 use crate::base::types::{AutoShareDetails, GroupMember, PaymentHistory, ScheduledNotification};
 use soroban_sdk::{contracttype, token, Address, BytesN, Env, String, Vec};
