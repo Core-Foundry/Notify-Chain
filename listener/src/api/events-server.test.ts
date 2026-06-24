@@ -406,3 +406,41 @@ describe('GET /api/analytics', () => {
     expect((after.body as any).totalRecorded).toBe(0);
   });
 });
+
+describe('POST /api/notifications/validate-batch', () => {
+  let server: http.Server;
+
+  beforeEach((done) => {
+    jest.clearAllMocks();
+    server = createEventsServer({ port: 0, stellarRpcUrl: 'http://localhost' });
+    server.listen(0, '127.0.0.1', done);
+  });
+
+  afterEach((done) => {
+    server.close(done);
+  });
+
+  it('accepts a valid notification batch', async () => {
+    const res = await request(server, 'POST', '/api/notifications/validate-batch', [
+      { id: 'n1', recipient: 'user_a', channel: 'discord', message: 'Hello' },
+      { id: 'n2', recipient: 'user_b', channel: 'webhook', message: 'Hi' },
+    ]);
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ valid: true, processedCount: 2, errors: [] });
+  });
+
+  it('rejects batches with duplicate recipients and missing fields', async () => {
+    const res = await request(server, 'POST', '/api/notifications/validate-batch', [
+      { id: 'n1', recipient: 'user_a', channel: 'discord', message: 'Hello' },
+      { id: 'n2', recipient: 'user_a', channel: 'webhook', message: 'Duplicate' },
+      { id: '', recipient: '', channel: 'email', message: '' },
+    ]);
+
+    expect(res.status).toBe(400);
+    const body = res.body as { valid: boolean; errors: Array<{ code: string }> };
+    expect(body.valid).toBe(false);
+    expect(body.errors.some((e) => e.code === 'DUPLICATE_RECIPIENT')).toBe(true);
+    expect(body.errors.some((e) => e.code === 'MISSING_FIELD' || e.code === 'EMPTY_FIELD')).toBe(true);
+  });
+});

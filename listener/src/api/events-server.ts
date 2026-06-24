@@ -33,6 +33,7 @@ import {
   serializeTemplate,
 } from './template-api';
 import { CreateNotificationTemplateInput } from '../types/notification-template';
+import { BatchValidationService } from '../services/batch-validation-service';
 
 export interface EventsServerOptions {
   port: number;
@@ -341,6 +342,36 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
         logger.error('Failed to read webhook body', { requestId, correlationId, error: err });
         res.writeHead(400, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'Failed to read request body' }));
+      });
+      return;
+    }
+
+    // POST /api/notifications/validate-batch
+    if (req.method === 'POST' && url.pathname === '/api/notifications/validate-batch') {
+      let body = '';
+      req.on('data', (chunk) => { body += chunk.toString(); });
+      req.on('end', () => {
+        try {
+          const data = JSON.parse(body || 'null');
+          const batch = Array.isArray(data) ? data : data?.notifications;
+          const validator = new BatchValidationService();
+          const result = validator.validate(batch);
+
+          if (!result.valid) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify(result));
+            logger.warn('Batch validation rejected', { requestId, correlationId, errorCount: result.errors.length });
+            return;
+          }
+
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(result));
+          logger.info('Batch validation passed', { requestId, correlationId, processedCount: result.processedCount });
+        } catch (error) {
+          logger.error('Failed to validate notification batch', { error, requestId, correlationId });
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ valid: false, processedCount: 0, errors: [{ index: -1, code: 'PARSE_ERROR', message: 'Request body must be valid JSON.' }] }));
+        }
       });
       return;
     }

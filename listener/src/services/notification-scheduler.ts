@@ -4,6 +4,8 @@ import { generateRequestId } from '../utils/request-id';
 import { ScheduledNotificationRepository } from './scheduled-notification-repository';
 import { SchedulerConfig, ScheduledNotification } from '../types/scheduled-notification';
 import { DiscordNotificationService } from './discord-notification';
+import { BatchValidationService } from './batch-validation-service';
+import { NotificationChannel } from '../utils/batch-validator';
 
 /**
  * Background scheduler that processes scheduled notifications
@@ -20,16 +22,19 @@ export class NotificationScheduler {
   private timer: NodeJS.Timeout | null = null;
   private isRunning: boolean = false;
   private processorId: string;
+  private batchValidator: BatchValidationService;
 
   constructor(
     repository: ScheduledNotificationRepository,
     config: SchedulerConfig,
-    discordService?: DiscordNotificationService | null
+    discordService?: DiscordNotificationService | null,
+    batchValidator?: BatchValidationService
   ) {
     this.repository = repository;
     this.config = config;
     this.discordService = discordService ?? null;
     this.processorId = config.processorId || uuidv4();
+    this.batchValidator = batchValidator ?? new BatchValidationService();
   }
 
   /**
@@ -115,6 +120,28 @@ export class NotificationScheduler {
           count: 0,
           durationMs: Date.now() - batchStart,
         });
+        return;
+      }
+
+      const batchRejection = this.batchValidator.rejectIfInvalid(
+        this.toValidationBatch(notifications)
+      );
+
+      if (batchRejection) {
+        logger.error('Scheduled notification batch rejected by validation', {
+          requestId,
+          processorId: this.processorId,
+          errors: batchRejection.errors,
+        });
+
+        for (const notification of notifications) {
+          await this.repository.markAsFailedOrRetry(
+            notification.id!,
+            new Error(`Batch validation failed: ${batchRejection.errors.map((e) => e.message).join('; ')}`),
+            notification.retryCount,
+            notification.maxRetries
+          );
+        }
         return;
       }
 
@@ -279,5 +306,29 @@ export class NotificationScheduler {
    */
   async getStats() {
     return await this.repository.getStats();
+  }
+
+  private toValidationBatch(notifications: ScheduledNotification[]) {
+    return notifications.map((notification) => ({
+      id: String(notification.id),
+      recipient: notification.targetRecipient,
+      channel: notification.notificationType as NotificationChannel,
+      message: this.extractValidationMessage(notification.payload),
+    }));
+  }
+
+  private extractValidationMessage(payloadJson: string): string {
+    try {
+      const payload = JSON.parse(payloadJson);
+      if (typeof payload.message === 'string' && payload.message.trim()) {
+        return payload.message;
+      }
+      if (typeof payload.content === 'string' && payload.content.trim()) {
+        return payload.content;
+      }
+      return JSON.stringify(payload).slice(0, 200);
+    } catch {
+      return payloadJson.slice(0, 200) || 'scheduled-notification';
+    }
   }
 }
