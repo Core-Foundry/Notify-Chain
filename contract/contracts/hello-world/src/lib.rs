@@ -289,6 +289,19 @@ impl AutoShareContract {
     pub fn expire_notification(env: Env, notification_id: BytesN<32>) {
         autoshare_logic::expire_notification(env, notification_id).unwrap();
     }
+
+    /// Revokes a scheduled notification, preventing any further interaction with it.
+    ///
+    /// Only the notification creator or the contract admin can revoke a notification.
+    /// The notification must not already be revoked or expired. Emits a `NotificationRevoked` event.
+    pub fn revoke_notification(env: Env, notification_id: BytesN<32>, caller: Address) {
+        autoshare_logic::revoke_notification(env, notification_id, caller).unwrap();
+    }
+
+    /// Returns whether a scheduled notification has been revoked.
+    pub fn is_notification_revoked(env: Env, notification_id: BytesN<32>) -> bool {
+        autoshare_logic::is_notification_revoked(env, notification_id).unwrap()
+    }
 }
 
 #[cfg(test)]
@@ -317,4 +330,7 @@ mod tests {
 
     #[path = "../tests/expiration_test.rs"]
     mod expiration_test;
+
+    #[path = "../tests/revocation_test.rs"]
+    mod revocation_test;
 }

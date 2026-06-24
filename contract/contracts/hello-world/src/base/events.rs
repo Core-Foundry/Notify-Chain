@@ -217,3 +217,23 @@ pub struct NotificationExpired {
     pub priority: NotificationPriority,
     pub expires_at: u64,
 }
+
+/// Emitted when a scheduled notification is revoked by an authorized sender.
+///
+/// The `notification_id` is published as an indexed topic so consumers can
+/// subscribe to the revocation of a specific notification; the `revoked_by`
+/// address indicates who initiated the revocation, and `revoked_at` records
+/// the ledger timestamp when the revocation occurred.
+#[contractevent(data_format = "single-value")]
+#[derive(Clone)]
+pub struct NotificationRevoked {
+    #[topic]
+    pub notification_id: BytesN<32>,
+    #[topic]
+    pub revoked_by: Address,
+    #[topic]
+    pub category: NotificationCategory,
+    #[topic]
+    pub priority: NotificationPriority,
+    pub revoked_at: u64,
+}

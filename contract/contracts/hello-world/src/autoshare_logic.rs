@@ -2,7 +2,8 @@ use crate::base::errors::Error;
 use crate::base::events::{
     AdminTransferred, AuthorizationFailure, AutoshareCreated, AutoshareUpdated, ContractPaused,
     ContractUnpaused, GroupActivated, GroupDeactivated, NotificationCategory, NotificationExpired,
-    NotificationPriority, NotificationScheduled, ScheduledNotificationCancelled, Withdrawal,
+    NotificationPriority, NotificationRevoked, NotificationScheduled, ScheduledNotificationCancelled,
+    Withdrawal,
 };
 use crate::base::types::{AutoShareDetails, GroupMember, PaymentHistory, ScheduledNotification};
 use soroban_sdk::{contracttype, token, Address, BytesN, Env, String, Vec};
@@ -24,6 +25,7 @@ pub enum DataKey {
     GroupMembers(BytesN<32>),
     IsPaused,
     ScheduledNotification(BytesN<32>),
+    NotificationRevokers(BytesN<32>),
 }
 
 pub fn create_autoshare(
@@ -860,6 +862,11 @@ fn is_expired(env: &Env, notification: &ScheduledNotification) -> bool {
     env.ledger().timestamp() >= notification.expires_at
 }
 
+/// Returns true if a notification has been revoked.
+fn is_revoked(notification: &ScheduledNotification) -> bool {
+    notification.revoked_by.is_some()
+}
+
 /// Schedules a notification on-chain that becomes invalid after `ttl_seconds`.
 ///
 /// The notification is stored with an `expires_at` of `now + ttl_seconds`. A
@@ -896,6 +903,8 @@ pub fn schedule_notification(
         creator: creator.clone(),
         created_at,
         expires_at,
+        revoked_by: None,
+        revoked_at: None,
     };
     env.storage().persistent().set(&key, &notification);
 
@@ -932,11 +941,17 @@ pub fn is_notification_expired(env: Env, notification_id: BytesN<32>) -> Result<
 ///
 /// Permissionless by design — any party (e.g. an off-chain keeper) may finalize
 /// the expiry of an elapsed notification. A notification that has not yet
-/// reached its expiry is rejected with [`Error::NotificationNotExpired`]; an
-/// unknown one with [`Error::NotFound`].
+/// reached its expiry is rejected with [`Error::NotificationNotExpired`]; a
+/// revoked notification with [`Error::NotificationRevoked`]; an unknown one
+/// with [`Error::NotFound`].
 pub fn expire_notification(env: Env, notification_id: BytesN<32>) -> Result<(), Error> {
     let key = DataKey::ScheduledNotification(notification_id.clone());
     let notification = load_notification(&env, &notification_id).ok_or(Error::NotFound)?;
+
+    // Cannot expire a revoked notification
+    if is_revoked(&notification) {
+        return Err(Error::NotificationRevoked);
+    }
 
     if !is_expired(&env, &notification) {
         return Err(Error::NotificationNotExpired);
@@ -960,9 +975,9 @@ pub fn expire_notification(env: Env, notification_id: BytesN<32>) -> Result<(), 
 /// lifecycle of every scheduled notification in real time.
 ///
 /// If the notification is tracked on-chain, cancelling reaps its storage entry —
-/// but an **expired** notification is invalid and cannot be cancelled; such an
-/// attempt is rejected with [`Error::NotificationExpired`]. Identifiers that are
-/// not tracked on-chain are accepted (and simply emit the event) so callers can
+/// but an **expired** or **revoked** notification is invalid and cannot be cancelled; such an
+/// attempt is rejected with [`Error::NotificationExpired`] or [`Error::NotificationRevoked`].
+/// Identifiers that are not tracked on-chain are accepted (and simply emit the event) so callers can
 /// signal cancellation of notifications managed entirely off-chain.
 pub fn cancel_notification(
     env: Env,
@@ -976,6 +991,9 @@ pub fn cancel_notification(
     }
 
     if let Some(notification) = load_notification(&env, &notification_id) {
+        if is_revoked(&notification) {
+            return Err(Error::NotificationRevoked);
+        }
         if is_expired(&env, &notification) {
             return Err(Error::NotificationExpired);
         }
@@ -993,4 +1011,75 @@ pub fn cancel_notification(
     .publish(&env);
 
     Ok(())
+}
+
+/// Revokes a scheduled notification, preventing any further interaction with it.
+///
+/// Only authorized callers (the notification creator or the contract admin) can
+/// revoke a notification. The notification must exist, not already be revoked,
+/// and not have expired. Once revoked, the notification state is updated to
+/// record who revoked it and when, and a [`NotificationRevoked`] event is emitted.
+///
+/// Revoked notifications maintain their state for transparency and auditing:
+/// they can still be queried but cannot be cancelled or expired.
+pub fn revoke_notification(
+    env: Env,
+    notification_id: BytesN<32>,
+    caller: Address,
+) -> Result<(), Error> {
+    caller.require_auth();
+
+    if get_paused_status(&env) {
+        return Err(Error::ContractPaused);
+    }
+
+    let key = DataKey::ScheduledNotification(notification_id.clone());
+    let mut notification = load_notification(&env, &notification_id).ok_or(Error::NotFound)?;
+
+    // Check if already revoked
+    if is_revoked(&notification) {
+        return Err(Error::AlreadyRevoked);
+    }
+
+    // Check if expired (cannot revoke expired notifications)
+    if is_expired(&env, &notification) {
+        return Err(Error::NotificationExpired);
+    }
+
+    // Check authorization: only creator or admin can revoke
+    let admin = get_admin(env.clone()).ok();
+    let is_creator = caller == notification.creator;
+    let is_admin = admin.as_ref().map_or(false, |a| caller == *a);
+
+    if !is_creator && !is_admin {
+        return Err(Error::NotAuthorizedToRevoke);
+    }
+
+    // Update notification with revocation data
+    let revoked_at = env.ledger().timestamp();
+    notification.revoked_by = Some(caller.clone());
+    notification.revoked_at = Some(revoked_at);
+
+    // Store updated notification
+    env.storage().persistent().set(&key, &notification);
+
+    // Emit revocation event
+    NotificationRevoked {
+        notification_id,
+        revoked_by: caller,
+        category: NotificationCategory::Notification,
+        priority: NotificationPriority::High,
+        revoked_at,
+    }
+    .publish(&env);
+
+    Ok(())
+}
+
+/// Checks if a notification has been revoked.
+///
+/// Returns [`Error::NotFound`] if the notification is not tracked.
+pub fn is_notification_revoked(env: Env, notification_id: BytesN<32>) -> Result<bool, Error> {
+    let notification = get_notification(env, notification_id)?;
+    Ok(is_revoked(&notification))
 }

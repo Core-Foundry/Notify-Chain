@@ -25,6 +25,11 @@ pub struct GroupMember {
 ///
 /// The notification is considered **expired** — and therefore invalid for any
 /// further interaction — once the ledger timestamp reaches `expires_at`.
+///
+/// A notification can also be **revoked** before its expiration by an authorized
+/// sender. Once revoked, the notification becomes inactive and cannot be
+/// interacted with. Revoked notifications maintain their state for auditing
+/// and transparency.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ScheduledNotification {
@@ -34,6 +39,10 @@ pub struct ScheduledNotification {
     pub created_at: u64,
     /// Ledger timestamp (seconds) at or after which the notification is expired.
     pub expires_at: u64,
+    /// Address that revoked the notification, or None if not revoked.
+    pub revoked_by: Option<Address>,
+    /// Ledger timestamp (seconds) at which the notification was revoked, if revoked.
+    pub revoked_at: Option<u64>,
 }
 
 #[contracttype]
