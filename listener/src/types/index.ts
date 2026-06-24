@@ -41,6 +41,7 @@ export interface Config {
   eventsApiCorsOrigin: string;
   discord?: DiscordConfig;
   retryQueue?: RetryQueueConfig;
+  eventQueue?: EventQueueConfig;
   webhookSecrets?: WebhookSecret[];
   scheduler?: SchedulerConfig;
   databasePath?: string;
@@ -55,6 +56,17 @@ export interface SchedulerConfig {
   processorId?: string;
   batchSize: number;
   timingBufferMs: number;
+}
+
+export interface EventQueueConfig {
+  /** Maximum number of events to process concurrently (default: 1, must be >= 1). */
+  maxConcurrency?: number;
+  /** Maximum retry attempts per event (default: 3). */
+  maxRetries?: number;
+  /** Base delay in ms for exponential backoff (default: 2000). */
+  baseDelayMs?: number;
+  /** How often to poll the queue for due events in ms (default: 1000). */
+  pollIntervalMs?: number;
 }
 
 export interface AppCleanupConfig {
