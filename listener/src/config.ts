@@ -1,4 +1,4 @@
-import { Config, ContractConfig, DiscordConfig, WebhookSecret } from './types';
+import { Config, ContractConfig, DiscordConfig, WebhookSecret, AppCleanupConfig } from './types';
 
 export class ConfigError extends Error {
   constructor(message: string) {
@@ -112,6 +112,15 @@ function validateWebhookSecrets(value: unknown): WebhookSecret[] {
   });
 }
 
+function loadCleanupConfig(): AppCleanupConfig {
+  return {
+    intervalMs: parseIntegerEnv('CLEANUP_INTERVAL_MS', String(60 * 60 * 1000)),
+    notificationRetentionMs: parseIntegerEnv('NOTIFICATION_RETENTION_MS', String(7 * 24 * 60 * 60 * 1000)),
+    rateLimitEventRetentionMs: parseIntegerEnv('RATE_LIMIT_EVENT_RETENTION_MS', String(24 * 60 * 60 * 1000)),
+    eventRetentionMs: parseIntegerEnv('EVENT_RETENTION_MS', String(24 * 60 * 60 * 1000)),
+  };
+}
+
 export function loadConfig(): Config {
   const discord = loadDiscordConfig();
   const rawContractAddresses = parseJsonEnv<unknown>('CONTRACT_ADDRESSES', '[]');
@@ -152,6 +161,7 @@ export function loadConfig(): Config {
       maxRequests: parseIntegerEnv('RATE_LIMIT_MAX_REQUESTS', '60'),
       clientOverrides,
     },
+    cleanup: loadCleanupConfig(),
   };
 }
 

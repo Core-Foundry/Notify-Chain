@@ -8,8 +8,10 @@ import { NotificationTemplateService } from './services/notification-template-se
 import { TemplateAuditTrail } from './services/template-audit-trail';
 import { getTemplateCache } from './services/notification-template-cache';
 import { NotificationAPI } from './services/notification-api';
+import { CleanupService } from './services/cleanup-service';
 import { initializeDatabase } from './database/database';
 import { DiscordNotificationService } from './services/discord-notification';
+import { eventRegistry } from './store/event-registry';
 import logger from './utils/logger';
 import { loadConfig, ConfigError } from './config';
 
@@ -22,10 +24,19 @@ async function main() {
   let scheduler: NotificationScheduler | null = null;
   let notificationAPI: NotificationAPI | null = null;
   let templateService: NotificationTemplateService | null = null;
+  let cleanupService: CleanupService | null = null;
 
   try {
     logger.info('Initializing database');
     const db = await initializeDatabase(config.databasePath);
+
+    // Rebuild registry with configured event TTL
+    if (config.cleanup) {
+      eventRegistry['ttlMs'] = config.cleanup.eventRetentionMs;
+    }
+
+    cleanupService = new CleanupService(db, eventRegistry, config.cleanup);
+    cleanupService.start();
 
     const templateRepository = new NotificationTemplateRepository(
       db,
@@ -70,6 +81,10 @@ async function main() {
 
   const shutdown = async () => {
     logger.info('Shutting down services...');
+
+    if (cleanupService) {
+      await cleanupService.stop();
+    }
 
     if (scheduler) {
       await scheduler.stop();

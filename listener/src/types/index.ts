@@ -45,6 +45,7 @@ export interface Config {
   scheduler?: SchedulerConfig;
   databasePath?: string;
   rateLimit?: RateLimitConfig;
+  cleanup?: AppCleanupConfig;
 }
 
 export interface SchedulerConfig {
@@ -54,5 +55,16 @@ export interface SchedulerConfig {
   processorId?: string;
   batchSize: number;
   timingBufferMs: number;
+}
+
+export interface AppCleanupConfig {
+  /** How often to run cleanup jobs (ms). */
+  intervalMs: number;
+  /** Retain completed/failed/cancelled notifications for this long (ms). */
+  notificationRetentionMs: number;
+  /** Retain rate-limit audit rows for this long (ms). */
+  rateLimitEventRetentionMs: number;
+  /** Retain in-memory events for this long (ms). */
+  eventRetentionMs: number;
 }
 
