@@ -34,13 +34,15 @@ export function EventExplorerPage() {
   const setEvents = useEventStore((state) => state.setEvents);
   const setLoading = useEventStore((state) => state.setLoading);
   const setError = useEventStore((state) => state.setError);
+  const loadSavedFiltersFromStorage = useEventStore((state) => state.loadSavedFiltersFromStorage);
   const { isLoading, error } = useEventLoadingState();
   const filters = useEventFilters();
   const filteredEvents = useFilteredEvents();
 
   useEffect(() => {
     restoreWalletSession();
-  }, []);
+    loadSavedFiltersFromStorage();
+  }, [loadSavedFiltersFromStorage]);
 
   useEffect(() => {
     let cancelled = false;

@@ -15,3 +15,10 @@ export interface EventFilters {
   contractAddress: string;
   eventType: string;
 }
+
+export interface SavedFilter {
+  id: string;
+  name: string;
+  filters: EventFilters;
+  createdAt: number;
+}

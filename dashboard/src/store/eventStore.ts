@@ -1,10 +1,12 @@
 import { create } from 'zustand';
-import type { BlockchainEvent, EventFilters } from '../types/event';
+import type { BlockchainEvent, EventFilters, SavedFilter } from '../types/event';
 import { filterEvents } from '../utils/eventData';
+import { getSavedFilters, addSavedFilter, updateSavedFilter, deleteSavedFilter } from '../utils/filterPersistence';
 
 interface EventStoreState {
   events: BlockchainEvent[];
   filters: EventFilters;
+  savedFilters: SavedFilter[];
   isLoading: boolean;
   error: string | null;
   setEvents: (events: BlockchainEvent[]) => void;
@@ -14,6 +16,11 @@ interface EventStoreState {
   setEventTypeFilter: (eventType: string) => void;
   setLoading: (isLoading: boolean) => void;
   setError: (error: string | null) => void;
+  saveCurrentFilter: (name: string) => void;
+  loadSavedFilter: (id: string) => void;
+  renameSavedFilter: (id: string, newName: string) => void;
+  deleteSavedFilter: (id: string) => void;
+  loadSavedFiltersFromStorage: () => void;
 }
 
 function dedupeEventsById(events: BlockchainEvent[]): BlockchainEvent[] {
@@ -36,6 +43,7 @@ export const useEventStore = create<EventStoreState>((set) => ({
     contractAddress: 'all',
     eventType: 'all',
   },
+  savedFilters: [],
   isLoading: false,
   error: null,
   setEvents: (events) => set({ events: dedupeEventsById(events) }),
@@ -57,6 +65,37 @@ export const useEventStore = create<EventStoreState>((set) => ({
     })),
   setLoading: (isLoading) => set({ isLoading }),
   setError: (error) => set({ error }),
+  saveCurrentFilter: (name) =>
+    set((state) => {
+      const newFilter: SavedFilter = {
+        id: `filter-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+        name,
+        filters: { ...state.filters },
+        createdAt: Date.now(),
+      };
+      const updated = addSavedFilter(newFilter);
+      return { savedFilters: updated };
+    }),
+  loadSavedFilter: (id) =>
+    set((state) => {
+      const savedFilter = state.savedFilters.find((f) => f.id === id);
+      if (!savedFilter) return state;
+      return { filters: { ...savedFilter.filters } };
+    }),
+  renameSavedFilter: (id, newName) =>
+    set(() => {
+      const updated = updateSavedFilter(id, { name: newName });
+      return { savedFilters: updated };
+    }),
+  deleteSavedFilter: (id) =>
+    set(() => {
+      const updated = deleteSavedFilter(id);
+      return { savedFilters: updated };
+    }),
+  loadSavedFiltersFromStorage: () =>
+    set(() => ({
+      savedFilters: getSavedFilters(),
+    })),
 }));
 
 export function selectFilteredEvents(state: EventStoreState): BlockchainEvent[] {
@@ -89,4 +128,8 @@ export function selectEventTypeOptions(state: EventStoreState): string[] {
         .filter((name): name is string => Boolean(name))
     )
   );
+}
+
+export function selectSavedFilters(state: EventStoreState) {
+  return state.savedFilters;
 }
