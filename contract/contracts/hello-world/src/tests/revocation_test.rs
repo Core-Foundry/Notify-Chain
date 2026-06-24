@@ -118,7 +118,8 @@ fn test_revoke_notification_emits_event() {
     set_now(&test_env.env, 2_000);
     client.revoke_notification(&id, &creator);
 
-    let topics = topics_of(&test_env.env, "notification_revoked").expect("revocation event must be emitted");
+    let topics =
+        topics_of(&test_env.env, "notification_revoked").expect("revocation event must be emitted");
     // [0] name, [1] notification_id, [2] revoked_by, [3] category, [4] priority.
     assert_eq!(topics.len(), 5);
 
@@ -327,12 +328,14 @@ fn test_revoke_event_has_high_priority() {
     set_now(&test_env.env, 2_000);
     client.revoke_notification(&id, &creator);
 
-    let topics = topics_of(&test_env.env, "notification_revoked").expect("revocation event must be emitted");
+    let topics =
+        topics_of(&test_env.env, "notification_revoked").expect("revocation event must be emitted");
     // Last topic is priority
     let priority_topic = topics.last().unwrap();
-    let priority = crate::base::events::NotificationPriority::try_from_val(&test_env.env, &priority_topic)
-        .expect("priority should be extractable");
-    
+    let priority =
+        crate::base::events::NotificationPriority::try_from_val(&test_env.env, &priority_topic)
+            .expect("priority should be extractable");
+
     assert_eq!(priority, crate::base::events::NotificationPriority::High);
 }
 
@@ -349,12 +352,13 @@ fn test_revoke_event_has_notification_category() {
     set_now(&test_env.env, 2_000);
     client.revoke_notification(&id, &creator);
 
-    let topics = topics_of(&test_env.env, "notification_revoked").expect("revocation event must be emitted");
+    let topics =
+        topics_of(&test_env.env, "notification_revoked").expect("revocation event must be emitted");
     // Second to last topic is category
     let n = topics.len();
     let category_topic = topics.get(n - 2).unwrap();
     let category = NotificationCategory::try_from_val(&test_env.env, &category_topic)
         .expect("category should be extractable");
-    
+
     assert_eq!(category, NotificationCategory::Notification);
 }
