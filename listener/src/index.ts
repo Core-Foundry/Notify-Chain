@@ -2,6 +2,7 @@ import dotenv from 'dotenv';
 import { startEventsServer } from './api/events-server';
 import { EventSubscriber } from './services/event-subscriber';
 import { NotificationScheduler } from './services/notification-scheduler';
+import { RetryScheduler } from './services/retry-scheduler';
 import { ScheduledNotificationRepository } from './services/scheduled-notification-repository';
 import { NotificationTemplateRepository } from './services/notification-template-repository';
 import { NotificationTemplateService } from './services/notification-template-service';
@@ -22,6 +23,7 @@ async function main() {
 
   // Initialize database for templates, scheduler, and rate limiting
   let scheduler: NotificationScheduler | null = null;
+  let retryScheduler: RetryScheduler | null = null;
   let notificationAPI: NotificationAPI | null = null;
   let templateService: NotificationTemplateService | null = null;
   let cleanupService: CleanupService | null = null;
@@ -59,6 +61,12 @@ async function main() {
       await scheduler.start();
 
       logger.info('Notification scheduler started successfully');
+
+      if (config.retryScheduler?.enabled) {
+        retryScheduler = new RetryScheduler(repository, config.retryScheduler, discordService);
+        await retryScheduler.start();
+        logger.info('Retry scheduler started successfully');
+      }
     }
   } catch (error) {
     logger.error('Failed to initialize database or scheduler', { error });
@@ -88,6 +96,10 @@ async function main() {
 
     if (scheduler) {
       await scheduler.stop();
+    }
+
+    if (retryScheduler) {
+      await retryScheduler.stop();
     }
 
     await subscriber.stop();
