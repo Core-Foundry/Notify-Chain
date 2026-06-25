@@ -15,6 +15,8 @@ export interface DiscordConfig {
 
 export interface RetryQueueConfig {
   baseDelayMs?: number;
+  multiplier?: number;
+  jitter?: boolean;
   maxRetries?: number;
 }
 
@@ -43,6 +45,7 @@ export interface Config {
   retryQueue?: RetryQueueConfig;
   webhookSecrets?: WebhookSecret[];
   scheduler?: SchedulerConfig;
+  retryScheduler?: RetrySchedulerOptions;
   databasePath?: string;
   rateLimit?: RateLimitConfig;
   cleanup?: AppCleanupConfig;
@@ -66,5 +69,17 @@ export interface AppCleanupConfig {
   rateLimitEventRetentionMs: number;
   /** Retain in-memory events for this long (ms). */
   eventRetentionMs: number;
+}
+
+export interface RetrySchedulerOptions {
+  enabled: boolean;
+  pollIntervalMs: number;
+  lockTimeoutMs: number;
+  processorId?: string;
+  batchSize: number;
+  baseDelayMs: number;
+  multiplier: number;
+  maxDelayMs: number;
+  jitter: boolean;
 }
 

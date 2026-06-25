@@ -2,6 +2,7 @@ import dotenv from 'dotenv';
 import { startEventsServer } from './api/events-server';
 import { EventSubscriber } from './services/event-subscriber';
 import { NotificationScheduler } from './services/notification-scheduler';
+import { RetryScheduler } from './services/retry-scheduler';
 import { ScheduledNotificationRepository } from './services/scheduled-notification-repository';
 import { NotificationTemplateRepository } from './services/notification-template-repository';
 import { NotificationTemplateService } from './services/notification-template-service';
@@ -9,6 +10,9 @@ import { TemplateAuditTrail } from './services/template-audit-trail';
 import { getTemplateCache } from './services/notification-template-cache';
 import { NotificationAPI } from './services/notification-api';
 import { CleanupService } from './services/cleanup-service';
+import { ArchiveService } from './services/archive-service';
+import { ArchiveStore } from './services/archive-store';
+import { loadArchiveConfig } from './services/archive-config';
 import { initializeDatabase } from './database/database';
 import { DiscordNotificationService } from './services/discord-notification';
 import { eventRegistry } from './store/event-registry';
@@ -22,9 +26,12 @@ async function main() {
 
   // Initialize database for templates, scheduler, and rate limiting
   let scheduler: NotificationScheduler | null = null;
+  let retryScheduler: RetryScheduler | null = null;
   let notificationAPI: NotificationAPI | null = null;
   let templateService: NotificationTemplateService | null = null;
   let cleanupService: CleanupService | null = null;
+  let archiveService: ArchiveService | null = null;
+  let archiveStore: ArchiveStore | null = null;
 
   try {
     logger.info('Initializing database');
@@ -37,6 +44,16 @@ async function main() {
 
     cleanupService = new CleanupService(db, eventRegistry, config.cleanup);
     cleanupService.start();
+
+    // Archive service: moves old notifications to the archive table.
+    const archiveCfg = loadArchiveConfig();
+    archiveStore = new ArchiveStore(db);
+    archiveService = new ArchiveService(db, archiveCfg);
+    await archiveService.initialize();
+    if (archiveCfg.enabled) {
+      archiveService.start();
+      logger.info('ArchiveService started');
+    }
 
     const templateRepository = new NotificationTemplateRepository(
       db,
@@ -59,6 +76,12 @@ async function main() {
       await scheduler.start();
 
       logger.info('Notification scheduler started successfully');
+
+      if (config.retryScheduler?.enabled) {
+        retryScheduler = new RetryScheduler(repository, config.retryScheduler, discordService);
+        await retryScheduler.start();
+        logger.info('Retry scheduler started successfully');
+      }
     }
   } catch (error) {
     logger.error('Failed to initialize database or scheduler', { error });
@@ -74,6 +97,8 @@ async function main() {
     notificationAPI,
     templateService,
     rateLimit: config.rateLimit,
+    archiveStore,
+    archiveService,
   });
 
   const subscriber = new EventSubscriber(config);
@@ -86,8 +111,16 @@ async function main() {
       await cleanupService.stop();
     }
 
+    if (archiveService) {
+      archiveService.stop();
+    }
+
     if (scheduler) {
       await scheduler.stop();
+    }
+
+    if (retryScheduler) {
+      await retryScheduler.stop();
     }
 
     await subscriber.stop();

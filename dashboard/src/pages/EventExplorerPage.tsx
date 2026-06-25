@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { EventFiltersBar } from '../components/EventFiltersBar';
+import { NotificationSearchBar } from '../components/NotificationSearchBar';
 import { WalletConnectButton } from '../components/WalletConnectButton';
 import { EventExplorerTable } from '../components/EventExplorerTable';
 import { EventExplorerSkeleton } from '../components/EventExplorerSkeleton';
@@ -86,7 +87,7 @@ export function EventExplorerPage() {
 
   useEffect(() => {
     setPage(1);
-  }, [filters.search, filters.contractAddress, filters.eventType]);
+  }, [filters.search, filters.contractAddress, filters.eventType, filters.status, filters.dateFrom, filters.dateTo]);
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -138,6 +139,7 @@ export function EventExplorerPage() {
       </header>
 
       <EventFiltersBar />
+      <NotificationSearchBar />
 
       {error && (
         <section className="event-explorer__error-banner" role="alert">

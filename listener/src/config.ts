@@ -1,4 +1,4 @@
-import { Config, ContractConfig, DiscordConfig, WebhookSecret, AppCleanupConfig } from './types';
+import { Config, ContractConfig, DiscordConfig, WebhookSecret, AppCleanupConfig, RetrySchedulerOptions } from './types';
 
 export class ConfigError extends Error {
   constructor(message: string) {
@@ -121,6 +121,20 @@ function loadCleanupConfig(): AppCleanupConfig {
   };
 }
 
+function loadRetrySchedulerConfig(): RetrySchedulerOptions {
+  return {
+    enabled: trimEnv('RETRY_SCHEDULER_ENABLED') !== 'false',
+    pollIntervalMs: parseIntegerEnv('RETRY_SCHEDULER_POLL_INTERVAL_MS', '15000'),
+    lockTimeoutMs: parseIntegerEnv('RETRY_SCHEDULER_LOCK_TIMEOUT_MS', '60000'),
+    processorId: trimEnv('RETRY_SCHEDULER_PROCESSOR_ID'),
+    batchSize: parseIntegerEnv('RETRY_SCHEDULER_BATCH_SIZE', '10'),
+    baseDelayMs: parseIntegerEnv('RETRY_BASE_DELAY_MS', '5000'),
+    multiplier: parseIntegerEnv('RETRY_MULTIPLIER', '2'),
+    maxDelayMs: parseIntegerEnv('RETRY_MAX_DELAY_MS', String(60 * 60 * 1000)),
+    jitter: trimEnv('RETRY_JITTER') !== 'false',
+  };
+}
+
 export function loadConfig(): Config {
   const discord = loadDiscordConfig();
   const rawContractAddresses = parseJsonEnv<unknown>('CONTRACT_ADDRESSES', '[]');
@@ -145,6 +159,8 @@ export function loadConfig(): Config {
     retryQueue: {
       baseDelayMs: parseIntegerEnv('RETRY_BASE_DELAY_MS', '5000'),
       maxRetries: parseIntegerEnv('RETRY_MAX_RETRIES', '5'),
+      multiplier: parseIntegerEnv('RETRY_MULTIPLIER', '2'),
+      jitter: trimEnv('RETRY_JITTER') !== 'false',
     },
     webhookSecrets: validateWebhookSecrets(rawWebhookSecrets),
     scheduler: {
@@ -155,6 +171,7 @@ export function loadConfig(): Config {
       batchSize: parseIntegerEnv('SCHEDULER_BATCH_SIZE', '10'),
       timingBufferMs: parseIntegerEnv('SCHEDULER_TIMING_BUFFER_MS', '60000'),
     },
+    retryScheduler: loadRetrySchedulerConfig(),
     rateLimit: {
       enabled: trimEnv('RATE_LIMIT_ENABLED') !== 'false',
       windowMs: parseIntegerEnv('RATE_LIMIT_WINDOW_MS', '60000'),
