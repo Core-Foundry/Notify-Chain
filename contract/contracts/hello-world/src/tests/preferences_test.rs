@@ -6,7 +6,7 @@ mod preferences_tests {
     };
     use crate::test_utils::setup_test_env;
     use crate::{AutoShareContract, AutoShareContractClient};
-    use soroban_sdk::{testutils::Address as _, Address, Env, Vec};
+    use soroban_sdk::{testutils::Address as _, Address, Env, IntoVal, Vec};
 
     // ============================================================================
     // Default preferences
