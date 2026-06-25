@@ -5,6 +5,7 @@ import { getEventName } from '../utils/event-utils';
 import { NotificationDeduplicator, generateFingerprint } from './notification-deduplicator';
 import { getNotificationAnalyticsAggregator, NotificationAnalyticsAggregator } from './notification-analytics-aggregator';
 import { NotificationType } from '../types/scheduled-notification';
+import { getSuspiciousActivityMonitor, SuspiciousActivityMonitor } from './suspicious-activity-monitor';
 
 export interface DiscordMessage {
   content?: string;
@@ -29,6 +30,7 @@ export class DiscordNotificationService {
   private deduplicator: NotificationDeduplicator;
   private timeoutCount: number = 0;
   private readonly analytics: NotificationAnalyticsAggregator | null;
+  private readonly monitor: SuspiciousActivityMonitor;
 
   constructor(config: DiscordConfig, deduplicator?: NotificationDeduplicator) {
     this.config = config;
@@ -39,6 +41,7 @@ export class DiscordNotificationService {
         maxSize: config.deduplicationMaxSize,
       });
     this.analytics = getNotificationAnalyticsAggregator();
+    this.monitor = getSuspiciousActivityMonitor();
   }
 
   async sendEventNotification(
@@ -90,6 +93,7 @@ export class DiscordNotificationService {
           errorReason: `HTTP ${response.status}`,
           timestamp: Date.now(),
         });
+        this.monitor.recordFailure(contractConfig.address);
         logger.error('Discord webhook failed', {
           ...logContext,
           status: response.status,
@@ -101,6 +105,7 @@ export class DiscordNotificationService {
       }
 
       this.deduplicator.markSent(fingerprint);
+      this.monitor.recordNotification(contractConfig.address);
       this.analytics?.record({
         notificationType: NotificationType.DISCORD,
         contractAddress: contractConfig.address,

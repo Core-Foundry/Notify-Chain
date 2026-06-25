@@ -4,6 +4,7 @@ import logger from '../utils/logger';
 import { getEventName } from '../utils/event-utils';
 import { getNotificationAnalyticsAggregator, NotificationAnalyticsAggregator } from './notification-analytics-aggregator';
 import { NotificationType } from '../types/scheduled-notification';
+import { getSuspiciousActivityMonitor, SuspiciousActivityMonitor } from './suspicious-activity-monitor';
 
 export interface RetryQueueOptions {
   baseDelayMs?: number;
@@ -13,12 +14,20 @@ export interface RetryQueueOptions {
   processIntervalMs?: number;
 }
 
+export interface RetryAttemptRecord {
+  attempt: number;
+  timestamp: number;
+  outcome: 'retry' | 'success' | 'failure';
+  delayMs?: number;
+}
+
 interface RetryItem {
   event: StellarSDK.rpc.Api.EventResponse;
   contractConfig: ContractConfig;
   retryCount: number;
   nextRetryAt: number;
   requestId?: string;
+  history: RetryAttemptRecord[];
 }
 
 const DEFAULTS = {
@@ -46,6 +55,7 @@ export class NotificationRetryQueue {
   private timer: ReturnType<typeof setInterval> | null = null;
   private readonly notificationFn: NotificationFn;
   private readonly analytics: NotificationAnalyticsAggregator | null;
+  private readonly monitor: SuspiciousActivityMonitor;
 
   constructor(notificationFn: NotificationFn, options?: RetryQueueOptions) {
     this.notificationFn = notificationFn;
@@ -55,6 +65,7 @@ export class NotificationRetryQueue {
     this.maxRetries = options?.maxRetries ?? DEFAULTS.maxRetries;
     this.processIntervalMs = options?.processIntervalMs ?? DEFAULTS.processIntervalMs;
     this.analytics = getNotificationAnalyticsAggregator();
+    this.monitor = getSuspiciousActivityMonitor();
   }
 
   enqueue(
@@ -87,7 +98,7 @@ export class NotificationRetryQueue {
     });
 
     this.queuedFingerprints.add(fingerprint);
-    this.queue.push({ event, contractConfig, retryCount: 0, nextRetryAt, requestId });
+    this.queue.push({ event, contractConfig, retryCount: 0, nextRetryAt, requestId, history: [] });
   }
 
   start(): void {
@@ -140,19 +151,25 @@ export class NotificationRetryQueue {
       durationMs: 0,
       timestamp: retryStart,
     });
+    this.monitor.recordRetry(item.contractConfig.address, item.event.id, attempt);
 
     const success = await this.notificationFn(item.event, item.contractConfig, item.requestId);
 
     if (success) {
+      item.history.push({ attempt, timestamp: Date.now(), outcome: 'success' });
       this.queuedFingerprints.delete(fingerprint);
       logger.info('Retry succeeded', {
         requestId: item.requestId,
         eventId: item.event.id,
         contractAddress: item.contractConfig.address,
         attempt,
+        retryHistory: item.history,
       });
       return;
     }
+
+    item.history.push({ attempt, timestamp: Date.now(), outcome: attempt >= this.maxRetries ? 'failure' : 'retry' });
+    this.monitor.recordFailure(item.contractConfig.address);
 
     if (attempt >= this.maxRetries) {
       this.queuedFingerprints.delete(fingerprint);
@@ -169,6 +186,7 @@ export class NotificationRetryQueue {
         eventId: item.event.id,
         contractAddress: item.contractConfig.address,
         totalAttempts: attempt,
+        retryHistory: item.history,
       });
       return;
     }
@@ -183,6 +201,7 @@ export class NotificationRetryQueue {
       attempt,
       delayMs,
       nextRetryAt: new Date(nextRetryAt).toISOString(),
+      retryHistory: item.history,
     });
 
     this.queue.push({ ...item, retryCount: attempt, nextRetryAt });

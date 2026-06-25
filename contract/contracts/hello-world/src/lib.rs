@@ -5,6 +5,7 @@ use soroban_sdk::{contract, contractimpl, Address, BytesN, Env, String, Vec};
 pub mod base {
     pub mod errors;
     pub mod events;
+    pub mod metadata_integrity;
     pub mod preferences;
     pub mod types;
 }
@@ -312,6 +313,40 @@ impl AutoShareContract {
     ) -> bool {
         preferences_logic::is_category_enabled(env, recipient, category)
     }
+
+    // ============================================================================
+    // Notification Metadata Integrity
+    // ============================================================================
+
+    /// Store a SHA-256 integrity proof for a notification record.
+    ///
+    /// `record_id` uniquely identifies the notification whose metadata is being
+    /// anchored. `metadata` is the canonical byte representation of the fields
+    /// that must not change after the proof is stored.
+    pub fn store_integrity_proof(env: Env, record_id: BytesN<32>, metadata: soroban_sdk::Bytes) {
+        base::metadata_integrity::store_proof(&env, record_id, &metadata);
+    }
+
+    /// Verify that `metadata` matches the stored integrity proof for `record_id`.
+    ///
+    /// Returns `true` when the proof exists and the hash matches.  Returns
+    /// `false` when no proof is stored or when the metadata has been tampered
+    /// with.
+    pub fn verify_integrity_proof(
+        env: Env,
+        record_id: BytesN<32>,
+        metadata: soroban_sdk::Bytes,
+    ) -> bool {
+        base::metadata_integrity::verify_integrity(&env, record_id, &metadata)
+    }
+
+    /// Return the raw integrity proof (hash + timestamp) for `record_id`, if any.
+    pub fn get_integrity_proof(
+        env: Env,
+        record_id: BytesN<32>,
+    ) -> Option<base::metadata_integrity::IntegrityProof> {
+        base::metadata_integrity::get_proof(&env, record_id)
+    }
 }
 
     // ============================================================================
@@ -431,4 +466,7 @@ mod tests {
 
     #[path = "../tests/revocation_test.rs"]
     mod revocation_test;
+
+    #[path = "../tests/metadata_integrity_test.rs"]
+    mod metadata_integrity_test;
 }
