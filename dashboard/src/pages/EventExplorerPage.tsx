@@ -4,11 +4,13 @@ import { WalletConnectButton } from '../components/WalletConnectButton';
 import { EventExplorerTable } from '../components/EventExplorerTable';
 import { EventExplorerSkeleton } from '../components/EventExplorerSkeleton';
 import { PaginationControls } from '../components/PaginationControls';
+import { NotificationDetailsDrawer } from '../components/NotificationDetailsDrawer';
 import { useEventFilters, useEventLoadingState, useFilteredEvents } from '../hooks/useEventSelectors';
 import { useEventStore } from '../store/eventStore';
 import { fetchEvents } from '../services/eventsApi';
 import { generateMockEvents } from '../utils/eventData';
 import { restoreWalletSession } from '../services/wallet';
+import type { BlockchainEvent } from '../types/event';
 
 const DEFAULT_EVENT_COUNT = 5000;
 const DEFAULT_LIMIT = 12;
@@ -30,6 +32,7 @@ export function EventExplorerPage() {
   const initialSearch = typeof window !== 'undefined' ? window.location.search : '';
   const [page, setPage] = useState(() => parsePageParam(initialSearch));
   const [limit, setLimit] = useState(() => parseLimitParam(initialSearch));
+  const [selectedNotification, setSelectedNotification] = useState<BlockchainEvent | null>(null);
 
   const setEvents = useEventStore((state) => state.setEvents);
   const setLoading = useEventStore((state) => state.setLoading);
@@ -123,6 +126,14 @@ export function EventExplorerPage() {
     }
   }, [setError, setEvents, setLoading]);
 
+  const handleSelectEvent = useCallback((event: BlockchainEvent) => {
+    setSelectedNotification(event);
+  }, []);
+
+  const handleCloseDrawer = useCallback(() => {
+    setSelectedNotification(null);
+  }, []);
+
   return (
     <main className="event-explorer-page">
       <header className="event-explorer__header">
@@ -161,7 +172,7 @@ export function EventExplorerPage() {
       {isLoading ? (
         <EventExplorerSkeleton rows={Math.min(limit, 8)} />
       ) : currentPageEvents.length > 0 ? (
-        <EventExplorerTable events={currentPageEvents} />
+        <EventExplorerTable events={currentPageEvents} onSelectEvent={handleSelectEvent} />
       ) : (
         <section className="event-explorer__empty-state" role="status" aria-live="polite">
           <h2>No events found</h2>
@@ -179,6 +190,12 @@ export function EventExplorerPage() {
         totalCount={filteredEvents.length}
         onPageChange={setPage}
         onLimitChange={setLimit}
+      />
+
+      <NotificationDetailsDrawer
+        isOpen={Boolean(selectedNotification)}
+        notification={selectedNotification}
+        onClose={handleCloseDrawer}
       />
     </main>
   );

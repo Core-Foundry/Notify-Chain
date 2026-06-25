@@ -4,9 +4,10 @@ import { EventExplorerCard } from './EventExplorerCard';
 
 interface EventExplorerTableProps {
   events: BlockchainEvent[];
+  onSelectEvent?: (event: BlockchainEvent) => void;
 }
 
-export function EventExplorerTable({ events }: EventExplorerTableProps) {
+export function EventExplorerTable({ events, onSelectEvent }: EventExplorerTableProps) {
   const [copiedAddress, setCopiedAddress] = useState<string | null>(null);
 
   async function syncCopyText(text: string) {
@@ -58,6 +59,7 @@ export function EventExplorerTable({ events }: EventExplorerTableProps) {
             event={event}
             onCopyContract={handleCopyContract}
             isCopied={copiedAddress === event.contractAddress}
+            onSelect={onSelectEvent}
           />
         ))}
       </div>
