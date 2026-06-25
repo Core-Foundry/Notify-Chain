@@ -11,6 +11,10 @@ import { NotificationAPI } from './services/notification-api';
 import { CleanupService } from './services/cleanup-service';
 import { initializeDatabase } from './database/database';
 import { DiscordNotificationService } from './services/discord-notification';
+import {
+  IndexingReconciliationEngine,
+  createDefaultAlertSink,
+} from './services/indexing-reconciliation-engine';
 import { eventRegistry } from './store/event-registry';
 import logger from './utils/logger';
 import { loadConfig, ConfigError } from './config';
@@ -25,6 +29,7 @@ async function main() {
   let notificationAPI: NotificationAPI | null = null;
   let templateService: NotificationTemplateService | null = null;
   let cleanupService: CleanupService | null = null;
+  let reconciliationEngine: IndexingReconciliationEngine | null = null;
 
   try {
     logger.info('Initializing database');
@@ -32,11 +37,19 @@ async function main() {
 
     // Rebuild registry with configured event TTL
     if (config.cleanup) {
-      eventRegistry['ttlMs'] = config.cleanup.eventRetentionMs;
+      eventRegistry.setTtlMs(config.cleanup.eventRetentionMs);
     }
 
     cleanupService = new CleanupService(db, eventRegistry, config.cleanup);
     cleanupService.start();
+
+    reconciliationEngine = new IndexingReconciliationEngine({
+      db,
+      rpcUrl: config.stellarRpcUrl,
+      contractAddresses: config.contractAddresses.map((c) => c.address),
+      alertSink: createDefaultAlertSink(config.discord?.webhookUrl),
+    });
+    reconciliationEngine.start();
 
     const templateRepository = new NotificationTemplateRepository(
       db,
@@ -84,6 +97,10 @@ async function main() {
 
     if (cleanupService) {
       await cleanupService.stop();
+    }
+
+    if (reconciliationEngine) {
+      reconciliationEngine.stop();
     }
 
     if (scheduler) {
