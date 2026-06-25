@@ -1517,3 +1517,201 @@ body {
     text-align: center;
   }
 }
+
+/* ─── Notification Health Panel ─────────────────────────────────────────── */
+
+.notification-health {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 16px;
+  padding: 18px 18px 16px;
+  background: rgba(255, 255, 255, 0.02);
+  display: grid;
+  gap: 14px;
+}
+
+.notification-health__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.notification-health__eyebrow {
+  margin: 0 0 6px;
+  font-size: 0.75rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #60a5fa;
+}
+
+.notification-health__title {
+  margin: 0;
+  font-size: 1.05rem;
+}
+
+.notification-health__meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.notification-health__status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px 12px;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.notification-health__status--ok {
+  color: #34d399;
+  background: rgba(52, 211, 153, 0.14);
+}
+
+.notification-health__status--degraded {
+  color: #f4b400;
+  background: rgba(244, 180, 0, 0.14);
+}
+
+.notification-health__status--error {
+  color: #f87171;
+  background: rgba(248, 113, 113, 0.14);
+}
+
+.notification-health__status--unknown {
+  color: #9aa0a6;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.notification-health__updated {
+  color: #9aa0a6;
+  font-size: 0.85rem;
+}
+
+.notification-health__grid {
+  display: grid;
+  gap: 14px;
+}
+
+.notification-health__card {
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 14px;
+  padding: 14px 14px 12px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.notification-health__card--full {
+  grid-column: 1 / -1;
+}
+
+.notification-health__card-title {
+  margin: 0 0 12px;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #cbd5e1;
+}
+
+.notification-health__metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 10px;
+}
+
+.notification-health__metric {
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 12px;
+  padding: 10px 10px 8px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.notification-health__metric dt {
+  font-size: 0.75rem;
+  color: #9aa0a6;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-bottom: 6px;
+}
+
+.notification-health__metric dd {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 650;
+  font-family: 'Courier New', Courier, monospace;
+}
+
+.notification-health__services-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 10px;
+}
+
+.notification-health__service {
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 12px;
+  padding: 10px 10px 8px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.notification-health__service-name {
+  font-size: 0.9rem;
+  font-weight: 600;
+  margin-bottom: 6px;
+  color: #e2e8f0;
+}
+
+.notification-health__service-status {
+  font-size: 0.8rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 4px;
+}
+
+.notification-health__service-latency {
+  font-size: 0.8rem;
+  color: #9aa0a6;
+  font-family: 'Courier New', Courier, monospace;
+}
+
+.notification-health__service-detail {
+  font-size: 0.8rem;
+  color: #9aa0a6;
+  margin-top: 4px;
+}
+
+.notification-health__service--ok {
+  border-color: rgba(52, 211, 153, 0.2);
+}
+
+.notification-health__service--ok .notification-health__service-status {
+  color: #34d399;
+}
+
+.notification-health__service--error {
+  border-color: rgba(248, 113, 113, 0.2);
+}
+
+.notification-health__service--error .notification-health__service-status {
+  color: #f87171;
+}
+
+.notification-health__service--not-configured {
+  border-color: rgba(148, 163, 184, 0.2);
+}
+
+.notification-health__service--not-configured .notification-health__service-status {
+  color: #9aa0a6;
+}
+
+.notification-health__error {
+  margin: 0;
+  color: #f87171;
+  font-size: 0.9rem;
+}
