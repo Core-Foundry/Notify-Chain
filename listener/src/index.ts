@@ -15,6 +15,7 @@ import { ArchiveStore } from './services/archive-store';
 import { loadArchiveConfig } from './services/archive-config';
 import { initializeDatabase } from './database/database';
 import { DiscordNotificationService } from './services/discord-notification';
+import { EventDeduplicationService } from './services/event-deduplication-service';
 import { eventRegistry } from './store/event-registry';
 import logger from './utils/logger';
 import { loadConfig, ConfigError } from './config';
@@ -32,10 +33,14 @@ async function main() {
   let cleanupService: CleanupService | null = null;
   let archiveService: ArchiveService | null = null;
   let archiveStore: ArchiveStore | null = null;
+  let deduplicationService: EventDeduplicationService | null = null;
 
   try {
     logger.info('Initializing database');
     const db = await initializeDatabase(config.databasePath);
+
+    // Initialize deduplication service
+    deduplicationService = new EventDeduplicationService(db);
 
     // Rebuild registry with configured event TTL
     if (config.cleanup) {
@@ -89,6 +94,9 @@ async function main() {
     throw error;
   }
 
+  // Create subscriber first
+  const subscriber = new EventSubscriber(config, deduplicationService);
+
   // Start events server and subscriber
   const eventsServer = startEventsServer({
     port: config.eventsApiPort,
@@ -97,14 +105,16 @@ async function main() {
     stellarNetworkPassphrase: config.stellarNetworkPassphrase,
     contractAddresses: config.contractAddresses,
     discordWebhookUrl: config.discord?.webhookUrl,
+    webhookSecrets: config.webhookSecrets,
+    apiKeys: config.apiKeys,
     notificationAPI,
     templateService,
     rateLimit: config.rateLimit,
     archiveStore,
     archiveService,
+    subscriber,
   });
 
-  const subscriber = new EventSubscriber(config);
   await subscriber.start();
 
   const shutdown = async () => {

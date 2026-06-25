@@ -17,7 +17,6 @@ import {
   collectRawBody,
 } from '../services/webhook-verifier';
 import { WebhookSecret, RateLimitConfig, ContractConfig } from '../types';
-import { WebhookSecret, RateLimitConfig } from '../types';
 import { RateLimiter } from './rate-limiter';
 import {
   getNotificationAnalyticsAggregator,
@@ -47,6 +46,7 @@ export interface EventsServerOptions {
   contractAddresses: ContractConfig[];
   discordWebhookUrl?: string;
   webhookSecrets?: WebhookSecret[];
+  apiKeys?: Array<{ key: string; name?: string }>;
   notificationAPI?: NotificationAPI | null;
   rateLimit?: RateLimitConfig;
   /**
@@ -60,6 +60,7 @@ export interface EventsServerOptions {
   archiveStore?: ArchiveStore | null;
   /** Archive service for the admin /run endpoint (optional). */
   archiveService?: ArchiveService | null;
+  subscriber?: any;
 }
 
 type ServiceStatus = 'ok' | 'error' | 'not_configured';
@@ -177,10 +178,16 @@ async function getContractPauseStatus(
 
     const simulation = await server.simulateTransaction(tx);
 
-    if (!StellarSDK.rpc.isSuccessfulSim(simulation) || !simulation.result) {
+    if (!('result' in simulation) || !simulation.result) {
+      let errorMsg = 'Failed to simulate contract call';
+      if ('error' in simulation && simulation.error) {
+        errorMsg = typeof simulation.error === 'string' 
+          ? simulation.error 
+          : String(simulation.error);
+      }
       return { 
         paused: false, 
-        error: simulation.error ? simulation.error.message : 'Failed to simulate contract call' 
+        error: errorMsg
       };
     }
 
@@ -215,6 +222,9 @@ async function buildStatusResponse(options: EventsServerOptions): Promise<{
   return {
     timestamp: new Date().toISOString(),
     contracts: contractStatuses
+  };
+}
+
 async function fetchNetworkTipLedger(rpcUrl: string): Promise<{
   ledger: number | null;
   errorDetail?: string;
@@ -450,6 +460,21 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
       return;
     }
 
+    // GET /api/queues/metrics
+    if (req.method === 'GET' && url.pathname === '/api/queues/metrics') {
+      const metrics = options.subscriber?.getQueueMetrics() || { eventQueue: null, retryQueue: null };
+      
+      logger.info('Handling GET /api/queues/metrics', {
+        requestId,
+        correlationId,
+        durationMs: Date.now() - startTime,
+      });
+      
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(metrics));
+      return;
+    }
+
     // GET /api/rate-limit/metrics
     if (req.method === 'GET' && url.pathname === '/api/rate-limit/metrics') {
       if (!rateLimiter) {
@@ -673,8 +698,27 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
       return;
     }
 
+    function isValidApiKey(apiKey: string | undefined, allowedKeys: Array<{ key: string; name?: string }> | undefined): boolean {
+      if (!allowedKeys || allowedKeys.length === 0) {
+        // If no API keys are configured, allow unauthenticated access is allowed (for backward compatibility)
+        return true;
+      }
+      if (!apiKey) {
+        return false;
+      }
+      return allowedKeys.some(k => k.key === apiKey);
+    }
+
     // Get notification delivery history endpoint
     if (req.method === 'GET' && req.url?.startsWith('/api/notifications/history')) {
+      // Check API key first
+      const apiKey = req.headers['x-api-key'] as string | undefined;
+      if (!isValidApiKey(apiKey, options.apiKeys)) {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Unauthorized: Invalid or missing API key' }));
+        return;
+      }
+
       const url = new URL(req.url, 'http://localhost');
       const limit = url.searchParams.get('limit') ? parseInt(url.searchParams.get('limit')!, 10) : undefined;
       const offset = url.searchParams.get('offset') ? parseInt(url.searchParams.get('offset')!, 10) : undefined;

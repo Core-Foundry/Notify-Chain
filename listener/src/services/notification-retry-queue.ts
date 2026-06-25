@@ -47,6 +47,15 @@ export class NotificationRetryQueue {
   private readonly notificationFn: NotificationFn;
   private readonly analytics: NotificationAnalyticsAggregator | null;
 
+  // Metrics
+  private metrics = {
+    totalEnqueued: 0,
+    totalProcessed: 0,
+    totalSucceeded: 0,
+    totalFailed: 0,
+    processingTimes: [] as number[],
+  };
+
   constructor(notificationFn: NotificationFn, options?: RetryQueueOptions) {
     this.notificationFn = notificationFn;
     this.baseDelayMs = options?.baseDelayMs ?? DEFAULTS.baseDelayMs;
@@ -88,6 +97,7 @@ export class NotificationRetryQueue {
 
     this.queuedFingerprints.add(fingerprint);
     this.queue.push({ event, contractConfig, retryCount: 0, nextRetryAt, requestId });
+    this.metrics.totalEnqueued++;
   }
 
   start(): void {
@@ -142,9 +152,13 @@ export class NotificationRetryQueue {
     });
 
     const success = await this.notificationFn(item.event, item.contractConfig, item.requestId);
+    const duration = Date.now() - retryStart;
 
     if (success) {
       this.queuedFingerprints.delete(fingerprint);
+      this.metrics.totalProcessed++;
+      this.metrics.totalSucceeded++;
+      this.metrics.processingTimes.push(duration);
       logger.info('Retry succeeded', {
         requestId: item.requestId,
         eventId: item.event.id,
@@ -156,11 +170,14 @@ export class NotificationRetryQueue {
 
     if (attempt >= this.maxRetries) {
       this.queuedFingerprints.delete(fingerprint);
+      this.metrics.totalProcessed++;
+      this.metrics.totalFailed++;
+      this.metrics.processingTimes.push(duration);
       this.analytics?.record({
         notificationType: NotificationType.DISCORD,
         contractAddress: item.contractConfig.address,
         outcome: 'failure',
-        durationMs: Date.now() - retryStart,
+        durationMs: duration,
         errorReason: `exhausted ${this.maxRetries} retries`,
         timestamp: Date.now(),
       });
@@ -186,6 +203,23 @@ export class NotificationRetryQueue {
     });
 
     this.queue.push({ ...item, retryCount: attempt, nextRetryAt });
+  }
+
+  getMetrics() {
+    const times = this.metrics.processingTimes;
+    const avg = times.length > 0 ? times.reduce((a, b) => a + b, 0) / times.length : 0;
+    const min = times.length > 0 ? Math.min(...times) : 0;
+    const max = times.length > 0 ? Math.max(...times) : 0;
+
+    return {
+      queueSize: this.queue.length,
+      ...this.metrics,
+      processingTime: {
+        min,
+        max,
+        avg,
+      },
+    };
   }
 
   private calculateDelay(retryCount: number): number {

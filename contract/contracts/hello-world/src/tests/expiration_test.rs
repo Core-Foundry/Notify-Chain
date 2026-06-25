@@ -477,4 +477,3 @@ fn test_cannot_extend_by_zero_seconds() {
     // Must panic
     client.extend_notification_expiry(&id, &creator, &0);
 }
-
