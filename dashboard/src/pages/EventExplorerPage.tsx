@@ -8,6 +8,7 @@ import { PaginationControls } from '../components/PaginationControls';
 import { IndexingHealthPanel } from '../components/IndexingHealthPanel';
 import { useEventFilters, useEventLoadingState, useFilteredEvents } from '../hooks/useEventSelectors';
 import { useEventStore } from '../store/eventStore';
+import { fetchEvents, fetchStatus, type ContractStatus } from '../services/eventsApi';
 import { fetchEvents } from '../services/eventsApi';
 import { resolveIndexingHealthUrl } from '../services/indexingHealthApi';
 import { generateMockEvents } from '../utils/eventData';
@@ -16,6 +17,7 @@ import { restoreWalletSession } from '../services/wallet';
 const DEFAULT_EVENT_COUNT = 5000;
 const DEFAULT_LIMIT = 12;
 const API_URL = import.meta.env.VITE_EVENTS_API_URL ?? 'http://localhost:8787/api/events';
+const LISTENER_BASE_URL = API_URL.replace('/api/events', '');
 const INDEXING_HEALTH_URL =
   import.meta.env.VITE_INDEXING_HEALTH_URL ?? resolveIndexingHealthUrl(API_URL);
 
@@ -35,6 +37,7 @@ export function EventExplorerPage() {
   const initialSearch = typeof window !== 'undefined' ? window.location.search : '';
   const [page, setPage] = useState(() => parsePageParam(initialSearch));
   const [limit, setLimit] = useState(() => parseLimitParam(initialSearch));
+  const [contractStatuses, setContractStatuses] = useState<ContractStatus[]>([]);
 
   const setEvents = useEventStore((state) => state.setEvents);
   const setLoading = useEventStore((state) => state.setLoading);
@@ -71,6 +74,19 @@ export function EventExplorerPage() {
       }
     }
 
+    async function loadStatus() {
+      try {
+        const status = await fetchStatus(LISTENER_BASE_URL);
+        if (!cancelled) {
+          setContractStatuses(status.contracts);
+        }
+      } catch {
+        // Ignore status fetch errors, just don't show status
+      }
+    }
+
+    loadEvents();
+    loadStatus();
     loadEvents();
 
     return () => {
@@ -142,6 +158,26 @@ export function EventExplorerPage() {
         <WalletConnectButton />
       </header>
 
+      {contractStatuses.length > 0 && (
+        <section className="contract-statuses">
+          <h2 className="contract-statuses__title">Contract Status</h2>
+          <div className="contract-statuses__list">
+            {contractStatuses.map((contract) => (
+              <div key={contract.address} className="contract-status-card">
+                <div className="contract-status-card__address">{contract.address}</div>
+                <div className={`contract-status-card__badge ${contract.paused ? 'contract-status-card__badge--paused' : 'contract-status-card__badge--active'}`}>
+                  {contract.paused ? 'PAUSED' : 'ACTIVE'}
+                </div>
+                {contract.error && (
+                  <div className="contract-status-card__error">
+                    Error: {contract.error}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
       <IndexingHealthPanel healthUrl={INDEXING_HEALTH_URL} />
 
       <EventFiltersBar />
@@ -169,6 +205,7 @@ export function EventExplorerPage() {
       {isLoading ? (
         <EventExplorerSkeleton rows={Math.min(limit, 8)} />
       ) : currentPageEvents.length > 0 ? (
+        <EventExplorerTable events={currentPageEvents} contractStatuses={contractStatuses} />
         <EventExplorerTable events={currentPageEvents} />
       ) : (
         <section className="event-explorer__empty-state" role="status" aria-live="polite">

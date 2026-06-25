@@ -719,6 +719,11 @@ body {
   background: rgba(167, 139, 250, 0.14);
 }
 
+.event-explorer__badge--paused {
+  color: #f4b400;
+  background: rgba(244, 180, 0, 0.14);
+}
+
 .event-explorer__badge--default {
   color: #e2e8f0;
   background: rgba(255, 255, 255, 0.08);
@@ -755,6 +760,71 @@ body {
 .event-explorer__empty-state h2 {
   margin: 0 0 10px;
   font-size: 1.4rem;
+}
+
+/* ─── Contract Status ────────────────────────────────────────── */
+.contract-statuses {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.02);
+  padding: 16px;
+}
+
+.contract-statuses__title {
+  margin: 0 0 12px;
+  font-size: 1rem;
+  font-weight: 600;
+  color: #cbd5e1;
+}
+
+.contract-statuses__list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.contract-status-card {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.contract-status-card__address {
+  font-family: 'Courier New', Courier, monospace;
+  color: #e2e8f0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+
+.contract-status-card__badge {
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.contract-status-card__badge--active {
+  color: #34d399;
+  background: rgba(52, 211, 153, 0.15);
+}
+
+.contract-status-card__badge--paused {
+  color: #f4b400;
+  background: rgba(244, 180, 0, 0.15);
+}
+
+.contract-status-card__error {
+  font-size: 0.78rem;
+  color: #f87171;
 }
 
 .pagination-controls {
@@ -870,6 +940,24 @@ body {
   }
 }
 
+/* ─── Navigation & Export Center Styles ────────────────────────── */
+
+.nav-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 24px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  padding-bottom: 12px;
+}
+
+.nav-brand {
+  font-weight: 700;
+  font-size: 1.25rem;
+  color: #38bdf8;
+}
+
+.nav-tabs {
 /* ── Notification Delivery Timeline ─────────────────────────────────────── */
 
 .timeline-view {
@@ -903,6 +991,218 @@ body {
   gap: 8px;
 }
 
+.nav-tab-btn {
+  background: transparent;
+  border: none;
+  color: #9aa0a6;
+  padding: 8px 16px;
+  font-size: 0.9rem;
+  font-weight: 500;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.nav-tab-btn:hover {
+  color: #e8eaed;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.nav-tab-btn--active {
+  color: #0b0d12;
+  background: #38bdf8;
+}
+
+.nav-tab-btn--active:hover {
+  color: #0b0d12;
+  background: #7dd3fc;
+}
+
+.export-history-page {
+  padding: 8px 0;
+}
+
+.export-history__header {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 32px;
+  gap: 20px;
+}
+
+.export-history__eyebrow {
+  color: #38bdf8;
+  text-transform: uppercase;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  margin: 0 0 8px;
+}
+
+.export-history__lead {
+  color: #9aa0a6;
+  max-width: 600px;
+  margin: 8px 0 0;
+}
+
+.export-table-container {
+  overflow-x: auto;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.01);
+  margin-bottom: 24px;
+}
+
+.export-table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+}
+
+.export-table th {
+  padding: 16px;
+  font-size: 0.85rem;
+  color: #9aa0a6;
+  font-weight: 500;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.export-table td {
+  padding: 16px;
+  font-size: 0.9rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.export-table__row:hover {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.export-table__cell-id {
+  font-family: monospace;
+  color: #9aa0a6;
+}
+
+.export-table__cell-name {
+  font-weight: 500;
+  color: #e8eaed;
+}
+
+.export-table__cell-date {
+  color: #9aa0a6;
+}
+
+.export-table__cell-numeric {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.format-badge {
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.format-badge--csv {
+  background: rgba(16, 185, 129, 0.1);
+  color: #10b981;
+}
+
+.format-badge--json {
+  background: rgba(245, 158, 11, 0.1);
+  color: #f59e0b;
+}
+
+.format-badge--pdf {
+  background: rgba(239, 68, 68, 0.1);
+  color: #ef4444;
+}
+
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 12px;
+  font-size: 0.8rem;
+  font-weight: 500;
+}
+
+.status-badge__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+
+.status-badge--completed {
+  background: rgba(16, 185, 129, 0.1);
+  color: #10b981;
+}
+
+.status-badge--completed .status-badge__dot {
+  background: #10b981;
+  box-shadow: 0 0 8px #10b981;
+}
+
+.status-badge--processing {
+  background: rgba(59, 130, 246, 0.1);
+  color: #3b82f6;
+}
+
+.status-badge--processing .status-badge__dot {
+  background: #3b82f6;
+  animation: pulse-badge-animation 1.5s infinite alternate;
+}
+
+.status-badge--failed {
+  background: rgba(239, 68, 68, 0.1);
+  color: #ef4444;
+}
+
+.status-badge--failed .status-badge__dot {
+  background: #ef4444;
+}
+
+@keyframes pulse-badge-animation {
+  0% {
+    transform: scale(0.8);
+    opacity: 0.5;
+  }
+  100% {
+    transform: scale(1.2);
+    opacity: 1;
+    box-shadow: 0 0 8px #3b82f6;
+  }
+}
+
+.export-action-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: #1e293b;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+  padding: 6px 12px;
+  color: #e8eaed;
+  font-size: 0.8rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.export-action-btn:hover:not(:disabled) {
+  background: #334155;
+  border-color: rgba(255, 255, 255, 0.16);
+}
+
+.export-action-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.download-icon {
+  width: 14px;
+  height: 14px;
 .timeline-view__input {
   flex: 1;
   padding: 8px 12px;

@@ -8,6 +8,7 @@ import { NotificationType } from '../types/scheduled-notification';
 import logger from '../utils/logger';
 import { generateRequestId, resolveCorrelationId } from '../utils/request-id';
 import { NotificationHistoryService } from '../services/notification-history';
+import { SearchSuggestionService } from '../services/search-suggestion';
 import {
   verifySignature,
   extractSignature,
@@ -15,6 +16,7 @@ import {
   getSecretForKey,
   collectRawBody,
 } from '../services/webhook-verifier';
+import { WebhookSecret, RateLimitConfig, ContractConfig } from '../types';
 import { WebhookSecret, RateLimitConfig } from '../types';
 import { RateLimiter } from './rate-limiter';
 import {
@@ -41,6 +43,8 @@ export interface EventsServerOptions {
   port: number;
   corsOrigin?: string;
   stellarRpcUrl: string;
+  stellarNetworkPassphrase: string;
+  contractAddresses: ContractConfig[];
   discordWebhookUrl?: string;
   webhookSecrets?: WebhookSecret[];
   notificationAPI?: NotificationAPI | null;
@@ -148,6 +152,69 @@ export async function checkDiscord(webhookUrl: string): Promise<ServiceHealth> {
   }
 }
 
+async function getContractPauseStatus(
+  contractAddress: string,
+  stellarRpcUrl: string
+): Promise<{ paused: boolean; error?: string }> {
+  try {
+    const server = new StellarSDK.rpc.Server(stellarRpcUrl);
+    const contract = new StellarSDK.Contract(contractAddress);
+    
+    // Create a dummy account for simulation (we don't need to actually sign anything)
+    const dummyKeypair = StellarSDK.Keypair.random();
+    const sourceAccount = await server.getAccount(dummyKeypair.publicKey()).catch(() => {
+      // If the dummy account doesn't exist, we can still simulate
+      return new StellarSDK.Account(dummyKeypair.publicKey(), '0');
+    });
+
+    const tx = new StellarSDK.TransactionBuilder(sourceAccount, {
+      fee: StellarSDK.BASE_FEE,
+      networkPassphrase: 'Test SDF Network ; September 2015', // We just need this for simulation
+    })
+      .addOperation(contract.call('get_paused_status'))
+      .setTimeout(30)
+      .build();
+
+    const simulation = await server.simulateTransaction(tx);
+
+    if (!StellarSDK.rpc.isSuccessfulSim(simulation) || !simulation.result) {
+      return { 
+        paused: false, 
+        error: simulation.error ? simulation.error.message : 'Failed to simulate contract call' 
+      };
+    }
+
+    const value = StellarSDK.scValToNative(simulation.result.retval);
+    return { paused: !!value };
+  } catch (err) {
+    return { 
+      paused: false, 
+      error: err instanceof Error ? err.message : String(err) 
+    };
+  }
+}
+
+async function buildStatusResponse(options: EventsServerOptions): Promise<{
+  contracts: Array<{
+    address: string;
+    paused: boolean;
+    error?: string;
+  }>;
+  timestamp: string;
+}> {
+  const contractStatuses = await Promise.all(
+    options.contractAddresses.map(async (contractConfig) => {
+      const status = await getContractPauseStatus(contractConfig.address, options.stellarRpcUrl);
+      return {
+        address: contractConfig.address,
+        ...status
+      };
+    })
+  );
+
+  return {
+    timestamp: new Date().toISOString(),
+    contracts: contractStatuses
 async function fetchNetworkTipLedger(rpcUrl: string): Promise<{
   ledger: number | null;
   errorDetail?: string;
@@ -266,6 +333,7 @@ function isRateLimitExempt(pathname: string): boolean {
 export function createEventsServer(options: EventsServerOptions): http.Server {
   const corsOrigin = options.corsOrigin ?? 'http://localhost:5173';
   const historyService = new NotificationHistoryService();
+  const suggestionService = new SearchSuggestionService();
   const rateLimiter = options.rateLimit ? new RateLimiter(options.rateLimit) : undefined;
 
   const server = http.createServer(async (req, res) => {
@@ -308,6 +376,19 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
         logger.error('Health check failed unexpectedly', { error: err, requestId, correlationId });
         res.writeHead(500, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ status: 'error', detail: 'Internal health check failure' }));
+      });
+      return;
+    }
+
+    // GET /api/status
+    if (req.method === 'GET' && url.pathname === '/api/status') {
+      buildStatusResponse(options).then((status) => {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(status));
+      }).catch((err) => {
+        logger.error('Status check failed unexpectedly', { error: err, requestId, correlationId });
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ status: 'error', detail: 'Internal status check failure' }));
       });
       return;
     }
@@ -630,6 +711,31 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
         })
         .catch((error) => {
           logger.error('Failed to retrieve notification history', { error, requestId, correlationId });
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: (error as Error).message }));
+        });
+      return;
+    }
+
+    // GET /api/search/suggestions
+    if (req.method === 'GET' && url.pathname === '/api/search/suggestions') {
+      const q = url.searchParams.get('q') || '';
+      const limit = url.searchParams.get('limit') ? parseInt(url.searchParams.get('limit')!, 10) : undefined;
+
+      logger.info('Handling GET /api/search/suggestions', { requestId, correlationId, q, limit });
+
+      suggestionService.getSuggestions(q, limit)
+        .then((result) => {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(result));
+
+          logger.info('GET /api/search/suggestions complete', {
+            requestId,
+            durationMs: Date.now() - startTime,
+          });
+        })
+        .catch((error) => {
+          logger.error('Failed to retrieve search suggestions', { error, requestId, correlationId });
           res.writeHead(500, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ error: (error as Error).message }));
         });

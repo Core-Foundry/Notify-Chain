@@ -7,6 +7,7 @@ This guide walks you through setting up a local development environment for
 NotifyChain. By the end, you will have the listener service, the dashboard,
 the frontend analytics app, and the smart contracts building and running on
 your machine.
+This guide walks you through setting up a local development environment for NotifyChain. By the end, you will have the listener service, the dashboard, and the smart contracts building and running on your machine.
 
 ---
 
@@ -23,6 +24,11 @@ your machine.
 9. [Running Tests](#9-running-tests)
 10. [VS Code Setup (Recommended)](#10-vs-code-setup-recommended)
 11. [Troubleshooting & FAQ](#11-troubleshooting--faq)
+5. [Smart Contracts Setup](#5-smart-contracts-setup)
+6. [Environment Variables Reference](#6-environment-variables-reference)
+7. [Running Tests](#7-running-tests)
+8. [VS Code Setup (Recommended)](#8-vs-code-setup-recommended)
+9. [Troubleshooting & FAQ](#9-troubleshooting--faq)
 
 ---
 
@@ -89,6 +95,7 @@ rustc --version && cargo --version && stellar --version
 
 ```bash
 git clone https://github.com/CollinsC1O/Notify-Chain.git
+git clone https://github.com/Core-Foundry/Notify-Chain.git
 cd Notify-Chain
 ```
 
@@ -98,6 +105,7 @@ If you plan to contribute, fork the repository first, then clone your fork:
 git clone https://github.com/YOUR-USERNAME/Notify-Chain.git
 cd Notify-Chain
 git remote add upstream https://github.com/CollinsC1O/Notify-Chain.git
+git remote add upstream https://github.com/Core-Foundry/Notify-Chain.git
 ```
 
 ---
@@ -139,6 +147,7 @@ DISCORD_WEBHOOK_ID=YOUR_WEBHOOK_ID
 > together. If either is missing, Discord notifications are disabled.
 
 For a full reference of every variable, see [Environment Variables Reference](#7-environment-variables-reference).
+For a full reference of every variable, see [Environment Variables Reference](#6-environment-variables-reference).
 
 ### 3.3 Initialize the Database
 
@@ -273,6 +282,11 @@ Opens at [http://localhost:3000](http://localhost:3000).
 The project contains two Soroban smart contracts. Building them is optional — you only need to do this if you are modifying contracts or deploying your own instances.
 
 ### 6.1 Build Contracts
+## 5. Smart Contracts Setup
+
+The project contains two Soroban smart contracts. Building them is optional — you only need to do this if you are modifying contracts or deploying your own instances.
+
+### 5.1 Build Contracts
 
 **AutoShare Contract** (`contract/`):
 
@@ -291,6 +305,7 @@ stellar contract build
 ```
 
 ### 6.2 Run Contract Tests
+### 5.2 Run Contract Tests
 
 ```bash
 # AutoShare
@@ -303,6 +318,7 @@ cargo test
 ```
 
 ### 6.3 Deploy to Testnet (Optional)
+### 5.3 Deploy to Testnet (Optional)
 
 This requires a funded Stellar testnet identity:
 
@@ -356,6 +372,7 @@ After initializing, add the contract ID to your `listener/.env`
 `CONTRACT_ADDRESSES` so the listener knows to monitor it.
 
 ### 6.5 Useful Contract Commands
+### 5.4 Useful Contract Commands
 
 | Command                                          | Purpose                     |
 |--------------------------------------------------|-----------------------------|
@@ -372,6 +389,9 @@ After initializing, add the contract ID to your `listener/.env`
 ## 7. Environment Variables Reference
 
 ### 7.1 Listener (`listener/.env`)
+## 6. Environment Variables Reference
+
+### 6.1 Listener (`listener/.env`)
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
@@ -393,6 +413,7 @@ After initializing, add the contract ID to your `listener/.env`
 | `DISCORD_WEBHOOK_ID` | No | — | Discord webhook ID (required together with webhook URL) |
 | `NOTIFICATION_DEDUPLICATION_WINDOW_MS` | No | `60000` | In-memory dedup window for Discord notifications (ms) |
 | `NOTIFICATION_DEDUPLICATION_MAX_SIZE` | No | `10000` | Max entries in in-memory dedup cache |
+| `DISCORD_WEBHOOK_ID` | No | — | Discord webhook ID (required if webhook URL is set) |
 | **Retry Queue** | | | |
 | `RETRY_BASE_DELAY_MS` | No | `5000` | Base delay for notification retry exponential backoff |
 | `RETRY_MAX_RETRIES` | No | `5` | Max retry attempts for failed Discord notifications |
@@ -425,6 +446,7 @@ After initializing, add the contract ID to your `listener/.env`
 | `NODE_ENV` | No | — | Set to `production` for newline-delimited JSON log output |
 
 ### 7.2 Dashboard (`dashboard/.env`)
+### 6.2 Dashboard (`dashboard/.env`)
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
@@ -432,6 +454,7 @@ After initializing, add the contract ID to your `listener/.env`
 | `VITE_STELLAR_NETWORK` | No | `TESTNET` | Stellar network for wallet integration (`TESTNET` or `MAINNET`) |
 
 ### 7.3 Minimum Viable Configuration
+### 6.3 Minimum Viable Configuration
 
 To run the listener with no optional features:
 
@@ -525,6 +548,11 @@ cd listener && npm run migrate
 ---
 
 ## 9. Running Tests
+```
+
+---
+
+## 7. Running Tests
 
 Always run tests before submitting a pull request.
 
@@ -577,6 +605,7 @@ cargo test --workspace --all-features --verbose
 ---
 
 ## 10. VS Code Setup (Recommended)
+## 8. VS Code Setup (Recommended)
 
 ### Extensions
 
@@ -604,6 +633,7 @@ This configures `rust-analyzer` to use the `wasm32` target and avoids false-posi
 ---
 
 ## 11. Troubleshooting & FAQ
+## 9. Troubleshooting & FAQ
 
 > A more extensive troubleshooting guide is available at [`TROUBLESHOOTING.md`](TROUBLESHOOTING.md). This section covers the most common setup issues.
 
@@ -624,6 +654,7 @@ npm uninstall sqlite3 && npm install
 On Windows, ensure you have Visual Studio Build Tools installed with the
 "C++ build tools" workload. On macOS, install Xcode Command Line Tools:
 `xcode-select --install`.
+On Windows, ensure you have Visual Studio Build Tools installed with the "C++ build tools" workload.
 
 ---
 
@@ -735,6 +766,7 @@ stellar contract build
 ### After a `git pull`
 
 If things stop working after pulling latest changes, run the full refresh:
+If things stop working after pulling latest changes:
 
 ```bash
 # Contracts
@@ -755,6 +787,7 @@ cd frontend && npm install
 ### Still Stuck?
 
 1. Search [open issues](https://github.com/CollinsC1O/Notify-Chain/issues) — your problem may already be reported.
+1. Search [open issues](https://github.com/Core-Foundry/Notify-Chain/issues) — your problem may already be reported.
 2. Read the detailed [Troubleshooting Guide](TROUBLESHOOTING.md).
 3. Open a new issue with:
    - Your OS and version
@@ -796,6 +829,7 @@ Notify-Chain/
 │   └── app/
 │       ├── analytics/                 # Analytics pages with charts
 │       └── page.tsx                   # Landing page
+├── frontend/                          # Legacy Next.js frontend (not actively maintained)
 │
 ├── scripts/                           # Helper scripts (health check, etc.)
 │

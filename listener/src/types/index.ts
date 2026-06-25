@@ -35,6 +35,7 @@ export interface RateLimitConfig {
 export interface Config {
   stellarNetwork: string;
   stellarRpcUrl: string;
+  stellarNetworkPassphrase: string;
   contractAddresses: ContractConfig[];
   pollIntervalMs: number;
   maxReconnectAttempts: number;

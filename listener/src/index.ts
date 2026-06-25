@@ -39,6 +39,7 @@ async function main() {
 
     // Rebuild registry with configured event TTL
     if (config.cleanup) {
+      (eventRegistry as any).ttlMs = config.cleanup.eventRetentionMs;
       eventRegistry.setTtlMs(config.cleanup.eventRetentionMs);
     }
 
@@ -93,6 +94,8 @@ async function main() {
     port: config.eventsApiPort,
     corsOrigin: config.eventsApiCorsOrigin,
     stellarRpcUrl: config.stellarRpcUrl,
+    stellarNetworkPassphrase: config.stellarNetworkPassphrase,
+    contractAddresses: config.contractAddresses,
     discordWebhookUrl: config.discord?.webhookUrl,
     notificationAPI,
     templateService,

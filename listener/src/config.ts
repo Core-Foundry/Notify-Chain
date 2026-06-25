@@ -140,6 +140,7 @@ export function loadConfig(): Config {
   const discord = loadDiscordConfig();
   const rawContractAddresses = parseJsonEnv<unknown>('CONTRACT_ADDRESSES', '[]');
   const rawWebhookSecrets = parseJsonEnv<unknown>('WEBHOOK_SECRETS', '[]');
+  const clientOverrides = parseJsonEnv<Record<string, { maxRequests: number; windowMs?: number>>(
   const clientOverrides = parseJsonEnv<Record<string, { maxRequests: number; windowMs?: number }>>(
     'RATE_LIMIT_CLIENT_OVERRIDES',
     '{}'
@@ -149,6 +150,7 @@ export function loadConfig(): Config {
     stellarNetwork: trimEnv('STELLAR_NETWORK') || 'testnet',
     stellarRpcUrl:
       trimEnv('STELLAR_RPC_URL') || 'https://soroban-testnet.stellar.org:443',
+    stellarNetworkPassphrase: trimEnv('STELLAR_NETWORK_PASSPHRASE') || 'Test SDF Network ; September 2015',
     contractAddresses: validateContractAddresses(rawContractAddresses),
     pollIntervalMs: parseIntegerEnv('POLL_INTERVAL_MS', '30000'),
     maxReconnectAttempts: parseIntegerEnv('MAX_RECONNECT_ATTEMPTS', '5'),
