@@ -336,3 +336,138 @@ describe('NotificationScheduler', () => {
     });
   });
 });
+
+describe('Stale cache regression tests', () => {
+  let db: Database;
+  let repository: ScheduledNotificationRepository;
+
+  const testDbPath = './data/test-stale-cache.db';
+
+  beforeAll(async () => {
+    const dbDir = path.dirname(testDbPath);
+    if (!fs.existsSync(dbDir)) {
+      fs.mkdirSync(dbDir, { recursive: true });
+    }
+    if (fs.existsSync(testDbPath)) {
+      fs.unlinkSync(testDbPath);
+    }
+    db = new Database(testDbPath);
+    await db.initialize();
+    repository = new ScheduledNotificationRepository(db);
+  });
+
+  afterAll(async () => {
+    await db.close();
+    if (fs.existsSync(testDbPath)) {
+      fs.unlinkSync(testDbPath);
+    }
+  });
+
+  beforeEach(async () => {
+    await db.run('DELETE FROM notification_execution_log');
+    await db.run('DELETE FROM scheduled_notifications');
+  });
+
+  test('markAsCompleted updates updated_at — no stale timestamp after delivery', async () => {
+    const id = await repository.create({
+      payload: { message: 'Stale test' },
+      notificationType: NotificationType.DISCORD,
+      targetRecipient: 'test-webhook',
+      executeAt: new Date(Date.now() - 1000),
+    });
+
+    await repository.markAsCompleted(id);
+
+    const notification = await repository.getById(id);
+    expect(notification?.status).toBe(NotificationStatus.COMPLETED);
+    // updated_at must be a defined, valid date — confirms the column is written on status change
+    expect(notification?.updatedAt).toBeDefined();
+    expect(notification?.updatedAt).toBeInstanceOf(Date);
+    expect(isNaN(notification?.updatedAt?.getTime() ?? NaN)).toBe(false);
+  });
+
+  test('markAsFailedOrRetry updates updated_at — no stale timestamp on retry', async () => {
+    const id = await repository.create({
+      payload: { message: 'Retry stale test' },
+      notificationType: NotificationType.DISCORD,
+      targetRecipient: 'test-webhook',
+      executeAt: new Date(Date.now() - 1000),
+      maxRetries: 3,
+    });
+
+    await repository.markAsFailedOrRetry(id, new Error('Delivery failed'), 0, 3);
+
+    const notification = await repository.getById(id);
+    expect(notification?.status).toBe(NotificationStatus.PENDING);
+    expect(notification?.updatedAt).toBeDefined();
+    expect(notification?.updatedAt).toBeInstanceOf(Date);
+    expect(isNaN(notification?.updatedAt?.getTime() ?? NaN)).toBe(false);
+  });
+
+  test('markAsFailedOrRetry updates updated_at when permanently failed', async () => {
+    const id = await repository.create({
+      payload: { message: 'Final failure stale test' },
+      notificationType: NotificationType.DISCORD,
+      targetRecipient: 'test-webhook',
+      executeAt: new Date(Date.now() - 1000),
+      maxRetries: 2,
+    });
+
+    await repository.markAsFailedOrRetry(id, new Error('Max retries exceeded'), 2, 2);
+
+    const notification = await repository.getById(id);
+    expect(notification?.status).toBe(NotificationStatus.FAILED);
+    expect(notification?.updatedAt).toBeDefined();
+    expect(notification?.updatedAt).toBeInstanceOf(Date);
+    expect(isNaN(notification?.updatedAt?.getTime() ?? NaN)).toBe(false);
+  });
+
+  test('recoverStaleLocks updates updated_at — no stale status after lock recovery', async () => {
+    const id = await repository.create({
+      payload: { message: 'Stale lock test' },
+      notificationType: NotificationType.DISCORD,
+      targetRecipient: 'test-webhook',
+      executeAt: new Date(Date.now() - 1000),
+    });
+
+    await repository.fetchAndLockPendingNotifications('processor-stale', 30000, 10);
+
+    // Expire the lock
+    const pastLock = new Date(Date.now() - 1000);
+    await db.run('UPDATE scheduled_notifications SET lock_expires_at = ? WHERE id = ?', [
+      pastLock.toISOString(),
+      id,
+    ]);
+
+    await repository.recoverStaleLocks();
+
+    const recovered = await repository.getById(id);
+    expect(recovered?.status).toBe(NotificationStatus.PENDING);
+    expect(recovered?.processorId).toBeNull();
+    // updated_at must be a valid date — confirms the column is written on lock recovery
+    expect(recovered?.updatedAt).toBeDefined();
+    expect(recovered?.updatedAt).toBeInstanceOf(Date);
+    expect(isNaN(recovered?.updatedAt?.getTime() ?? NaN)).toBe(false);
+  });
+
+  test('stale status is not served after delivery: re-fetch reflects COMPLETED', async () => {
+    const id = await repository.create({
+      payload: { message: 'Delivery stale check' },
+      notificationType: NotificationType.DISCORD,
+      targetRecipient: 'test-webhook',
+      executeAt: new Date(Date.now() - 1000),
+    });
+
+    // Simulate the state a UI would cache before delivery
+    const beforeDelivery = await repository.getById(id);
+    expect(beforeDelivery?.status).toBe(NotificationStatus.PENDING);
+
+    // Delivery happens
+    await repository.markAsCompleted(id);
+
+    // Re-fetch (simulating a poll/refresh) must return the new status
+    const afterDelivery = await repository.getById(id);
+    expect(afterDelivery?.status).toBe(NotificationStatus.COMPLETED);
+    expect(afterDelivery?.status).not.toBe(beforeDelivery?.status);
+  });
+});

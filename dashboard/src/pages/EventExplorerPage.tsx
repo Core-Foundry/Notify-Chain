@@ -13,6 +13,7 @@ import { restoreWalletSession } from '../services/wallet';
 const DEFAULT_EVENT_COUNT = 5000;
 const DEFAULT_LIMIT = 12;
 const API_URL = import.meta.env.VITE_EVENTS_API_URL ?? 'http://localhost:8787/api/events';
+const POLL_INTERVAL_MS = 15_000;
 
 function parsePageParam(search: string) {
   const params = new URLSearchParams(search);
@@ -68,8 +69,23 @@ export function EventExplorerPage() {
 
     loadEvents();
 
+    // Poll for status updates so delivered/failed notifications are reflected
+    // without requiring a manual page refresh.
+    const intervalId = setInterval(async () => {
+      try {
+        const remoteEvents = await fetchEvents(API_URL);
+        if (!cancelled) {
+          setEvents(remoteEvents);
+        }
+      } catch {
+        // Silently ignore polling errors — the error banner is reserved for
+        // the initial load failure so background polls don't disrupt the user.
+      }
+    }, POLL_INTERVAL_MS);
+
     return () => {
       cancelled = true;
+      clearInterval(intervalId);
     };
   }, [setEvents, setError, setLoading]);
 

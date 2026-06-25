@@ -302,6 +302,11 @@ impl AutoShareContract {
     pub fn is_notification_revoked(env: Env, notification_id: BytesN<32>) -> bool {
         autoshare_logic::is_notification_revoked(env, notification_id).unwrap()
     }
+
+    /// Acknowledges multiple scheduled notifications in a single batch.
+    pub fn acknowledge_notifications(env: Env, caller: Address, notification_ids: Vec<BytesN<32>>) {
+        autoshare_logic::acknowledge_notifications(env, caller, notification_ids).unwrap();
+    }
 }
 
 #[cfg(test)]
@@ -333,4 +338,7 @@ mod tests {
 
     #[path = "../tests/revocation_test.rs"]
     mod revocation_test;
+
+    #[path = "../tests/batch_ack_test.rs"]
+    mod batch_ack_test;
 }

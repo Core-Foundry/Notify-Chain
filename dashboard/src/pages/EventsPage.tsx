@@ -11,6 +11,7 @@ import { restoreWalletSession } from '../services/wallet';
 const DEFAULT_EVENT_COUNT = 5000;
 const API_URL =
   import.meta.env.VITE_EVENTS_API_URL ?? 'http://localhost:8787/api/events';
+const POLL_INTERVAL_MS = 15_000;
 
 export function EventsPage() {
   const setEvents = useEventStore((state) => state.setEvents);
@@ -48,8 +49,20 @@ export function EventsPage() {
 
     loadEvents();
 
+    const intervalId = setInterval(async () => {
+      try {
+        const remoteEvents = await fetchEvents(API_URL);
+        if (!cancelled) {
+          setEvents(remoteEvents);
+        }
+      } catch {
+        // Silently ignore background poll errors.
+      }
+    }, POLL_INTERVAL_MS);
+
     return () => {
       cancelled = true;
+      clearInterval(intervalId);
     };
   }, [setEvents, setError, setLoading]);
 
