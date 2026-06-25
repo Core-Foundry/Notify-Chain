@@ -94,6 +94,9 @@ async function main() {
     throw error;
   }
 
+  // Create subscriber first
+  const subscriber = new EventSubscriber(config, deduplicationService);
+
   // Start events server and subscriber
   const eventsServer = startEventsServer({
     port: config.eventsApiPort,
@@ -107,9 +110,9 @@ async function main() {
     rateLimit: config.rateLimit,
     archiveStore,
     archiveService,
+    subscriber,
   });
 
-  const subscriber = new EventSubscriber(config, deduplicationService);
   await subscriber.start();
 
   const shutdown = async () => {

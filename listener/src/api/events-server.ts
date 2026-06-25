@@ -59,6 +59,7 @@ export interface EventsServerOptions {
   archiveStore?: ArchiveStore | null;
   /** Archive service for the admin /run endpoint (optional). */
   archiveService?: ArchiveService | null;
+  subscriber?: any;
 }
 
 type ServiceStatus = 'ok' | 'error' | 'not_configured';
@@ -455,6 +456,21 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
 
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(response));
+      return;
+    }
+
+    // GET /api/queues/metrics
+    if (req.method === 'GET' && url.pathname === '/api/queues/metrics') {
+      const metrics = options.subscriber?.getQueueMetrics() || { eventQueue: null, retryQueue: null };
+      
+      logger.info('Handling GET /api/queues/metrics', {
+        requestId,
+        correlationId,
+        durationMs: Date.now() - startTime,
+      });
+      
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(metrics));
       return;
     }
 

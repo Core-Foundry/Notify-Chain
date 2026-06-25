@@ -265,7 +265,9 @@ pub fn initialize_admin(env: Env, admin: Address) {
 
         // Initialize empty supported tokens list in instance storage
         let empty_tokens: Vec<Address> = Vec::new(&env);
-        env.storage().instance().set(&INSTANCE_TOKENS, &empty_tokens);
+        env.storage()
+            .instance()
+            .set(&INSTANCE_TOKENS, &empty_tokens);
     }
 }
 
@@ -464,10 +466,7 @@ pub fn set_usage_fee(env: Env, fee: u32, admin: Address) -> Result<(), Error> {
 }
 
 pub fn get_usage_fee(env: Env) -> u32 {
-    env.storage()
-        .instance()
-        .get(&INSTANCE_FEE)
-        .unwrap_or(10u32)
+    env.storage().instance().get(&INSTANCE_FEE).unwrap_or(10u32)
 }
 
 // ============================================================================
@@ -1162,4 +1161,3 @@ pub fn extend_notification_expiry(
 
     Ok(())
 }
-

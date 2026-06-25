@@ -252,4 +252,3 @@ pub struct NotificationExtended {
     pub priority: NotificationPriority,
     pub new_expires_at: u64,
 }
-
