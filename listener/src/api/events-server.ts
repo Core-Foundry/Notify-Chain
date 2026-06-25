@@ -17,7 +17,6 @@ import {
   collectRawBody,
 } from '../services/webhook-verifier';
 import { WebhookSecret, RateLimitConfig, ContractConfig } from '../types';
-import { WebhookSecret, RateLimitConfig } from '../types';
 import { RateLimiter } from './rate-limiter';
 import {
   getNotificationAnalyticsAggregator,
@@ -60,6 +59,7 @@ export interface EventsServerOptions {
   archiveStore?: ArchiveStore | null;
   /** Archive service for the admin /run endpoint (optional). */
   archiveService?: ArchiveService | null;
+  subscriber?: any;
 }
 
 type ServiceStatus = 'ok' | 'error' | 'not_configured';
@@ -177,10 +177,16 @@ async function getContractPauseStatus(
 
     const simulation = await server.simulateTransaction(tx);
 
-    if (!StellarSDK.rpc.isSuccessfulSim(simulation) || !simulation.result) {
+    if (!('result' in simulation) || !simulation.result) {
+      let errorMsg = 'Failed to simulate contract call';
+      if ('error' in simulation && simulation.error) {
+        errorMsg = typeof simulation.error === 'string' 
+          ? simulation.error 
+          : String(simulation.error);
+      }
       return { 
         paused: false, 
-        error: simulation.error ? simulation.error.message : 'Failed to simulate contract call' 
+        error: errorMsg
       };
     }
 
@@ -215,6 +221,9 @@ async function buildStatusResponse(options: EventsServerOptions): Promise<{
   return {
     timestamp: new Date().toISOString(),
     contracts: contractStatuses
+  };
+}
+
 async function fetchNetworkTipLedger(rpcUrl: string): Promise<{
   ledger: number | null;
   errorDetail?: string;
@@ -447,6 +456,21 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
 
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(response));
+      return;
+    }
+
+    // GET /api/queues/metrics
+    if (req.method === 'GET' && url.pathname === '/api/queues/metrics') {
+      const metrics = options.subscriber?.getQueueMetrics() || { eventQueue: null, retryQueue: null };
+      
+      logger.info('Handling GET /api/queues/metrics', {
+        requestId,
+        correlationId,
+        durationMs: Date.now() - startTime,
+      });
+      
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(metrics));
       return;
     }
 

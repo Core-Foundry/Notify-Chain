@@ -42,6 +42,15 @@ export class EventProcessingQueue {
   private readonly processor: EventProcessor;
   private timer: ReturnType<typeof setInterval> | null = null;
 
+  // Metrics
+  private metrics = {
+    totalEnqueued: 0,
+    totalProcessed: 0,
+    totalSucceeded: 0,
+    totalFailed: 0,
+    processingTimes: [] as number[],
+  };
+
   constructor(processor: EventProcessor, options?: EventProcessingQueueOptions) {
     this.processor = processor;
     this.maxConcurrency = Math.max(1, options?.maxConcurrency ?? DEFAULTS.maxConcurrency);
@@ -88,6 +97,7 @@ export class EventProcessingQueue {
       nextRetryAt,
       fingerprint,
     });
+    this.metrics.totalEnqueued++;
 
     return true;
   }
@@ -150,13 +160,18 @@ export class EventProcessingQueue {
 
   private async processItem(item: QueuedEvent): Promise<void> {
     this.activeFingerprints.add(item.fingerprint);
+    const startTime = Date.now();
 
     try {
       const success = await this.processor(item.event, item.contractConfig, item.requestId);
+      const duration = Date.now() - startTime;
 
       if (success) {
         this.queuedFingerprints.delete(item.fingerprint);
         this.activeFingerprints.delete(item.fingerprint);
+        this.metrics.totalProcessed++;
+        this.metrics.totalSucceeded++;
+        this.metrics.processingTimes.push(duration);
         logger.info('Event processing succeeded', {
           requestId: item.requestId,
           eventId: item.event.id,
@@ -170,6 +185,9 @@ export class EventProcessingQueue {
       if (attempt >= this.maxRetries) {
         this.queuedFingerprints.delete(item.fingerprint);
         this.activeFingerprints.delete(item.fingerprint);
+        this.metrics.totalProcessed++;
+        this.metrics.totalFailed++;
+        this.metrics.processingTimes.push(duration);
         logger.error('Event processing permanently failed after max retries', {
           requestId: item.requestId,
           eventId: item.event.id,
@@ -195,11 +213,15 @@ export class EventProcessingQueue {
       this.queue.push({ ...item, retryCount: attempt, nextRetryAt });
     } catch (error) {
       this.activeFingerprints.delete(item.fingerprint);
+      const duration = Date.now() - startTime;
 
       const attempt = item.retryCount + 1;
 
       if (attempt >= this.maxRetries) {
         this.queuedFingerprints.delete(item.fingerprint);
+        this.metrics.totalProcessed++;
+        this.metrics.totalFailed++;
+        this.metrics.processingTimes.push(duration);
         logger.error('Event processing crashed after max retries', {
           requestId: item.requestId,
           eventId: item.event.id,
@@ -224,6 +246,24 @@ export class EventProcessingQueue {
 
       this.queue.push({ ...item, retryCount: attempt, nextRetryAt });
     }
+  }
+
+  getMetrics() {
+    const times = this.metrics.processingTimes;
+    const avg = times.length > 0 ? times.reduce((a, b) => a + b, 0) / times.length : 0;
+    const min = times.length > 0 ? Math.min(...times) : 0;
+    const max = times.length > 0 ? Math.max(...times) : 0;
+
+    return {
+      queueSize: this.queue.length,
+      activeCount: this.activeFingerprints.size,
+      ...this.metrics,
+      processingTime: {
+        min,
+        max,
+        avg,
+      },
+    };
   }
 
   private calculateDelay(retryCount: number): number {
