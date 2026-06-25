@@ -6,11 +6,12 @@ import { EventExplorerTable } from '../components/EventExplorerTable';
 import { EventExplorerSkeleton } from '../components/EventExplorerSkeleton';
 import { PaginationControls } from '../components/PaginationControls';
 import { IndexingHealthPanel } from '../components/IndexingHealthPanel';
+import { NotificationHealthPanel } from '../components/NotificationHealthPanel';
 import { useEventFilters, useEventLoadingState, useFilteredEvents } from '../hooks/useEventSelectors';
 import { useEventStore } from '../store/eventStore';
 import { fetchEvents, fetchStatus, type ContractStatus } from '../services/eventsApi';
-import { fetchEvents } from '../services/eventsApi';
 import { resolveIndexingHealthUrl } from '../services/indexingHealthApi';
+import { resolveNotificationHealthUrl } from '../services/notificationHealthApi';
 import { generateMockEvents } from '../utils/eventData';
 import { restoreWalletSession } from '../services/wallet';
 
@@ -20,6 +21,8 @@ const API_URL = import.meta.env.VITE_EVENTS_API_URL ?? 'http://localhost:8787/ap
 const LISTENER_BASE_URL = API_URL.replace('/api/events', '');
 const INDEXING_HEALTH_URL =
   import.meta.env.VITE_INDEXING_HEALTH_URL ?? resolveIndexingHealthUrl(API_URL);
+const NOTIFICATION_HEALTH_URL =
+  import.meta.env.VITE_NOTIFICATION_HEALTH_URL ?? resolveNotificationHealthUrl(API_URL);
 
 function parsePageParam(search: string) {
   const params = new URLSearchParams(search);
@@ -179,6 +182,7 @@ export function EventExplorerPage() {
         </section>
       )}
       <IndexingHealthPanel healthUrl={INDEXING_HEALTH_URL} />
+      <NotificationHealthPanel healthUrl={NOTIFICATION_HEALTH_URL} />
 
       <EventFiltersBar />
       <NotificationSearchBar />
