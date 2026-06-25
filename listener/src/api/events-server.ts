@@ -46,6 +46,7 @@ export interface EventsServerOptions {
   contractAddresses: ContractConfig[];
   discordWebhookUrl?: string;
   webhookSecrets?: WebhookSecret[];
+  apiKeys?: Array<{ key: string; name?: string }>;
   notificationAPI?: NotificationAPI | null;
   rateLimit?: RateLimitConfig;
   /**
@@ -697,8 +698,27 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
       return;
     }
 
+    function isValidApiKey(apiKey: string | undefined, allowedKeys: Array<{ key: string; name?: string }> | undefined): boolean {
+      if (!allowedKeys || allowedKeys.length === 0) {
+        // If no API keys are configured, allow unauthenticated access is allowed (for backward compatibility)
+        return true;
+      }
+      if (!apiKey) {
+        return false;
+      }
+      return allowedKeys.some(k => k.key === apiKey);
+    }
+
     // Get notification delivery history endpoint
     if (req.method === 'GET' && req.url?.startsWith('/api/notifications/history')) {
+      // Check API key first
+      const apiKey = req.headers['x-api-key'] as string | undefined;
+      if (!isValidApiKey(apiKey, options.apiKeys)) {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Unauthorized: Invalid or missing API key' }));
+        return;
+      }
+
       const url = new URL(req.url, 'http://localhost');
       const limit = url.searchParams.get('limit') ? parseInt(url.searchParams.get('limit')!, 10) : undefined;
       const offset = url.searchParams.get('offset') ? parseInt(url.searchParams.get('offset')!, 10) : undefined;
