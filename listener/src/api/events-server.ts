@@ -17,7 +17,6 @@ import {
   collectRawBody,
 } from '../services/webhook-verifier';
 import { WebhookSecret, RateLimitConfig, ContractConfig } from '../types';
-import { WebhookSecret, RateLimitConfig } from '../types';
 import { RateLimiter } from './rate-limiter';
 import {
   getNotificationAnalyticsAggregator,
@@ -177,10 +176,16 @@ async function getContractPauseStatus(
 
     const simulation = await server.simulateTransaction(tx);
 
-    if (!StellarSDK.rpc.isSuccessfulSim(simulation) || !simulation.result) {
+    if (!('result' in simulation) || !simulation.result) {
+      let errorMsg = 'Failed to simulate contract call';
+      if ('error' in simulation && simulation.error) {
+        errorMsg = typeof simulation.error === 'string' 
+          ? simulation.error 
+          : String(simulation.error);
+      }
       return { 
         paused: false, 
-        error: simulation.error ? simulation.error.message : 'Failed to simulate contract call' 
+        error: errorMsg
       };
     }
 
@@ -215,6 +220,9 @@ async function buildStatusResponse(options: EventsServerOptions): Promise<{
   return {
     timestamp: new Date().toISOString(),
     contracts: contractStatuses
+  };
+}
+
 async function fetchNetworkTipLedger(rpcUrl: string): Promise<{
   ledger: number | null;
   errorDetail?: string;

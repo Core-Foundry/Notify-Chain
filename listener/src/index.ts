@@ -15,6 +15,7 @@ import { ArchiveStore } from './services/archive-store';
 import { loadArchiveConfig } from './services/archive-config';
 import { initializeDatabase } from './database/database';
 import { DiscordNotificationService } from './services/discord-notification';
+import { EventDeduplicationService } from './services/event-deduplication-service';
 import { eventRegistry } from './store/event-registry';
 import logger from './utils/logger';
 import { loadConfig, ConfigError } from './config';
@@ -32,10 +33,14 @@ async function main() {
   let cleanupService: CleanupService | null = null;
   let archiveService: ArchiveService | null = null;
   let archiveStore: ArchiveStore | null = null;
+  let deduplicationService: EventDeduplicationService | null = null;
 
   try {
     logger.info('Initializing database');
     const db = await initializeDatabase(config.databasePath);
+
+    // Initialize deduplication service
+    deduplicationService = new EventDeduplicationService(db);
 
     // Rebuild registry with configured event TTL
     if (config.cleanup) {
@@ -104,7 +109,7 @@ async function main() {
     archiveService,
   });
 
-  const subscriber = new EventSubscriber(config);
+  const subscriber = new EventSubscriber(config, deduplicationService);
   await subscriber.start();
 
   const shutdown = async () => {
