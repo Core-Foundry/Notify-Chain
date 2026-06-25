@@ -1,16 +1,10 @@
-use soroban_sdk::{Address, Env, String};
-use crate::types::{Dispute, TaskStatus, SubmissionStatus, Error};
-use crate::storage;
 use crate::events;
+use crate::storage;
+use crate::types::{Dispute, Error, SubmissionStatus, TaskStatus};
+use soroban_sdk::{Address, Env, String};
 
 /// Raise a dispute for a submission
-pub fn raise_dispute(
-    env: &Env,
-    task_id: u64,
-    submission_id: u64,
-    raiser: Address,
-    reason: String,
-) {
+pub fn raise_dispute(env: &Env, task_id: u64, submission_id: u64, raiser: Address, reason: String) {
     // Get task
     if !storage::task_exists(env, task_id) {
         panic_with_error!(env, Error::TaskNotFound);
@@ -36,8 +30,9 @@ pub fn raise_dispute(
     }
 
     // Check submission status (can only dispute pending or rejected)
-    if submission.status != SubmissionStatus::Pending 
-        && submission.status != SubmissionStatus::Rejected {
+    if submission.status != SubmissionStatus::Pending
+        && submission.status != SubmissionStatus::Rejected
+    {
         panic_with_error!(env, Error::InvalidSubmissionStatus);
     }
 

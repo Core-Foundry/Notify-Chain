@@ -9,7 +9,7 @@ const DEFAULT_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 export class EventRegistry {
   private events: DisplayEvent[] = [];
   private readonly maxEvents: number;
-  private readonly ttlMs: number;
+  private ttlMs: number;
   private cleanupTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(maxEvents = DEFAULT_MAX_EVENTS, ttlMs = DEFAULT_TTL_MS) {
@@ -20,6 +20,10 @@ export class EventRegistry {
   startCleanup(intervalMs = 60_000): void {
     if (this.cleanupTimer) return;
     this.cleanupTimer = setInterval(() => this.pruneExpired(), intervalMs);
+  }
+
+  setTtlMs(ms: number): void {
+    this.ttlMs = ms;
   }
 
   stopCleanup(): void {
