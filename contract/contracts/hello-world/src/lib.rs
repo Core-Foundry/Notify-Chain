@@ -238,9 +238,9 @@ impl AutoShareContract {
         autoshare_logic::get_total_usages_paid(env, id).unwrap()
     }
 
-    /// Reduces the usage count by 1 (dummy function for testing).
-    pub fn reduce_usage(env: Env, id: BytesN<32>) {
-        autoshare_logic::reduce_usage(env, id).unwrap();
+    /// Reduces the usage count by 1.
+    pub fn reduce_usage(env: Env, id: BytesN<32>, caller: Address) {
+        autoshare_logic::reduce_usage(env, id, caller).unwrap();
     }
 
     // ============================================================================
