@@ -2,6 +2,9 @@ import { useState } from 'react';
 import { EventExplorerPage } from './pages/EventExplorerPage';
 import { NotificationTimelineView } from './components/NotificationTimelineView';
 import { ActivityFeed } from './components/ActivityFeed';
+import { WebhookDashboardPage } from './pages/WebhookDashboardPage';
+
+type Tab = 'explorer' | 'timeline' | 'activity' | 'webhooks';
 import { ExportHistoryPage } from './pages/ExportHistoryPage';
 
 type Tab = 'explorer' | 'timeline' | 'activity' | 'export-history';
@@ -38,6 +41,11 @@ export function App() {
         </button>
         <button
           role="tab"
+          aria-selected={tab === 'webhooks'}
+          className={`app-tabs__btn${tab === 'webhooks' ? ' app-tabs__btn--active' : ''}`}
+          onClick={() => setTab('webhooks')}
+        >
+          Webhook Performance
           aria-selected={tab === 'export-history'}
           className={`app-tabs__btn${tab === 'export-history' ? ' app-tabs__btn--active' : ''}`}
           onClick={() => setTab('export-history')}
@@ -49,6 +57,7 @@ export function App() {
       {tab === 'explorer' && <EventExplorerPage />}
       {tab === 'timeline' && <NotificationTimelineView />}
       {tab === 'activity' && <ActivityFeed />}
+      {tab === 'webhooks' && <WebhookDashboardPage />}
       {tab === 'export-history' && <ExportHistoryPage />}
     </div>
   );
