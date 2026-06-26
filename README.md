@@ -14,51 +14,73 @@ The project enables developers to build reactive decentralized applications with
 2. [Project Structure](#project-structure)
 3. [Event Flow](#event-flow)
 4. [Local Development Guide](#local-development-guide)
-5. [Features](#features)
-6. [Use Cases](#use-cases)
-7. [Tech Stack](#tech-stack)
-8. [Contributing](#contributing)
-9. [License](#license)
+5. [Smart Contract Upgrade Guide](#smart-contract-upgrade-guide)
+6. [Features](#features)
+7. [Use Cases](#use-cases)
+8. [Tech Stack](#tech-stack)
+9. [Contributing](#contributing)
+10. [License](#license)
+
+> **Listener service docs**: [Notification Failure Recovery](NOTIFICATION_FAILURE_RECOVERY.md) — retry lifecycle, configuration, and troubleshooting.
 
 ---
 
 ## Architecture Overview
 
-NotifyChain consists of two main components:
+NotifyChain is built from three cooperating layers. On-chain contracts emit
+events, an off-chain listener turns those events into notifications and a
+queryable feed, and a dashboard renders that feed for humans. Each layer can be
+run and developed independently.
 
-1. **On-chain Smart Contracts**: Deployed on the Stellar blockchain using Soroban, these contracts emit events for all important actions
-2. **Off-chain Listener Service**: (Future implementation) Watches the blockchain for events and triggers notifications
+| Component | Location | Tech | Responsibility |
+|-----------|----------|------|----------------|
+| **Smart Contracts** | `contract/`, `Documents/Task Bounty/` | Soroban / Rust | Execute business logic and emit a structured event for every important state change |
+| **Listener Service** | `listener/` | Node.js / TypeScript | Poll the Stellar network for contract events, deduplicate them, push notifications, and expose an HTTP events API |
+| **Dashboard** | `dashboard/` | React + Vite | Fetch the listener's events API and display real-time contract activity |
 
-### High-Level Architecture Diagram
+### How the Components Interact
 
 ```
-                    +----------------------+
-                    |   Smart Contract     |
-                    |----------------------|
-                    | Emits Events         |
-                    +----------+-----------+
-                               |
-                               |
-                      Blockchain Network
-                               |
-                               ▼
-                    +----------------------+
-                    |  NotifyChain Helper  |
-                    |  (Off-chain Worker)  |
-                    +----------+-----------+
-                               |
-                +--------------+--------------+
-                |                             |
-                ▼                             ▼
-        Notification Service          External Webhooks
-                |                             |
-                ▼                             ▼
-         Email / SMS / Push         APIs / Bots / Dashboards
+        On-chain                         Off-chain
+ ┌────────────────────┐         ┌──────────────────────────────┐
+ │  Soroban Contracts │         │        Listener Service       │
+ │  (TaskBounty,      │  emit   │  ┌────────────────────────┐   │
+ │   AutoShare)       │ ──────► │  │ EventSubscriber (poll) │   │
+ │                    │ events  │  └───────────┬────────────┘   │
+ └────────────────────┘         │              ▼                │
+            ▲                    │  ┌────────────────────────┐  │
+            │ invoke             │  │ Deduplicator + Registry │ │
+            │                    │  └───────────┬────────────┘  │
+ ┌────────────────────┐         │      ┌────────┴────────┐      │
+ │   Users / dApps    │         │      ▼                 ▼      │
+ └────────────────────┘         │  Discord         /api/events  │
+                                │  webhook          HTTP API     │
+                                └──────────────────────┬─────────┘
+                                                       │ fetch
+                                                       ▼
+                                            ┌────────────────────┐
+                                            │  React Dashboard   │
+                                            └────────────────────┘
 ```
 
-### Smart Contract Architecture
+> A visual system architecture diagram with Mermaid diagrams spanning
+> all layers is available in
+> [`SYSTEM_ARCHITECTURE.md`](SYSTEM_ARCHITECTURE.md). It provides the
+> quickest way to understand the full system at a glance.
+>
+> A high-level, contributor-facing architecture guide lives in
+> [`ARCHITECTURE_OVERVIEW.md`](ARCHITECTURE_OVERVIEW.md). It walks new
+> contributors through the on-chain, off-chain, and dashboard layers,
+> the end-to-end data flow, and links out to every subsystem doc.
+>
+> A more detailed, contract-level architecture write-up lives in
+> [`Documents/Task Bounty/ARCHITECTURE.md`](Documents/Task%20Bounty/ARCHITECTURE.md).
 
-There are two example smart contracts in this repository:
+### Contract Responsibilities
+
+The on-chain layer is the source of truth. Each contract owns its own state and
+emits typed events (see [Event Flow](#event-flow)) that the off-chain layer
+consumes. Two example contracts ship with the project:
 
 #### 1. TaskBounty Contract (`Documents/Task Bounty/`)
 
@@ -85,6 +107,7 @@ A subscription and group management contract that allows users to:
 - Handle subscription payments
 - Track usage
 - Admin management
+- Expose contract version for verification
 
 Key Modules:
 - `base/types.rs`: Data structures
@@ -125,6 +148,18 @@ Notify-Chain/
 │   │       └── build_log.txt
 │   ├── Cargo.toml                    # Workspace configuration
 │   └── README.md
+├── listener/                         # Off-chain listener service (Node + TS)
+│   └── src/
+│       ├── api/                      # Events HTTP API (/api/events, /health)
+│       ├── services/                 # Subscriber, deduplicator, Discord notifier
+│       ├── store/                    # In-memory event registry
+│       ├── utils/                    # Logging, formatting, helpers
+│       └── index.ts                  # Service entry point
+├── dashboard/                        # Real-time event dashboard (React + Vite)
+│   └── src/
+│       ├── components/               # Event list / card / filter UI
+│       ├── services/                 # Events API client
+│       └── store/                    # Client-side event store (Zustand)
 ├── Documents/
 │   ├── Task Bounty/                  # TaskBounty contract and docs
 │   │   ├── src/
@@ -150,12 +185,47 @@ Notify-Chain/
 ├── .vscode/
 │   └── settings.json
 ├── README.md                        # This file
+├── ARCHITECTURE_OVERVIEW.md         # High-level architecture guide (issue #137)
+├── SYSTEM_ARCHITECTURE.md           # Visual system architecture with Mermaid diagrams (issue #97)
 └── .gitignore
 ```
 
 ---
 
 ## Event Flow
+
+### End-to-End Notification Flow
+
+This is how a single on-chain action becomes a delivered notification:
+
+```
+1. A user invokes a contract function (e.g. create_task)
+   ↓
+2. The contract updates state and emits a typed event
+   ↓
+3. The listener's EventSubscriber polls the Stellar RPC and picks up the event
+   ↓
+4. The event is validated, parsed, and recorded in the in-memory event registry
+   ↓
+5. The deduplicator drops events already seen (by contract + event id)
+   ↓
+6. A Discord notification is sent (if a webhook is configured)
+   ↓
+7. The dashboard fetches GET /api/events and renders the new activity
+```
+
+Key pieces of the off-chain pipeline:
+
+- **`EventSubscriber`** (`listener/src/services/event-subscriber.ts`) polls the
+  configured contracts on an interval and reconnects on failure.
+- **`NotificationDeduplicator`** (`listener/src/services/notification-deduplicator.ts`)
+  prevents the same event from being notified twice.
+- **`DiscordNotificationService`** (`listener/src/services/discord-notification.ts`)
+  formats and delivers notifications.
+- **Events API** (`listener/src/api/events-server.ts`) exposes `GET /api/events`
+  for the dashboard and `GET /health` for monitoring.
+
+The contract events that drive this flow are listed below.
 
 ### 1. TaskBounty Contract Events
 
@@ -341,11 +411,22 @@ Add this to `.vscode/settings.json`:
 
 ---
 
+## Smart Contract Upgrade Guide
+
+Before changing contract storage, public methods, event schemas, authorization
+rules, or deployment artifacts, read the
+[Smart Contract Upgrade Guide](CONTRACT_UPGRADE_GUIDE.md). It documents the
+recommended upgrade workflow, prerequisites, testnet verification steps,
+rollback procedures, risk checklist, and PR template for NotifyChain contract
+changes.
+
+---
+
 ## Features
 
 * 📡 Real-time blockchain event monitoring
 * 🔗 Smart contract event emission
-* ⚡ Off-chain listener service (coming soon)
+* ⚡ Off-chain listener service
 * 🔔 Custom notification triggers
 * 🌐 Webhook support for external integrations
 * 📝 Event logging and processing
@@ -376,20 +457,17 @@ Add this to `.vscode/settings.json`:
 * **Soroban** (Stellar smart contracts)
 * **Rust**
 
-### Backend (Future)
+### Off-chain Services
 
 * Node.js
 * TypeScript
 * Stellar SDK
+* React + Vite (dashboard)
 
-### Notification Providers (Future)
+### Notification Providers
 
-* Email
-* Discord
-* Telegram
-* Slack
-* Webhooks
-* Push Notifications
+* Discord (implemented)
+* Email, Telegram, Slack, Webhooks, Push Notifications (planned)
 
 ---
 
@@ -421,3 +499,9 @@ This project is licensed under the MIT License.
 NotifyChain is built to simplify event-driven blockchain development by bridging smart contract events with off-chain automation and notification systems.
 
 Built on [Stellar](https://www.stellar.org/) and [Soroban](https://soroban.stellar.org/).
+
+## Staging Environment Instructions
+To run the staging environment locally:
+1. Export environment variables: `export $(cat listener/.env.staging | xargs)`
+2. Build and run listener: `cd listener && npm ci && npm run build && npm start`
+3. Run health check: `./scripts/health-check.sh`

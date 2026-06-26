@@ -5,6 +5,7 @@ use soroban_sdk::{contract, contractimpl, Address, BytesN, Env, String, Vec};
 pub mod base {
     pub mod errors;
     pub mod events;
+    pub mod preferences;
     pub mod types;
 }
 
@@ -12,8 +13,9 @@ pub mod interfaces {
     pub mod autoshare;
 }
 
-// 2. Declare the main logic file where the functions are implemented
+// 2. Declare the main logic files where the functions are implemented
 mod autoshare_logic;
+mod preferences_logic;
 
 #[cfg(test)]
 pub mod mock_token;
@@ -21,8 +23,15 @@ pub mod mock_token;
 #[contract]
 pub struct AutoShareContract;
 
+const VERSION: u32 = 1;
+
 #[contractimpl]
 impl AutoShareContract {
+    /// Returns the current version of the contract.
+    pub fn version(_env: Env) -> u32 {
+        VERSION
+    }
+
     // ============================================================================
     // Admin Management
     // ============================================================================
@@ -233,9 +242,171 @@ impl AutoShareContract {
     pub fn reduce_usage(env: Env, id: BytesN<32>, caller: Address) {
         autoshare_logic::reduce_usage(env, id, caller).unwrap();
     }
+
+    // ============================================================================
+    // Recipient Preference Management  (Issue #178)
+    // ============================================================================
+
+    /// Returns the full notification preferences for `recipient`.
+    /// Returns all-enabled defaults if the recipient has never set preferences.
+    pub fn get_preferences(
+        env: Env,
+        recipient: Address,
+    ) -> base::preferences::RecipientPreferences {
+        preferences_logic::get_preferences(env, recipient)
+    }
+
+    /// Atomically replace all channel and category preferences for `recipient`.
+    /// Caller must be `recipient` (auth required).
+    pub fn set_preferences(
+        env: Env,
+        recipient: Address,
+        channels: Vec<base::preferences::ChannelPreference>,
+        categories: Vec<base::preferences::CategoryPreference>,
+    ) {
+        preferences_logic::set_preferences(env, recipient, channels, categories).unwrap();
+    }
+
+    /// Toggle a single delivery channel on or off.
+    /// Caller must be `recipient` (auth required).
+    pub fn set_channel_preference(
+        env: Env,
+        recipient: Address,
+        channel: base::preferences::DeliveryChannel,
+        enabled: bool,
+    ) {
+        preferences_logic::set_channel_preference(env, recipient, channel, enabled).unwrap();
+    }
+
+    /// Toggle a single notification category on or off.
+    /// Caller must be `recipient` (auth required).
+    pub fn set_category_preference(
+        env: Env,
+        recipient: Address,
+        category: base::preferences::NotificationCategory,
+        enabled: bool,
+    ) {
+        preferences_logic::set_category_preference(env, recipient, category, enabled).unwrap();
+    }
+
+    /// Reset all preferences to the all-enabled defaults.
+    /// Caller must be `recipient` (auth required).
+    pub fn reset_preferences(env: Env, recipient: Address) {
+        preferences_logic::reset_preferences(env, recipient).unwrap();
+    }
+
+    /// Returns true if the specified delivery channel is enabled for `recipient`.
+    pub fn is_channel_enabled(
+        env: Env,
+        recipient: Address,
+        channel: base::preferences::DeliveryChannel,
+    ) -> bool {
+        preferences_logic::is_channel_enabled(env, recipient, channel)
+    }
+
+    /// Returns true if the specified notification category is enabled for `recipient`.
+    pub fn is_category_enabled(
+        env: Env,
+        recipient: Address,
+        category: base::preferences::NotificationCategory,
+    ) -> bool {
+        preferences_logic::is_category_enabled(env, recipient, category)
+    }
+}
+
+    // ============================================================================
+    // Scheduled Notification Management
+    // ============================================================================
+
+    /// Cancels a scheduled notification and emits a ScheduledNotificationCancelled event.
+    ///
+    /// The `notification_id` uniquely identifies the notification being cancelled.
+    /// Callers must authenticate. The contract is paused-aware: cancellations are
+    /// rejected while the contract is paused.
+    pub fn cancel_notification(env: Env, notification_id: BytesN<32>, caller: Address) {
+        autoshare_logic::cancel_notification(env, notification_id, caller).unwrap();
+    }
+
+    // ============================================================================
+    // Notification Expiration
+    // ============================================================================
+
+    /// Schedules a notification on-chain that expires after `ttl_seconds`.
+    ///
+    /// The notification becomes invalid once the ledger timestamp reaches
+    /// `created_at + ttl_seconds`. Emits a `NotificationScheduled` event.
+    pub fn schedule_notification(
+        env: Env,
+        notification_id: BytesN<32>,
+        creator: Address,
+        ttl_seconds: u64,
+    ) {
+        autoshare_logic::schedule_notification(env, notification_id, creator, ttl_seconds).unwrap();
+    }
+
+    /// Returns the stored details for a scheduled notification.
+    pub fn get_notification(
+        env: Env,
+        notification_id: BytesN<32>,
+    ) -> base::types::ScheduledNotification {
+        autoshare_logic::get_notification(env, notification_id).unwrap()
+    }
+
+    /// Returns whether a scheduled notification has expired.
+    pub fn is_notification_expired(env: Env, notification_id: BytesN<32>) -> bool {
+        autoshare_logic::is_notification_expired(env, notification_id).unwrap()
+    }
+
+    /// Finalizes the expiry of a notification whose lifetime has elapsed,
+    /// emitting a `NotificationExpired` event. Callable by anyone.
+    pub fn expire_notification(env: Env, notification_id: BytesN<32>) {
+        autoshare_logic::expire_notification(env, notification_id).unwrap();
+    }
+
+    /// Revokes a scheduled notification, preventing any further interaction with it.
+    ///
+    /// Only the notification creator or the contract admin can revoke a notification.
+    /// The notification must not already be revoked or expired. Emits a `NotificationRevoked` event.
+    pub fn revoke_notification(env: Env, notification_id: BytesN<32>, caller: Address) {
+        autoshare_logic::revoke_notification(env, notification_id, caller).unwrap();
+    }
+
+    /// Returns whether a scheduled notification has been revoked.
+    pub fn is_notification_revoked(env: Env, notification_id: BytesN<32>) -> bool {
+        autoshare_logic::is_notification_revoked(env, notification_id).unwrap()
+    }
+
+    /// Extends the expiration period of a scheduled notification by `extension_seconds`.
+    ///
+    /// Only the notification creator or the contract admin can extend it.
+    /// The notification must exist, not already be revoked, and not have expired.
+    /// Emits a `NotificationExtended` event.
+    pub fn extend_notification_expiry(
+        env: Env,
+        notification_id: BytesN<32>,
+        caller: Address,
+        extension_seconds: u64,
+    ) {
+        autoshare_logic::extend_notification_expiry(env, notification_id, caller, extension_seconds)
+            .unwrap();
+    }
 }
 
 #[cfg(test)]
+#[path = "tests/test_utils.rs"]
+pub mod test_utils;
+
+#[cfg(test)]
+#[path = "tests/test_utils_test.rs"]
+mod test_utils_test;
+
+#[cfg(test)]
+#[path = "tests/storage_optimization_test.rs"]
+mod storage_optimization_test;
+
+#[cfg(test)]
+#[path = "tests/preferences_test.rs"]
+mod preferences_test;
 mod tests {
     #[path = "../tests/autoshare_test.rs"]
     mod autoshare_test;
@@ -246,9 +417,21 @@ mod tests {
     #[path = "../tests/mock_token_test.rs"]
     mod mock_token_test;
 
-    #[path = "../tests/test_utils.rs"]
-    pub mod test_utils;
+    #[path = "../tests/version_test.rs"]
+    mod version_test;
 
     #[path = "../tests/test_utils_test.rs"]
     mod test_utils_test;
+
+    #[path = "../tests/notification_test.rs"]
+    mod notification_test;
+
+    #[path = "../tests/expiration_test.rs"]
+    mod expiration_test;
+
+    #[path = "../tests/revocation_test.rs"]
+    mod revocation_test;
+
+    #[path = "../tests/fuzz_test.rs"]
+    mod fuzz_test;
 }

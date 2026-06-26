@@ -1,0 +1,20 @@
+{
+  "generatedAt": "2026-06-24T19:47:36.590Z",
+  "total": 3,
+  "passed": 3,
+  "failed": 0,
+  "wallets": [
+    {
+      "wallet": "freighter",
+      "passed": true
+    },
+    {
+      "wallet": "albedo",
+      "passed": true
+    },
+    {
+      "wallet": "xbull",
+      "passed": true
+    }
+  ]
+}
