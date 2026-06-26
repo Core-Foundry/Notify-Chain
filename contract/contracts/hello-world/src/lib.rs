@@ -364,7 +364,8 @@ impl AutoShareContract {
         ttl_seconds: u64,
         title: String,
     ) {
-        autoshare_logic::schedule_notification(env, notification_id, creator, ttl_seconds, title).unwrap();
+        autoshare_logic::schedule_notification(env, notification_id, creator, ttl_seconds, title)
+            .unwrap();
     }
 
     /// Returns the stored details for a scheduled notification.
@@ -410,8 +411,13 @@ impl AutoShareContract {
         caller: Address,
         extension_seconds: u64,
     ) {
-        autoshare_logic::extend_notification_expiry(env, notification_id, caller, extension_seconds)
-            .unwrap();
+        autoshare_logic::extend_notification_expiry(
+            env,
+            notification_id,
+            caller,
+            extension_seconds,
+        )
+        .unwrap();
     }
 
     // ============================================================================
@@ -479,6 +485,9 @@ mod tests {
 
     #[path = "../tests/notification_test.rs"]
     mod notification_test;
+
+    #[path = "../tests/category_registry_test.rs"]
+    mod category_registry_test;
 
     #[path = "../tests/expiration_test.rs"]
     mod expiration_test;

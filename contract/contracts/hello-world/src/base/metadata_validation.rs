@@ -2,9 +2,8 @@
 ///
 /// Provides validation for notification metadata to ensure consistency
 /// and prevent malformed data from being stored on-chain.
-
 use crate::base::errors::Error;
-use soroban_sdk::{String, Map};
+use soroban_sdk::{Map, String};
 
 /// Maximum length for metadata string fields (bytes)
 const MAX_METADATA_STRING_LENGTH: u32 = 256;
@@ -141,7 +140,7 @@ mod tests {
     #[test]
     fn test_valid_metadata() {
         let metadata = NotificationMetadata {
-            title: String::from_slice(&soroban_sdk::Env::new(), "Test"),
+            title: String::from_slice(&soroban_sdk::Env::default(), "Test"),
             description: None,
             data_uri: None,
             custom_fields: None,
@@ -152,7 +151,7 @@ mod tests {
     #[test]
     fn test_empty_title_invalid() {
         let metadata = NotificationMetadata {
-            title: String::from_slice(&soroban_sdk::Env::new(), ""),
+            title: String::from_slice(&soroban_sdk::Env::default(), ""),
             description: None,
             data_uri: None,
             custom_fields: None,
@@ -162,8 +161,9 @@ mod tests {
 
     #[test]
     fn test_long_title_invalid() {
-        let env = soroban_sdk::Env::new();
-        let long_string = String::from_slice(&env, &"a".repeat(MAX_METADATA_STRING_LENGTH as usize + 1));
+        let env = soroban_sdk::Env::default();
+        let long_string =
+            String::from_slice(&env, &"a".repeat(MAX_METADATA_STRING_LENGTH as usize + 1));
         let metadata = NotificationMetadata {
             title: long_string,
             description: None,

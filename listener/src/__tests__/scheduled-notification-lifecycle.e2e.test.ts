@@ -11,6 +11,7 @@ import { NotificationScheduler } from '../services/notification-scheduler';
 import { NotificationAPI } from '../services/notification-api';
 import { DiscordNotificationService } from '../services/discord-notification';
 import { CleanupService } from '../services/cleanup-service';
+import { resetWorkerManager } from '../services/worker-manager';
 import { EventRegistry } from '../store/event-registry';
 import { NotificationFixtureBuilder } from '../test-utils/notification-fixture-builder';
 import { NotificationStatus, NotificationType } from '../types/scheduled-notification';
@@ -55,9 +56,8 @@ describe('Scheduled notification lifecycle (e2e)', () => {
   });
 
   beforeEach(async () => {
+    resetWorkerManager();
     jest.clearAllMocks();
-    jest.useFakeTimers();
-    jest.setSystemTime(new Date('2026-06-24T12:00:00.000Z'));
 
     await db.run('DELETE FROM notification_execution_log');
     await db.run('DELETE FROM scheduled_notifications');
@@ -72,8 +72,11 @@ describe('Scheduled notification lifecycle (e2e)', () => {
 
   afterEach(async () => {
     await scheduler.stop();
-    jest.useRealTimers();
   });
+
+  async function waitForSchedulerPolls(ms = 300): Promise<void> {
+    await new Promise((resolve) => setTimeout(resolve, ms));
+  }
 
   function schedulerPayload() {
     const event = NotificationFixtureBuilder.aStellarEvent().withId('sched-e2e-1').build();
@@ -92,7 +95,7 @@ describe('Scheduled notification lifecycle (e2e)', () => {
   }
 
   it('schedules a notification and delivers it after the poll interval', async () => {
-    const executeAt = new Date('2026-06-24T12:00:02.000Z');
+    const executeAt = new Date(Date.now() + 50);
 
     const id = await api.scheduleNotification({
       payload: schedulerPayload(),
@@ -106,7 +109,7 @@ describe('Scheduled notification lifecycle (e2e)', () => {
     expect(notification!.status).toBe(NotificationStatus.PENDING);
 
     await scheduler.start();
-    await jest.advanceTimersByTimeAsync(250);
+    await waitForSchedulerPolls(400);
 
     notification = await repository.getById(id);
     expect(notification!.status).toBe(NotificationStatus.COMPLETED);
@@ -121,7 +124,7 @@ describe('Scheduled notification lifecycle (e2e)', () => {
   });
 
   it('does not deliver notifications before their executeAt time', async () => {
-    const executeAt = new Date('2026-06-24T12:05:00.000Z');
+    const executeAt = new Date(Date.now() + 60_000);
 
     const id = await api.scheduleNotification({
       payload: schedulerPayload(),
@@ -131,7 +134,7 @@ describe('Scheduled notification lifecycle (e2e)', () => {
     });
 
     await scheduler.start();
-    await jest.advanceTimersByTimeAsync(250);
+    await waitForSchedulerPolls(250);
 
     const notification = await repository.getById(id);
     expect(notification!.status).toBe(NotificationStatus.PENDING);
@@ -139,7 +142,7 @@ describe('Scheduled notification lifecycle (e2e)', () => {
   });
 
   it('delivers when executeAt elapses after scheduling', async () => {
-    const executeAt = new Date('2026-06-24T12:05:00.000Z');
+    const executeAt = new Date(Date.now() + 200);
 
     const id = await api.scheduleNotification({
       payload: schedulerPayload(),
@@ -149,11 +152,11 @@ describe('Scheduled notification lifecycle (e2e)', () => {
     });
 
     await scheduler.start();
-    await jest.advanceTimersByTimeAsync(200);
+    await waitForSchedulerPolls(150);
     expect((await repository.getById(id))!.status).toBe(NotificationStatus.PENDING);
 
-    jest.setSystemTime(new Date('2026-06-24T12:05:01.000Z'));
-    await jest.advanceTimersByTimeAsync(500);
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    await waitForSchedulerPolls(300);
 
     expect((await repository.getById(id))!.status).toBe(NotificationStatus.COMPLETED);
     expect(sendEventMock).toHaveBeenCalledTimes(1);
@@ -163,7 +166,7 @@ describe('Scheduled notification lifecycle (e2e)', () => {
     const id = await createDueNotification();
 
     await scheduler.start();
-    await jest.advanceTimersByTimeAsync(150);
+    await waitForSchedulerPolls(300);
     expect((await repository.getById(id))!.status).toBe(NotificationStatus.COMPLETED);
 
     const registry = new EventRegistry();
@@ -173,7 +176,7 @@ describe('Scheduled notification lifecycle (e2e)', () => {
       rateLimitEventRetentionMs: 1,
     });
 
-    jest.setSystemTime(new Date('2026-06-24T13:00:00.000Z'));
+    await new Promise((resolve) => setTimeout(resolve, 5));
     const result = await cleanup.runDbCleanup();
 
     expect(result.notifications).toBeGreaterThanOrEqual(1);

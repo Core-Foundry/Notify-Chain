@@ -82,10 +82,11 @@ describe('Config validation', () => {
         snapshotRetentionDays: 30,
       },
       cleanup: {
-        enabled: true,
-        pollIntervalMs: 3600000,
-        notificationRetentionDays: 30,
-        executionLogRetentionDays: 90,
+        intervalMs: 3600000,
+        notificationRetentionMs: 604800000,
+        rateLimitEventRetentionMs: 86400000,
+        eventRetentionMs: 86400000,
+        executionLogRetentionMs: 7776000000,
       },
     });
   });

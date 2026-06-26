@@ -15,6 +15,7 @@ import { NotificationScheduler } from '../services/notification-scheduler';
 import { DiscordNotificationService } from '../services/discord-notification';
 import { BackpressureController } from '../services/backpressure-controller';
 import { BackpressureMonitor } from '../services/backpressure-monitor';
+import { resetWorkerManager } from '../services/worker-manager';
 import { NotificationStatus, NotificationType } from '../types/scheduled-notification';
 
 describe('Notification flow end-to-end (e2e)', () => {
@@ -65,9 +66,8 @@ describe('Notification flow end-to-end (e2e)', () => {
   });
 
   beforeEach(async () => {
+    resetWorkerManager();
     jest.clearAllMocks();
-    jest.useFakeTimers();
-    jest.setSystemTime(new Date('2026-06-24T12:00:00.000Z'));
 
     // Clear tables
     await db.run('DELETE FROM notification_execution_log');
@@ -86,12 +86,19 @@ describe('Notification flow end-to-end (e2e)', () => {
 
   afterEach(async () => {
     await scheduler.stop();
-    jest.useRealTimers();
   });
+
+  async function waitForSchedulerPolls(ms = 300): Promise<void> {
+    await new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  function futureExecuteAt(offsetMs = 50): Date {
+    return new Date(Date.now() + offsetMs);
+  }
 
   describe('Complete notification lifecycle', () => {
     it('should create, process, and deliver a notification', async () => {
-      const executeAt = new Date('2026-06-24T12:00:02.000Z');
+      const executeAt = futureExecuteAt();
 
       const id = await api.scheduleNotification({
         payload: { message: 'Test notification' },
@@ -108,7 +115,7 @@ describe('Notification flow end-to-end (e2e)', () => {
       expect(notification!.status).toBe(NotificationStatus.PENDING);
 
       await scheduler.start();
-      await jest.advanceTimersByTimeAsync(250);
+      await waitForSchedulerPolls(400);
 
       notification = await repository.getById(id);
       expect(notification!.status).toBe(NotificationStatus.COMPLETED);
@@ -120,11 +127,11 @@ describe('Notification flow end-to-end (e2e)', () => {
         payload: { message: 'Test notification' },
         notificationType: NotificationType.DISCORD,
         targetRecipient: 'https://discord.com/webhook',
-        executeAt: new Date('2026-06-24T12:00:02.000Z'),
+        executeAt: futureExecuteAt(),
       });
 
       await scheduler.start();
-      await jest.advanceTimersByTimeAsync(250);
+      await waitForSchedulerPolls(400);
 
       const logs = await db.all(
         'SELECT * FROM notification_execution_log WHERE scheduled_notification_id = ?',
@@ -140,7 +147,7 @@ describe('Notification flow end-to-end (e2e)', () => {
 
   describe('Idempotency handling', () => {
     it('should return cached response for duplicate requests with same idempotency key', async () => {
-      const executeAt = new Date('2026-06-24T12:00:02.000Z');
+      const executeAt = futureExecuteAt();
       const payload = { message: 'Unique message' };
       const idempotencyKey = 'test-idempotency-key-1';
 
@@ -175,7 +182,7 @@ describe('Notification flow end-to-end (e2e)', () => {
     });
 
     it('should reject duplicate requests with different payload', async () => {
-      const executeAt = new Date('2026-06-24T12:00:02.000Z');
+      const executeAt = futureExecuteAt();
       const idempotencyKey = 'test-idempotency-key-2';
 
       await api.scheduleNotification(
@@ -205,7 +212,7 @@ describe('Notification flow end-to-end (e2e)', () => {
     });
 
     it('should clean up expired idempotency keys', async () => {
-      const executeAt = new Date('2026-06-24T12:00:02.000Z');
+      const executeAt = futureExecuteAt();
       const idempotencyKey = 'test-idempotency-key-3';
 
       await api.scheduleNotification(
@@ -222,14 +229,15 @@ describe('Notification flow end-to-end (e2e)', () => {
       let stats = await idempotencyRepo.getStats();
       expect(stats.processed).toBe(1);
 
-      // Advance time past expiration (default 24 hours)
-      jest.setSystemTime(new Date('2026-06-25T13:00:00.000Z'));
+      await db.run(
+        'UPDATE idempotency_keys SET expires_at = ? WHERE idempotency_key = ?',
+        [new Date(Date.now() - 1000).toISOString(), idempotencyKey]
+      );
 
       const cleanupCount = await idempotencyService.cleanupExpiredKeys();
-      expect(cleanupCount).toBeGreaterThanOrEqual(0);
+      expect(cleanupCount).toBeGreaterThanOrEqual(1);
 
       stats = await idempotencyRepo.getStats();
-      expect(stats.total).toBe(1);
       expect(stats.expired).toBeGreaterThanOrEqual(0);
     });
   });
@@ -313,7 +321,7 @@ describe('Notification flow end-to-end (e2e)', () => {
 
   describe('Integration tests', () => {
     it('should handle high-volume notification creation with idempotency', async () => {
-      const executeAt = new Date('2026-06-24T12:00:02.000Z');
+      const executeAt = futureExecuteAt();
       const payload = { message: 'Batch test' };
       const idempotencyKey = 'batch-idempotency-1';
 
@@ -348,7 +356,7 @@ describe('Notification flow end-to-end (e2e)', () => {
     });
 
     it('should maintain audit trail through complete lifecycle', async () => {
-      const executeAt = new Date('2026-06-24T12:00:02.000Z');
+      const executeAt = futureExecuteAt();
 
       const id = await api.scheduleNotification({
         payload: { message: 'Audit test' },
@@ -358,7 +366,7 @@ describe('Notification flow end-to-end (e2e)', () => {
       });
 
       await scheduler.start();
-      await jest.advanceTimersByTimeAsync(250);
+      await waitForSchedulerPolls(400);
 
       // Check execution log
       const executionLogs = await db.all(

@@ -270,7 +270,7 @@ pub struct NotificationExtended {
 }
 
 /// Emitted when protocol-level notification limits are configured or updated.
-#[contractevent(data_format = "single-value")]
+#[contractevent]
 #[derive(Clone)]
 pub struct NotificationLimitsConfigured {
     #[topic]
@@ -284,4 +284,3 @@ pub struct NotificationLimitsConfigured {
     pub min_expiration_seconds: u64,
     pub max_batch_size: u32,
 }
-

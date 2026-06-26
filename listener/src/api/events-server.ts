@@ -39,6 +39,7 @@ import { BatchValidationService } from '../services/batch-validation-service';
 import { handleArchiveRequest } from './archive-api';
 import { ArchiveStore } from '../services/archive-store';
 import { ArchiveService } from '../services/archive-service';
+import { NotificationMetricsStore } from '../services/notification-metrics-store';
 
 export interface EventsServerOptions {
   port: number;
@@ -61,6 +62,8 @@ export interface EventsServerOptions {
   archiveStore?: ArchiveStore | null;
   /** Archive service for the admin /run endpoint (optional). */
   archiveService?: ArchiveService | null;
+  /** Persisted metrics snapshots for historical analytics (optional). */
+  metricsStore?: NotificationMetricsStore | null;
   /** Maximum age of signed requests in seconds (default: 300 = 5 minutes). */
   signatureExpirationSeconds?: number;
 }

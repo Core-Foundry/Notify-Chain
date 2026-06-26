@@ -13,10 +13,14 @@ use crate::test_utils::setup_test_env;
 use crate::AutoShareContractClient;
 
 use soroban_sdk::testutils::{Address as _, Events, Ledger};
-use soroban_sdk::{Address, BytesN, Env, Symbol, TryFromVal, Val, Vec};
+use soroban_sdk::{Address, BytesN, Env, String, Symbol, TryFromVal, Val, Vec};
 
 /// One hour, in seconds — a representative configurable duration.
 const ONE_HOUR: u64 = 3_600;
+
+fn notification_title(env: &Env) -> String {
+    String::from_str(env, "Test notification")
+}
 
 fn make_id(env: &Env, tag: u8) -> BytesN<32> {
     let mut bytes = [0u8; 32];
@@ -74,7 +78,7 @@ fn test_revoke_notification_by_creator() {
 
     set_now(&test_env.env, 1_000);
     let id = make_id(&test_env.env, 1);
-    client.schedule_notification(&id, &creator, &ONE_HOUR);
+    client.schedule_notification(&id, &creator, &ONE_HOUR, &notification_title(&test_env.env));
 
     set_now(&test_env.env, 2_000);
     client.revoke_notification(&id, &creator);
@@ -95,7 +99,7 @@ fn test_is_notification_revoked_after_revocation() {
 
     set_now(&test_env.env, 1_000);
     let id = make_id(&test_env.env, 2);
-    client.schedule_notification(&id, &creator, &ONE_HOUR);
+    client.schedule_notification(&id, &creator, &ONE_HOUR, &notification_title(&test_env.env));
 
     assert!(!client.is_notification_revoked(&id));
 
@@ -113,12 +117,13 @@ fn test_revoke_notification_emits_event() {
 
     set_now(&test_env.env, 1_000);
     let id = make_id(&test_env.env, 3);
-    client.schedule_notification(&id, &creator, &ONE_HOUR);
+    client.schedule_notification(&id, &creator, &ONE_HOUR, &notification_title(&test_env.env));
 
     set_now(&test_env.env, 2_000);
     client.revoke_notification(&id, &creator);
 
-    let topics = topics_of(&test_env.env, "notification_revoked").expect("revocation event must be emitted");
+    let topics =
+        topics_of(&test_env.env, "notification_revoked").expect("revocation event must be emitted");
     // [0] name, [1] notification_id, [2] revoked_by, [3] category, [4] priority.
     assert_eq!(topics.len(), 5);
 
@@ -139,7 +144,7 @@ fn test_revoke_by_unauthorized_user_fails() {
 
     set_now(&test_env.env, 1_000);
     let id = make_id(&test_env.env, 4);
-    client.schedule_notification(&id, &creator, &ONE_HOUR);
+    client.schedule_notification(&id, &creator, &ONE_HOUR, &notification_title(&test_env.env));
 
     set_now(&test_env.env, 2_000);
     client.revoke_notification(&id, &unauthorized);
@@ -154,7 +159,7 @@ fn test_cannot_revoke_already_revoked_notification() {
 
     set_now(&test_env.env, 1_000);
     let id = make_id(&test_env.env, 5);
-    client.schedule_notification(&id, &creator, &ONE_HOUR);
+    client.schedule_notification(&id, &creator, &ONE_HOUR, &notification_title(&test_env.env));
 
     set_now(&test_env.env, 2_000);
     client.revoke_notification(&id, &creator);
@@ -173,7 +178,7 @@ fn test_cannot_revoke_expired_notification() {
 
     set_now(&test_env.env, 1_000);
     let id = make_id(&test_env.env, 6);
-    client.schedule_notification(&id, &creator, &ONE_HOUR);
+    client.schedule_notification(&id, &creator, &ONE_HOUR, &notification_title(&test_env.env));
 
     // Skip past expiration
     set_now(&test_env.env, 1_000 + ONE_HOUR + 1);
@@ -204,7 +209,7 @@ fn test_cannot_cancel_revoked_notification() {
 
     set_now(&test_env.env, 1_000);
     let id = make_id(&test_env.env, 8);
-    client.schedule_notification(&id, &creator, &ONE_HOUR);
+    client.schedule_notification(&id, &creator, &ONE_HOUR, &notification_title(&test_env.env));
 
     set_now(&test_env.env, 2_000);
     client.revoke_notification(&id, &creator);
@@ -223,7 +228,7 @@ fn test_cannot_expire_revoked_notification() {
 
     set_now(&test_env.env, 1_000);
     let id = make_id(&test_env.env, 9);
-    client.schedule_notification(&id, &creator, &ONE_HOUR);
+    client.schedule_notification(&id, &creator, &ONE_HOUR, &notification_title(&test_env.env));
 
     set_now(&test_env.env, 2_000);
     client.revoke_notification(&id, &creator);
@@ -244,7 +249,7 @@ fn test_revoke_notification_while_contract_paused_fails() {
 
     set_now(&test_env.env, 1_000);
     let id = make_id(&test_env.env, 10);
-    client.schedule_notification(&id, &creator, &ONE_HOUR);
+    client.schedule_notification(&id, &creator, &ONE_HOUR, &notification_title(&test_env.env));
 
     // Pause the contract
     client.pause(&admin);
@@ -263,7 +268,7 @@ fn test_revoke_notification_by_admin() {
 
     set_now(&test_env.env, 1_000);
     let id = make_id(&test_env.env, 11);
-    client.schedule_notification(&id, &creator, &ONE_HOUR);
+    client.schedule_notification(&id, &creator, &ONE_HOUR, &notification_title(&test_env.env));
 
     set_now(&test_env.env, 2_000);
     // Admin revokes notification created by someone else
@@ -281,7 +286,7 @@ fn test_revocation_stores_timestamp() {
 
     set_now(&test_env.env, 1_000);
     let id = make_id(&test_env.env, 12);
-    client.schedule_notification(&id, &creator, &ONE_HOUR);
+    client.schedule_notification(&id, &creator, &ONE_HOUR, &notification_title(&test_env.env));
 
     set_now(&test_env.env, 2_000);
     client.revoke_notification(&id, &creator);
@@ -298,7 +303,7 @@ fn test_revoked_notification_still_queryable() {
 
     set_now(&test_env.env, 1_000);
     let id = make_id(&test_env.env, 13);
-    client.schedule_notification(&id, &creator, &ONE_HOUR);
+    client.schedule_notification(&id, &creator, &ONE_HOUR, &notification_title(&test_env.env));
 
     // Revoke it
     set_now(&test_env.env, 2_000);
@@ -322,17 +327,19 @@ fn test_revoke_event_has_high_priority() {
 
     set_now(&test_env.env, 1_000);
     let id = make_id(&test_env.env, 14);
-    client.schedule_notification(&id, &creator, &ONE_HOUR);
+    client.schedule_notification(&id, &creator, &ONE_HOUR, &notification_title(&test_env.env));
 
     set_now(&test_env.env, 2_000);
     client.revoke_notification(&id, &creator);
 
-    let topics = topics_of(&test_env.env, "notification_revoked").expect("revocation event must be emitted");
+    let topics =
+        topics_of(&test_env.env, "notification_revoked").expect("revocation event must be emitted");
     // Last topic is priority
     let priority_topic = topics.last().unwrap();
-    let priority = crate::base::events::NotificationPriority::try_from_val(&test_env.env, &priority_topic)
-        .expect("priority should be extractable");
-    
+    let priority =
+        crate::base::events::NotificationPriority::try_from_val(&test_env.env, &priority_topic)
+            .expect("priority should be extractable");
+
     assert_eq!(priority, crate::base::events::NotificationPriority::High);
 }
 
@@ -344,17 +351,18 @@ fn test_revoke_event_has_notification_category() {
 
     set_now(&test_env.env, 1_000);
     let id = make_id(&test_env.env, 15);
-    client.schedule_notification(&id, &creator, &ONE_HOUR);
+    client.schedule_notification(&id, &creator, &ONE_HOUR, &notification_title(&test_env.env));
 
     set_now(&test_env.env, 2_000);
     client.revoke_notification(&id, &creator);
 
-    let topics = topics_of(&test_env.env, "notification_revoked").expect("revocation event must be emitted");
+    let topics =
+        topics_of(&test_env.env, "notification_revoked").expect("revocation event must be emitted");
     // Second to last topic is category
     let n = topics.len();
     let category_topic = topics.get(n - 2).unwrap();
     let category = NotificationCategory::try_from_val(&test_env.env, &category_topic)
         .expect("category should be extractable");
-    
+
     assert_eq!(category, NotificationCategory::Notification);
 }
