@@ -2,6 +2,8 @@
 
 Thank you for your interest in contributing to NotifyChain! This document provides guidelines and instructions for contributing to the project.
 
+**Start here instead (recommended):** [`CONTRIBUTOR_DEVELOPMENT_WORKFLOW_GUIDE.md`](CONTRIBUTOR_DEVELOPMENT_WORKFLOW_GUIDE.md)
+
 ## Code of Conduct
 
 - Be respectful and inclusive
