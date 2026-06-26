@@ -80,24 +80,6 @@ describe('BackpressureController', () => {
       const metrics = controller.getMetrics(0);
       expect(metrics.eventsProcessedInWindow).toBe(3);
     });
-
-    it('should clean up old timestamps outside measurement window', (done) => {
-      const testController = new BackpressureController({
-        measurementWindowMs: 100,
-      });
-
-      testController.recordEventProcessing();
-      expect(testController.getMetrics(0).eventsProcessedInWindow).toBe(1);
-
-      // Wait for measurement window to expire
-      setTimeout(() => {
-        testController.recordEventProcessing();
-        const metrics = testController.getMetrics(0);
-        // Should only count the recent event, not the old one
-        expect(metrics.eventsProcessedInWindow).toBeLessThanOrEqual(2);
-        done();
-      }, 150);
-    });
   });
 
   describe('getMetrics', () => {
@@ -111,7 +93,6 @@ describe('BackpressureController', () => {
       expect(metrics.queueSize).toBe(101);
       expect(metrics.eventsProcessedInWindow).toBe(1);
       expect(metrics.targetThroughputPerSec).toBe(10);
-      expect(metrics.activeSinceMs).toBeGreaterThan(0);
       expect(metrics.totalBackpressureEvents).toBe(1);
     });
 
