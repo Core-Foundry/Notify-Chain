@@ -12,6 +12,7 @@ import {
 import { DiscordNotificationService } from './discord-notification';
 import { NotificationRetryQueue } from './notification-retry-queue';
 import { EventDeduplicationService } from './event-deduplication-service';
+import { EventProcessingQueue } from './event-processing-queue';
 
 export class EventSubscriber {
   private config: Config;
@@ -22,6 +23,7 @@ export class EventSubscriber {
   private discordService: DiscordNotificationService | null = null;
   private retryQueue: NotificationRetryQueue | null = null;
   private deduplicationService: EventDeduplicationService | null = null;
+  private eventQueue: EventProcessingQueue | null = null;
 
   constructor(config: Config, deduplicationService?: EventDeduplicationService) {
     this.config = config;
@@ -35,6 +37,13 @@ export class EventSubscriber {
         config.retryQueue
       );
     }
+    if (config.eventQueue) {
+      this.eventQueue = new EventProcessingQueue(
+        (event, contractConfig, requestId) =>
+          this.processEvent(event, contractConfig, requestId),
+        config.eventQueue
+      );
+    }
   }
 
   async start(): Promise<void> {
@@ -45,12 +54,14 @@ export class EventSubscriber {
 
     this.isRunning = true;
     logger.info('Starting event subscriber service');
+    this.eventQueue?.start();
     this.retryQueue?.start();
     this.poll();
   }
 
   async stop(): Promise<void> {
     this.isRunning = false;
+    this.eventQueue?.stop();
     this.retryQueue?.stop();
     logger.info('Stopping event subscriber service');
   }
@@ -122,7 +133,11 @@ export class EventSubscriber {
         }
 
         for (const event of processableEvents) {
-          await this.processEvent(event, contractConfig, requestId);
+          if (this.eventQueue) {
+            this.eventQueue.enqueue(event, contractConfig, requestId);
+          } else {
+            await this.processEvent(event, contractConfig, requestId);
+          }
         }
 
         if (response.cursor) {
@@ -212,7 +227,7 @@ export class EventSubscriber {
     event: StellarSDK.rpc.Api.EventResponse,
     contractConfig: ContractConfig,
     requestId: string = ''
-  ): Promise<void> {
+  ): Promise<boolean> {
     const eventStart = Date.now();
     const eventName = getEventName(event.topic);
 
@@ -238,7 +253,7 @@ export class EventSubscriber {
           'SKIPPED'
         );
         
-        return;
+        return true;
       }
     }
 
@@ -322,6 +337,11 @@ export class EventSubscriber {
       notificationSent,
       durationMs: Date.now() - eventStart,
     });
+
+    if (!this.discordService) return true;
+    if (notificationSent) return true;
+    if (processingError && this.retryQueue) return true;
+    return false;
   }
 
   private async handleReconnection(requestId?: string): Promise<void> {

@@ -8,6 +8,7 @@ import { NotificationType } from '../types/scheduled-notification';
 import logger from '../utils/logger';
 import { generateRequestId, resolveCorrelationId } from '../utils/request-id';
 import { NotificationHistoryService } from '../services/notification-history';
+import { SearchSuggestionService } from '../services/search-suggestion';
 import {
   verifySignature,
   extractSignature,
@@ -15,6 +16,7 @@ import {
   getSecretForKey,
   collectRawBody,
 } from '../services/webhook-verifier';
+import { WebhookSecret, RateLimitConfig, ContractConfig } from '../types';
 import { WebhookSecret, RateLimitConfig } from '../types';
 import { RateLimiter } from './rate-limiter';
 import {
@@ -34,11 +36,16 @@ import {
 } from './template-api';
 import { CreateNotificationTemplateInput } from '../types/notification-template';
 import { BatchValidationService } from '../services/batch-validation-service';
+import { handleArchiveRequest } from './archive-api';
+import { ArchiveStore } from '../services/archive-store';
+import { ArchiveService } from '../services/archive-service';
 
 export interface EventsServerOptions {
   port: number;
   corsOrigin?: string;
   stellarRpcUrl: string;
+  stellarNetworkPassphrase: string;
+  contractAddresses: ContractConfig[];
   discordWebhookUrl?: string;
   webhookSecrets?: WebhookSecret[];
   notificationAPI?: NotificationAPI | null;
@@ -50,6 +57,10 @@ export interface EventsServerOptions {
    */
   analyticsAggregator?: NotificationAnalyticsAggregator | null;
   templateService?: NotificationTemplateService | null;
+  /** Archive store for retrieval endpoints (optional). */
+  archiveStore?: ArchiveStore | null;
+  /** Archive service for the admin /run endpoint (optional). */
+  archiveService?: ArchiveService | null;
 }
 
 type ServiceStatus = 'ok' | 'error' | 'not_configured';
@@ -71,6 +82,28 @@ interface HealthResponse {
 }
 
 const HEALTH_TIMEOUT_MS = 5000;
+const NETWORK_TIP_CACHE_TTL_MS = 2000;
+
+type IndexingStatus = 'synced' | 'syncing' | 'degraded';
+
+interface IndexingHealthResponse {
+  status: IndexingStatus;
+  timestamp: string;
+  indexedLedger: number | null;
+  networkTipLedger: number | null;
+  ledgerLag: number | null;
+  /**
+   * Time since the last event was ingested into the in-memory registry.
+   * This serves as a lightweight proxy for ingestion latency / pipeline stalls.
+   */
+  processingDelayMs: number | null;
+  lastIngestedAt: string | null;
+  detail?: string;
+}
+
+let cachedNetworkTip:
+  | { fetchedAt: number; ledger: number | null; errorDetail?: string }
+  | null = null;
 
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   return Promise.race([
@@ -120,6 +153,147 @@ export async function checkDiscord(webhookUrl: string): Promise<ServiceHealth> {
   }
 }
 
+async function getContractPauseStatus(
+  contractAddress: string,
+  stellarRpcUrl: string
+): Promise<{ paused: boolean; error?: string }> {
+  try {
+    const server = new StellarSDK.rpc.Server(stellarRpcUrl);
+    const contract = new StellarSDK.Contract(contractAddress);
+    
+    // Create a dummy account for simulation (we don't need to actually sign anything)
+    const dummyKeypair = StellarSDK.Keypair.random();
+    const sourceAccount = await server.getAccount(dummyKeypair.publicKey()).catch(() => {
+      // If the dummy account doesn't exist, we can still simulate
+      return new StellarSDK.Account(dummyKeypair.publicKey(), '0');
+    });
+
+    const tx = new StellarSDK.TransactionBuilder(sourceAccount, {
+      fee: StellarSDK.BASE_FEE,
+      networkPassphrase: 'Test SDF Network ; September 2015', // We just need this for simulation
+    })
+      .addOperation(contract.call('get_paused_status'))
+      .setTimeout(30)
+      .build();
+
+    const simulation = await server.simulateTransaction(tx);
+
+    if (!StellarSDK.rpc.isSuccessfulSim(simulation) || !simulation.result) {
+      return { 
+        paused: false, 
+        error: simulation.error ? simulation.error.message : 'Failed to simulate contract call' 
+      };
+    }
+
+    const value = StellarSDK.scValToNative(simulation.result.retval);
+    return { paused: !!value };
+  } catch (err) {
+    return { 
+      paused: false, 
+      error: err instanceof Error ? err.message : String(err) 
+    };
+  }
+}
+
+async function buildStatusResponse(options: EventsServerOptions): Promise<{
+  contracts: Array<{
+    address: string;
+    paused: boolean;
+    error?: string;
+  }>;
+  timestamp: string;
+}> {
+  const contractStatuses = await Promise.all(
+    options.contractAddresses.map(async (contractConfig) => {
+      const status = await getContractPauseStatus(contractConfig.address, options.stellarRpcUrl);
+      return {
+        address: contractConfig.address,
+        ...status
+      };
+    })
+  );
+
+  return {
+    timestamp: new Date().toISOString(),
+    contracts: contractStatuses
+async function fetchNetworkTipLedger(rpcUrl: string): Promise<{
+  ledger: number | null;
+  errorDetail?: string;
+}> {
+  if (
+    cachedNetworkTip &&
+    Date.now() - cachedNetworkTip.fetchedAt < NETWORK_TIP_CACHE_TTL_MS
+  ) {
+    return { ledger: cachedNetworkTip.ledger, errorDetail: cachedNetworkTip.errorDetail };
+  }
+
+  const start = Date.now();
+  try {
+    const server = new StellarSDK.rpc.Server(rpcUrl);
+
+    // `getLatestLedger` is the most direct source of the current ledger/tip for Soroban RPC.
+    // We keep extraction defensive to avoid hard-coupling to the SDK response shape.
+    const latest: any = await withTimeout<any>(
+      (server as any).getLatestLedger(),
+      HEALTH_TIMEOUT_MS
+    );
+    const ledger =
+      typeof latest?.sequence === 'number'
+        ? latest.sequence
+        : typeof latest?.ledger === 'number'
+          ? latest.ledger
+          : typeof latest?.latestLedger === 'number'
+            ? latest.latestLedger
+            : null;
+
+    cachedNetworkTip = { fetchedAt: Date.now(), ledger };
+    return { ledger };
+  } catch (err) {
+    const errorDetail = err instanceof Error ? err.message : String(err);
+    cachedNetworkTip = { fetchedAt: Date.now(), ledger: null, errorDetail };
+    logger.warn('Failed to fetch network tip ledger', {
+      rpcUrl,
+      durationMs: Date.now() - start,
+      errorDetail,
+    });
+    return { ledger: null, errorDetail };
+  }
+}
+
+function deriveIndexingStatus(args: {
+  indexedLedger: number | null;
+  networkTipLedger: number | null;
+  processingDelayMs: number | null;
+}): { status: IndexingStatus; detail?: string } {
+  const { indexedLedger, networkTipLedger, processingDelayMs } = args;
+
+  if (networkTipLedger === null) {
+    return { status: 'degraded', detail: 'Unable to resolve network tip ledger.' };
+  }
+
+  if (indexedLedger === null) {
+    return { status: 'syncing', detail: 'No events ingested yet.' };
+  }
+
+  const ledgerLag = Math.max(0, networkTipLedger - indexedLedger);
+  const delay = processingDelayMs ?? Number.POSITIVE_INFINITY;
+
+  if (ledgerLag === 0 && delay <= 60_000) {
+    return { status: 'synced' };
+  }
+
+  if (ledgerLag <= 5 && delay <= 5 * 60_000) {
+    return { status: 'syncing', detail: `Behind by ${ledgerLag} ledger(s).` };
+  }
+
+  return {
+    status: 'degraded',
+    detail: `Behind by ${ledgerLag} ledger(s) and last ingestion was ${Math.round(
+      delay / 1000
+    )}s ago.`,
+  };
+}
+
 async function buildHealthResponse(options: EventsServerOptions): Promise<HealthResponse> {
   const [stellarRpc, discord] = await Promise.all([
     checkStellarRpc(options.stellarRpcUrl),
@@ -160,6 +334,7 @@ function isRateLimitExempt(pathname: string): boolean {
 export function createEventsServer(options: EventsServerOptions): http.Server {
   const corsOrigin = options.corsOrigin ?? 'http://localhost:5173';
   const historyService = new NotificationHistoryService();
+  const suggestionService = new SearchSuggestionService();
   const rateLimiter = options.rateLimit ? new RateLimiter(options.rateLimit) : undefined;
 
   const server = http.createServer(async (req, res) => {
@@ -206,6 +381,19 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
       return;
     }
 
+    // GET /api/status
+    if (req.method === 'GET' && url.pathname === '/api/status') {
+      buildStatusResponse(options).then((status) => {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(status));
+      }).catch((err) => {
+        logger.error('Status check failed unexpectedly', { error: err, requestId, correlationId });
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ status: 'error', detail: 'Internal status check failure' }));
+      });
+      return;
+    }
+
     // GET /api/events
     if (req.method === 'GET' && url.pathname.startsWith('/api/events')) {
       const limitParam = url.searchParams.get('limit');
@@ -226,6 +414,40 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
         returned: events.length,
         durationMs: Date.now() - startTime,
       });
+      return;
+    }
+
+    // GET /api/indexing/health
+    if (req.method === 'GET' && url.pathname === '/api/indexing/health') {
+      const networkTip = await fetchNetworkTipLedger(options.stellarRpcUrl);
+      const ingestion = eventRegistry.getIngestionSnapshot();
+
+      const now = Date.now();
+      const processingDelayMs =
+        ingestion.lastIngestedAt === null ? null : Math.max(0, now - ingestion.lastIngestedAt);
+
+      const indexedLedger = ingestion.lastIngestedLedger;
+      const networkTipLedger = networkTip.ledger;
+      const ledgerLag =
+        indexedLedger === null || networkTipLedger === null
+          ? null
+          : Math.max(0, networkTipLedger - indexedLedger);
+
+      const derived = deriveIndexingStatus({ indexedLedger, networkTipLedger, processingDelayMs });
+
+      const response: IndexingHealthResponse = {
+        status: derived.status,
+        timestamp: new Date().toISOString(),
+        indexedLedger,
+        networkTipLedger,
+        ledgerLag,
+        processingDelayMs,
+        lastIngestedAt: ingestion.lastIngestedAt ? new Date(ingestion.lastIngestedAt).toISOString() : null,
+        detail: derived.detail ?? networkTip.errorDetail,
+      };
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(response));
       return;
     }
 
@@ -526,6 +748,31 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
       return;
     }
 
+    // GET /api/search/suggestions
+    if (req.method === 'GET' && url.pathname === '/api/search/suggestions') {
+      const q = url.searchParams.get('q') || '';
+      const limit = url.searchParams.get('limit') ? parseInt(url.searchParams.get('limit')!, 10) : undefined;
+
+      logger.info('Handling GET /api/search/suggestions', { requestId, correlationId, q, limit });
+
+      suggestionService.getSuggestions(q, limit)
+        .then((result) => {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(result));
+
+          logger.info('GET /api/search/suggestions complete', {
+            requestId,
+            durationMs: Date.now() - startTime,
+          });
+        })
+        .catch((error) => {
+          logger.error('Failed to retrieve search suggestions', { error, requestId, correlationId });
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: (error as Error).message }));
+        });
+      return;
+    }
+
     // GET /api/templates/:id/audit
     const templateAuditMatch = url.pathname.match(/^\/api\/templates\/([^/]+)\/audit$/);
     if (req.method === 'GET' && templateAuditMatch) {
@@ -729,6 +976,15 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
         }
       });
       return;
+    }
+
+    // GET /api/archive, GET /api/archive/:id, POST /api/archive/run
+    if (options.archiveStore && (url.pathname === '/api/archive' || url.pathname.startsWith('/api/archive/'))) {
+      const handled = await handleArchiveRequest(req, res, {
+        store: options.archiveStore,
+        service: options.archiveService,
+      }, requestId);
+      if (handled) return;
     }
 
     logger.warn('Unhandled request', {
