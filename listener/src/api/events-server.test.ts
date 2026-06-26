@@ -24,7 +24,7 @@ jest.mock('@stellar/stellar-sdk', () => ({
     Server: jest.fn().mockImplementation(() => ({
       getHealth: mockGetHealth,
       simulateTransaction: mockSimulateTransaction,
-      getAccount: jest.fn().mockRejectedValue(new Error('not found')),
+      getAccount: jest.fn<Promise<unknown>, []>().mockRejectedValue(new Error('not found')),
     })),
     isSuccessfulSim: mockIsSuccessfulSim,
   },
@@ -473,6 +473,9 @@ describe('POST /api/notifications/validate-batch', () => {
     expect(body.valid).toBe(false);
     expect(body.errors.some((e) => e.code === 'DUPLICATE_RECIPIENT')).toBe(true);
     expect(body.errors.some((e) => e.code === 'MISSING_FIELD' || e.code === 'EMPTY_FIELD')).toBe(true);
+  });
+});
+
 describe('GET /api/search/suggestions API', () => {
   let server: http.Server;
   let db: Database;

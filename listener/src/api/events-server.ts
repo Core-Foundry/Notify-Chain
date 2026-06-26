@@ -29,6 +29,9 @@ import {
   TemplateValidationError,
 } from '../services/notification-template-repository';
 import {
+  TemplateRenderError,
+} from '../services/notification-template-service';
+import {
   parseTemplateUpdateBody,
   resolveRequestActor,
   serializeAuditRecord,
@@ -44,8 +47,8 @@ export interface EventsServerOptions {
   port: number;
   corsOrigin?: string;
   stellarRpcUrl: string;
-  stellarNetworkPassphrase: string;
-  contractAddresses: ContractConfig[];
+  stellarNetworkPassphrase?: string;
+  contractAddresses?: ContractConfig[];
   discordWebhookUrl?: string;
   webhookSecrets?: WebhookSecret[];
   notificationAPI?: NotificationAPI | null;
@@ -212,7 +215,7 @@ async function buildStatusResponse(options: EventsServerOptions): Promise<{
   timestamp: string;
 }> {
   const contractStatuses = await Promise.all(
-    options.contractAddresses.map(async (contractConfig) => {
+    (options.contractAddresses ?? []).map(async (contractConfig) => {
       const status = await getContractPauseStatus(contractConfig.address, options.stellarRpcUrl);
       return {
         address: contractConfig.address,
@@ -354,7 +357,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
     const startTime = Date.now();
 
     res.setHeader('Access-Control-Allow-Origin', corsOrigin);
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, OPTIONS');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-API-Key, Authorization, X-Correlation-Id');
     res.setHeader('X-Request-Id', requestId);
     res.setHeader('X-Correlation-Id', correlationId);
@@ -798,6 +801,26 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
       return;
     }
 
+    // GET /api/templates
+    if (req.method === 'GET' && url.pathname === '/api/templates') {
+      if (!options.templateService) {
+        res.writeHead(503, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Template service not enabled' }));
+        return;
+      }
+      options.templateService.listAll()
+        .then((templates) => {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(templates.map(serializeTemplate)));
+        })
+        .catch((error) => {
+          logger.error('Failed to list templates', { error, requestId, correlationId });
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: (error as Error).message }));
+        });
+      return;
+    }
+
     // GET /api/templates/:id/audit
     const templateAuditMatch = url.pathname.match(/^\/api\/templates\/([^/]+)\/audit$/);
     if (req.method === 'GET' && templateAuditMatch) {
@@ -960,6 +983,83 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
           }
         })();
       });
+      return;
+    }
+
+    // POST /api/templates/:id/render
+    const templateRenderMatch = url.pathname.match(/^\/api\/templates\/([^/]+)\/render$/);
+    if (req.method === 'POST' && templateRenderMatch) {
+      if (!options.templateService) {
+        res.writeHead(503, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Template service not enabled' }));
+        return;
+      }
+
+      const templateId = decodeURIComponent(templateRenderMatch[1]);
+      logger.info('Handling POST /api/templates/:id/render', { requestId, correlationId, templateId });
+
+      let body = '';
+      req.on('data', (chunk) => { body += chunk; });
+      req.on('end', () => {
+        void (async () => {
+          try {
+            const parsed = body ? JSON.parse(body) as Record<string, string> : {};
+            const template = await options.templateService!.getById(templateId);
+            if (!template) {
+              res.writeHead(404, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ error: `Template not found: ${templateId}` }));
+              return;
+            }
+            const rendered = options.templateService!.renderTemplate(template, parsed);
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify(rendered));
+          } catch (error) {
+            if (error instanceof SyntaxError) {
+              res.writeHead(400, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ error: 'Invalid JSON' }));
+              return;
+            }
+            if (error instanceof TemplateRenderError) {
+              res.writeHead(422, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ error: error.message }));
+              return;
+            }
+            logger.error('Failed to render template', { error, requestId, correlationId, templateId });
+            res.writeHead(500, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: (error as Error).message }));
+          }
+        })();
+      });
+      return;
+    }
+
+    // DELETE /api/templates/:id
+    const deleteTemplateMatch = url.pathname.match(/^\/api\/templates\/([^/]+)$/);
+    if (req.method === 'DELETE' && deleteTemplateMatch) {
+      if (!options.templateService) {
+        res.writeHead(503, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Template service not enabled' }));
+        return;
+      }
+
+      const templateId = decodeURIComponent(deleteTemplateMatch[1]);
+      logger.info('Handling DELETE /api/templates/:id', { requestId, correlationId, templateId });
+
+      options.templateService.delete(templateId)
+        .then(() => {
+          res.writeHead(204);
+          res.end();
+        })
+        .catch((error) => {
+          if (error instanceof TemplateNotFoundError) {
+            res.writeHead(404, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: error.message }));
+            return;
+          }
+          logger.error('Failed to delete template', { error, requestId, correlationId, templateId });
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: (error as Error).message }));
+        });
       return;
     }
 
