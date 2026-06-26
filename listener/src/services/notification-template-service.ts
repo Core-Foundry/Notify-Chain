@@ -35,6 +35,14 @@ export class NotificationTemplateService {
     return this.repository.update(templateId, input, actor);
   }
 
+  async getAll(): Promise<NotificationTemplate[]> {
+    return this.repository.getAll();
+  }
+
+  async delete(templateId: string): Promise<void> {
+    return this.repository.delete(templateId);
+  }
+
   async getAuditHistory(templateId: string): Promise<TemplateAuditRecord[]> {
     return this.repository.getUpdateHistory(templateId);
   }

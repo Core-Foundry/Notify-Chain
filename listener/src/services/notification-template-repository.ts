@@ -149,6 +149,23 @@ export class NotificationTemplateRepository {
     return persisted;
   }
 
+  async getAll(): Promise<NotificationTemplate[]> {
+    const rows = await this.db.all<NotificationTemplateRow>(
+      'SELECT * FROM notification_templates',
+    );
+    return rows.map(row => this.rowToModel(row));
+  }
+
+  async delete(templateId: string): Promise<void> {
+    const existing = await this.getById(templateId);
+    if (!existing) {
+      throw new TemplateNotFoundError(templateId);
+    }
+    await this.db.run('DELETE FROM notification_templates WHERE id = ?', [templateId]);
+    this.cache?.invalidate(templateId);
+    logger.info('Notification template deleted', { templateId });
+  }
+
   async getUpdateHistory(templateId: string): Promise<TemplateAuditRecord[]> {
     return this.auditTrail.getByTemplateId(templateId);
   }
