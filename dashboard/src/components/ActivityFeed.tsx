@@ -3,6 +3,7 @@ import { fetchActivityFeed, generateMockActivityEvents } from '../services/activ
 import type { ActivityEvent, ActivityType } from '../types/activity';
 import { formatTimestamp } from '../utils/formatTime';
 import { PaginationControls } from './PaginationControls';
+import { useWalletAccountSync } from '../hooks/useWalletAccountSync';
 
 // Helper to get icon/color based on activity type
 const getActivityTypeStyle = (type: ActivityType) => {
@@ -147,6 +148,16 @@ export function ActivityFeed() {
     setPage(1);
     setLiveEvents([]);
   };
+
+  // Clear stale activity and re-fetch from page 1 whenever the connected
+  // wallet address changes (switch or disconnect). This is the fix for issue #175.
+  useWalletAccountSync((_nextAddress) => {
+    setEvents([]);
+    setLiveEvents([]);
+    setTotal(0);
+    setPage(1);
+    loadEvents(1, pageSize);
+  });
 
   // Events shown: live prepended events (only on page 1) + paginated events
   const displayedEvents = page === 1 ? [...liveEvents, ...events] : events;

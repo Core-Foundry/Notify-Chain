@@ -33,6 +33,21 @@ export class IdempotencyKeyService {
     // Check if we have a cached response
     const cached = await this.repository.getCachedResponse(idempotencyKey);
     if (cached) {
+      const isValidRequest = await this.repository.validateRequestHash(
+        idempotencyKey,
+        requestBody
+      );
+      if (!isValidRequest) {
+        const error = new Error(
+          'Idempotency key reused with different request body'
+        );
+        logger.error('Request validation failed', {
+          idempotencyKey,
+          error: error.message,
+        });
+        throw error;
+      }
+
       logger.info('Returning cached response for idempotent request', {
         idempotencyKey,
         notificationId: cached.notificationId,

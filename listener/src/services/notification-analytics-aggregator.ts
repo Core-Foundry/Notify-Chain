@@ -1,5 +1,6 @@
 import logger from '../utils/logger';
 import { NotificationType } from '../types/scheduled-notification';
+import { AnalyticsConfig } from '../types';
 
 export type AnalyticsDeliveryOutcome = 'success' | 'failure' | 'retry' | 'skipped';
 
@@ -86,7 +87,7 @@ const DEFAULTS = {
  * memory-bounded (rolling window) and allocation-light: a single sorted array
  * of records and a sparse array of hourly buckets. No external storage is
  * required, which makes it suitable for in-process observability and the
- * `/api/analytics/notifications` HTTP endpoint.
+ * `/api/analytics` HTTP endpoint.
  *
  * Thread-safety: the aggregator is single-threaded by design. Callers must
  * invoke `record()` synchronously from a single event loop tick. Concurrent
@@ -416,12 +417,26 @@ export class NotificationAnalyticsAggregator {
  */
 let defaultInstance: NotificationAnalyticsAggregator | null = null;
 
+export function initNotificationAnalyticsAggregator(
+  config: AnalyticsConfig,
+): NotificationAnalyticsAggregator {
+  defaultInstance = new NotificationAnalyticsAggregator({
+    maxRecords: config.maxRecords,
+    maxBuckets: config.maxBuckets,
+    bucketSizeMs: config.bucketSizeMs,
+  });
+  logger.info('Notification analytics aggregator initialized', {
+    maxRecords: config.maxRecords,
+    maxBuckets: config.maxBuckets,
+    bucketSizeMs: config.bucketSizeMs,
+  });
+  return defaultInstance;
+}
+
 export function getNotificationAnalyticsAggregator(): NotificationAnalyticsAggregator {
   if (!defaultInstance) {
     defaultInstance = new NotificationAnalyticsAggregator();
-    logger.info('Notification analytics aggregator initialized', {
-      maxRecords: defaultInstance.size,
-    });
+    logger.info('Notification analytics aggregator initialized with defaults');
   }
   return defaultInstance;
 }

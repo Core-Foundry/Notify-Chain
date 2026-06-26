@@ -5,6 +5,9 @@ import { ActivityFeed } from './components/ActivityFeed';
 import { WebhookDashboardPage } from './pages/WebhookDashboardPage';
 
 type Tab = 'explorer' | 'timeline' | 'activity' | 'webhooks';
+import { ExportHistoryPage } from './pages/ExportHistoryPage';
+
+type Tab = 'explorer' | 'timeline' | 'activity' | 'export-history';
 
 export function App() {
   const [tab, setTab] = useState<Tab>('explorer');
@@ -43,6 +46,11 @@ export function App() {
           onClick={() => setTab('webhooks')}
         >
           Webhook Performance
+          aria-selected={tab === 'export-history'}
+          className={`app-tabs__btn${tab === 'export-history' ? ' app-tabs__btn--active' : ''}`}
+          onClick={() => setTab('export-history')}
+        >
+          Export History
         </button>
       </nav>
 
@@ -50,6 +58,7 @@ export function App() {
       {tab === 'timeline' && <NotificationTimelineView />}
       {tab === 'activity' && <ActivityFeed />}
       {tab === 'webhooks' && <WebhookDashboardPage />}
+      {tab === 'export-history' && <ExportHistoryPage />}
     </div>
   );
 }

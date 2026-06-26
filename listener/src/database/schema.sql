@@ -34,7 +34,8 @@ CREATE TABLE IF NOT EXISTS scheduled_notifications (
   event_id TEXT,                            -- Reference to the original event (if applicable)
   contract_address TEXT,                    -- Stellar contract address (if applicable)
   priority INTEGER NOT NULL DEFAULT 5,      -- 1-10, lower = higher priority
-  metadata TEXT                             -- Additional JSON metadata
+  metadata TEXT,                            -- Additional JSON metadata
+  next_retry_at DATETIME                    -- Explicit retry scheduling timestamp
 );
 
 -- Indexes for performance optimization
@@ -86,9 +87,8 @@ CREATE INDEX IF NOT EXISTS idx_execution_log_execution_time
 CREATE INDEX IF NOT EXISTS idx_execution_log_status_execution_time 
   ON notification_execution_log(status, execution_time);
 
--- Migration: add next_retry_at for explicit retry scheduling
-ALTER TABLE scheduled_notifications ADD COLUMN next_retry_at DATETIME;
-
+-- Migration: add next_retry_at for explicit retry scheduling (no-op when column exists in CREATE TABLE)
+-- SQLite does not support IF NOT EXISTS for ADD COLUMN; runMigrations tolerates duplicate-column errors.
 -- Trigger to update updated_at timestamp
 CREATE TRIGGER IF NOT EXISTS update_scheduled_notifications_timestamp 
 AFTER UPDATE ON scheduled_notifications
@@ -297,4 +297,17 @@ CREATE INDEX IF NOT EXISTS idx_backpressure_events_timestamp
 
 CREATE INDEX IF NOT EXISTS idx_backpressure_events_type_timestamp
   ON backpressure_events(event_type, timestamp);
+
+-- Persisted notification delivery metrics snapshots for historical analytics
+CREATE TABLE IF NOT EXISTS notification_metrics_snapshots (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  captured_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  window_start INTEGER NOT NULL,
+  window_end INTEGER NOT NULL,
+  total_recorded INTEGER NOT NULL,
+  snapshot_json TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_metrics_snapshots_captured_at
+  ON notification_metrics_snapshots(captured_at);
 

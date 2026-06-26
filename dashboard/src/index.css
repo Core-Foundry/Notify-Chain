@@ -1958,6 +1958,30 @@ body {
 }
 
 .webhook-filters__select {
+/* ── Export History filters ─────────────────────────────────────────────── */
+
+/*
+ * .export-filters reuses the same layout as .event-filters but is scoped to
+ * the Export History page so both grids can diverge independently if needed.
+ */
+.export-filters {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+  margin: 24px 0 16px;
+  padding: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.export-filters label {
+  font-size: 0.85rem;
+  color: #9aa0a6;
+}
+
+.export-filters input,
+.export-filters select {
   border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 8px;
   padding: 8px 10px;
@@ -2453,5 +2477,76 @@ body {
 @media (max-width: 420px) {
   .webhook-summary-cards {
     grid-template-columns: 1fr;
+}
+
+/* ── Export table: action cell ──────────────────────────────────────────── */
+
+.export-table__cell-action {
+  text-align: center;
+  white-space: nowrap;
+}
+
+/* ── Export table: responsive / mobile ─────────────────────────────────── */
+
+@media (max-width: 860px) {
+  /* Hide less-critical columns on medium screens */
+  .export-table thead th:nth-child(4),
+  .export-table thead th:nth-child(5),
+  .export-table tbody td:nth-child(4),
+  .export-table tbody td:nth-child(5) {
+    display: none;
+  }
+}
+
+@media (max-width: 600px) {
+  /* Stack rows as definition lists on very small screens */
+  .export-table,
+  .export-table thead,
+  .export-table tbody,
+  .export-table th,
+  .export-table td,
+  .export-table tr {
+    display: block;
+  }
+
+  .export-table thead {
+    display: none;
+  }
+
+  .export-table__row {
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    padding: 14px 16px;
+  }
+
+  .export-table td {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 0;
+    border-bottom: none;
+    font-size: 0.875rem;
+  }
+
+  .export-table td[data-label]::before {
+    content: attr(data-label);
+    font-size: 0.75rem;
+    color: #9aa0a6;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    flex-shrink: 0;
+  }
+
+  .export-table__cell-numeric {
+    text-align: right;
+  }
+
+  .export-table__cell-action {
+    justify-content: flex-end;
+  }
+
+  .export-history__header {
+    flex-direction: column;
+    align-items: stretch;
   }
 }

@@ -1,11 +1,13 @@
 use crate::base::errors::Error;
 use crate::base::events::{
-    AdminTransferred, AuthorizationFailure, AutoshareCreated, AutoshareUpdated, ContractPaused,
-    ContractUnpaused, GroupActivated, GroupDeactivated, NotificationCategory, NotificationExpired,
-    NotificationExtended, NotificationLimitsConfigured, NotificationPriority, NotificationRevoked,
-    NotificationScheduled, ScheduledNotificationCancelled, Withdrawal,
+    AdminTransferred, AuthorizationFailure, AutoshareCreated, AutoshareUpdated, CategoryRegistered,
+    ContractPaused, ContractUnpaused, GroupActivated, GroupDeactivated, NotificationCategory,
+    NotificationExpired, NotificationExtended, NotificationLimitsConfigured, NotificationPriority,
+    NotificationRevoked, NotificationScheduled, ScheduledNotificationCancelled, Withdrawal,
 };
-use crate::base::types::{AutoShareDetails, GroupMember, NotificationLimits, PaymentHistory, ScheduledNotification};
+use crate::base::types::{
+    AutoShareDetails, GroupMember, NotificationLimits, PaymentHistory, ScheduledNotification,
+};
 use soroban_sdk::{contracttype, token, Address, BytesN, Env, String, Vec};
 
 /// Storage key layout (optimized):
@@ -42,6 +44,7 @@ pub enum DataKey {
     ScheduledNotification(BytesN<32>),
     NotificationRevokers(BytesN<32>),
     NotificationLimits,
+    RegisteredCategories,
 }
 
 // ============================================================================
@@ -266,8 +269,71 @@ pub fn initialize_admin(env: Env, admin: Address) {
 
         // Initialize empty supported tokens list in instance storage
         let empty_tokens: Vec<Address> = Vec::new(&env);
-        env.storage().instance().set(&INSTANCE_TOKENS, &empty_tokens);
+        env.storage()
+            .instance()
+            .set(&INSTANCE_TOKENS, &empty_tokens);
+
+        seed_default_categories(&env);
     }
+}
+
+fn seed_default_categories(env: &Env) {
+    let key = DataKey::RegisteredCategories;
+    if env.storage().persistent().has(&key) {
+        return;
+    }
+
+    let categories: Vec<NotificationCategory> = Vec::new(env);
+    env.storage().persistent().set(&key, &categories);
+}
+
+pub fn get_registered_categories(env: Env) -> Vec<NotificationCategory> {
+    let key = DataKey::RegisteredCategories;
+    env.storage()
+        .persistent()
+        .get(&key)
+        .unwrap_or(Vec::new(&env))
+}
+
+pub fn is_category_registered(env: Env, category: NotificationCategory) -> bool {
+    let categories = get_registered_categories(env.clone());
+    for i in 0..categories.len() {
+        if categories.get(i).unwrap() == category {
+            return true;
+        }
+    }
+    false
+}
+
+pub fn register_category(
+    env: Env,
+    admin: Address,
+    category: NotificationCategory,
+) -> Result<(), Error> {
+    admin.require_auth();
+    require_admin(&env, &admin)?;
+
+    if is_category_registered(env.clone(), category) {
+        return Err(Error::AlreadyExists);
+    }
+
+    let key = DataKey::RegisteredCategories;
+    let mut categories: Vec<NotificationCategory> = env
+        .storage()
+        .persistent()
+        .get(&key)
+        .unwrap_or(Vec::new(&env));
+    categories.push_back(category);
+    env.storage().persistent().set(&key, &categories);
+
+    CategoryRegistered {
+        admin: admin.clone(),
+        category,
+        priority: NotificationPriority::Medium,
+    }
+    .publish(&env);
+
+    Ok(())
 }
 
 fn publish_authorization_failure(env: &Env, caller: &Address, action: &str) {
@@ -337,9 +403,8 @@ pub fn pause(env: Env, admin: Address) -> Result<(), Error> {
     }
 
     env.storage().instance().set(&INSTANCE_PAUSED, &true);
-    ContractPaused {}.publish(&env);
-    env.storage().persistent().set(&pause_key, &true);
     ContractPaused {
+        admin: admin.clone(),
         category: NotificationCategory::Admin,
         priority: NotificationPriority::High,
     }
@@ -362,9 +427,8 @@ pub fn unpause(env: Env, admin: Address) -> Result<(), Error> {
     }
 
     env.storage().instance().set(&INSTANCE_PAUSED, &false);
-    ContractUnpaused {}.publish(&env);
-    env.storage().persistent().set(&pause_key, &false);
     ContractUnpaused {
+        admin: admin.clone(),
         category: NotificationCategory::Admin,
         priority: NotificationPriority::High,
     }
@@ -469,10 +533,7 @@ pub fn set_usage_fee(env: Env, fee: u32, admin: Address) -> Result<(), Error> {
 }
 
 pub fn get_usage_fee(env: Env) -> u32 {
-    env.storage()
-        .instance()
-        .get(&INSTANCE_FEE)
-        .unwrap_or(10u32)
+    env.storage().instance().get(&INSTANCE_FEE).unwrap_or(10u32)
 }
 
 // ============================================================================
@@ -1182,7 +1243,6 @@ pub fn extend_notification_expiry(
     Ok(())
 }
 
-
 // ============================================================================
 // Notification Limits Configuration
 // ============================================================================
@@ -1202,7 +1262,7 @@ pub fn configure_notification_limits(
     admin.require_auth();
 
     // Verify caller is admin
-    let current_admin = get_admin(env.clone()).ok_or(Error::Unauthorized)?;
+    let current_admin = get_admin(env.clone())?;
     if admin != current_admin {
         AuthorizationFailure {
             caller: admin,
@@ -1259,14 +1319,14 @@ pub fn configure_notification_limits(
 /// Returns default limits if none have been configured.
 pub fn get_notification_limits(env: Env) -> NotificationLimits {
     let key = DataKey::NotificationLimits;
-    
+
     env.storage()
         .persistent()
         .get::<DataKey, NotificationLimits>(&key)
         .unwrap_or(NotificationLimits {
             max_payload_size: 10_000,
             max_expiration_seconds: 365 * 24 * 60 * 60, // 1 year
-            min_expiration_seconds: 60,                  // 1 minute
+            min_expiration_seconds: 60,                 // 1 minute
             max_batch_size: 1000,
         })
 }

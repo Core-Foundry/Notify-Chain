@@ -10,6 +10,12 @@ use proptest::prelude::*;
 use soroban_sdk::testutils::Address as _;
 use soroban_sdk::{Address, BytesN, Env, String, Vec};
 
+const ONE_HOUR: u64 = 3_600;
+
+fn notification_title(env: &Env) -> String {
+    String::from_str(env, "Test notification")
+}
+
 fn group_id(env: &Env, seed: u8) -> BytesN<32> {
     BytesN::from_array(env, &[seed; 32])
 }
@@ -92,7 +98,12 @@ proptest! {
         let creator = test_env.users.get(0).unwrap().clone();
         let notification_id = group_id(&test_env.env, seed);
 
-        client.schedule_notification(&notification_id, &creator, &ttl);
+        client.schedule_notification(
+            &notification_id,
+            &creator,
+            &ttl,
+            &notification_title(&test_env.env),
+        );
 
         let stored = client.get_notification(&notification_id);
         prop_assert_eq!(stored.expires_at - stored.created_at, ttl);
@@ -106,7 +117,12 @@ proptest! {
         let creator = test_env.users.get(0).unwrap().clone();
         let notification_id = group_id(&test_env.env, seed);
 
-        let result = client.try_schedule_notification(&notification_id, &creator, &0);
+        let result = client.try_schedule_notification(
+            &notification_id,
+            &creator,
+            &0,
+            &notification_title(&test_env.env),
+        );
         prop_assert!(result.is_err());
     }
 
