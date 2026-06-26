@@ -95,7 +95,7 @@ export function EventExplorerPage() {
 
   // Clear stale events and re-fetch whenever the connected wallet address
   // changes (switch or disconnect). This is the fix for issue #175.
-  useWalletAccountSync((_nextAddress) => {
+  useWalletAccountSync(() => {
     setEvents([]);
     setError(null);
     setPage(1);

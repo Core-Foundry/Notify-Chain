@@ -51,7 +51,7 @@ describe('event store selective subscriptions', () => {
   it('filter updates do not require reloading the full event collection', async () => {
     useEventStore.setState({
       events: generateMockEvents(100),
-      filters: { search: '', contractAddress: 'all', eventType: 'all', status: 'all', dateFrom: '', dateTo: '' },
+      filters: BLANK_FILTERS,
       isLoading: false,
       error: null,
     });
@@ -79,7 +79,7 @@ describe('pagination + filter interaction', () => {
     const events = generateMockEvents(200);
     useEventStore.setState({
       events,
-      filters: { search: '', contractAddress: 'all', eventType: 'all', status: 'all', dateFrom: '', dateTo: '' },
+      filters: BLANK_FILTERS,
       isLoading: false,
       error: null,
     });
@@ -98,7 +98,7 @@ describe('pagination + filter interaction', () => {
   it('filter change resets scroll position to top', async () => {
     useEventStore.setState({
       events: generateMockEvents(100),
-      filters: { search: '', contractAddress: 'all', eventType: 'all', status: 'all', dateFrom: '', dateTo: '' },
+      filters: BLANK_FILTERS,
       isLoading: false,
       error: null,
     });
