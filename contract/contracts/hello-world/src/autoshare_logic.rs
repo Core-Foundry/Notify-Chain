@@ -172,9 +172,12 @@ pub fn get_group_members(env: Env, id: BytesN<32>) -> Result<Vec<GroupMember>, E
 pub fn add_group_member(
     env: Env,
     id: BytesN<32>,
+    caller: Address,
     address: Address,
     percentage: u32,
 ) -> Result<(), Error> {
+    caller.require_auth();
+
     // Check if contract is paused
     if get_paused_status(&env) {
         return Err(Error::ContractPaused);
@@ -187,6 +190,14 @@ pub fn add_group_member(
         .get(&key)
         .ok_or(Error::NotFound)?;
 
+    if details.creator != caller {
+        return Err(Error::Unauthorized);
+    }
+
+    if !details.is_active {
+        return Err(Error::GroupInactive);
+    }
+
     // Check if already a member
     for member in details.members.iter() {
         if member.address == address {
@@ -194,9 +205,11 @@ pub fn add_group_member(
         }
     }
 
+    let member_address = address.clone();
+
     // Add new member
     details.members.push_back(GroupMember {
-        address,
+        address: member_address.clone(),
         percentage,
     });
 
@@ -205,6 +218,20 @@ pub fn add_group_member(
 
     // Save updated details
     env.storage().persistent().set(&key, &details);
+
+    let members_key = DataKey::GroupMembers(id);
+    let mut stored_members: Vec<GroupMember> = env
+        .storage()
+        .persistent()
+        .get(&members_key)
+        .unwrap_or(Vec::new(&env));
+    stored_members.push_back(GroupMember {
+        address: member_address,
+        percentage,
+    });
+    env.storage()
+        .persistent()
+        .set(&members_key, &stored_members);
     Ok(())
 }
 
@@ -546,13 +573,23 @@ pub fn get_total_usages_paid(env: Env, id: BytesN<32>) -> Result<u32, Error> {
     Ok(details.total_usages_paid)
 }
 
-pub fn reduce_usage(env: Env, id: BytesN<32>) -> Result<(), Error> {
+pub fn reduce_usage(env: Env, id: BytesN<32>, caller: Address) -> Result<(), Error> {
+    caller.require_auth();
+
     let key = DataKey::AutoShare(id);
     let mut details: AutoShareDetails = env
         .storage()
         .persistent()
         .get(&key)
         .ok_or(Error::NotFound)?;
+
+    if details.creator != caller {
+        return Err(Error::Unauthorized);
+    }
+
+    if !details.is_active {
+        return Err(Error::GroupInactive);
+    }
 
     if details.usage_count == 0 {
         return Err(Error::NoUsagesRemaining);

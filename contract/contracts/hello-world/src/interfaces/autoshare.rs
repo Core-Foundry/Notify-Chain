@@ -69,7 +69,14 @@ pub trait AutoShareTrait {
     fn get_group_members(env: Env, id: BytesN<32>) -> Vec<GroupMember>;
 
     /// Adds a member to a group with specified percentage.
-    fn add_group_member(env: Env, id: BytesN<32>, address: Address, percentage: u32);
+    /// Only the creator can call this.
+    fn add_group_member(
+        env: Env,
+        id: BytesN<32>,
+        caller: Address,
+        address: Address,
+        percentage: u32,
+    );
 
     /// Deactivates a group. Only the creator can deactivate.
     fn deactivate_group(env: Env, id: BytesN<32>, caller: Address);
@@ -139,6 +146,7 @@ pub trait AutoShareTrait {
     /// Returns the total usages paid for a group.
     fn get_total_usages_paid(env: Env, id: BytesN<32>) -> u32;
 
-    /// Reduces the usage count by 1 (dummy function for testing).
-    fn reduce_usage(env: Env, id: BytesN<32>);
+    /// Reduces the usage count by 1.
+    /// Only the creator can call this.
+    fn reduce_usage(env: Env, id: BytesN<32>, caller: Address);
 }

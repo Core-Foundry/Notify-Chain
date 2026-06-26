@@ -102,8 +102,14 @@ impl AutoShareContract {
     }
 
     /// Adds a member to a group with specified percentage.
-    pub fn add_group_member(env: Env, id: BytesN<32>, address: Address, percentage: u32) {
-        autoshare_logic::add_group_member(env, id, address, percentage).unwrap();
+    pub fn add_group_member(
+        env: Env,
+        id: BytesN<32>,
+        caller: Address,
+        address: Address,
+        percentage: u32,
+    ) {
+        autoshare_logic::add_group_member(env, id, caller, address, percentage).unwrap();
     }
 
     /// Deactivates a group. Only the creator can deactivate.
@@ -223,9 +229,9 @@ impl AutoShareContract {
         autoshare_logic::get_total_usages_paid(env, id).unwrap()
     }
 
-    /// Reduces the usage count by 1 (dummy function for testing).
-    pub fn reduce_usage(env: Env, id: BytesN<32>) {
-        autoshare_logic::reduce_usage(env, id).unwrap();
+    /// Reduces the usage count by 1.
+    pub fn reduce_usage(env: Env, id: BytesN<32>, caller: Address) {
+        autoshare_logic::reduce_usage(env, id, caller).unwrap();
     }
 }
 

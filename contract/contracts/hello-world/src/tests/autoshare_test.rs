@@ -603,6 +603,31 @@ fn test_add_group_member_success() {
 }
 
 #[test]
+fn test_add_group_member_updates_member_index() {
+    let test_env = setup_test_env();
+    let client = AutoShareContractClient::new(&test_env.env, &test_env.autoshare_contract);
+
+    let creator = test_env.users.get(0).unwrap().clone();
+    let id = BytesN::from_array(&test_env.env, &[7u8; 32]);
+    let name = String::from_str(&test_env.env, "Membership Index Test");
+    let empty_members = Vec::new(&test_env.env);
+
+    create_helper(&client, &id, &name, &creator, &empty_members, &test_env);
+
+    let member1 = Address::generate(&test_env.env);
+    let member2 = Address::generate(&test_env.env);
+
+    client.add_group_member(&id, &creator, &member1, &60);
+    client.add_group_member(&id, &creator, &member2, &40);
+
+    assert!(client.is_group_member(&id, &member1));
+    assert!(client.is_group_member(&id, &member2));
+
+    let members = client.get_group_members(&id);
+    assert_eq!(members.len(), 2);
+}
+
+#[test]
 #[should_panic] // AlreadyExists
 fn test_add_duplicate_member() {
     let test_env = setup_test_env();
@@ -622,7 +647,7 @@ fn test_add_duplicate_member() {
     create_helper(&client, &id, &name, &creator, &members, &test_env);
 
     // Try to add the same member again - should fail
-    client.add_group_member(&id, &member1, &50);
+    client.add_group_member(&id, &creator, &member1, &50);
 }
 
 #[test]
@@ -631,10 +656,11 @@ fn test_add_member_to_non_existent_group() {
     let test_env = setup_test_env();
     let client = AutoShareContractClient::new(&test_env.env, &test_env.autoshare_contract);
 
+    let creator = test_env.users.get(0).unwrap().clone();
     let id = BytesN::from_array(&test_env.env, &[99u8; 32]);
     let member = Address::generate(&test_env.env);
 
-    client.add_group_member(&id, &member, &50);
+    client.add_group_member(&id, &creator, &member, &50);
 }
 
 #[test]
@@ -659,7 +685,7 @@ fn test_add_member_invalid_total_percentage() {
 
     // Try to add another member with 50% (total would be 150%) - should fail
     let member2 = Address::generate(&test_env.env);
-    client.add_group_member(&id, &member2, &50);
+    client.add_group_member(&id, &creator, &member2, &50);
 }
 
 #[test]
@@ -1611,4 +1637,63 @@ fn test_create_group_with_payment() {
     let details = client.get(&id);
     assert_eq!(details.usage_count, usage_count);
     assert_eq!(details.total_usages_paid, usage_count);
+}
+
+#[test]
+#[should_panic]
+fn test_add_group_member_requires_creator_auth() {
+    let test_env = setup_test_env();
+    let client = AutoShareContractClient::new(&test_env.env, &test_env.autoshare_contract);
+
+    let creator = test_env.users.get(0).unwrap().clone();
+    let attacker = test_env.users.get(1).unwrap().clone();
+    let id = BytesN::from_array(&test_env.env, &[1u8; 32]);
+    let name = String::from_str(&test_env.env, "Auth Guard Test");
+
+    let member = Address::generate(&test_env.env);
+    let mut members = Vec::new(&test_env.env);
+    members.push_back(GroupMember {
+        address: member.clone(),
+        percentage: 100,
+    });
+
+    create_helper(&client, &id, &name, &creator, &members, &test_env);
+
+    client.add_group_member(&id, &attacker, &Address::generate(&test_env.env), &1u32);
+}
+
+#[test]
+#[should_panic]
+fn test_reduce_usage_rejects_unauthorized_caller() {
+    let test_env = setup_test_env();
+    let client = AutoShareContractClient::new(&test_env.env, &test_env.autoshare_contract);
+
+    let creator = test_env.users.get(0).unwrap().clone();
+    let attacker = test_env.users.get(1).unwrap().clone();
+    let token = test_env.mock_tokens.get(0).unwrap().clone();
+
+    let id = BytesN::from_array(&test_env.env, &[9u8; 32]);
+    let name = String::from_str(&test_env.env, "Usage Guard Test");
+    crate::test_utils::mint_tokens(&test_env.env, &token, &creator, 10000000);
+    client.create(&id, &name, &creator, &2u32, &token);
+
+    client.reduce_usage(&id, &attacker);
+}
+
+#[test]
+#[should_panic]
+fn test_reduce_usage_fails_when_usage_exhausted() {
+    let test_env = setup_test_env();
+    let client = AutoShareContractClient::new(&test_env.env, &test_env.autoshare_contract);
+
+    let creator = test_env.users.get(0).unwrap().clone();
+    let token = test_env.mock_tokens.get(0).unwrap().clone();
+
+    let id = BytesN::from_array(&test_env.env, &[8u8; 32]);
+    let name = String::from_str(&test_env.env, "Exhausted Usage Test");
+    crate::test_utils::mint_tokens(&test_env.env, &token, &creator, 10000000);
+    client.create(&id, &name, &creator, &1u32, &token);
+
+    client.reduce_usage(&id, &creator);
+    client.reduce_usage(&id, &creator);
 }
