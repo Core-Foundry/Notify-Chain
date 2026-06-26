@@ -1,4 +1,4 @@
-import type { ActivityEvent, ActivityFeedResponse } from '../types/activity';
+import type { ActivityEvent, ActivityFeedResponse, ActivityType } from '../types/activity';
 
 const BASE_URL =
   (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_EVENTS_API_URL) ||

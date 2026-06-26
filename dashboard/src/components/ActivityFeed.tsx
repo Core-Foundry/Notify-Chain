@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { fetchActivityFeed, generateMockActivityEvents } from '../services/activityApi';
 import type { ActivityEvent, ActivityType } from '../types/activity';
 import { formatTimestamp } from '../utils/formatTime';
+import { PaginationControls } from './PaginationControls';
 
 // Helper to get icon/color based on activity type
 const getActivityTypeStyle = (type: ActivityType) => {
@@ -47,7 +48,7 @@ const ActivityEventCard = ({ event }: { event: ActivityEvent }) => {
         {Object.keys(event.metadata).length > 0 && (
           <div className="activity-event__metadata">
             {Object.entries(event.metadata).map(([key, value]) => (
-              value && (
+              value !== undefined && value !== null && (
                 <span key={key} className="activity-event__metadata-item">
                   <span className="activity-event__metadata-key">{key}:</span>
                   <span className="activity-event__metadata-value">{String(value)}</span>
@@ -74,72 +75,81 @@ const ActivitySkeleton = () => (
   </div>
 );
 
+// All mock events are generated once and held in module scope so pagination
+// works consistently across page changes without regenerating on every render.
+const ALL_MOCK_EVENTS = generateMockActivityEvents(100);
+
 // Main ActivityFeed component
 export function ActivityFeed() {
   const [events, setEvents] = useState<ActivityEvent[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
   const [total, setTotal] = useState(0);
-  const [hasMore, setHasMore] = useState(true);
   const [realTimeEnabled, setRealTimeEnabled] = useState(true);
-  const pageSize = 20;
+  // Real-time events are prepended; track them separately so pagination totals
+  // stay accurate without mixing them into the paginated data.
+  const [liveEvents, setLiveEvents] = useState<ActivityEvent[]>([]);
 
-  // Load events
-  const loadEvents = useCallback(async (pageNum: number, append: boolean = false) => {
+  const pageCount = Math.max(1, Math.ceil(total / pageSize));
+
+  // Load a specific page of events
+  const loadEvents = useCallback(async (pageNum: number, size: number) => {
     setLoading(true);
     setError(null);
 
     try {
-      // Try API first, fallback to mock data
       try {
-        const data = await fetchActivityFeed(pageNum, pageSize);
-        setEvents(prev => append ? [...prev, ...data.events] : data.events);
+        const data = await fetchActivityFeed(pageNum, size);
+        setEvents(data.events);
         setTotal(data.total);
-        setHasMore(data.page * data.pageSize < data.total);
-      } catch (err) {
-        // Fallback to mock data
-        const mockEvents = generateMockActivityEvents(100);
-        const start = (pageNum - 1) * pageSize;
-        const end = start + pageSize;
-        const pageEvents = mockEvents.slice(start, end);
-        setEvents(prev => append ? [...prev, ...pageEvents] : pageEvents);
-        setTotal(mockEvents.length);
-        setHasMore(end < mockEvents.length);
+      } catch {
+        // Fallback to stable mock data
+        const start = (pageNum - 1) * size;
+        const end = start + size;
+        setEvents(ALL_MOCK_EVENTS.slice(start, end));
+        setTotal(ALL_MOCK_EVENTS.length);
       }
-    } catch (err) {
+    } catch {
       setError('Failed to load activity feed');
     } finally {
       setLoading(false);
     }
-  }, [pageSize]);
+  }, []);
 
-  // Initial load
+  // Reload whenever page or pageSize changes
   useEffect(() => {
-    loadEvents(1);
-  }, [loadEvents]);
+    loadEvents(page, pageSize);
+  }, [loadEvents, page, pageSize]);
 
-  // Real-time updates simulation
+  // Real-time update simulation — prepends a new event every 15 seconds
   useEffect(() => {
     if (!realTimeEnabled) return;
 
     const interval = setInterval(() => {
-      const newEvents = generateMockActivityEvents(1);
-      setEvents(prev => [newEvents[0], ...prev]);
+      const [newEvent] = generateMockActivityEvents(1);
+      setLiveEvents(prev => [newEvent, ...prev]);
       setTotal(prev => prev + 1);
-    }, 15000); // Every 15 seconds
+    }, 15000);
 
     return () => clearInterval(interval);
   }, [realTimeEnabled]);
 
-  // Load next page
-  const loadMore = () => {
-    if (!loading && hasMore) {
-      const nextPage = page + 1;
-      setPage(nextPage);
-      loadEvents(nextPage, true);
-    }
+  const handlePageChange = (newPage: number) => {
+    setPage(newPage);
+    // Clear live events on navigation so the count stays consistent
+    setLiveEvents([]);
   };
+
+  const handleLimitChange = (newLimit: number) => {
+    setPageSize(newLimit);
+    setPage(1);
+    setLiveEvents([]);
+  };
+
+  // Events shown: live prepended events (only on page 1) + paginated events
+  const displayedEvents = page === 1 ? [...liveEvents, ...events] : events;
 
   return (
     <section className="activity-feed" aria-labelledby="activity-feed-title">
@@ -149,7 +159,7 @@ export function ActivityFeed() {
             Activity Feed
           </h2>
           <p className="activity-feed__subtitle">
-            Recent actions and system events ({total} total)
+            Recent actions and system events ({total.toLocaleString()} total)
           </p>
         </div>
         <button
@@ -168,7 +178,7 @@ export function ActivityFeed() {
           <button
             type="button"
             className="activity-feed__retry"
-            onClick={() => loadEvents(1)}
+            onClick={() => loadEvents(page, pageSize)}
           >
             Retry
           </button>
@@ -177,31 +187,26 @@ export function ActivityFeed() {
 
       <div className="activity-feed__list" role="list" aria-label="Activity events">
         {loading && events.length === 0 ? (
-          // Show skeletons for initial load
           Array.from({ length: 5 }).map((_, i) => <ActivitySkeleton key={i} />)
-        ) : events.length === 0 ? (
+        ) : displayedEvents.length === 0 ? (
           <div className="activity-feed__empty" role="status">
             <p>No activity yet</p>
           </div>
         ) : (
-          events.map(event => (
+          displayedEvents.map(event => (
             <ActivityEventCard key={event.id} event={event} />
           ))
         )}
       </div>
 
-      {hasMore && (
-        <div className="activity-feed__load-more">
-          <button
-            type="button"
-            className="activity-feed__load-more-btn"
-            onClick={loadMore}
-            disabled={loading}
-          >
-            {loading ? 'Loading...' : 'Load More'}
-          </button>
-        </div>
-      )}
+      <PaginationControls
+        page={page}
+        pageCount={pageCount}
+        limit={pageSize}
+        totalCount={total}
+        onPageChange={handlePageChange}
+        onLimitChange={handleLimitChange}
+      />
     </section>
   );
 }

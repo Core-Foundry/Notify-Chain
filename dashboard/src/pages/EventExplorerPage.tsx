@@ -206,7 +206,6 @@ export function EventExplorerPage() {
         <EventExplorerSkeleton rows={Math.min(limit, 8)} />
       ) : currentPageEvents.length > 0 ? (
         <EventExplorerTable events={currentPageEvents} contractStatuses={contractStatuses} />
-        <EventExplorerTable events={currentPageEvents} />
       ) : (
         <section className="event-explorer__empty-state" role="status" aria-live="polite">
           <h2>No events found</h2>
