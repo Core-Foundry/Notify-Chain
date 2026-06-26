@@ -473,7 +473,9 @@ changes.
 
 ## Contributing
 
-Contributions are welcome! Please follow these steps:
+Contributions are welcome! Please follow these steps (or start with the canonical workflow guide):
+
+- [`CONTRIBUTOR_DEVELOPMENT_WORKFLOW_GUIDE.md`](CONTRIBUTOR_DEVELOPMENT_WORKFLOW_GUIDE.md)
 
 1. Fork the repository
 2. Create a feature branch
