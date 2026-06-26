@@ -181,6 +181,28 @@ client.raise_dispute(
 dispute_client.resolve_dispute(&dispute_id, &arbitrator, &true); // true = favor contributor
 ```
 
+### API Credential Rotation
+
+```rust
+let credential_id = client.register_api_key(
+    &organization,
+    &String::from_str(&env, "Primary API key"),
+    &fingerprint,
+);
+
+let next_id = client.rotate_api_key(
+    &organization,
+    &credential_id,
+    &String::from_str(&env, "Rotated API key"),
+    &new_fingerprint,
+    &String::from_str(&env, "Quarterly rotation"),
+);
+
+client.revoke_api_key(&organization, &credential_id);
+```
+
+Rotations keep the old credential active until you explicitly revoke it, so existing integrations can migrate gradually.
+
 ## 🔧 How to Extend
 
 ### Add Reputation System
@@ -264,6 +286,7 @@ cargo test -- --nocapture  # With output
 - **Input Validation**: Comprehensive checks on all parameters
 - **Atomic Operations**: Stellar's transaction atomicity guarantees
 - **No Reentrancy**: Soroban's execution model prevents reentrancy attacks
+- **Credential Rotation**: Multiple active API keys with audit history
 
 ## 📊 Gas Optimization (Fee Efficiency)
 
