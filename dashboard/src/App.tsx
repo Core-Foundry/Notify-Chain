@@ -2,8 +2,9 @@ import { useState } from 'react';
 import { EventExplorerPage } from './pages/EventExplorerPage';
 import { NotificationTimelineView } from './components/NotificationTimelineView';
 import { ActivityFeed } from './components/ActivityFeed';
+import { WebhookDashboardPage } from './pages/WebhookDashboardPage';
 
-type Tab = 'explorer' | 'timeline' | 'activity';
+type Tab = 'explorer' | 'timeline' | 'activity' | 'webhooks';
 
 export function App() {
   const [tab, setTab] = useState<Tab>('explorer');
@@ -35,11 +36,20 @@ export function App() {
         >
           Activity Feed
         </button>
+        <button
+          role="tab"
+          aria-selected={tab === 'webhooks'}
+          className={`app-tabs__btn${tab === 'webhooks' ? ' app-tabs__btn--active' : ''}`}
+          onClick={() => setTab('webhooks')}
+        >
+          Webhook Performance
+        </button>
       </nav>
 
       {tab === 'explorer' && <EventExplorerPage />}
       {tab === 'timeline' && <NotificationTimelineView />}
       {tab === 'activity' && <ActivityFeed />}
+      {tab === 'webhooks' && <WebhookDashboardPage />}
     </div>
   );
 }
