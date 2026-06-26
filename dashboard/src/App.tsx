@@ -3,8 +3,9 @@ import { EventExplorerPage } from './pages/EventExplorerPage';
 import { NotificationTimelineView } from './components/NotificationTimelineView';
 import { ActivityFeed } from './components/ActivityFeed';
 import { ExportHistoryPage } from './pages/ExportHistoryPage';
+import { NotificationSearchPage } from './pages/NotificationSearchPage';
 
-type Tab = 'explorer' | 'timeline' | 'activity' | 'export-history';
+type Tab = 'explorer' | 'timeline' | 'activity' | 'export-history' | 'search';
 
 export function App() {
   const [tab, setTab] = useState<Tab>('explorer');
@@ -44,12 +45,21 @@ export function App() {
         >
           Export History
         </button>
+        <button
+          role="tab"
+          aria-selected={tab === 'search'}
+          className={`app-tabs__btn${tab === 'search' ? ' app-tabs__btn--active' : ''}`}
+          onClick={() => setTab('search')}
+        >
+          Notification Search
+        </button>
       </nav>
 
       {tab === 'explorer' && <EventExplorerPage />}
       {tab === 'timeline' && <NotificationTimelineView />}
       {tab === 'activity' && <ActivityFeed />}
       {tab === 'export-history' && <ExportHistoryPage />}
+      {tab === 'search' && <NotificationSearchPage />}
     </div>
   );
 }

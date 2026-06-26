@@ -34,7 +34,8 @@ CREATE TABLE IF NOT EXISTS scheduled_notifications (
   event_id TEXT,                            -- Reference to the original event (if applicable)
   contract_address TEXT,                    -- Stellar contract address (if applicable)
   priority INTEGER NOT NULL DEFAULT 5,      -- 1-10, lower = higher priority
-  metadata TEXT                             -- Additional JSON metadata
+  metadata TEXT,                            -- Additional JSON metadata
+  next_retry_at DATETIME                    -- When the next retry should be attempted
 );
 
 -- Indexes for performance optimization
@@ -85,9 +86,6 @@ CREATE INDEX IF NOT EXISTS idx_execution_log_execution_time
 
 CREATE INDEX IF NOT EXISTS idx_execution_log_status_execution_time 
   ON notification_execution_log(status, execution_time);
-
--- Migration: add next_retry_at for explicit retry scheduling
-ALTER TABLE scheduled_notifications ADD COLUMN next_retry_at DATETIME;
 
 -- Trigger to update updated_at timestamp
 CREATE TRIGGER IF NOT EXISTS update_scheduled_notifications_timestamp 

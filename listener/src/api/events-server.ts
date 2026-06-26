@@ -9,6 +9,7 @@ import logger from '../utils/logger';
 import { generateRequestId, resolveCorrelationId } from '../utils/request-id';
 import { NotificationHistoryService } from '../services/notification-history';
 import { SearchSuggestionService } from '../services/search-suggestion';
+import { NotificationSearchService } from '../services/notification-search-service';
 import {
   verifySignature,
   extractSignature,
@@ -346,6 +347,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
   const corsOrigin = options.corsOrigin ?? 'http://localhost:5173';
   const historyService = new NotificationHistoryService();
   const suggestionService = new SearchSuggestionService();
+  const notificationSearchService = new NotificationSearchService();
   const rateLimiter = options.rateLimit ? new RateLimiter(options.rateLimit) : undefined;
 
   const server = http.createServer(async (req, res) => {
@@ -767,6 +769,33 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
         })
         .catch((error) => {
           logger.error('Failed to retrieve notification history', { error, requestId, correlationId });
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: (error as Error).message }));
+        });
+      return;
+    }
+
+    // GET /api/notifications/search
+    if (req.method === 'GET' && url.pathname === '/api/notifications/search') {
+      const q = url.searchParams.get('q') ?? undefined;
+      const sender = url.searchParams.get('sender') ?? undefined;
+      const txHash = url.searchParams.get('txHash') ?? undefined;
+      const eventId = url.searchParams.get('eventId') ?? undefined;
+      const status = url.searchParams.get('status') ?? undefined;
+      const type = url.searchParams.get('type') ?? undefined;
+      const limit = url.searchParams.get('limit') ? parseInt(url.searchParams.get('limit')!, 10) : undefined;
+      const offset = url.searchParams.get('offset') ? parseInt(url.searchParams.get('offset')!, 10) : undefined;
+
+      logger.info('Handling GET /api/notifications/search', { requestId, correlationId, q, sender, txHash, eventId, status, type, limit, offset });
+
+      notificationSearchService.search({ q, sender, txHash, eventId, status, type, limit, offset })
+        .then((result) => {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(result));
+          logger.info('GET /api/notifications/search complete', { requestId, total: result.total, durationMs: Date.now() - startTime });
+        })
+        .catch((error) => {
+          logger.error('Failed to search notifications', { error, requestId, correlationId });
           res.writeHead(500, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ error: (error as Error).message }));
         });

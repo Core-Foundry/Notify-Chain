@@ -138,7 +138,7 @@ describe('Notification workflow with wallet connected', () => {
         json: async () => ({
           events: [
             {
-              id: 'evt-wallet-1',
+              eventId: 'evt-wallet-1',
               contractAddress: 'CTEST',
               topic: 'task_created',
               ledger: 100,
@@ -160,7 +160,7 @@ describe('Notification workflow with wallet connected', () => {
 
     const events = await fetchEvents('http://localhost:8787/api/events');
     expect(events).toHaveLength(1);
-    expect(events[0].id).toBe('evt-wallet-1');
+    expect(events[0].eventId).toBe('evt-wallet-1');
     expect(fetchMock).toHaveBeenCalledWith('http://localhost:8787/api/events');
   });
 });
