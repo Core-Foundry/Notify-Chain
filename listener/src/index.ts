@@ -41,6 +41,15 @@ async function main() {
   if (config.analytics?.enabled) {
     initNotificationAnalyticsAggregator(config.analytics);
   }
+  const retryCount = process.env.DISCORD_RETRY_COUNT
+    ? parseInt(process.env.DISCORD_RETRY_COUNT, 10)
+    : undefined;
+  const backoffBaseSeconds = process.env.DISCORD_BACKOFF_BASE_SECONDS
+    ? parseFloat(process.env.DISCORD_BACKOFF_BASE_SECONDS)
+    : undefined;
+
+  return { webhookUrl, webhookId, retryCount, backoffBaseSeconds };
+}
 
   try {
     logger.info('Initializing database');
