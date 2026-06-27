@@ -94,12 +94,12 @@ describe('CleanupService', () => {
   it('runDbCleanup deletes old notifications and rate_limit_events', async () => {
     const db = makeDb(5);
     const registry = new EventRegistry();
-    const service = new CleanupService(db, registry, { intervalMs: 60000, notificationRetentionMs: 1000, rateLimitEventRetentionMs: 500 });
+    const service = new CleanupService(db, registry, { intervalMs: 60000, notificationRetentionMs: 1000, rateLimitEventRetentionMs: 500, executionLogRetentionMs: 500 });
 
     const result = await service.runDbCleanup();
 
-    // Two DELETE calls: scheduled_notifications + rate_limit_events
-    expect(db.run).toHaveBeenCalledTimes(2);
+    // Three DELETE calls: scheduled_notifications + rate_limit_events + execution_log
+    expect(db.run).toHaveBeenCalledTimes(3);
     expect(db.run).toHaveBeenCalledWith(
       expect.stringContaining('DELETE FROM scheduled_notifications'),
       expect.any(Array),
@@ -108,8 +108,13 @@ describe('CleanupService', () => {
       expect.stringContaining('DELETE FROM rate_limit_events'),
       expect.any(Array),
     );
+    expect(db.run).toHaveBeenCalledWith(
+      expect.stringContaining('DELETE FROM notification_execution_log'),
+      expect.any(Array),
+    );
     expect(result.notifications).toBe(5);
     expect(result.rateLimitEvents).toBe(5);
+    expect(result.executionLogs).toBe(5);
   });
 
   it('stop clears the interval and stops registry cleanup', async () => {
@@ -137,6 +142,6 @@ describe('CleanupService', () => {
 
     jest.advanceTimersByTime(400);
     // Should only fire once despite two start() calls
-    expect(db.run).toHaveBeenCalledTimes(2); // one interval tick × 2 SQL statements
+    expect(db.run).toHaveBeenCalledTimes(3); // one interval tick × 3 SQL statements
   });
 });

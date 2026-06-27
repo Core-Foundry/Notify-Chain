@@ -1636,6 +1636,8 @@ body {
 .download-icon {
   width: 14px;
   height: 14px;
+}
+
 .timeline-view__input {
   flex: 1;
   padding: 8px 12px;
@@ -1948,5 +1950,347 @@ body {
   .notif-search__status-btn {
     flex: 1;
     text-align: center;
+  }
+}
+
+/* ── Activity Feed ─────────────────────────────────────────────────────────── */
+
+.activity-feed {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 24px;
+}
+
+.activity-feed__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  margin-bottom: 24px;
+  flex-wrap: wrap;
+}
+
+.activity-feed__title {
+  margin: 0 0 8px;
+  font-size: 1.75rem;
+}
+
+.activity-feed__subtitle {
+  margin: 0;
+  color: #9aa0a6;
+}
+
+.activity-feed__toggle-realtime {
+  padding: 8px 16px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.05);
+  color: #9aa0a6;
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.activity-feed__toggle-realtime--active {
+  border-color: rgba(52, 211, 153, 0.4);
+  background: rgba(52, 211, 153, 0.1);
+  color: #34d399;
+}
+
+.activity-feed__toggle-realtime:hover {
+  border-color: rgba(255, 255, 255, 0.3);
+  color: #e8eaed;
+}
+
+.activity-feed__error {
+  border: 1px solid rgba(248, 113, 113, 0.18);
+  border-radius: 12px;
+  background: rgba(248, 113, 113, 0.08);
+  padding: 16px;
+  margin-bottom: 16px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.activity-feed__error p {
+  margin: 0;
+  color: #f8c0c0;
+}
+
+.activity-feed__retry {
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  padding: 6px 12px;
+  background: rgba(255, 255, 255, 0.05);
+  color: #e8eaed;
+  cursor: pointer;
+}
+
+.activity-feed__list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 24px;
+}
+
+.activity-feed__empty {
+  text-align: center;
+  padding: 48px 24px;
+  color: #9aa0a6;
+  border: 1px dashed rgba(255, 255, 255, 0.16);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.activity-feed__load-more {
+  display: flex;
+  justify-content: center;
+}
+
+.activity-feed__load-more-btn {
+  padding: 10px 24px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.05);
+  color: #e8eaed;
+  font-size: 0.95rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.activity-feed__load-more-btn:hover:not(:disabled) {
+  border-color: rgba(255, 255, 255, 0.3);
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.activity-feed__load-more-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Activity Event Card */
+
+.activity-event {
+  display: flex;
+  gap: 16px;
+  padding: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.02);
+  position: relative;
+  transition: all 0.2s ease;
+}
+
+.activity-event:hover {
+  border-color: rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.activity-event--unread {
+  border-left: 3px solid #1a73e8;
+  background: rgba(26, 115, 232, 0.05);
+}
+
+.activity-event--unread:hover {
+  background: rgba(26, 115, 232, 0.08);
+}
+
+.activity-event__icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.2rem;
+  flex-shrink: 0;
+}
+
+.activity-event__icon--skeleton {
+  background: rgba(255, 255, 255, 0.12);
+  animation: activity-pulse 1.4s ease-in-out infinite;
+}
+
+.activity-event__content {
+  flex: 1;
+  min-width: 0;
+}
+
+.activity-event__content--skeleton .activity-event__skeleton-line {
+  height: 12px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.08);
+  animation: activity-pulse 1.4s ease-in-out infinite;
+  margin-bottom: 8px;
+}
+
+.activity-event__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 6px;
+  flex-wrap: wrap;
+}
+
+.activity-event__type {
+  font-weight: 600;
+  font-size: 0.9rem;
+  text-transform: capitalize;
+}
+
+.activity-event__time {
+  font-size: 0.8rem;
+  color: #9aa0a6;
+}
+
+.activity-event__message {
+  margin: 0 0 8px;
+  color: #e8eaed;
+  font-size: 0.95rem;
+}
+
+.activity-event__metadata {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.activity-event__metadata-item {
+  display: inline-flex;
+  gap: 4px;
+  font-size: 0.8rem;
+  background: rgba(255, 255, 255, 0.04);
+  padding: 4px 8px;
+  border-radius: 6px;
+}
+
+.activity-event__metadata-key {
+  color: #9aa0a6;
+}
+
+.activity-event__metadata-value {
+  color: #cbd5e1;
+  font-family: 'Courier New', Courier, monospace;
+}
+
+.activity-event__unread-indicator {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #1a73e8;
+  position: absolute;
+  top: 12px;
+  right: 12px;
+}
+
+@keyframes activity-pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.4; }
+}
+
+
+/* ── Export History filters ─────────────────────────────────────────────── */
+
+/*
+ * .export-filters reuses the same layout as .event-filters but is scoped to
+ * the Export History page so both grids can diverge independently if needed.
+ */
+.export-filters {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+  margin: 24px 0 16px;
+  padding: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.export-filters label {
+  font-size: 0.85rem;
+  color: #9aa0a6;
+}
+
+.export-filters input,
+.export-filters select {
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: #12151c;
+  color: inherit;
+}
+
+/* ── Export table: action cell ──────────────────────────────────────────── */
+
+.export-table__cell-action {
+  text-align: center;
+  white-space: nowrap;
+}
+
+/* ── Export table: responsive / mobile ─────────────────────────────────── */
+
+@media (max-width: 860px) {
+  /* Hide less-critical columns on medium screens */
+  .export-table thead th:nth-child(4),
+  .export-table thead th:nth-child(5),
+  .export-table tbody td:nth-child(4),
+  .export-table tbody td:nth-child(5) {
+    display: none;
+  }
+}
+
+@media (max-width: 600px) {
+  /* Stack rows as definition lists on very small screens */
+  .export-table,
+  .export-table thead,
+  .export-table tbody,
+  .export-table th,
+  .export-table td,
+  .export-table tr {
+    display: block;
+  }
+
+  .export-table thead {
+    display: none;
+  }
+
+  .export-table__row {
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    padding: 14px 16px;
+  }
+
+  .export-table td {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 0;
+    border-bottom: none;
+    font-size: 0.875rem;
+  }
+
+  .export-table td[data-label]::before {
+    content: attr(data-label);
+    font-size: 0.75rem;
+    color: #9aa0a6;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    flex-shrink: 0;
+  }
+
+  .export-table__cell-numeric {
+    text-align: right;
+  }
+
+  .export-table__cell-action {
+    justify-content: flex-end;
+  }
+
+  .export-history__header {
+    flex-direction: column;
+    align-items: stretch;
   }
 }

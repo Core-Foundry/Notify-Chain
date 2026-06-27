@@ -4,6 +4,7 @@ import { generateRequestId } from '../utils/request-id';
 import { ScheduledNotificationRepository } from './scheduled-notification-repository';
 import { ScheduledNotification, NotificationStatus } from '../types/scheduled-notification';
 import { DiscordNotificationService } from './discord-notification';
+import { getWorkerManager } from './worker-manager';
 
 export interface RetrySchedulerConfig {
   /** Whether the scheduler is enabled. */
@@ -118,6 +119,11 @@ export class RetryScheduler {
       clearTimeout(this.timer);
       this.timer = null;
     }
+
+    // Wait for all active jobs to complete
+    const workerManager = getWorkerManager();
+    await workerManager.initiateGracefulShutdown();
+
     logger.info('RetryScheduler stopped', { processorId: this.processorId });
   }
 
@@ -149,6 +155,25 @@ export class RetryScheduler {
 
       if (notifications.length === 0) return;
 
+      // Check if shutdown is in progress - don't accept new jobs
+      const workerManager = getWorkerManager();
+      if (workerManager.isShutdownInProgress()) {
+        logger.info('Shutdown in progress - releasing unprocessed retries', {
+          requestId,
+          count: notifications.length,
+        });
+        // Release locks on unprocessed retries
+        for (const notification of notifications) {
+          await this.repository.markAsFailedOrRetry(
+            notification.id!,
+            new Error('Retry scheduler shutting down'),
+            notification.retryCount,
+            notification.maxRetries
+          );
+        }
+        return;
+      }
+
       logger.info('RetryScheduler processing batch', {
         requestId,
         processorId: this.processorId,
@@ -156,7 +181,24 @@ export class RetryScheduler {
       });
 
       for (const notification of notifications) {
-        await this.processRetry(notification, requestId);
+        const jobId = `retry-${notification.id}`;
+        if (!workerManager.startJob(jobId)) {
+          // Shutdown is in progress, don't process new jobs
+          logger.info('Job rejected - retry scheduler shutting down', { jobId });
+          await this.repository.markAsFailedOrRetry(
+            notification.id!,
+            new Error('Retry scheduler shutting down'),
+            notification.retryCount,
+            notification.maxRetries
+          );
+          continue;
+        }
+
+        try {
+          await this.processRetry(notification, requestId);
+        } finally {
+          workerManager.completeJob(jobId);
+        }
       }
     } catch (err) {
       logger.error('RetryScheduler poll error', { requestId, error: err });

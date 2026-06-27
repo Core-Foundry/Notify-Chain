@@ -96,8 +96,10 @@ export function App() {
 
       {activeTab === 'explorer' ? <EventExplorerPage /> : <ExportHistoryPage />}
 import { NotificationTimelineView } from './components/NotificationTimelineView';
+import { ActivityFeed } from './components/ActivityFeed';
+import { ExportHistoryPage } from './pages/ExportHistoryPage';
 
-type Tab = 'explorer' | 'timeline';
+type Tab = 'explorer' | 'timeline' | 'activity' | 'export-history';
 
 export function App() {
   const [tab, setTab] = useState<Tab>('explorer');
@@ -121,10 +123,28 @@ export function App() {
         >
           Delivery Timeline
         </button>
+        <button
+          role="tab"
+          aria-selected={tab === 'activity'}
+          className={`app-tabs__btn${tab === 'activity' ? ' app-tabs__btn--active' : ''}`}
+          onClick={() => setTab('activity')}
+        >
+          Activity Feed
+        </button>
+        <button
+          role="tab"
+          aria-selected={tab === 'export-history'}
+          className={`app-tabs__btn${tab === 'export-history' ? ' app-tabs__btn--active' : ''}`}
+          onClick={() => setTab('export-history')}
+        >
+          Export History
+        </button>
       </nav>
 
       {tab === 'explorer' && <EventExplorerPage />}
       {tab === 'timeline' && <NotificationTimelineView />}
+      {tab === 'activity' && <ActivityFeed />}
+      {tab === 'export-history' && <ExportHistoryPage />}
     </div>
   );
 }

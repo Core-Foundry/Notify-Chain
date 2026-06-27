@@ -381,6 +381,58 @@ export class ScheduledNotificationRepository {
   }
 
   /**
+   * Delete terminal notifications older than the retention window.
+   */
+  async deleteExpiredNotifications(retentionDays: number): Promise<number> {
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - Math.max(1, retentionDays));
+
+    const sql = `
+      DELETE FROM scheduled_notifications
+      WHERE status IN (?, ?, ?)
+        AND updated_at < ?
+    `;
+
+    const result = await this.db.run(sql, [
+      NotificationStatus.COMPLETED,
+      NotificationStatus.FAILED,
+      NotificationStatus.CANCELLED,
+      cutoff.toISOString(),
+    ]);
+
+    if (result.changes > 0) {
+      logger.info('Deleted expired scheduled notifications', {
+        deleted: result.changes,
+        retentionDays,
+      });
+    }
+
+    return result.changes;
+  }
+
+  /**
+   * Delete execution log rows older than the retention window.
+   */
+  async deleteExpiredExecutionLogs(retentionDays: number): Promise<number> {
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - Math.max(1, retentionDays));
+
+    const result = await this.db.run(
+      'DELETE FROM notification_execution_log WHERE execution_time < ?',
+      [cutoff.toISOString()],
+    );
+
+    if (result.changes > 0) {
+      logger.info('Deleted expired notification execution logs', {
+        deleted: result.changes,
+        retentionDays,
+      });
+    }
+
+    return result.changes;
+  }
+
+  /**
    * Get statistics about scheduled notifications
    */
   async getStats(): Promise<{
