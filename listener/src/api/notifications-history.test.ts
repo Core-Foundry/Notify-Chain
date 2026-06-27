@@ -18,6 +18,8 @@ jest.mock('../utils/logger', () => ({
 const BASE_OPTIONS = {
   port: 0,
   stellarRpcUrl: 'https://soroban-testnet.stellar.org:443',
+  stellarNetworkPassphrase: 'Test SDF Network ; September 2015',
+  contractAddresses: [],
 };
 
 function makeRequest(
