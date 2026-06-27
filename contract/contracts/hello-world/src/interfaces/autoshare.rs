@@ -161,6 +161,7 @@ pub trait AutoShareTrait {
     /// Returns the total usages paid for a group.
     fn get_total_usages_paid(env: Env, id: BytesN<32>) -> u32;
 
-    /// Reduces the usage count by 1 (dummy function for testing).
-    fn reduce_usage(env: Env, id: BytesN<32>);
+    /// Reduces the usage count by 1.
+    /// Only the creator can call this.
+    fn reduce_usage(env: Env, id: BytesN<32>, caller: Address);
 }
