@@ -82,6 +82,8 @@ describe('Template API endpoints', () => {
     server = createEventsServer({
       port: 0,
       stellarRpcUrl: 'http://localhost',
+      stellarNetworkPassphrase: 'Test SDF Network ; September 2015',
+      contractAddresses: [],
       templateService: service,
     });
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', () => resolve()));
@@ -175,6 +177,8 @@ describe('Template API endpoints', () => {
     const disabledServer = createEventsServer({
       port: 0,
       stellarRpcUrl: 'http://localhost',
+      stellarNetworkPassphrase: 'Test SDF Network ; September 2015',
+      contractAddresses: [],
     });
     await new Promise<void>((resolve) => disabledServer.listen(0, '127.0.0.1', () => resolve()));
 
