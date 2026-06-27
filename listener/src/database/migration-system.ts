@@ -1,3 +1,21 @@
+/**
+ * Migration System
+ * 
+ * A custom SQLite database migration system for the Notify-Chain listener.
+ * 
+ * Features:
+ * - Tracks applied migrations in a `migrations` table
+ * - Atomic migrations using transactions (rolls back on failure)
+ * - Loads migrations from a specified directory
+ * - Applies pending migrations in order
+ * 
+ * Migration file structure:
+ * Each migration should export a default object with:
+ * - id: Unique identifier (e.g., "001")
+ * - name: Human-readable name (e.g., "initial-schema")
+ * - up(db): Function to apply the migration
+ * - down(db): Function to roll back the migration (optional)
+ */
 import * as sqlite3 from 'sqlite3';
 import * as fs from 'fs';
 import * as path from 'path';
