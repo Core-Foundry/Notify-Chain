@@ -92,13 +92,13 @@ describe('Notification flow end-to-end (e2e)', () => {
     await new Promise((resolve) => setTimeout(resolve, ms));
   }
 
-  function futureExecuteAt(offsetMs = 50): Date {
+  function futureExecuteAt(offsetMs = 10000): Date {
     return new Date(Date.now() + offsetMs);
   }
 
   describe('Complete notification lifecycle', () => {
     it('should create, process, and deliver a notification', async () => {
-      const executeAt = futureExecuteAt();
+      const executeAt = futureExecuteAt(50);
 
       const id = await api.scheduleNotification({
         payload: { message: 'Test notification' },
@@ -127,7 +127,7 @@ describe('Notification flow end-to-end (e2e)', () => {
         payload: { message: 'Test notification' },
         notificationType: NotificationType.DISCORD,
         targetRecipient: 'https://discord.com/webhook',
-        executeAt: futureExecuteAt(),
+        executeAt: futureExecuteAt(50),
       });
 
       await scheduler.start();
@@ -356,7 +356,7 @@ describe('Notification flow end-to-end (e2e)', () => {
     });
 
     it('should maintain audit trail through complete lifecycle', async () => {
-      const executeAt = futureExecuteAt();
+      const executeAt = futureExecuteAt(50);
 
       const id = await api.scheduleNotification({
         payload: { message: 'Audit test' },

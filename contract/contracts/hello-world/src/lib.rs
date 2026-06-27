@@ -403,7 +403,8 @@ impl AutoShareContract {
         ttl_seconds: Vec<u64>,
         titles: Vec<String>,
     ) {
-        autoshare_logic::batch_schedule_notifications(env, ids, creator, ttl_seconds, titles).unwrap();
+        autoshare_logic::batch_schedule_notifications(env, ids, creator, ttl_seconds, titles)
+            .unwrap();
     }
 
     // ============================================================================

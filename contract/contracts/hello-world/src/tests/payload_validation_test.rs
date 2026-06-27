@@ -185,7 +185,8 @@ fn test_schedule_rejects_duplicate_id() {
     let id = make_id(&test_env.env, 11);
 
     client.schedule_notification(&id, &creator, &3_600u64, &make_title(&test_env.env));
-    let result = client.try_schedule_notification(&id, &creator, &3_600u64, &make_title(&test_env.env));
+    let result =
+        client.try_schedule_notification(&id, &creator, &3_600u64, &make_title(&test_env.env));
     assert!(
         result.is_err(),
         "duplicate notification id must be rejected"
@@ -203,7 +204,8 @@ fn test_schedule_rejects_overflow_ttl() {
     use soroban_sdk::testutils::Ledger;
     test_env.env.ledger().set_timestamp(1_000);
 
-    let result = client.try_schedule_notification(&id, &creator, &u64::MAX, &make_title(&test_env.env));
+    let result =
+        client.try_schedule_notification(&id, &creator, &u64::MAX, &make_title(&test_env.env));
     assert!(result.is_err(), "overflow TTL must be rejected");
 }
 
