@@ -100,6 +100,59 @@ describe('NotificationDeduplicator', () => {
     });
   });
 
+
+  describe('time window and metrics', () => {
+    it('allows the same fingerprint after the deduplication window expires', () => {
+      let now = 1000;
+      const d = new NotificationDeduplicator({ windowMs: 500, now: () => now });
+
+      d.markSent('CONTRACT:event-windowed');
+      expect(d.isDuplicate('CONTRACT:event-windowed')).toBe(true);
+
+      now = 1501;
+      expect(d.isDuplicate('CONTRACT:event-windowed')).toBe(false);
+      expect(d.size()).toBe(0);
+    });
+
+    it('reports skipped duplicate metrics accurately', () => {
+      const d = new NotificationDeduplicator({ windowMs: 1000 });
+
+      d.markSent('CONTRACT:event-1');
+      d.markSent('CONTRACT:event-2');
+      d.isDuplicate('CONTRACT:event-1');
+      d.isDuplicate('CONTRACT:event-1');
+      d.isDuplicate('CONTRACT:event-new');
+
+      expect(d.getMetrics()).toEqual({
+        acceptedRequests: 2,
+        skippedDuplicates: 2,
+        evictedEntries: 0,
+        expiredEntries: 0,
+        cacheSize: 2,
+        deduplicationWindowMs: 1000,
+      });
+    });
+
+    it('counts evicted and expired entries in metrics', () => {
+      let now = 0;
+      const d = new NotificationDeduplicator({ maxSize: 2, windowMs: 100, now: () => now });
+
+      d.markSent('fp-1');
+      d.markSent('fp-2');
+      d.markSent('fp-3');
+      now = 101;
+      d.size();
+
+      expect(d.getMetrics()).toEqual(
+        expect.objectContaining({
+          evictedEntries: 1,
+          expiredEntries: 2,
+          cacheSize: 0,
+        })
+      );
+    });
+  });
+
   describe('size', () => {
     it('returns 0 for a new deduplicator', () => {
       expect(new NotificationDeduplicator().size()).toBe(0);
@@ -140,3 +193,4 @@ describe('NotificationDeduplicator', () => {
     });
   });
 });
+

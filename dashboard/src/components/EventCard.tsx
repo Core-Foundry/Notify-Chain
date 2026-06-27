@@ -1,5 +1,6 @@
 import { memo, type KeyboardEvent } from 'react';
 import type { BlockchainEvent } from '../types/event';
+import { formatTimestamp, formatTimestampShort } from '../utils/formatTime';
 
 export type EventCardVariant = 'compact' | 'expanded';
 
@@ -8,18 +9,6 @@ export interface EventCardProps {
   variant?: EventCardVariant;
   isLoading?: boolean;
   onClick?: (event: BlockchainEvent) => void;
-}
-
-function formatTime(timestamp: number): string {
-  return new Date(timestamp).toLocaleString();
-}
-
-function formatTimeShort(timestamp: number): string {
-  return new Date(timestamp).toLocaleTimeString(undefined, {
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-  });
 }
 
 function shortenAddress(address: string): string {
@@ -137,8 +126,8 @@ function CompactCard({ event, onClick }: { event: BlockchainEvent; onClick?: (e:
         <span className="event-card__address" title={event.contractAddress}>
           {shortenAddress(event.contractAddress)}
         </span>
-        <span className="event-card__time" title={formatTime(event.receivedAt)}>
-          {formatTimeShort(event.receivedAt)}
+        <span className="event-card__time" title={formatTimestamp(event.receivedAt)}>
+          {formatTimestampShort(event.receivedAt)}
         </span>
       </div>
       <div className="event-card__details">
@@ -210,7 +199,7 @@ function ExpandedCard({ event, onClick }: { event: BlockchainEvent; onClick?: (e
 
           <div className="event-card__field">
             <dt>Received</dt>
-            <dd>{formatTime(event.receivedAt)}</dd>
+            <dd>{formatTimestamp(event.receivedAt)}</dd>
           </div>
 
           <div className="event-card__field">
