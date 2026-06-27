@@ -45,8 +45,8 @@ export interface EventsServerOptions {
   port: number;
   corsOrigin?: string;
   stellarRpcUrl: string;
-  stellarNetworkPassphrase: string;
-  contractAddresses: ContractConfig[];
+  stellarNetworkPassphrase?: string;
+  contractAddresses?: ContractConfig[];
   discordWebhookUrl?: string;
   webhookSecrets?: WebhookSecret[];
   notificationAPI?: NotificationAPI | null;
@@ -214,15 +214,17 @@ async function buildStatusResponse(options: EventsServerOptions): Promise<{
   }>;
   timestamp: string;
 }> {
-  const contractStatuses = await Promise.all(
-    options.contractAddresses.map(async (contractConfig) => {
-      const status = await getContractPauseStatus(contractConfig.address, options.stellarRpcUrl);
-      return {
-        address: contractConfig.address,
-        ...status
-      };
-    })
-  );
+  const contractStatuses = options.contractAddresses 
+    ? await Promise.all(
+        options.contractAddresses.map(async (contractConfig) => {
+          const status = await getContractPauseStatus(contractConfig.address, options.stellarRpcUrl);
+          return {
+            address: contractConfig.address,
+            ...status
+          };
+        })
+      )
+    : [];
 
   return {
     timestamp: new Date().toISOString(),
