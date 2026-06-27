@@ -145,6 +145,13 @@ export class NotificationRetryQueue {
 
     if (success) {
       this.queuedFingerprints.delete(fingerprint);
+      this.analytics?.record({
+        notificationType: NotificationType.DISCORD,
+        contractAddress: item.contractConfig.address,
+        outcome: 'success',
+        durationMs: Date.now() - retryStart,
+        timestamp: Date.now(),
+      });
       logger.info('Retry succeeded', {
         requestId: item.requestId,
         eventId: item.event.id,
