@@ -3,6 +3,9 @@ use crate::base::events::{
     AdminTransferred, AuditAction, AuditRecordAppended, AuthorizationFailure, AutoshareCreated,
     AutoshareUpdated, BatchNotificationsCreated, CategoryRegistered, ContractPaused,
     ContractUnpaused, GroupActivated, GroupDeactivated, NotificationCategory, NotificationExpired,
+    NotificationPriority, NotificationRevoked, NotificationScheduled,
+    NotificationExtended, NotificationPriority, NotificationRevoked, NotificationScheduled,
+    ScheduledNotificationCancelled, Withdrawal,
     NotificationExtended, NotificationLimitsConfigured, NotificationPriority, NotificationRevoked,
     NotificationScheduled, ScheduledNotificationCancelled, Withdrawal,
 };
