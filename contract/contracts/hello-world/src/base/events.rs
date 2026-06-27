@@ -313,6 +313,12 @@ pub struct NotificationRevoked {
     pub revoked_at: u64,
 }
 
+/// Emitted when an off-chain batch of notifications finishes processing.
+#[contractevent(data_format = "single-value")]
+#[derive(Clone)]
+pub struct BatchProcessingCompleted {
+    #[topic]
+    pub batch_id: BytesN<32>,
 /// Emitted when a scheduled notification's expiry period is extended by an authorized sender.
 #[contractevent(data_format = "single-value")]
 #[derive(Clone)]
@@ -338,6 +344,7 @@ pub struct NotificationLimitsConfigured {
     pub category: NotificationCategory,
     #[topic]
     pub priority: NotificationPriority,
+    pub processed_count: u32,
     pub max_payload_size: u32,
     pub max_expiration_seconds: u64,
     pub min_expiration_seconds: u64,

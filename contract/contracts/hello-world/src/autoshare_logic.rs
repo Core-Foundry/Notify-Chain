@@ -3,6 +3,8 @@ use crate::base::events::{
     AdminTransferred, AuditAction, AuditRecordAppended, AuthorizationFailure, AutoshareCreated,
     AutoshareUpdated, BatchNotificationsCreated, CategoryRegistered, ContractPaused,
     ContractUnpaused, GroupActivated, GroupDeactivated, NotificationCategory, NotificationExpired,
+    NotificationPriority, NotificationRevoked, NotificationScheduled, ScheduledNotificationCancelled,
+    Withdrawal, BatchProcessingCompleted,
     NotificationExtended, NotificationLimitsConfigured, NotificationPriority, NotificationRevoked,
     NotificationScheduled, ScheduledNotificationCancelled, Withdrawal,
 };
@@ -1456,6 +1458,17 @@ pub fn is_notification_revoked(env: Env, notification_id: BytesN<32>) -> Result<
     Ok(is_revoked(&notification))
 }
 
+/// Emits a `BatchProcessingCompleted` event for off-chain consumers.
+pub fn emit_batch_completed(env: Env, batch_id: BytesN<32>, processed_count: u32) -> Result<(), Error> {
+    BatchProcessingCompleted {
+        batch_id,
+        category: NotificationCategory::Notification,
+        priority: NotificationPriority::Medium,
+        processed_count,
+    }
+    .publish(&env);
+    Ok(())
+}
 /// Extends the expiration period of a scheduled notification by `extension_seconds`.
 ///
 /// Only authorized callers (the notification creator or the contract admin) can

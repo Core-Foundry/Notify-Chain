@@ -81,6 +81,23 @@ describe('NotificationAnalyticsAggregator', () => {
       expect(small.lifetimeCount).toBe(5);
       expect(small.size).toBe(2);
     });
+
+    it('maintains correct counters after eviction (no drift)', () => {
+      const small = new NotificationAnalyticsAggregator({ maxRecords: 3, now: () => fixedNow });
+      // push 5 records with mixed outcomes
+      small.record(buildRecord('success'));
+      small.record(buildRecord('failure'));
+      small.record(buildRecord('success'));
+      small.record(buildRecord('failure'));
+      small.record(buildRecord('success'));
+
+      // only last 3 should be visible: success, failure, success
+      expect(small.size).toBe(3);
+      const snap = small.snapshot();
+      expect(snap.overall.total).toBe(3);
+      expect(snap.overall.success).toBe(2);
+      expect(snap.overall.failure).toBe(1);
+    });
   });
 
   describe('outcome classification', () => {
