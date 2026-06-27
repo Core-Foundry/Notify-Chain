@@ -12,6 +12,7 @@
     "typecheck": "node ./node_modules/typescript/bin/tsc --noEmit",
     "lint": "node ./node_modules/typescript/bin/tsc --noEmit",
     "migrate": "ts-node src/scripts/migrate-db.ts",
+    "migrate:check": "ts-node src/scripts/migration-check.ts",
     "validate:batch": "ts-node src/utils/batch-validator.ts"
   },
   "keywords": [],
