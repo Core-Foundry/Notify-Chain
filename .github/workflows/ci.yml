@@ -27,6 +27,15 @@ jobs:
       - name: Run tests
         working-directory: dashboard
         run: npm test --silent
+      - name: Run wallet integration tests
+        working-directory: dashboard
+        run: npm run test:wallet --silent
+      - name: Upload wallet test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wallet-integration-report
+          path: dashboard/reports/wallet-integration.json
 
   listener:
     name: Listener (lint, typecheck, test)
@@ -58,7 +67,7 @@ jobs:
           npm run migrate:check
 
   rust:
-    name: Rust (fmt check, tests)
+    name: Rust (fmt check, tests, fuzz)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -73,6 +82,16 @@ jobs:
         run: |
           rustup component add rustfmt || true
           cargo fmt --all -- --check
-      - name: Run tests
+      - name: Run unit tests
         working-directory: contract
         run: cargo test --workspace --all-features --verbose
+      - name: Run fuzz tests
+        working-directory: contract
+        run: cargo test fuzz_ --verbose -- --nocapture
+      - name: Generate fuzz coverage report
+        run: bash scripts/run-fuzz-coverage.sh
+      - name: Upload fuzz coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-coverage-report
+          path: contract/reports/fuzz-coverage.json

@@ -292,6 +292,64 @@ Returns aggregate statistics about the scheduled-notification queue.
 
 ---
 
+## Notification Delivery History
+
+### GET /api/notifications/history
+
+Returns paginated delivery execution records from `notification_execution_log`.
+
+**Query Parameters**
+
+| Name      | Type   | Required | Description                                                       |
+|-----------|--------|----------|-------------------------------------------------------------------|
+| limit     | number | No       | Maximum records per page (default `20`, max `100`)                |
+| offset    | number | No       | Number of records to skip (default `0`)                           |
+| status    | string | No       | Filter by execution status: `SUCCESS`, `FAILED`, or `RETRY`       |
+| startDate | string | No       | ISO 8601 lower bound on `execution_time` (inclusive)              |
+| endDate   | string | No       | ISO 8601 upper bound on `execution_time` (inclusive)              |
+
+**Response `200`**
+
+```json
+{
+  "records": [
+    {
+      "id": 1,
+      "scheduledNotificationId": 42,
+      "executionAttempt": 1,
+      "executionTime": "2024-06-20T15:00:00.000Z",
+      "status": "SUCCESS",
+      "errorMessage": null,
+      "responseDuration": 120
+    }
+  ],
+  "total": 5,
+  "itemCount": 5,
+  "totalPages": 3,
+  "limit": 2,
+  "offset": 0
+}
+```
+
+| Field       | Type   | Description                                                                 |
+|-------------|--------|-----------------------------------------------------------------------------|
+| records     | array  | Execution log entries for the current page                                  |
+| total       | number | Total matching records (preserved for backward compatibility; same value as `itemCount`) |
+| itemCount   | number | Total number of records matching the query filters                          |
+| totalPages  | number | Total pages available at the requested `limit` (`0` when `itemCount` is `0`) |
+| limit       | number | Effective page size applied to the query                                    |
+| offset      | number | Number of records skipped before this page                                  |
+
+Existing clients that read `total`, `limit`, `offset`, and `records` continue to work unchanged. New clients should prefer `itemCount` and `totalPages` for pagination UI.
+
+**Response `500`** — database read failure
+
+```json
+{ "error": "SQLITE_ERROR: ..." }
+```
+
+---
+
 ## Webhooks
 
 ### POST /api/webhooks
@@ -339,6 +397,117 @@ Receives a signed webhook event payload. The request must carry a valid HMAC-SHA
 
 ```json
 { "error": "Invalid signature" }
+```
+
+---
+
+## Rate Limiting
+
+The API enforces configurable rate limits to protect against abuse. Limits can be set globally or per-client using API keys or IP addresses.
+
+### Rate Limit Headers
+
+All responses include these headers when rate limiting is enabled:
+
+| Header                  | Description                                              |
+|-------------------------|----------------------------------------------------------|
+| `X-RateLimit-Limit`     | Maximum requests allowed in the current window           |
+| `X-RateLimit-Remaining` | Requests remaining before hitting the limit              |
+| `X-RateLimit-Reset`     | Unix timestamp (seconds) when the window resets          |
+
+When a rate limit is exceeded:
+
+| Header        | Description                                     |
+|---------------|-------------------------------------------------|
+| `Retry-After` | Seconds to wait before retrying the request     |
+
+### GET /api/rate-limit/metrics
+
+Returns real-time rate limiting statistics for monitoring and analysis.
+
+**Query Parameters**
+
+| Name  | Type    | Required | Description                                      |
+|-------|---------|----------|--------------------------------------------------|
+| reset | boolean | No       | If `true`, resets metrics after reading them     |
+
+**Response `200`**
+
+```json
+{
+  "totalRequests": 1543,
+  "blockedRequests": 87,
+  "allowedRequests": 1456,
+  "uniqueClients": 23,
+  "topBlockedClients": [
+    {
+      "clientId": "192.168.1.100",
+      "blockCount": 45
+    },
+    {
+      "clientId": "sk_live_...",
+      "blockCount": 23
+    }
+  ],
+  "startTime": "2024-01-01T12:00:00.000Z"
+}
+```
+
+| Field              | Type   | Description                                                  |
+|--------------------|--------|--------------------------------------------------------------|
+| totalRequests      | number | Total requests processed since server start or last reset    |
+| blockedRequests    | number | Requests that were rate limited                              |
+| allowedRequests    | number | Requests that were allowed through                           |
+| uniqueClients      | number | Number of distinct clients currently tracked                 |
+| topBlockedClients  | array  | Top 10 clients by block count (API keys are masked)          |
+| startTime          | string | ISO 8601 timestamp when metrics tracking started             |
+
+**Response `503`** — rate limiting is disabled
+
+```json
+{ "error": "Rate limiting not enabled" }
+```
+
+**Example — fetch metrics**
+
+```http
+GET /api/rate-limit/metrics HTTP/1.1
+```
+
+```http
+HTTP/1.1 200 OK
+Content-Type: application/json
+
+{
+  "totalRequests": 1543,
+  "blockedRequests": 87,
+  "allowedRequests": 1456,
+  "uniqueClients": 23,
+  "topBlockedClients": [
+    { "clientId": "192.168.1.100", "blockCount": 45 }
+  ],
+  "startTime": "2024-01-01T12:00:00.000Z"
+}
+```
+
+**Example — fetch and reset metrics**
+
+```http
+GET /api/rate-limit/metrics?reset=true HTTP/1.1
+```
+
+```http
+HTTP/1.1 200 OK
+Content-Type: application/json
+
+{
+  "totalRequests": 1543,
+  "blockedRequests": 87,
+  "allowedRequests": 1456,
+  "uniqueClients": 23,
+  "topBlockedClients": [],
+  "startTime": "2024-01-01T12:00:00.000Z"
+}
 ```
 
 ---
@@ -398,6 +567,47 @@ Returns the operational status of all service dependencies.
 ```
 
 A service entry's `status` field can be `"ok"`, `"error"`, or `"not_configured"`. `"not_configured"` means the service URL was not provided at startup and is not checked.
+
+---
+
+## Contract Status
+
+### GET /api/status
+
+Returns the pause status of all configured smart contracts.
+
+**Response `200`**
+
+```json
+{
+  "timestamp": "2024-06-20T14:00:00.000Z",
+  "contracts": [
+    {
+      "address": "CCEMX6...",
+      "paused": false
+    },
+    {
+      "address": "CCEMX7...",
+      "paused": true,
+      "error": "Failed to simulate contract call"
+    }
+  ]
+}
+```
+
+| Field       | Type     | Description                                                                 |
+|-------------|----------|-----------------------------------------------------------------------------|
+| timestamp   | string   | ISO 8601 timestamp of when the status was fetched                          |
+| contracts   | array    | List of contracts and their statuses                                             |
+| address     | string   | Contract address                                                            |
+| paused      | boolean  | Whether the contract is currently paused                                   |
+| error       | string   | Optional. Error message if we could not fetch the status for this contract   |
+
+**Response `500`** — internal error fetching status
+
+```json
+{ "status": "error", "detail": "Internal status check failure" }
+```
 
 ---
 
