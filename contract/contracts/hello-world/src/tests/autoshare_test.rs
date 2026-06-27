@@ -1926,7 +1926,7 @@ fn test_too_many_members_rejected() {
 
     // Build > MAX_MEMBERS (51 members, limit is 50)
     let mut members = Vec::new(&test_env.env);
-    for i in 0..51u32 {
+    for _i in 0..51u32 {
         members.push_back(GroupMember {
             address: Address::generate(&test_env.env),
             percentage: 100 / 51,
@@ -1951,7 +1951,7 @@ fn test_members_at_max_succeeds() {
 
     // Exactly MAX_MEMBERS (50 members, each 2%)
     let mut members = Vec::new(&test_env.env);
-    for i in 0..50u32 {
+    for _i in 0..50u32 {
         members.push_back(GroupMember {
             address: Address::generate(&test_env.env),
             percentage: 2,

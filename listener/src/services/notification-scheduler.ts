@@ -2,8 +2,11 @@ import { v4 as uuidv4 } from 'uuid';
 import logger from '../utils/logger';
 import { generateRequestId } from '../utils/request-id';
 import { ScheduledNotificationRepository } from './scheduled-notification-repository';
-import { SchedulerConfig, NotificationStatus, ScheduledNotification } from '../types/scheduled-notification';
+import { SchedulerConfig, ScheduledNotification } from '../types/scheduled-notification';
 import { DiscordNotificationService } from './discord-notification';
+import { BatchValidationService } from './batch-validation-service';
+import { NotificationChannel } from '../utils/batch-validator';
+import { getWorkerManager } from './worker-manager';
 
 /**
  * Background scheduler that processes scheduled notifications
@@ -20,16 +23,19 @@ export class NotificationScheduler {
   private timer: NodeJS.Timeout | null = null;
   private isRunning: boolean = false;
   private processorId: string;
+  private batchValidator: BatchValidationService;
 
   constructor(
     repository: ScheduledNotificationRepository,
     config: SchedulerConfig,
-    discordService?: DiscordNotificationService | null
+    discordService?: DiscordNotificationService | null,
+    batchValidator?: BatchValidationService
   ) {
     this.repository = repository;
     this.config = config;
     this.discordService = discordService ?? null;
     this.processorId = config.processorId || uuidv4();
+    this.batchValidator = batchValidator ?? new BatchValidationService();
   }
 
   /**
@@ -62,6 +68,7 @@ export class NotificationScheduler {
 
   /**
    * Stop the scheduler gracefully
+   * Waits for all in-flight jobs to complete before returning
    */
   async stop(): Promise<void> {
     if (!this.isRunning) {
@@ -75,6 +82,10 @@ export class NotificationScheduler {
       clearTimeout(this.timer);
       this.timer = null;
     }
+
+    // Wait for all active jobs to complete
+    const workerManager = getWorkerManager();
+    await workerManager.initiateGracefulShutdown();
   }
 
   /**
@@ -118,15 +129,73 @@ export class NotificationScheduler {
         return;
       }
 
+      const batchRejection = this.batchValidator.rejectIfInvalid(
+        this.toValidationBatch(notifications)
+      );
+
+      if (batchRejection) {
+        logger.error('Scheduled notification batch rejected by validation', {
+          requestId,
+          processorId: this.processorId,
+          errors: batchRejection.errors,
+        });
+
+        for (const notification of notifications) {
+          await this.repository.markAsFailedOrRetry(
+            notification.id!,
+            new Error(`Batch validation failed: ${batchRejection.errors.map((e) => e.message).join('; ')}`),
+            notification.retryCount,
+            notification.maxRetries
+          );
+        }
+        return;
+      }
+
       logger.info('Processing batch of scheduled notifications', {
         requestId,
         count: notifications.length,
         processorId: this.processorId,
       });
 
-      // Process each notification
+      // Check if shutdown is in progress - don't accept new jobs
+      const workerManager = getWorkerManager();
+      if (workerManager.isShutdownInProgress()) {
+        logger.info('Shutdown in progress - releasing unprocessed notifications', {
+          requestId,
+          count: notifications.length,
+        });
+        // Release locks on unprocessed notifications
+        for (const notification of notifications) {
+          await this.repository.markAsFailedOrRetry(
+            notification.id!,
+            new Error('Scheduler shutting down'),
+            notification.retryCount,
+            notification.maxRetries
+          );
+        }
+        return;
+      }
+
+      // Process each notification with job tracking
       for (const notification of notifications) {
-        await this.processNotification(notification, requestId);
+        const jobId = `notification-${notification.id}`;
+        if (!workerManager.startJob(jobId)) {
+          // Shutdown is in progress, don't process new jobs
+          logger.info('Job rejected - scheduler shutting down', { jobId });
+          await this.repository.markAsFailedOrRetry(
+            notification.id!,
+            new Error('Scheduler shutting down'),
+            notification.retryCount,
+            notification.maxRetries
+          );
+          continue;
+        }
+
+        try {
+          await this.processNotification(notification, requestId);
+        } finally {
+          workerManager.completeJob(jobId);
+        }
       }
 
       logger.info('Scheduler batch complete', {
@@ -279,5 +348,29 @@ export class NotificationScheduler {
    */
   async getStats() {
     return await this.repository.getStats();
+  }
+
+  private toValidationBatch(notifications: ScheduledNotification[]) {
+    return notifications.map((notification) => ({
+      id: String(notification.id),
+      recipient: notification.targetRecipient,
+      channel: notification.notificationType as NotificationChannel,
+      message: this.extractValidationMessage(notification.payload),
+    }));
+  }
+
+  private extractValidationMessage(payloadJson: string): string {
+    try {
+      const payload = JSON.parse(payloadJson);
+      if (typeof payload.message === 'string' && payload.message.trim()) {
+        return payload.message;
+      }
+      if (typeof payload.content === 'string' && payload.content.trim()) {
+        return payload.content;
+      }
+      return JSON.stringify(payload).slice(0, 200);
+    } catch {
+      return payloadJson.slice(0, 200) || 'scheduled-notification';
+    }
   }
 }
