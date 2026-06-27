@@ -7,6 +7,7 @@ pub mod base {
     pub mod events;
     pub mod metadata_validation;
     pub mod preferences;
+    pub mod reputation;
     pub mod types;
 }
 
@@ -17,6 +18,7 @@ pub mod interfaces {
 // 2. Declare the main logic files where the functions are implemented
 mod autoshare_logic;
 mod preferences_logic;
+mod reputation_logic;
 
 #[cfg(test)]
 pub mod mock_token;
@@ -504,6 +506,41 @@ impl AutoShareContract {
     /// Returns the current notification limits.
     pub fn get_notification_limits(env: Env) -> base::types::NotificationLimits {
         autoshare_logic::get_notification_limits(env)
+    }
+
+    // ============================================================================
+    // Sender Reputation Tracking
+    // ============================================================================
+
+    /// Record a successful notification delivery for a sender.
+    /// Updates the sender's reputation score based on delivery history.
+    pub fn record_delivery_success(env: Env, sender: Address) {
+        reputation_logic::record_successful_delivery(&env, &sender).unwrap();
+    }
+
+    /// Record a failed notification delivery for a sender.
+    /// Decreases the sender's reputation score based on delivery history.
+    pub fn record_delivery_failure(env: Env, sender: Address) {
+        reputation_logic::record_failed_delivery(&env, &sender).unwrap();
+    }
+
+    /// Get the current reputation score for a sender.
+    /// Score ranges from 0 (lowest) to 100 (highest).
+    pub fn get_sender_reputation_score(env: Env, sender: Address) -> i64 {
+        reputation_logic::get_reputation_score(&env, &sender).unwrap_or(50)
+    }
+
+    /// Get the complete reputation record for a sender.
+    /// Includes successful deliveries, failed deliveries, and current score.
+    pub fn get_sender_reputation(env: Env, sender: Address) -> base::reputation::SenderReputation {
+        reputation_logic::get_reputation(&env, &sender)
+            .unwrap_or_else(|_| base::reputation::SenderReputation::new(sender, env.ledger().timestamp()))
+    }
+
+    /// Get the reputation tier for a sender.
+    /// Tier levels: 0=Unverified, 1=Bronze, 2=Silver, 3=Gold, 4=Platinum
+    pub fn get_sender_reputation_tier(env: Env, sender: Address) -> u32 {
+        reputation_logic::get_reputation_tier(&env, &sender).unwrap_or(0)
     }
 }
 

@@ -334,6 +334,13 @@ pub struct NotificationExtended {
     pub new_expires_at: u64,
 }
 
+/// Emitted when a sender's reputation score is updated.
+/// Triggered by successful or failed notification delivery.
+#[contractevent(data_format = "single-value")]
+#[derive(Clone)]
+pub struct ReputationUpdated {
+    #[topic]
+    pub sender: Address,
 /// Emitted when protocol-level notification limits are configured or updated.
 #[contractevent]
 #[derive(Clone)]
@@ -344,6 +351,26 @@ pub struct NotificationLimitsConfigured {
     pub category: NotificationCategory,
     #[topic]
     pub priority: NotificationPriority,
+    pub new_score: i64,
+    pub successful_count: u32,
+    pub failed_count: u32,
+}
+
+/// Emitted when a sender's reputation tier changes (e.g., from Bronze to Silver).
+#[contractevent(data_format = "single-value")]
+#[derive(Clone)]
+pub struct ReputationTierChanged {
+    #[topic]
+    pub sender: Address,
+    #[topic]
+    pub category: NotificationCategory,
+    #[topic]
+    pub priority: NotificationPriority,
+    pub old_tier: u32,
+    pub new_tier: u32,
+    pub reputation_score: i64,
+}
+
     pub processed_count: u32,
     pub max_payload_size: u32,
     pub max_expiration_seconds: u64,
