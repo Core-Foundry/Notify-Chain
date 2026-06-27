@@ -482,16 +482,19 @@ maintainers track open questions actively.
 
 ### Subsystem Architecture Docs (read alongside this guide)
 
+- [Contributor Architecture Deep Dive](file:///workspaces/Notify-Chain/CONTRIBUTOR_ARCHITECTURE_DEEP_DIVE.md) — Deep dive into event indexing, lifecycle, scheduler concurrency model, sequence diagrams, and module mapping.
+- `Documents/Task Bounty/ARCHITECTURE.md` — TaskBounty contract lifecycle, state machines, and event schema.
 - `SYSTEM_ARCHITECTURE.md` — Visual system architecture with Mermaid
   diagrams covering all layers, component interactions, and data flow.
 - `Documents/Task Bounty/ARCHITECTURE.md` — TaskBounty contract
   lifecycle, state machines, and event schema.
 - `listener/ARCHITECTURE-DIAGRAM.md` — Scheduler subsystem diagrams.
-- `Documents/Task Bounty/PROJECT_OVERVIEW.md` — High-level project pitch
-  for the TaskBounty variant.
+- `Documents/Task Bounty/PROJECT_OVERVIEW.md` — High-level project pitch for the TaskBounty variant.
 
 ### Operational Docs
 
+- [Smart Contract Deployment Playbook](file:///workspaces/Notify-Chain/DEPLOYMENT_PLAYBOOK.md) — Step-by-step deploy instructions, env variables, examples, and verification steps.
+- [Smart Contract Event Catalog](file:///workspaces/Notify-Chain/EVENT_CATALOG.md) — Reference catalog for event names, payloads, category/priority routing rules, and SDK parsing examples.
 - `README.md` — Top-level project intro and quick links.
 - `CONTRIBUTING.md` — Contribution workflow, DCO, PR conventions.
 - `TROUBLESHOOTING.md` — Common failure modes and fixes.
@@ -536,13 +539,10 @@ its own deep-dive doc, please open an issue with the label
 
 Known gaps:
 
-- A consolidated **deployment guide** (currently split across
-  `SETUP.md`, `SCHEDULED-NOTIFICATIONS-DELIVERY.md`, and the listener's
-  README).
 - A **security model** doc covering auth boundaries, replay protection,
   and notification-target allowlists.
 - An **observability** doc covering log schema, metrics, and tracing.
 
 ---
 
-*Last reviewed: 2026-06-21. Maintained as part of issue #137.*
+*Last reviewed: 2026-06-25. Maintained as part of issue #137.*
