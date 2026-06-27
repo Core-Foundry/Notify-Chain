@@ -64,4 +64,6 @@ pub enum Error {
     AlreadyRevoked = 28,
     /// Triggered when an invalid limit configuration is provided.
     InvalidLimit = 29,
+    /// Triggered when a notification has already been delivered and cannot be recalled.
+    NotificationDelivered = 30,
 }
