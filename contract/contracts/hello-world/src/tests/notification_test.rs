@@ -553,7 +553,12 @@ fn test_recall_notification_emits_event_for_sender() {
     id_bytes[0] = 40;
     let notification_id = BytesN::from_array(&test_env.env, &id_bytes);
 
-    client.schedule_notification(&notification_id, &creator, &3600u64, &String::from_str(&test_env.env, "Recall me"));
+    client.schedule_notification(
+        &notification_id,
+        &creator,
+        &3600u64,
+        &String::from_str(&test_env.env, "Recall me"),
+    );
     client.recall_notification(&notification_id, &creator);
 
     assert!(topics_of(&test_env.env, "notification_recalled").is_some());
@@ -570,10 +575,18 @@ fn test_recall_notification_rejects_unauthorized_sender() {
     id_bytes[0] = 41;
     let notification_id = BytesN::from_array(&test_env.env, &id_bytes);
 
-    client.schedule_notification(&notification_id, &creator, &3600u64, &String::from_str(&test_env.env, "Nope"));
+    client.schedule_notification(
+        &notification_id,
+        &creator,
+        &3600u64,
+        &String::from_str(&test_env.env, "Nope"),
+    );
 
     let result = client.try_recall_notification(&notification_id, &other);
-    assert!(result.is_err(), "recall should fail for an unauthorized caller");
+    assert!(
+        result.is_err(),
+        "recall should fail for an unauthorized caller"
+    );
 }
 
 #[test]
@@ -586,11 +599,19 @@ fn test_recall_notification_rejects_after_delivery_confirmation() {
     id_bytes[0] = 42;
     let notification_id = BytesN::from_array(&test_env.env, &id_bytes);
 
-    client.schedule_notification(&notification_id, &creator, &3600u64, &String::from_str(&test_env.env, "Delivered"));
+    client.schedule_notification(
+        &notification_id,
+        &creator,
+        &3600u64,
+        &String::from_str(&test_env.env, "Delivered"),
+    );
     client.confirm_notification_delivery(&notification_id, &creator);
 
     let result = client.try_recall_notification(&notification_id, &creator);
-    assert!(result.is_err(), "recall should fail after delivery confirmation");
+    assert!(
+        result.is_err(),
+        "recall should fail after delivery confirmation"
+    );
 }
 
 /// Backward compatibility: the event name is still the first topic, the
