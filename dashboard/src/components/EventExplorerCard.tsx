@@ -18,7 +18,6 @@ function shortenAddress(address: string) {
   if (address.length <= 14) {
     return address;
   }
-
   return `${address.slice(0, 6)}...${address.slice(-4)}`;
 }
 
@@ -34,7 +33,7 @@ interface EventExplorerCardProps {
   event: BlockchainEvent;
   onCopyContract: (contractAddress: string) => void;
   isCopied: boolean;
-  contractStatuses: ContractStatus[];
+  contractStatuses?: ContractStatus[];
 }
 
 export function EventExplorerCard({
@@ -48,6 +47,8 @@ export function EventExplorerCard({
   const label = event.eventName ?? event.type;
   const badgeClass = getEventKindClass(event.type);
   const kindLabel = getEventKindLabel(event.type);
+  const contractStatus = contractStatuses.find(c => c.address === event.contractAddress);
+  const isPaused = contractStatus?.paused ?? false;
 
   return (
     <article className="event-explorer__row" role="row" data-event-id={event.eventId}>

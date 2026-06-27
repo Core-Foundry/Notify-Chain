@@ -7,6 +7,15 @@ import { EventList } from '../components/EventList';
 import { useEventStore } from '../store/eventStore';
 import { generateMockEvents } from '../utils/eventData';
 
+const BLANK_FILTERS = {
+  search: '',
+  contractAddress: 'all',
+  eventType: 'all',
+  status: 'all' as const,
+  dateFrom: '',
+  dateTo: '',
+};
+
 describe('event store selective subscriptions', () => {
   it('deduplicates events before rendering notification rows', () => {
     const [firstEvent, secondEvent] = generateMockEvents(2);
@@ -42,7 +51,7 @@ describe('event store selective subscriptions', () => {
   it('filter updates do not require reloading the full event collection', async () => {
     useEventStore.setState({
       events: generateMockEvents(100),
-      filters: { search: '', contractAddress: 'all', eventType: 'all', status: 'all', dateFrom: '', dateTo: '' },
+      filters: BLANK_FILTERS,
       isLoading: false,
       error: null,
     });
@@ -70,30 +79,26 @@ describe('pagination + filter interaction', () => {
     const events = generateMockEvents(200);
     useEventStore.setState({
       events,
-      filters: { search: '', contractAddress: 'all', eventType: 'all', status: 'all', dateFrom: '', dateTo: '' },
+      filters: BLANK_FILTERS,
       isLoading: false,
       error: null,
     });
 
-    // Render just the list with a large scroll offset to simulate being deep in the list
     const { rerender } = render(<EventList events={events} />);
     expect(screen.getAllByRole('listitem').length).toBeGreaterThan(0);
 
-    // Now simulate a filter being applied — pass a small filtered result
-    // while the internal scrollTop state is still set to a large value
     const filtered = events.filter((e) => e.eventName === 'TaskCreated');
     act(() => {
       rerender(<EventList events={filtered} />);
     });
 
-    // The list must still render rows — not go blank
     expect(screen.getAllByRole('listitem').length).toBeGreaterThan(0);
   });
 
   it('filter change resets scroll position to top', async () => {
     useEventStore.setState({
       events: generateMockEvents(100),
-      filters: { search: '', contractAddress: 'all', eventType: 'all', status: 'all', dateFrom: '', dateTo: '' },
+      filters: BLANK_FILTERS,
       isLoading: false,
       error: null,
     });

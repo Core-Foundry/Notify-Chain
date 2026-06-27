@@ -5,7 +5,7 @@ import { EventExplorerCard } from './EventExplorerCard';
 
 interface EventExplorerTableProps {
   events: BlockchainEvent[];
-  contractStatuses: ContractStatus[];
+  contractStatuses?: ContractStatus[];
 }
 
 export function EventExplorerTable({ events, contractStatuses }: EventExplorerTableProps) {
