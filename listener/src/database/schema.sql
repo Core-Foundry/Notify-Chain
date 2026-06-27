@@ -35,6 +35,7 @@ CREATE TABLE IF NOT EXISTS scheduled_notifications (
   contract_address TEXT,                    -- Stellar contract address (if applicable)
   priority INTEGER NOT NULL DEFAULT 5,      -- 1-10, lower = higher priority
   metadata TEXT,                            -- Additional JSON metadata
+  next_retry_at DATETIME                    -- When the next retry should be attempted
   next_retry_at DATETIME                    -- Explicit retry scheduling timestamp
 );
 
