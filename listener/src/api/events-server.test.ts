@@ -4,34 +4,27 @@ import crypto from 'crypto';
 import { createEventsServer, checkStellarRpc, checkDiscord } from './events-server';
 import { eventRegistry } from '../store/event-registry';
 import { NotificationAnalyticsAggregator } from '../services/notification-analytics-aggregator';
+import { NotificationMetricsStore } from '../services/notification-metrics-store';
 import { NotificationType } from '../types/scheduled-notification';
-import { Database, getDatabase } from '../database/database';
-
-const mockGetHealth = jest.fn();
-const mockSimulateTransaction = jest.fn();
-const mockIsSuccessfulSim = jest.fn();
-const mockKeypairRandom = jest.fn(() => ({ publicKey: () => 'GAXXX' }));
-const mockContractCall = jest.fn();
-const mockTxBuilder = {
-  addOperation: jest.fn().mockReturnThis(),
-  setTimeout: jest.fn().mockReturnThis(),
-  build: jest.fn().mockReturnValue({}),
-};
-const mockTransactionBuilder = jest.fn(() => mockTxBuilder);
+import { Database, getDatabase, resetDatabaseSingleton } from '../database/database';
 
 jest.mock('@stellar/stellar-sdk', () => ({
   rpc: {
     Server: jest.fn().mockImplementation(() => ({
-      getHealth: mockGetHealth,
-      simulateTransaction: mockSimulateTransaction,
-      getAccount: jest.fn().mockRejectedValue(new Error('not found')),
+      getHealth: jest.fn(),
+      simulateTransaction: jest.fn(),
+      getAccount: jest.fn().mockRejectedValue(new Error('not found') as never),
     })),
-    isSuccessfulSim: mockIsSuccessfulSim,
+    isSuccessfulSim: jest.fn(),
   },
-  Keypair: { random: mockKeypairRandom },
+  Keypair: { random: jest.fn(() => ({ publicKey: () => 'GAXXX' })) },
   Account: jest.fn(),
-  Contract: jest.fn(() => ({ call: mockContractCall })),
-  TransactionBuilder: mockTransactionBuilder,
+  Contract: jest.fn(() => ({ call: jest.fn() })),
+  TransactionBuilder: jest.fn(() => ({
+    addOperation: jest.fn().mockReturnThis(),
+    setTimeout: jest.fn().mockReturnThis(),
+    build: jest.fn().mockReturnValue({}),
+  })),
   BASE_FEE: '100',
   scValToNative: jest.fn(),
 }));
@@ -87,13 +80,12 @@ describe('Preference API endpoints', () => {
 
   beforeEach((done) => {
     jest.clearAllMocks();
-    server = createEventsServer({ 
-      port: 0, 
-      stellarRpcUrl: 'http://localhost', 
-      stellarNetworkPassphrase: 'Test SDF Network ; September 2015', 
-      contractAddresses: [] 
+    server = createEventsServer({
+      port: 0,
+      stellarRpcUrl: 'http://localhost',
+      stellarNetworkPassphrase: 'Test SDF Network ; September 2015',
+      contractAddresses: [],
     });
-    server = createEventsServer({ port: 0, stellarRpcUrl: 'http://localhost' });
     server.listen(0, '127.0.0.1', done);
   });
 
@@ -436,6 +428,31 @@ describe('GET /api/analytics', () => {
     const after = await request(server, 'GET', '/api/analytics');
     expect((after.body as any).totalRecorded).toBe(0);
   });
+
+  it('returns persisted historical snapshots via /api/analytics/history', async () => {
+    const aggregator = new NotificationAnalyticsAggregator();
+    aggregator.reset();
+    const getHistory = jest.fn() as jest.MockedFunction<NotificationMetricsStore['getHistory']>;
+    getHistory.mockResolvedValue([
+      {
+        id: 1,
+        capturedAt: '2026-06-26T00:00:00.000Z',
+        snapshot: aggregator.snapshot(),
+      },
+    ]);
+    const metricsStore = { getHistory } as unknown as NotificationMetricsStore;
+
+    server = await startServer({
+      ...BASE_OPTIONS,
+      analyticsAggregator: aggregator,
+      metricsStore,
+    });
+
+    const res = await request(server, 'GET', '/api/analytics/history?limit=10');
+    expect(res.status).toBe(200);
+    expect((res.body as any).snapshots).toHaveLength(1);
+    expect(getHistory).toHaveBeenCalledWith(10, undefined);
+  });
 });
 
 describe('POST /api/notifications/validate-batch', () => {
@@ -443,7 +460,12 @@ describe('POST /api/notifications/validate-batch', () => {
 
   beforeEach((done) => {
     jest.clearAllMocks();
-    server = createEventsServer({ port: 0, stellarRpcUrl: 'http://localhost' });
+    server = createEventsServer({
+      port: 0,
+      stellarRpcUrl: 'http://localhost',
+      stellarNetworkPassphrase: 'Test SDF Network ; September 2015',
+      contractAddresses: [],
+    });
     server.listen(0, '127.0.0.1', done);
   });
 
@@ -473,30 +495,36 @@ describe('POST /api/notifications/validate-batch', () => {
     expect(body.valid).toBe(false);
     expect(body.errors.some((e) => e.code === 'DUPLICATE_RECIPIENT')).toBe(true);
     expect(body.errors.some((e) => e.code === 'MISSING_FIELD' || e.code === 'EMPTY_FIELD')).toBe(true);
+  });
+});
+
 describe('GET /api/search/suggestions API', () => {
   let server: http.Server;
   let db: Database;
 
-  beforeAll(async () => {
+  beforeEach(async () => {
+    await resetDatabaseSingleton();
     db = getDatabase(':memory:');
     await db.initialize();
-  });
 
-  afterAll(async () => {
-    await db.close();
-  });
-
-  beforeEach(async () => {
     await db.run('DELETE FROM processed_events');
     await db.run('DELETE FROM scheduled_notifications');
     await db.run('DELETE FROM notification_templates');
-    
-    server = createEventsServer({ port: 0, stellarRpcUrl: 'http://localhost' });
+
+    server = createEventsServer({
+      port: 0,
+      stellarRpcUrl: 'http://localhost',
+      stellarNetworkPassphrase: 'Test SDF Network ; September 2015',
+      contractAddresses: [],
+    });
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', () => resolve()));
   });
 
   afterEach(async () => {
-    await new Promise<void>((resolve) => server.close(() => resolve()));
+    if (server) {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+    await resetDatabaseSingleton();
   });
 
   it('returns suggestions successfully from the API', async () => {

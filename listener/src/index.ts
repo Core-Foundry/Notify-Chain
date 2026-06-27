@@ -15,6 +15,9 @@ import { ArchiveStore } from './services/archive-store';
 import { loadArchiveConfig } from './services/archive-config';
 import { initializeDatabase } from './database/database';
 import { DiscordNotificationService } from './services/discord-notification';
+import { initNotificationAnalyticsAggregator } from './services/notification-analytics-aggregator';
+import { NotificationMetricsStore } from './services/notification-metrics-store';
+import { NotificationMetricsRunner } from './services/notification-metrics-runner';
 import { eventRegistry } from './store/event-registry';
 import logger from './utils/logger';
 import { loadConfig, ConfigError } from './config';
@@ -32,6 +35,12 @@ async function main() {
   let cleanupService: CleanupService | null = null;
   let archiveService: ArchiveService | null = null;
   let archiveStore: ArchiveStore | null = null;
+  let metricsRunner: NotificationMetricsRunner | null = null;
+  let metricsStore: NotificationMetricsStore | null = null;
+
+  if (config.analytics?.enabled) {
+    initNotificationAnalyticsAggregator(config.analytics);
+  }
 
   try {
     logger.info('Initializing database');
@@ -45,6 +54,13 @@ async function main() {
 
     cleanupService = new CleanupService(db, eventRegistry, config.cleanup);
     cleanupService.start();
+
+    if (config.analytics?.enabled) {
+      metricsStore = new NotificationMetricsStore(db);
+      metricsRunner = new NotificationMetricsRunner(config.analytics, metricsStore);
+      await metricsRunner.start();
+      logger.info('Notification metrics runner started successfully');
+    }
 
     // Archive service: moves old notifications to the archive table.
     const archiveCfg = loadArchiveConfig();
@@ -89,7 +105,6 @@ async function main() {
     throw error;
   }
 
-  // Start events server and subscriber
   const eventsServer = startEventsServer({
     port: config.eventsApiPort,
     corsOrigin: config.eventsApiCorsOrigin,
@@ -102,6 +117,7 @@ async function main() {
     rateLimit: config.rateLimit,
     archiveStore,
     archiveService,
+    metricsStore,
   });
 
   const subscriber = new EventSubscriber(config);
@@ -112,6 +128,10 @@ async function main() {
 
     if (cleanupService) {
       await cleanupService.stop();
+    }
+
+    if (metricsRunner) {
+      await metricsRunner.stop();
     }
 
     if (archiveService) {
