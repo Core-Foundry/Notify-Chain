@@ -15,6 +15,10 @@ import { ArchiveStore } from './services/archive-store';
 import { loadArchiveConfig } from './services/archive-config';
 import { initializeDatabase } from './database/database';
 import { DiscordNotificationService } from './services/discord-notification';
+import {
+  IndexingReconciliationEngine,
+  createDefaultAlertSink,
+} from './services/indexing-reconciliation-engine';
 import { initNotificationAnalyticsAggregator } from './services/notification-analytics-aggregator';
 import { NotificationMetricsStore } from './services/notification-metrics-store';
 import { NotificationMetricsRunner } from './services/notification-metrics-runner';
@@ -33,6 +37,7 @@ async function main() {
   let notificationAPI: NotificationAPI | null = null;
   let templateService: NotificationTemplateService | null = null;
   let cleanupService: CleanupService | null = null;
+  let reconciliationEngine: IndexingReconciliationEngine | null = null;
   let archiveService: ArchiveService | null = null;
   let archiveStore: ArchiveStore | null = null;
   let metricsRunner: NotificationMetricsRunner | null = null;
@@ -55,6 +60,13 @@ async function main() {
     cleanupService = new CleanupService(db, eventRegistry, config.cleanup);
     cleanupService.start();
 
+    reconciliationEngine = new IndexingReconciliationEngine({
+      db,
+      rpcUrl: config.stellarRpcUrl,
+      contractAddresses: config.contractAddresses.map((c) => c.address),
+      alertSink: createDefaultAlertSink(config.discord?.webhookUrl),
+    });
+    reconciliationEngine.start();
     if (config.analytics?.enabled) {
       metricsStore = new NotificationMetricsStore(db);
       metricsRunner = new NotificationMetricsRunner(config.analytics, metricsStore);
@@ -130,6 +142,8 @@ async function main() {
       await cleanupService.stop();
     }
 
+    if (reconciliationEngine) {
+      reconciliationEngine.stop();
     if (metricsRunner) {
       await metricsRunner.stop();
     }
