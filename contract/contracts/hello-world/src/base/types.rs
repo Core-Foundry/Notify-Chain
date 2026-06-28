@@ -1,4 +1,4 @@
-use crate::base::events::NotificationPriority;
+use crate::base::events::{AuditAction, NotificationPriority};
 use soroban_sdk::{contracttype, Address, BytesN, String, Vec};
 
 #[contracttype]
@@ -62,6 +62,28 @@ pub struct PaymentHistory {
     pub group_id: BytesN<32>,
     pub usages_purchased: u32,
     pub amount_paid: i128,
+    pub timestamp: u64,
+}
+
+/// Immutable record of a single notification lifecycle event.
+///
+/// Records are appended to persistent storage in order of occurrence and can
+/// never be modified or deleted after creation, satisfying the audit-log
+/// immutability requirement.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AuditRecord {
+    /// Sequential, 1-based index assigned at append time. Provides a stable
+    /// ordering handle for range queries.
+    pub seq: u64,
+    /// The notification identifier this record belongs to (all-zeros for
+    /// contract-level actions such as pause/unpause).
+    pub notification_id: BytesN<32>,
+    /// Which lifecycle stage this record represents.
+    pub action: AuditAction,
+    /// Who triggered the action (caller or creator).
+    pub actor: Address,
+    /// Ledger timestamp (seconds) when the action occurred.
     pub timestamp: u64,
 }
 

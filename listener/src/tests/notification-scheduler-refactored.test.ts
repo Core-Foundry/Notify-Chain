@@ -313,12 +313,19 @@ describe('NotificationScheduler (Refactored)', () => {
           .forImmediateExecution()
           .build()
       );
-      await repository.fetchAndLockPendingNotifications('processor-1', 30000, 10);
       const pastLock = NotificationFixtureBuilder.dates.past(1000);
-      await db.run('UPDATE scheduled_notifications SET lock_expires_at = ? WHERE id = ?', [
-        pastLock.toISOString(),
-        staleId,
-      ]);
+      await db.run(
+        `UPDATE scheduled_notifications
+         SET status = ?, processor_id = ?, lock_expires_at = ?, processing_started_at = ?
+         WHERE id = ?`,
+        [
+          NotificationStatus.PROCESSING,
+          'processor-1',
+          pastLock.toISOString(),
+          pastLock.toISOString(),
+          staleId,
+        ]
+      );
 
       // 3. Create a notification in the past (overdue, pending) - created AFTER locking to remain in PENDING status
       await repository.create(

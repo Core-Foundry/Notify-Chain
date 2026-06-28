@@ -7,6 +7,7 @@ pub mod base {
     pub mod events;
     pub mod metadata_validation;
     pub mod preferences;
+    pub mod reputation;
     pub mod types;
 }
 
@@ -17,6 +18,7 @@ pub mod interfaces {
 // 2. Declare the main logic files where the functions are implemented
 mod autoshare_logic;
 mod preferences_logic;
+mod reputation_logic;
 
 #[cfg(test)]
 pub mod mock_token;
@@ -401,6 +403,59 @@ impl AutoShareContract {
     /// The notification must exist, not already be revoked or expired, and not yet be delivered.
     pub fn recall_notification(env: Env, notification_id: BytesN<32>, caller: Address) {
         autoshare_logic::recall_notification(env, notification_id, caller).unwrap();
+    /// Emits a `BatchProcessingCompleted` event for off-chain listeners.
+    pub fn emit_batch_completed(env: Env, batch_id: BytesN<32>, processed_count: u32) {
+        autoshare_logic::emit_batch_completed(env, batch_id, processed_count).unwrap();
+    // ============================================================================
+    // Batch Notification Creation
+    // ============================================================================
+
+    /// Creates multiple scheduled notifications in a single transaction.
+    ///
+    /// `ids` and `ttl_seconds` must have the same length, must not be empty, and
+    /// must not exceed 50 entries. Emits one `NotificationScheduled` event per
+    /// notification plus a single `BatchNotificationsCreated` summary event.
+    pub fn batch_schedule_notifications(
+        env: Env,
+        ids: Vec<BytesN<32>>,
+        creator: Address,
+        ttl_seconds: Vec<u64>,
+        titles: Vec<String>,
+    ) {
+        autoshare_logic::batch_schedule_notifications(env, ids, creator, ttl_seconds, titles)
+            .unwrap();
+    }
+
+    // ============================================================================
+    // Audit Logging
+    // ============================================================================
+
+    /// Returns the full, immutable audit log in append order.
+    pub fn get_audit_log(env: Env) -> Vec<base::types::AuditRecord> {
+        autoshare_logic::get_audit_log(env)
+    }
+
+    /// Returns all audit records for a specific notification identifier.
+    pub fn get_notification_audit(
+        env: Env,
+        notification_id: BytesN<32>,
+    ) -> Vec<base::types::AuditRecord> {
+        autoshare_logic::get_audit_records_for_notification(env, notification_id)
+    }
+
+    /// Records a delivery attempt for a notification in the audit log.
+    pub fn record_delivery_attempt(env: Env, notification_id: BytesN<32>, actor: Address) {
+        autoshare_logic::record_delivery_attempt(env, notification_id, actor).unwrap();
+    }
+
+    /// Records a delivery failure for a notification in the audit log.
+    pub fn record_delivery_failure(env: Env, notification_id: BytesN<32>, actor: Address) {
+        autoshare_logic::record_delivery_failure(env, notification_id, actor).unwrap();
+    }
+
+    /// Records that the recipient acknowledged a notification.
+    pub fn record_acknowledgment(env: Env, notification_id: BytesN<32>, actor: Address) {
+        autoshare_logic::record_acknowledgment(env, notification_id, actor).unwrap();
     }
 
     /// Revokes a scheduled notification, preventing any further interaction with it.
@@ -466,6 +521,41 @@ impl AutoShareContract {
     pub fn get_notification_limits(env: Env) -> base::types::NotificationLimits {
         autoshare_logic::get_notification_limits(env)
     }
+
+    // ============================================================================
+    // Sender Reputation Tracking
+    // ============================================================================
+
+    /// Record a successful notification delivery for a sender.
+    /// Updates the sender's reputation score based on delivery history.
+    pub fn record_delivery_success(env: Env, sender: Address) {
+        reputation_logic::record_successful_delivery(&env, &sender).unwrap();
+    }
+
+    /// Record a failed notification delivery for a sender.
+    /// Decreases the sender's reputation score based on delivery history.
+    pub fn record_delivery_failure(env: Env, sender: Address) {
+        reputation_logic::record_failed_delivery(&env, &sender).unwrap();
+    }
+
+    /// Get the current reputation score for a sender.
+    /// Score ranges from 0 (lowest) to 100 (highest).
+    pub fn get_sender_reputation_score(env: Env, sender: Address) -> i64 {
+        reputation_logic::get_reputation_score(&env, &sender).unwrap_or(50)
+    }
+
+    /// Get the complete reputation record for a sender.
+    /// Includes successful deliveries, failed deliveries, and current score.
+    pub fn get_sender_reputation(env: Env, sender: Address) -> base::reputation::SenderReputation {
+        reputation_logic::get_reputation(&env, &sender)
+            .unwrap_or_else(|_| base::reputation::SenderReputation::new(sender, env.ledger().timestamp()))
+    }
+
+    /// Get the reputation tier for a sender.
+    /// Tier levels: 0=Unverified, 1=Bronze, 2=Silver, 3=Gold, 4=Platinum
+    pub fn get_sender_reputation_tier(env: Env, sender: Address) -> u32 {
+        reputation_logic::get_reputation_tier(&env, &sender).unwrap_or(0)
+    }
 }
 
 #[cfg(test)]
@@ -483,6 +573,8 @@ mod storage_optimization_test;
 #[cfg(test)]
 #[path = "tests/preferences_test.rs"]
 mod preferences_test;
+
+#[cfg(test)]
 mod tests {
     #[path = "../tests/autoshare_test.rs"]
     mod autoshare_test;
@@ -502,11 +594,22 @@ mod tests {
     #[path = "../tests/notification_test.rs"]
     mod notification_test;
 
+    #[path = "../tests/notification_validation_test.rs"]
+    mod notification_validation_test;
     #[path = "../tests/category_registry_test.rs"]
     mod category_registry_test;
 
     #[path = "../tests/expiration_test.rs"]
     mod expiration_test;
+
+    #[path = "../tests/batch_notification_test.rs"]
+    mod batch_notification_test;
+
+    #[path = "../tests/audit_log_test.rs"]
+    mod audit_log_test;
+
+    #[path = "../tests/payload_validation_test.rs"]
+    mod payload_validation_test;
 
     #[path = "../tests/revocation_test.rs"]
     mod revocation_test;
