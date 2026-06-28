@@ -12,7 +12,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 18
+          node-version: 22
           cache: "npm"
           cache-dependency-path: dashboard/package-lock.json
       - name: Install dependencies
@@ -45,7 +45,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: "npm"
           cache-dependency-path: listener/package-lock.json
       - name: Install dependencies
