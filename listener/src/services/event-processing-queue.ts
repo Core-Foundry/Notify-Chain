@@ -2,11 +2,18 @@ import * as StellarSDK from '@stellar/stellar-sdk';
 import { ContractConfig } from '../types';
 import logger from '../utils/logger';
 
+export enum Priority {
+  Low = 0,
+  Medium = 1,
+  High = 2,
+}
+
 export interface EventProcessingQueueOptions {
   maxConcurrency?: number;
   pollIntervalMs?: number;
   maxRetries?: number;
   baseDelayMs?: number;
+  priorityWeights?: { high: number; medium: number; low: number };
 }
 
 export type EventProcessor = (
@@ -22,6 +29,8 @@ interface QueuedEvent {
   retryCount: number;
   nextRetryAt: number;
   fingerprint: string;
+  priority: Priority;
+  enqueuedAt: number;
 }
 
 const DEFAULTS = {
@@ -29,6 +38,7 @@ const DEFAULTS = {
   pollIntervalMs: 1_000,
   maxRetries: 3,
   baseDelayMs: 2_000,
+  priorityWeights: { high: 5, medium: 2, low: 1 },
 };
 
 export class EventProcessingQueue {
@@ -39,8 +49,10 @@ export class EventProcessingQueue {
   private readonly pollIntervalMs: number;
   private readonly maxRetries: number;
   private readonly baseDelayMs: number;
+  private readonly priorityWeights: { high: number; medium: number; low: number };
   private readonly processor: EventProcessor;
   private timer: ReturnType<typeof setInterval> | null = null;
+  private priorityCounters: { high: number; medium: number; low: number } = { high: 0, medium: 0, low: 0 };
 
   constructor(processor: EventProcessor, options?: EventProcessingQueueOptions) {
     this.processor = processor;
@@ -48,12 +60,14 @@ export class EventProcessingQueue {
     this.pollIntervalMs = options?.pollIntervalMs ?? DEFAULTS.pollIntervalMs;
     this.maxRetries = options?.maxRetries ?? DEFAULTS.maxRetries;
     this.baseDelayMs = options?.baseDelayMs ?? DEFAULTS.baseDelayMs;
+    this.priorityWeights = options?.priorityWeights ?? DEFAULTS.priorityWeights;
   }
 
   enqueue(
     event: StellarSDK.rpc.Api.EventResponse,
     contractConfig: ContractConfig,
-    requestId?: string
+    requestId?: string,
+    priority: Priority = Priority.Medium
   ): boolean {
     const fingerprint = buildEventFingerprint(event, contractConfig.address);
 
@@ -77,6 +91,7 @@ export class EventProcessingQueue {
       delayMs,
       nextRetryAt: new Date(nextRetryAt).toISOString(),
       maxRetries: this.maxRetries,
+      priority: Priority[priority],
     });
 
     this.queuedFingerprints.add(fingerprint);
@@ -87,6 +102,8 @@ export class EventProcessingQueue {
       retryCount: 0,
       nextRetryAt,
       fingerprint,
+      priority,
+      enqueuedAt: Date.now(),
     });
 
     return true;
@@ -124,9 +141,21 @@ export class EventProcessingQueue {
 
     const due = this.queue
       .filter((item) => item.nextRetryAt <= now && !this.activeFingerprints.has(item.fingerprint))
+      .sort((a, b) => {
+        const priorityA = this.getWeightedPriority(a);
+        const priorityB = this.getWeightedPriority(b);
+        if (priorityB !== priorityA) return priorityB - priorityA;
+        return a.enqueuedAt - b.enqueuedAt;
+      })
       .slice(0, available);
 
     if (due.length === 0) return;
+
+    for (const item of due) {
+      if (item.priority === Priority.High) this.priorityCounters.high++;
+      else if (item.priority === Priority.Medium) this.priorityCounters.medium++;
+      else this.priorityCounters.low++;
+    }
 
     const selectedFingerprints = new Set(due.map((item) => item.fingerprint));
 
@@ -146,6 +175,19 @@ export class EventProcessingQueue {
         });
       }
     }
+  }
+
+  private getWeightedPriority(item: QueuedEvent): number {
+    const basePriority = item.priority;
+    const age = Date.now() - item.enqueuedAt;
+    const ageBonus = Math.floor(age / 60000);
+
+    let weight = 0;
+    if (item.priority === Priority.High) weight = this.priorityWeights.high;
+    else if (item.priority === Priority.Medium) weight = this.priorityWeights.medium;
+    else weight = this.priorityWeights.low;
+
+    return basePriority + ageBonus + weight;
   }
 
   private async processItem(item: QueuedEvent): Promise<void> {
