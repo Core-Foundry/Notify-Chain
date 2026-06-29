@@ -5,9 +5,13 @@ interface PaginationControlsProps {
   totalCount: number;
   onPageChange: (page: number) => void;
   onLimitChange: (limit: number) => void;
+  /** Override the page-size dropdown options. Defaults to [8, 12, 20, 40]. */
+  pageSizeOptions?: number[];
+  /** Override the label shown after the total count. Defaults to "events". */
+  summaryLabel?: string;
 }
 
-const LIMIT_OPTIONS = [8, 12, 20, 40];
+const DEFAULT_LIMIT_OPTIONS = [8, 12, 20, 40];
 
 export function PaginationControls({
   page,
@@ -16,6 +20,8 @@ export function PaginationControls({
   totalCount,
   onPageChange,
   onLimitChange,
+  pageSizeOptions = DEFAULT_LIMIT_OPTIONS,
+  summaryLabel = 'events',
 }: PaginationControlsProps) {
   const handlePrevious = () => {
     onPageChange(Math.max(1, page - 1));
@@ -31,7 +37,9 @@ export function PaginationControls({
         <span>
           Page {page} of {pageCount}
         </span>
-        <span>{totalCount.toLocaleString()} total events</span>
+        <span>
+          {totalCount.toLocaleString()} total {summaryLabel}
+        </span>
       </div>
 
       <div className="pagination-controls__actions">
@@ -53,7 +61,7 @@ export function PaginationControls({
           value={limit}
           onChange={(event) => onLimitChange(Number(event.target.value))}
         >
-          {LIMIT_OPTIONS.map((option) => (
+          {pageSizeOptions.map((option) => (
             <option key={option} value={option}>
               {option}
             </option>

@@ -4,6 +4,7 @@ import {
   extractSignature,
   extractKeyId,
   getSecretForKey,
+  isTimestampValid,
 } from './webhook-verifier';
 
 function computeSignature(payload: string, secret: string): string {
@@ -106,5 +107,103 @@ describe('getSecretForKey', () => {
 
   it('returns undefined for an empty secrets array', () => {
     expect(getSecretForKey([], 'key-1')).toBeUndefined();
+  });
+});
+
+describe('isTimestampValid', () => {
+  it('accepts a recent timestamp within the expiration window', () => {
+    const currentTimestamp = Math.floor(Date.now() / 1000);
+    expect(isTimestampValid(currentTimestamp.toString(), 300)).toBe(true);
+  });
+
+  it('rejects a timestamp older than the expiration window', () => {
+    const oldTimestamp = Math.floor(Date.now() / 1000) - 400; // 400 seconds ago, max is 300
+    expect(isTimestampValid(oldTimestamp.toString(), 300)).toBe(false);
+  });
+
+  it('accepts a timestamp at the exact expiration boundary', () => {
+    const boundaryTimestamp = Math.floor(Date.now() / 1000) - 300; // Exactly 300 seconds ago
+    expect(isTimestampValid(boundaryTimestamp.toString(), 300)).toBe(true);
+  });
+
+  it('rejects a timestamp just over the expiration boundary', () => {
+    const overBoundaryTimestamp = Math.floor(Date.now() / 1000) - 301; // 301 seconds ago
+    expect(isTimestampValid(overBoundaryTimestamp.toString(), 300)).toBe(false);
+  });
+
+  it('rejects a timestamp from the future (more than 1 minute ahead)', () => {
+    const futureTimestamp = Math.floor(Date.now() / 1000) + 120; // 2 minutes in the future
+    expect(isTimestampValid(futureTimestamp.toString(), 300)).toBe(false);
+  });
+
+  it('accepts a timestamp slightly in the future (within clock skew tolerance)', () => {
+    const slightlyFutureTimestamp = Math.floor(Date.now() / 1000) + 30; // 30 seconds in the future
+    expect(isTimestampValid(slightlyFutureTimestamp.toString(), 300)).toBe(true);
+  });
+
+  it('rejects an invalid timestamp string', () => {
+    expect(isTimestampValid('not-a-number', 300)).toBe(false);
+  });
+
+  it('rejects an empty timestamp string', () => {
+    expect(isTimestampValid('', 300)).toBe(false);
+  });
+
+  it('rejects NaN as a timestamp', () => {
+    expect(isTimestampValid('NaN', 300)).toBe(false);
+  });
+});
+
+describe('verifySignature with timestamp expiration', () => {
+  it('verifies both signature and timestamp when both are valid', () => {
+    const payload = '{"event":"test"}';
+    const secret = 'whsec_test_secret';
+    const header = computeSignature(payload, secret);
+    const currentTimestamp = Math.floor(Date.now() / 1000).toString();
+
+    expect(
+      verifySignature(payload, header, secret, currentTimestamp, { maxAgeSeconds: 300 })
+    ).toBe(true);
+  });
+
+  it('rejects when signature is valid but timestamp is expired', () => {
+    const payload = '{"event":"test"}';
+    const secret = 'whsec_test_secret';
+    const header = computeSignature(payload, secret);
+    const oldTimestamp = (Math.floor(Date.now() / 1000) - 400).toString();
+
+    expect(
+      verifySignature(payload, header, secret, oldTimestamp, { maxAgeSeconds: 300 })
+    ).toBe(false);
+  });
+
+  it('rejects when signature is invalid but timestamp is valid', () => {
+    const payload = '{"event":"test"}';
+    const secret = 'whsec_test_secret';
+    const header = computeSignature(payload, secret);
+    const currentTimestamp = Math.floor(Date.now() / 1000).toString();
+
+    expect(
+      verifySignature(payload, header, 'wrong_secret', currentTimestamp, { maxAgeSeconds: 300 })
+    ).toBe(false);
+  });
+
+  it('skips timestamp validation when maxAgeSeconds is not specified', () => {
+    const payload = '{"event":"test"}';
+    const secret = 'whsec_test_secret';
+    const header = computeSignature(payload, secret);
+    const oldTimestamp = (Math.floor(Date.now() / 1000) - 400).toString();
+
+    // Should accept because timestamp validation is not enabled
+    expect(verifySignature(payload, header, secret, oldTimestamp, {})).toBe(true);
+  });
+
+  it('skips timestamp validation when timestamp header is not provided', () => {
+    const payload = '{"event":"test"}';
+    const secret = 'whsec_test_secret';
+    const header = computeSignature(payload, secret);
+
+    // Should accept because timestamp is not provided
+    expect(verifySignature(payload, header, secret, undefined, { maxAgeSeconds: 300 })).toBe(true);
   });
 });
