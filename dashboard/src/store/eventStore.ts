@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { BlockchainEvent, EventFilters } from '../types/event';
+import type { BlockchainEvent, EventFilters, NotificationStatus } from '../types/event';
 import { filterEvents } from '../utils/eventData';
 
 interface EventStoreState {
@@ -12,8 +12,24 @@ interface EventStoreState {
   setSearch: (search: string) => void;
   setContractFilter: (contractAddress: string) => void;
   setEventTypeFilter: (eventType: string) => void;
+  setStatusFilter: (status: NotificationStatus) => void;
+  setDateFrom: (dateFrom: string) => void;
+  setDateTo: (dateTo: string) => void;
   setLoading: (isLoading: boolean) => void;
   setError: (error: string | null) => void;
+}
+
+function dedupeEventsById(events: BlockchainEvent[]): BlockchainEvent[] {
+  const seenEventIds = new Set<string>();
+
+  return events.filter((event) => {
+    if (seenEventIds.has(event.eventId)) {
+      return false;
+    }
+
+    seenEventIds.add(event.eventId);
+    return true;
+  });
 }
 
 export const useEventStore = create<EventStoreState>((set) => ({
@@ -22,26 +38,28 @@ export const useEventStore = create<EventStoreState>((set) => ({
     search: '',
     contractAddress: 'all',
     eventType: 'all',
+    status: 'all',
+    dateFrom: '',
+    dateTo: '',
   },
   isLoading: false,
   error: null,
-  setEvents: (events) => set({ events }),
+  setEvents: (events) => set({ events: dedupeEventsById(events) }),
   appendEvents: (events) =>
     set((state) => ({
-      events: [...state.events, ...events],
+      events: dedupeEventsById([...state.events, ...events]),
     })),
-  setSearch: (search) =>
-    set((state) => ({
-      filters: { ...state.filters, search },
-    })),
+  setSearch: (search) => set((state) => ({ filters: { ...state.filters, search } })),
   setContractFilter: (contractAddress) =>
-    set((state) => ({
-      filters: { ...state.filters, contractAddress },
-    })),
+    set((state) => ({ filters: { ...state.filters, contractAddress } })),
   setEventTypeFilter: (eventType) =>
-    set((state) => ({
-      filters: { ...state.filters, eventType },
-    })),
+    set((state) => ({ filters: { ...state.filters, eventType } })),
+  setStatusFilter: (status) =>
+    set((state) => ({ filters: { ...state.filters, status } })),
+  setDateFrom: (dateFrom) =>
+    set((state) => ({ filters: { ...state.filters, dateFrom } })),
+  setDateTo: (dateTo) =>
+    set((state) => ({ filters: { ...state.filters, dateTo } })),
   setLoading: (isLoading) => set({ isLoading }),
   setError: (error) => set({ error }),
 }));
@@ -52,7 +70,10 @@ export function selectFilteredEvents(state: EventStoreState): BlockchainEvent[] 
     events,
     filters.search,
     filters.contractAddress,
-    filters.eventType
+    filters.eventType,
+    filters.status,
+    filters.dateFrom,
+    filters.dateTo
   );
 }
 

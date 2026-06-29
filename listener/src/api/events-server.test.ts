@@ -1,18 +1,33 @@
+import { jest, describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import http from 'http';
 import crypto from 'crypto';
 import { createEventsServer, checkStellarRpc, checkDiscord } from './events-server';
 import { eventRegistry } from '../store/event-registry';
-
-const mockGetHealth = jest.fn();
+import { NotificationAnalyticsAggregator } from '../services/notification-analytics-aggregator';
+import { NotificationMetricsStore } from '../services/notification-metrics-store';
+import { NotificationType } from '../types/scheduled-notification';
+import { Database, getDatabase, resetDatabaseSingleton } from '../database/database';
 
 jest.mock('@stellar/stellar-sdk', () => ({
   rpc: {
     Server: jest.fn().mockImplementation(() => ({
-      getHealth: mockGetHealth,
+      getHealth: jest.fn(),
+      simulateTransaction: jest.fn(),
+      getAccount: jest.fn().mockRejectedValue(new Error('not found') as never),
     })),
+    isSuccessfulSim: jest.fn(),
   },
+  Keypair: { random: jest.fn(() => ({ publicKey: () => 'GAXXX' })) },
+  Account: jest.fn(),
+  Contract: jest.fn(() => ({ call: jest.fn() })),
+  TransactionBuilder: jest.fn(() => ({
+    addOperation: jest.fn().mockReturnThis(),
+    setTimeout: jest.fn().mockReturnThis(),
+    build: jest.fn().mockReturnValue({}),
+  })),
+  BASE_FEE: '100',
+  scValToNative: jest.fn(),
 }));
-import { createEventsServer } from './events-server';
 import { preferenceStore } from '../store/preference-store';
 
 jest.mock('../store/preference-store', () => {
@@ -65,7 +80,12 @@ describe('Preference API endpoints', () => {
 
   beforeEach((done) => {
     jest.clearAllMocks();
-    server = createEventsServer({ port: 0 });
+    server = createEventsServer({
+      port: 0,
+      stellarRpcUrl: 'http://localhost',
+      stellarNetworkPassphrase: 'Test SDF Network ; September 2015',
+      contractAddresses: [],
+    });
     server.listen(0, '127.0.0.1', done);
   });
 
@@ -174,6 +194,24 @@ function makePostRequest(
   });
 }
 
+function startServer(options: any): Promise<http.Server> {
+  return new Promise((resolve) => {
+    const s = createEventsServer(options);
+    s.listen(0, '127.0.0.1', () => resolve(s));
+  });
+}
+
+function closeServer(s: http.Server): Promise<void> {
+  return new Promise((resolve) => s.close(() => resolve()));
+}
+
+const BASE_OPTIONS = {
+  port: 0,
+  stellarRpcUrl: 'https://test',
+  stellarNetworkPassphrase: 'Test SDF Network ; September 2015',
+  contractAddresses: []
+};
+
 describe('POST /api/webhooks', () => {
   let server: http.Server;
   const secrets = [
@@ -276,5 +314,245 @@ describe('POST /api/webhooks', () => {
     const { status, body } = await makePostRequest(server, '/api/events', payload, {});
 
     expect(status).toBe(404);
+  });
+});
+
+describe('GET /api/analytics', () => {
+  let server: http.Server;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  afterEach(async () => {
+    if (server) {
+      await closeServer(server);
+      server = null as unknown as http.Server;
+    }
+  });
+
+  it('returns an empty snapshot when no records are recorded', async () => {
+    const aggregator = new NotificationAnalyticsAggregator();
+    aggregator.reset();
+    server = await startServer({ ...BASE_OPTIONS, analyticsAggregator: aggregator });
+
+    const res = await request(server, 'GET', '/api/analytics');
+    expect(res.status).toBe(200);
+    const body = res.body as Record<string, unknown>;
+    expect(body.totalRecorded).toBe(0);
+    expect(body.windowStart).toBeDefined();
+    expect(body.windowEnd).toBeDefined();
+    expect(body.overall).toBeDefined();
+    expect(body.byType).toEqual([]);
+    expect(body.byContract).toEqual([]);
+    // hourlyBuckets is a fixed-size rolling window: when there are no records
+    // every bucket still exists with zero counters. We assert structure rather
+    // than emptiness so the test is robust to bucket-count changes.
+    expect(Array.isArray(body.hourlyBuckets)).toBe(true);
+    expect((body.hourlyBuckets as unknown[]).length).toBeGreaterThan(0);
+    for (const bucket of body.hourlyBuckets as Array<{ total: number; success: number; failure: number }>) {
+      expect(bucket.total).toBe(0);
+      expect(bucket.success).toBe(0);
+      expect(bucket.failure).toBe(0);
+    }
+    expect(body.errorBreakdown).toEqual({});
+  });
+
+  it('returns aggregated metrics from recorded outcomes', async () => {
+    const aggregator = new NotificationAnalyticsAggregator({ bucketSizeMs: 60_000 });
+    aggregator.reset();
+    const now = Date.now();
+    const baseTs = now;
+    aggregator.record({
+      notificationType: NotificationType.DISCORD,
+      contractAddress: 'CABC',
+      outcome: 'success',
+      durationMs: 120,
+      timestamp: baseTs,
+    });
+    aggregator.record({
+      notificationType: NotificationType.DISCORD,
+      contractAddress: 'CABC',
+      outcome: 'failure',
+      durationMs: 240,
+      errorReason: 'HTTP 500',
+      timestamp: baseTs + 1000,
+    });
+    aggregator.record({
+      notificationType: NotificationType.WEBHOOK,
+      outcome: 'retry',
+      durationMs: 0,
+      timestamp: baseTs + 2000,
+    });
+    server = await startServer({ ...BASE_OPTIONS, analyticsAggregator: aggregator });
+
+    const res = await request(server, 'GET', '/api/analytics');
+    expect(res.status).toBe(200);
+    const body = res.body as Record<string, any>;
+    expect(body.totalRecorded).toBe(3);
+    expect(body.byType.length).toBeGreaterThan(0);
+    const discordRow = body.byType.find(
+      (r: any) => r.notificationType === NotificationType.DISCORD,
+    );
+    expect(discordRow).toBeDefined();
+    expect(discordRow.total).toBe(2);
+    expect(discordRow.success).toBe(1);
+    expect(discordRow.failure).toBe(1);
+    expect(discordRow.successRate).toBeCloseTo(0.5);
+    const contractRow = body.byContract.find(
+      (r: any) => r.contractAddress === 'CABC',
+    );
+    expect(contractRow).toBeDefined();
+    expect(contractRow.total).toBe(2);
+    expect(body.errorBreakdown['HTTP 500']).toBe(1);
+  });
+
+  it('clears aggregator state when reset=true is supplied', async () => {
+    const aggregator = new NotificationAnalyticsAggregator();
+    aggregator.reset();
+    aggregator.record({
+      notificationType: NotificationType.DISCORD,
+      outcome: 'success',
+      durationMs: 50,
+      timestamp: Date.now(),
+    });
+    server = await startServer({ ...BASE_OPTIONS, analyticsAggregator: aggregator });
+
+    const first = await request(server, 'GET', '/api/analytics');
+    expect((first.body as any).totalRecorded).toBe(1);
+
+    const reset = await request(server, 'GET', '/api/analytics?reset=true');
+    expect(reset.status).toBe(200);
+    expect((reset.body as any).totalRecorded).toBe(1); // snapshot returned BEFORE reset
+
+    const after = await request(server, 'GET', '/api/analytics');
+    expect((after.body as any).totalRecorded).toBe(0);
+  });
+
+  it('returns persisted historical snapshots via /api/analytics/history', async () => {
+    const aggregator = new NotificationAnalyticsAggregator();
+    aggregator.reset();
+    const getHistory = jest.fn() as jest.MockedFunction<NotificationMetricsStore['getHistory']>;
+    getHistory.mockResolvedValue([
+      {
+        id: 1,
+        capturedAt: '2026-06-26T00:00:00.000Z',
+        snapshot: aggregator.snapshot(),
+      },
+    ]);
+    const metricsStore = { getHistory } as unknown as NotificationMetricsStore;
+
+    server = await startServer({
+      ...BASE_OPTIONS,
+      analyticsAggregator: aggregator,
+      metricsStore,
+    });
+
+    const res = await request(server, 'GET', '/api/analytics/history?limit=10');
+    expect(res.status).toBe(200);
+    expect((res.body as any).snapshots).toHaveLength(1);
+    expect(getHistory).toHaveBeenCalledWith(10, undefined);
+  });
+});
+
+describe('POST /api/notifications/validate-batch', () => {
+  let server: http.Server;
+
+  beforeEach((done) => {
+    jest.clearAllMocks();
+    server = createEventsServer({
+      port: 0,
+      stellarRpcUrl: 'http://localhost',
+      stellarNetworkPassphrase: 'Test SDF Network ; September 2015',
+      contractAddresses: [],
+    });
+    server.listen(0, '127.0.0.1', done);
+  });
+
+  afterEach((done) => {
+    server.close(done);
+  });
+
+  it('accepts a valid notification batch', async () => {
+    const res = await request(server, 'POST', '/api/notifications/validate-batch', [
+      { id: 'n1', recipient: 'user_a', channel: 'discord', message: 'Hello' },
+      { id: 'n2', recipient: 'user_b', channel: 'webhook', message: 'Hi' },
+    ]);
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ valid: true, processedCount: 2, errors: [] });
+  });
+
+  it('rejects batches with duplicate recipients and missing fields', async () => {
+    const res = await request(server, 'POST', '/api/notifications/validate-batch', [
+      { id: 'n1', recipient: 'user_a', channel: 'discord', message: 'Hello' },
+      { id: 'n2', recipient: 'user_a', channel: 'webhook', message: 'Duplicate' },
+      { id: '', recipient: '', channel: 'email', message: '' },
+    ]);
+
+    expect(res.status).toBe(400);
+    const body = res.body as { valid: boolean; errors: Array<{ code: string }> };
+    expect(body.valid).toBe(false);
+    expect(body.errors.some((e) => e.code === 'DUPLICATE_RECIPIENT')).toBe(true);
+    expect(body.errors.some((e) => e.code === 'MISSING_FIELD' || e.code === 'EMPTY_FIELD')).toBe(true);
+  });
+});
+
+describe('GET /api/search/suggestions API', () => {
+  let server: http.Server;
+  let db: Database;
+
+  beforeEach(async () => {
+    await resetDatabaseSingleton();
+    db = getDatabase(':memory:');
+    await db.initialize();
+
+    await db.run('DELETE FROM processed_events');
+    await db.run('DELETE FROM scheduled_notifications');
+    await db.run('DELETE FROM notification_templates');
+
+    server = createEventsServer({
+      port: 0,
+      stellarRpcUrl: 'http://localhost',
+      stellarNetworkPassphrase: 'Test SDF Network ; September 2015',
+      contractAddresses: [],
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', () => resolve()));
+  });
+
+  afterEach(async () => {
+    if (server) {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+    await resetDatabaseSingleton();
+  });
+
+  it('returns suggestions successfully from the API', async () => {
+    await db.run(
+      `INSERT INTO scheduled_notifications 
+       (payload, notification_type, target_recipient, execute_at, contract_address)
+       VALUES (?, ?, ?, ?, ?)`,
+      [JSON.stringify({}), 'discord', 'test-user-recipient', '2026-06-24T12:00:00Z', 'C-Address']
+    );
+
+    const res = await request(server, 'GET', '/api/search/suggestions?q=test');
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveProperty('recipients');
+    expect((res.body as any).recipients).toContain('test-user-recipient');
+  });
+
+  it('supports limit query parameter', async () => {
+    for (let i = 1; i <= 5; i++) {
+      await db.run(
+        `INSERT INTO scheduled_notifications 
+         (payload, notification_type, target_recipient, execute_at)
+         VALUES (?, ?, ?, ?)`,
+        [JSON.stringify({}), 'discord', `user-${i}`, '2026-06-24T12:00:00Z']
+      );
+    }
+
+    const res = await request(server, 'GET', '/api/search/suggestions?q=user&limit=2');
+    expect(res.status).toBe(200);
+    expect((res.body as any).recipients.length).toBe(2);
   });
 });

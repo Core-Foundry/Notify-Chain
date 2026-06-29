@@ -3,9 +3,31 @@ import { WebhookSecret } from '../types';
 
 const SIGNATURE_PREFIX = 'sha256=';
 
-export function verifySignature(payload: string, signatureHeader: string, secret: string): boolean {
+export interface SignatureVerificationOptions {
+  /** Maximum age of the request in seconds (default: 300 = 5 minutes) */
+  maxAgeSeconds?: number;
+}
+
+/**
+ * Verifies a signature with optional timestamp expiration validation.
+ * Rejects requests older than maxAgeSeconds to prevent replay attacks.
+ */
+export function verifySignature(
+  payload: string,
+  signatureHeader: string,
+  secret: string,
+  timestampHeader?: string,
+  options?: SignatureVerificationOptions
+): boolean {
   if (!signatureHeader.startsWith(SIGNATURE_PREFIX)) {
     return false;
+  }
+
+  // Validate timestamp expiration if provided
+  if (timestampHeader && options?.maxAgeSeconds !== undefined) {
+    if (!isTimestampValid(timestampHeader, options.maxAgeSeconds)) {
+      return false;
+    }
   }
 
   const expectedSig = crypto
@@ -20,6 +42,32 @@ export function verifySignature(payload: string, signatureHeader: string, secret
   }
 
   return crypto.timingSafeEqual(Buffer.from(expectedSig, 'utf8'), Buffer.from(providedSig, 'utf8'));
+}
+
+/**
+ * Validates that a timestamp header is within the acceptable age window.
+ * Prevents replay attacks by rejecting requests with stale timestamps.
+ */
+export function isTimestampValid(timestampHeader: string, maxAgeSeconds: number): boolean {
+  try {
+    const requestTimestamp = parseInt(timestampHeader, 10);
+
+    if (isNaN(requestTimestamp)) {
+      return false;
+    }
+
+    const currentTimestamp = Math.floor(Date.now() / 1000);
+    const requestAge = currentTimestamp - requestTimestamp;
+
+    // Reject if request is too old or from the future (allow small clock skew)
+    if (requestAge > maxAgeSeconds || requestAge < -60) {
+      return false;
+    }
+
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export function extractSignature(headers: Record<string, string | string[] | undefined>): string | null {

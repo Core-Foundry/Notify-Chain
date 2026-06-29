@@ -14,13 +14,16 @@ The project enables developers to build reactive decentralized applications with
 2. [Project Structure](#project-structure)
 3. [Event Flow](#event-flow)
 4. [Local Development Guide](#local-development-guide)
-5. [Features](#features)
-6. [Use Cases](#use-cases)
-7. [Tech Stack](#tech-stack)
-8. [Contributing](#contributing)
-9. [License](#license)
+5. [Smart Contract Upgrade Guide](#smart-contract-upgrade-guide)
+6. [Features](#features)
+7. [Use Cases](#use-cases)
+8. [Tech Stack](#tech-stack)
+9. [Contributing](#contributing)
+10. [License](#license)
 
 > **Listener service docs**: [Notification Failure Recovery](NOTIFICATION_FAILURE_RECOVERY.md) — retry lifecycle, configuration, and troubleshooting.
+>
+> **Event reference**: [Smart Contract Event Reference Guide](CONTRACT_EVENT_REFERENCE.md) — all emitted events, parameters, data types, and usage recommendations for indexers and listeners.
 
 ---
 
@@ -62,6 +65,16 @@ run and developed independently.
                                             └────────────────────┘
 ```
 
+> A visual system architecture diagram with Mermaid diagrams spanning
+> all layers is available in
+> [`SYSTEM_ARCHITECTURE.md`](SYSTEM_ARCHITECTURE.md). It provides the
+> quickest way to understand the full system at a glance.
+>
+> A high-level, contributor-facing architecture guide lives in
+> [`ARCHITECTURE_OVERVIEW.md`](ARCHITECTURE_OVERVIEW.md). It walks new
+> contributors through the on-chain, off-chain, and dashboard layers,
+> the end-to-end data flow, and links out to every subsystem doc.
+>
 > A more detailed, contract-level architecture write-up lives in
 > [`Documents/Task Bounty/ARCHITECTURE.md`](Documents/Task%20Bounty/ARCHITECTURE.md).
 
@@ -174,6 +187,8 @@ Notify-Chain/
 ├── .vscode/
 │   └── settings.json
 ├── README.md                        # This file
+├── ARCHITECTURE_OVERVIEW.md         # High-level architecture guide (issue #137)
+├── SYSTEM_ARCHITECTURE.md           # Visual system architecture with Mermaid diagrams (issue #97)
 └── .gitignore
 ```
 
@@ -398,6 +413,17 @@ Add this to `.vscode/settings.json`:
 
 ---
 
+## Smart Contract Upgrade Guide
+
+Before changing contract storage, public methods, event schemas, authorization
+rules, or deployment artifacts, read the
+[Smart Contract Upgrade Guide](CONTRACT_UPGRADE_GUIDE.md). It documents the
+recommended upgrade workflow, prerequisites, testnet verification steps,
+rollback procedures, risk checklist, and PR template for NotifyChain contract
+changes.
+
+---
+
 ## Features
 
 * 📡 Real-time blockchain event monitoring
@@ -475,3 +501,9 @@ This project is licensed under the MIT License.
 NotifyChain is built to simplify event-driven blockchain development by bridging smart contract events with off-chain automation and notification systems.
 
 Built on [Stellar](https://www.stellar.org/) and [Soroban](https://soroban.stellar.org/).
+
+## Staging Environment Instructions
+To run the staging environment locally:
+1. Export environment variables: `export $(cat listener/.env.staging | xargs)`
+2. Build and run listener: `cd listener && npm ci && npm run build && npm start`
+3. Run health check: `./scripts/health-check.sh`
