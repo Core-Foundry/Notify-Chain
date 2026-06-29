@@ -1,5 +1,6 @@
 import { Database } from '../database/database';
 import logger from '../utils/logger';
+import { compressPayload, decompressPayload } from '../utils/payload-compression';
 import {
   ScheduledNotification,
   ScheduledNotificationRow,
@@ -26,8 +27,10 @@ export class ScheduledNotificationRepository {
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
 
+    const serializedPayload = compressPayload(input.payload);
+
     const params = [
-      JSON.stringify(input.payload),
+      serializedPayload,
       input.notificationType,
       input.targetRecipient,
       input.executeAt.toISOString(),
@@ -325,7 +328,7 @@ export class ScheduledNotificationRepository {
   private rowToModel(row: ScheduledNotificationRow): ScheduledNotification {
     return {
       id: row.id,
-      payload: row.payload,
+      payload: decompressPayload(row.payload),
       notificationType: row.notification_type as any,
       targetRecipient: row.target_recipient,
       executeAt: new Date(row.execute_at),
