@@ -9,9 +9,6 @@ interface EventExplorerTableProps {
 }
 
 export function EventExplorerTable({ events, contractStatuses }: EventExplorerTableProps) {
-}
-
-export function EventExplorerTable({ events }: EventExplorerTableProps) {
   const [copiedAddress, setCopiedAddress] = useState<string | null>(null);
 
   async function syncCopyText(text: string) {

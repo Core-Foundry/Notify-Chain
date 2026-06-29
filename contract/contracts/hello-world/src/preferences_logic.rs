@@ -4,8 +4,8 @@
 /// Preferences are stored in persistent storage keyed by recipient address.
 use crate::base::errors::Error;
 use crate::base::preferences::{
-    CategoryPreference, ChannelPreference, DeliveryChannel, NotificationCategory,
-    RecipientPreferences, default_categories, default_channels, load_preferences, save_preferences,
+    default_categories, default_channels, load_preferences, save_preferences, CategoryPreference,
+    ChannelPreference, DeliveryChannel, NotificationCategory, RecipientPreferences,
 };
 use soroban_sdk::{Address, Env, Vec};
 
@@ -76,7 +76,9 @@ pub fn set_channel_preference(
     }
 
     if !found {
-        prefs.channels.push_back(ChannelPreference { channel, enabled });
+        prefs
+            .channels
+            .push_back(ChannelPreference { channel, enabled });
     }
 
     prefs.updated_at = env.ledger().timestamp();

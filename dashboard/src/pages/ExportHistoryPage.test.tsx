@@ -57,7 +57,7 @@ test('ExportHistoryPage pagination limit and page switching works', () => {
   expect(queryByText('System Alert Notification logs')).not.toBeInTheDocument();
   
   // Change limit to 10
-  const selectLimit = getByLabelText('Show');
+  const selectLimit = getByLabelText('Items per page');
   fireEvent.change(selectLimit, { target: { value: '10' } });
   
   // Pages should recalculate to page 1 of 2

@@ -37,12 +37,14 @@ interface EventExplorerCardProps {
   contractStatuses: ContractStatus[];
 }
 
-export function EventExplorerCard({ event, onCopyContract, isCopied, contractStatuses }: EventExplorerCardProps) {
-  const contractStatus = contractStatuses.find(c => c.address === event.contractAddress);
+export function EventExplorerCard({
+  event,
+  onCopyContract,
+  isCopied,
+  contractStatuses,
+}: EventExplorerCardProps) {
+  const contractStatus = contractStatuses.find((c) => c.address === event.contractAddress);
   const isPaused = contractStatus?.paused ?? false;
-}
-
-export function EventExplorerCard({ event, onCopyContract, isCopied }: EventExplorerCardProps) {
   const label = event.eventName ?? event.type;
   const badgeClass = getEventKindClass(event.type);
   const kindLabel = getEventKindLabel(event.type);
@@ -67,14 +69,6 @@ export function EventExplorerCard({ event, onCopyContract, isCopied }: EventExpl
               <span className="event-explorer__badge event-explorer__badge--paused">Paused</span>
             )}
           </div>
-          <button
-            type="button"
-            className="event-explorer__copy-button"
-            onClick={() => onCopyContract(event.contractAddress)}
-            aria-label={`Copy contract address ${event.contractAddress}`}
-          >
-            {isCopied ? 'Copied' : 'Copy'}
-          </button>
         </div>
       </div>
 
