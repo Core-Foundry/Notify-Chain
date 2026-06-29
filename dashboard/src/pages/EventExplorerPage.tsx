@@ -9,10 +9,10 @@ import { IndexingHealthPanel } from '../components/IndexingHealthPanel';
 import { useEventFilters, useEventLoadingState, useFilteredEvents } from '../hooks/useEventSelectors';
 import { useEventStore } from '../store/eventStore';
 import { fetchEvents, fetchStatus, type ContractStatus } from '../services/eventsApi';
-import { fetchEvents } from '../services/eventsApi';
 import { resolveIndexingHealthUrl } from '../services/indexingHealthApi';
 import { generateMockEvents } from '../utils/eventData';
 import { restoreWalletSession } from '../services/wallet';
+import { useWalletAccountSync } from '../hooks/useWalletAccountSync';
 
 const DEFAULT_EVENT_COUNT = 5000;
 const DEFAULT_LIMIT = 12;
@@ -87,12 +87,32 @@ export function EventExplorerPage() {
 
     loadEvents();
     loadStatus();
-    loadEvents();
 
     return () => {
       cancelled = true;
     };
   }, [setEvents, setError, setLoading]);
+
+  // Clear stale events and re-fetch whenever the connected wallet address
+  // changes (switch or disconnect). This is the fix for issue #175.
+  useWalletAccountSync(() => {
+    setEvents([]);
+    setError(null);
+    setPage(1);
+
+    setLoading(true);
+    fetchEvents(API_URL)
+      .then((remoteEvents) => {
+        setEvents(remoteEvents);
+      })
+      .catch(() => {
+        setEvents(generateMockEvents(DEFAULT_EVENT_COUNT));
+        setError('Listener API unavailable — showing mock events for demo.');
+      })
+      .finally(() => {
+        setLoading(false);
+      });
+  });
 
   const pageCount = useMemo(
     () => Math.max(1, Math.ceil(filteredEvents.length / limit)),

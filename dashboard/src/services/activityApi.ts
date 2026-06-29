@@ -1,8 +1,7 @@
 import type { ActivityEvent, ActivityFeedResponse, ActivityType } from '../types/activity';
+import { getEventsApiBaseUrl } from '../config/eventsApiUrl';
 
-const BASE_URL =
-  (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_EVENTS_API_URL) ||
-  'http://localhost:8787';
+const BASE_URL = getEventsApiBaseUrl();
 
 export async function fetchActivityFeed(
   page: number = 1,

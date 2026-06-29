@@ -67,7 +67,7 @@ export class NotificationAPI {
         });
       }
 
-      return result;
+      return typeof result === 'number' ? result : (result as { id: number }).id;
     }
 
     return await this.repository.create(input, requestId);

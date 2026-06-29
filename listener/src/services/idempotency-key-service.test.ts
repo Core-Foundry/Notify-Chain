@@ -50,6 +50,7 @@ describe('IdempotencyKeyService', () => {
       };
 
       mockRepository.getCachedResponse.mockResolvedValue(cachedResponse);
+      mockRepository.validateRequestHash.mockResolvedValue(true);
 
       const processor = jest.fn();
 
@@ -68,8 +69,13 @@ describe('IdempotencyKeyService', () => {
     it('should throw error if request hash does not match', async () => {
       const idempotencyKey = 'test-key-123';
       const requestBody = { payload: 'test' };
+      const cachedResponse = {
+        notificationId: 42,
+        isDuplicate: true,
+        response: { success: true, id: 42 },
+      };
 
-      mockRepository.getCachedResponse.mockResolvedValue(null);
+      mockRepository.getCachedResponse.mockResolvedValue(cachedResponse);
       mockRepository.validateRequestHash.mockResolvedValue(false);
 
       const processor = jest.fn();

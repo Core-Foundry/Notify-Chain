@@ -39,6 +39,8 @@ import { BatchValidationService } from '../services/batch-validation-service';
 import { handleArchiveRequest } from './archive-api';
 import { ArchiveStore } from '../services/archive-store';
 import { ArchiveService } from '../services/archive-service';
+import { NotificationMetricsStore } from '../services/notification-metrics-store';
+import { NotificationHealthMonitor } from '../services/notification-health-monitor';
 
 export interface EventsServerOptions {
   port: number;
@@ -61,8 +63,12 @@ export interface EventsServerOptions {
   archiveStore?: ArchiveStore | null;
   /** Archive service for the admin /run endpoint (optional). */
   archiveService?: ArchiveService | null;
+  /** Persisted metrics snapshots for historical analytics (optional). */
+  metricsStore?: NotificationMetricsStore | null;
   /** Maximum age of signed requests in seconds (default: 300 = 5 minutes). */
   signatureExpirationSeconds?: number;
+  /** Optional health monitor — exposes its last report at GET /api/notifications/health. */
+  healthMonitor?: NotificationHealthMonitor | null;
 }
 
 type ServiceStatus = 'ok' | 'error' | 'not_configured';
@@ -462,6 +468,20 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
       return;
     }
 
+    // GET /api/notifications/health
+    if (req.method === 'GET' && url.pathname === '/api/notifications/health') {
+      const report = options.healthMonitor?.getLastReport() ?? null;
+      if (!report) {
+        res.writeHead(503, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Health monitor not configured or no report yet' }));
+        return;
+      }
+      const httpStatus = report.status === 'unhealthy' ? 503 : report.status === 'degraded' ? 200 : 200;
+      res.writeHead(httpStatus, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(report));
+      return;
+    }
+
     // GET /api/rate-limit/metrics
     if (req.method === 'GET' && url.pathname === '/api/rate-limit/metrics') {
       if (!rateLimiter) {
@@ -492,8 +512,38 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
       return;
     }
 
+    // GET /api/analytics/history
+    if (req.method === 'GET' && url.pathname === '/api/analytics/history') {
+      const metricsStore = options.metricsStore;
+      if (!metricsStore) {
+        res.writeHead(503, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Metrics history store unavailable' }));
+        return;
+      }
+
+      const limit = Math.min(
+        100,
+        Math.max(1, Number.parseInt(url.searchParams.get('limit') ?? '50', 10) || 50),
+      );
+      const sinceParam = url.searchParams.get('since');
+      const since = sinceParam ? new Date(sinceParam) : undefined;
+
+      const history = await metricsStore.getHistory(limit, since);
+
+      logger.info('Handling GET /api/analytics/history', {
+        requestId,
+        correlationId,
+        count: history.length,
+        durationMs: Date.now() - startTime,
+      });
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ snapshots: history }));
+      return;
+    }
+
     // GET /api/analytics
-    if (req.method === 'GET' && url.pathname.startsWith('/api/analytics')) {
+    if (req.method === 'GET' && url.pathname === '/api/analytics') {
       const aggregator =
         options.analyticsAggregator !== undefined
           ? options.analyticsAggregator
