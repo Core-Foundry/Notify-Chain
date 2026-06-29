@@ -1,4 +1,4 @@
-import { Config, ContractConfig, DiscordConfig } from './types';
+import { Config, ContractConfig, DiscordConfig, WebhookSecret, AppCleanupConfig, EventQueueConfig, RetrySchedulerOptions, AnalyticsConfig } from './types';
 
 export class ConfigError extends Error {
   constructor(message: string) {
@@ -77,17 +77,93 @@ function loadDiscordConfig(): DiscordConfig | undefined {
     throw new ConfigError('DISCORD_WEBHOOK_ID is required when DISCORD_WEBHOOK_URL is provided.');
   }
 
-  return { webhookUrl, webhookId };
+  return {
+    webhookUrl,
+    webhookId,
+    deduplicationWindowMs: parseIntegerEnv('NOTIFICATION_DEDUPLICATION_WINDOW_MS', '60000'),
+    deduplicationMaxSize: parseIntegerEnv('NOTIFICATION_DEDUPLICATION_MAX_SIZE', '10000'),
+  };
+}
+
+function validateWebhookSecrets(value: unknown): WebhookSecret[] {
+  if (!Array.isArray(value)) {
+    throw new ConfigError('WEBHOOK_SECRETS must be a JSON array of secret objects.');
+  }
+
+  return value.map((item, index) => {
+    if (typeof item !== 'object' || item === null) {
+      throw new ConfigError(
+        `WEBHOOK_SECRETS[${index}] must be an object with id and secret.`
+      );
+    }
+
+    const id = (item as any).id;
+    const secret = (item as any).secret;
+
+    if (typeof id !== 'string' || !id.trim()) {
+      throw new ConfigError(`WEBHOOK_SECRETS[${index}].id must be a non-empty string.`);
+    }
+
+    if (typeof secret !== 'string' || !secret.trim()) {
+      throw new ConfigError(`WEBHOOK_SECRETS[${index}].secret must be a non-empty string.`);
+    }
+
+    return { id: id.trim(), secret: secret.trim() };
+  });
+}
+
+function loadCleanupConfig(): AppCleanupConfig {
+  return {
+    intervalMs: parseIntegerEnv('CLEANUP_INTERVAL_MS', String(60 * 60 * 1000)),
+    notificationRetentionMs: parseIntegerEnv('NOTIFICATION_RETENTION_MS', String(7 * 24 * 60 * 60 * 1000)),
+    rateLimitEventRetentionMs: parseIntegerEnv('RATE_LIMIT_EVENT_RETENTION_MS', String(24 * 60 * 60 * 1000)),
+    eventRetentionMs: parseIntegerEnv('EVENT_RETENTION_MS', String(24 * 60 * 60 * 1000)),
+    executionLogRetentionMs: parseIntegerEnv(
+      'EXECUTION_LOG_RETENTION_MS',
+      String(90 * 24 * 60 * 60 * 1000),
+    ),
+  };
+}
+
+function loadAnalyticsConfig(): AnalyticsConfig {
+  return {
+    enabled: trimEnv('ANALYTICS_ENABLED') !== 'false',
+    maxRecords: parseIntegerEnv('ANALYTICS_MAX_RECORDS', '10000'),
+    maxBuckets: parseIntegerEnv('ANALYTICS_MAX_BUCKETS', '168'),
+    bucketSizeMs: parseIntegerEnv('ANALYTICS_BUCKET_SIZE_MS', String(60 * 60 * 1000)),
+    persistIntervalMs: parseIntegerEnv('ANALYTICS_PERSIST_INTERVAL_MS', '300000'),
+    snapshotRetentionDays: parseIntegerEnv('ANALYTICS_SNAPSHOT_RETENTION_DAYS', '30'),
+  };
+}
+
+function loadRetrySchedulerConfig(): RetrySchedulerOptions {
+  return {
+    enabled: trimEnv('RETRY_SCHEDULER_ENABLED') !== 'false',
+    pollIntervalMs: parseIntegerEnv('RETRY_SCHEDULER_POLL_INTERVAL_MS', '15000'),
+    lockTimeoutMs: parseIntegerEnv('RETRY_SCHEDULER_LOCK_TIMEOUT_MS', '60000'),
+    processorId: trimEnv('RETRY_SCHEDULER_PROCESSOR_ID'),
+    batchSize: parseIntegerEnv('RETRY_SCHEDULER_BATCH_SIZE', '10'),
+    baseDelayMs: parseIntegerEnv('RETRY_BASE_DELAY_MS', '5000'),
+    multiplier: parseIntegerEnv('RETRY_MULTIPLIER', '2'),
+    maxDelayMs: parseIntegerEnv('RETRY_MAX_DELAY_MS', String(60 * 60 * 1000)),
+    jitter: trimEnv('RETRY_JITTER') !== 'false',
+  };
 }
 
 export function loadConfig(): Config {
   const discord = loadDiscordConfig();
   const rawContractAddresses = parseJsonEnv<unknown>('CONTRACT_ADDRESSES', '[]');
+  const rawWebhookSecrets = parseJsonEnv<unknown>('WEBHOOK_SECRETS', '[]');
+  const clientOverrides = parseJsonEnv<Record<string, { maxRequests: number; windowMs?: number }>>(
+    'RATE_LIMIT_CLIENT_OVERRIDES',
+    '{}'
+  );
 
   return {
     stellarNetwork: trimEnv('STELLAR_NETWORK') || 'testnet',
     stellarRpcUrl:
       trimEnv('STELLAR_RPC_URL') || 'https://soroban-testnet.stellar.org:443',
+    stellarNetworkPassphrase: trimEnv('STELLAR_NETWORK_PASSPHRASE') || 'Test SDF Network ; September 2015',
     contractAddresses: validateContractAddresses(rawContractAddresses),
     pollIntervalMs: parseIntegerEnv('POLL_INTERVAL_MS', '30000'),
     maxReconnectAttempts: parseIntegerEnv('MAX_RECONNECT_ATTEMPTS', '5'),
@@ -99,7 +175,16 @@ export function loadConfig(): Config {
     retryQueue: {
       baseDelayMs: parseIntegerEnv('RETRY_BASE_DELAY_MS', '5000'),
       maxRetries: parseIntegerEnv('RETRY_MAX_RETRIES', '5'),
+      multiplier: parseIntegerEnv('RETRY_MULTIPLIER', '2'),
+      jitter: trimEnv('RETRY_JITTER') !== 'false',
     },
+    eventQueue: {
+      maxConcurrency: parseIntegerEnv('EVENT_QUEUE_MAX_CONCURRENCY', '1'),
+      maxRetries: parseIntegerEnv('EVENT_QUEUE_MAX_RETRIES', '3'),
+      baseDelayMs: parseIntegerEnv('EVENT_QUEUE_BASE_DELAY_MS', '2000'),
+      pollIntervalMs: parseIntegerEnv('EVENT_QUEUE_POLL_INTERVAL_MS', '1000'),
+    },
+    webhookSecrets: validateWebhookSecrets(rawWebhookSecrets),
     scheduler: {
       enabled: trimEnv('SCHEDULER_ENABLED') !== 'false',
       pollIntervalMs: parseIntegerEnv('SCHEDULER_POLL_INTERVAL_MS', '10000'),
@@ -108,5 +193,15 @@ export function loadConfig(): Config {
       batchSize: parseIntegerEnv('SCHEDULER_BATCH_SIZE', '10'),
       timingBufferMs: parseIntegerEnv('SCHEDULER_TIMING_BUFFER_MS', '60000'),
     },
+    retryScheduler: loadRetrySchedulerConfig(),
+    rateLimit: {
+      enabled: trimEnv('RATE_LIMIT_ENABLED') !== 'false',
+      windowMs: parseIntegerEnv('RATE_LIMIT_WINDOW_MS', '60000'),
+      maxRequests: parseIntegerEnv('RATE_LIMIT_MAX_REQUESTS', '60'),
+      clientOverrides,
+    },
+    cleanup: loadCleanupConfig(),
+    analytics: loadAnalyticsConfig(),
   };
 }
+

@@ -1,8 +1,12 @@
 import { v4 as uuidv4 } from 'uuid';
 import logger from '../utils/logger';
+import { generateRequestId } from '../utils/request-id';
 import { ScheduledNotificationRepository } from './scheduled-notification-repository';
-import { SchedulerConfig, NotificationStatus, ScheduledNotification } from '../types/scheduled-notification';
+import { SchedulerConfig, ScheduledNotification } from '../types/scheduled-notification';
 import { DiscordNotificationService } from './discord-notification';
+import { BatchValidationService } from './batch-validation-service';
+import { NotificationChannel } from '../utils/batch-validator';
+import { getWorkerManager } from './worker-manager';
 
 /**
  * Background scheduler that processes scheduled notifications
@@ -19,16 +23,19 @@ export class NotificationScheduler {
   private timer: NodeJS.Timeout | null = null;
   private isRunning: boolean = false;
   private processorId: string;
+  private batchValidator: BatchValidationService;
 
   constructor(
     repository: ScheduledNotificationRepository,
     config: SchedulerConfig,
-    discordService?: DiscordNotificationService
+    discordService?: DiscordNotificationService | null,
+    batchValidator?: BatchValidationService
   ) {
     this.repository = repository;
     this.config = config;
     this.discordService = discordService ?? null;
     this.processorId = config.processorId || uuidv4();
+    this.batchValidator = batchValidator ?? new BatchValidationService();
   }
 
   /**
@@ -61,6 +68,7 @@ export class NotificationScheduler {
 
   /**
    * Stop the scheduler gracefully
+   * Waits for all in-flight jobs to complete before returning
    */
   async stop(): Promise<void> {
     if (!this.isRunning) {
@@ -74,6 +82,10 @@ export class NotificationScheduler {
       clearTimeout(this.timer);
       this.timer = null;
     }
+
+    // Wait for all active jobs to complete
+    const workerManager = getWorkerManager();
+    await workerManager.initiateGracefulShutdown();
   }
 
   /**
@@ -92,44 +104,129 @@ export class NotificationScheduler {
    * Main processing loop
    */
   private async processPendingNotifications(): Promise<void> {
+    const requestId = generateRequestId();
+    const batchStart = Date.now();
+
     try {
       // Recover any stale locks from crashed processors
-      await this.repository.recoverStaleLocks();
+      await this.repository.recoverStaleLocks(requestId);
 
       // Fetch and lock pending notifications
       const notifications = await this.repository.fetchAndLockPendingNotifications(
         this.processorId,
         this.config.lockTimeoutMs,
-        this.config.batchSize
+        this.config.batchSize,
+        requestId
       );
 
       if (notifications.length === 0) {
+        logger.debug('Scheduler poll cycle complete', {
+          requestId,
+          processorId: this.processorId,
+          count: 0,
+          durationMs: Date.now() - batchStart,
+        });
+        return;
+      }
+
+      const batchRejection = this.batchValidator.rejectIfInvalid(
+        this.toValidationBatch(notifications)
+      );
+
+      if (batchRejection) {
+        logger.error('Scheduled notification batch rejected by validation', {
+          requestId,
+          processorId: this.processorId,
+          errors: batchRejection.errors,
+        });
+
+        for (const notification of notifications) {
+          await this.repository.markAsFailedOrRetry(
+            notification.id!,
+            new Error(`Batch validation failed: ${batchRejection.errors.map((e) => e.message).join('; ')}`),
+            notification.retryCount,
+            notification.maxRetries
+          );
+        }
         return;
       }
 
       logger.info('Processing batch of scheduled notifications', {
+        requestId,
         count: notifications.length,
         processorId: this.processorId,
       });
 
-      // Process each notification
-      for (const notification of notifications) {
-        await this.processNotification(notification);
+      // Check if shutdown is in progress - don't accept new jobs
+      const workerManager = getWorkerManager();
+      if (workerManager.isShutdownInProgress()) {
+        logger.info('Shutdown in progress - releasing unprocessed notifications', {
+          requestId,
+          count: notifications.length,
+        });
+        // Release locks on unprocessed notifications
+        for (const notification of notifications) {
+          await this.repository.markAsFailedOrRetry(
+            notification.id!,
+            new Error('Scheduler shutting down'),
+            notification.retryCount,
+            notification.maxRetries
+          );
+        }
+        return;
       }
+
+      // Process each notification with job tracking
+      for (const notification of notifications) {
+        const jobId = `notification-${notification.id}`;
+        if (!workerManager.startJob(jobId)) {
+          // Shutdown is in progress, don't process new jobs
+          logger.info('Job rejected - scheduler shutting down', { jobId });
+          await this.repository.markAsFailedOrRetry(
+            notification.id!,
+            new Error('Scheduler shutting down'),
+            notification.retryCount,
+            notification.maxRetries
+          );
+          continue;
+        }
+
+        try {
+          await this.processNotification(notification, requestId);
+        } finally {
+          workerManager.completeJob(jobId);
+        }
+      }
+
+      logger.info('Scheduler batch complete', {
+        requestId,
+        processorId: this.processorId,
+        count: notifications.length,
+        durationMs: Date.now() - batchStart,
+      });
     } catch (error) {
-      logger.error('Error in scheduler processing loop', { error, processorId: this.processorId });
+      logger.error('Error in scheduler processing loop', {
+        requestId,
+        error,
+        processorId: this.processorId,
+        durationMs: Date.now() - batchStart,
+      });
     }
   }
 
   /**
    * Process a single notification
    */
-  private async processNotification(notification: ScheduledNotification): Promise<void> {
+  private async processNotification(
+    notification: ScheduledNotification,
+    requestId: string
+  ): Promise<void> {
     const startTime = Date.now();
     const executionAttempt = notification.retryCount + 1;
 
     try {
       logger.info('Processing scheduled notification', {
+        requestId,
         id: notification.id,
         type: notification.notificationType,
         executeAt: notification.executeAt,
@@ -143,6 +240,7 @@ export class NotificationScheduler {
       if (timeDiff < -this.config.timingBufferMs) {
         // Notification is not yet due (clock skew or early fetch)
         logger.warn('Notification not yet due, releasing lock', {
+          requestId,
           id: notification.id,
           executeAt: notification.executeAt,
           now,
@@ -157,35 +255,37 @@ export class NotificationScheduler {
       }
 
       // Execute notification based on type
-      const success = await this.executeNotification(notification);
+      const success = await this.executeNotification(notification, requestId);
 
-      const duration = Date.now() - startTime;
+      const durationMs = Date.now() - startTime;
 
       if (success) {
-        await this.repository.markAsCompleted(notification.id!);
+        await this.repository.markAsCompleted(notification.id!, requestId);
         await this.repository.logExecution({
           scheduledNotificationId: notification.id!,
           executionAttempt,
           executionTime: new Date(),
           status: 'SUCCESS',
-          durationMs: duration,
+          durationMs,
         });
 
         logger.info('Notification delivered successfully', {
+          requestId,
           id: notification.id,
           type: notification.notificationType,
-          duration,
+          durationMs,
         });
       } else {
         throw new Error('Notification delivery returned false');
       }
     } catch (error) {
-      const duration = Date.now() - startTime;
+      const durationMs = Date.now() - startTime;
       logger.error('Failed to process notification', {
+        requestId,
         id: notification.id,
         error,
         attempt: executionAttempt,
-        duration,
+        durationMs,
       });
 
       await this.repository.markAsFailedOrRetry(
@@ -201,7 +301,7 @@ export class NotificationScheduler {
         executionTime: new Date(),
         status: notification.retryCount >= notification.maxRetries ? 'FAILED' : 'RETRY',
         errorMessage: (error as Error).message,
-        durationMs: duration,
+        durationMs,
       });
     }
   }
@@ -209,7 +309,10 @@ export class NotificationScheduler {
   /**
    * Execute notification delivery based on type
    */
-  private async executeNotification(notification: ScheduledNotification): Promise<boolean> {
+  private async executeNotification(
+    notification: ScheduledNotification,
+    requestId: string
+  ): Promise<boolean> {
     const payload = JSON.parse(notification.payload);
 
     switch (notification.notificationType) {
@@ -220,7 +323,7 @@ export class NotificationScheduler {
         return await this.discordService.sendEventNotification(
           payload.event,
           payload.contractConfig,
-          `scheduler-${notification.id}`
+          `scheduler-${notification.id}-${requestId}`
         );
 
       case 'webhook':
@@ -245,5 +348,29 @@ export class NotificationScheduler {
    */
   async getStats() {
     return await this.repository.getStats();
+  }
+
+  private toValidationBatch(notifications: ScheduledNotification[]) {
+    return notifications.map((notification) => ({
+      id: String(notification.id),
+      recipient: notification.targetRecipient,
+      channel: notification.notificationType as NotificationChannel,
+      message: this.extractValidationMessage(notification.payload),
+    }));
+  }
+
+  private extractValidationMessage(payloadJson: string): string {
+    try {
+      const payload = JSON.parse(payloadJson);
+      if (typeof payload.message === 'string' && payload.message.trim()) {
+        return payload.message;
+      }
+      if (typeof payload.content === 'string' && payload.content.trim()) {
+        return payload.content;
+      }
+      return JSON.stringify(payload).slice(0, 200);
+    } catch {
+      return payloadJson.slice(0, 200) || 'scheduled-notification';
+    }
   }
 }

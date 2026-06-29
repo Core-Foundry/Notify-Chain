@@ -2,14 +2,27 @@ import dotenv from 'dotenv';
 import { startEventsServer } from './api/events-server';
 import { EventSubscriber } from './services/event-subscriber';
 import { NotificationScheduler } from './services/notification-scheduler';
+import { RetryScheduler } from './services/retry-scheduler';
 import { ScheduledNotificationRepository } from './services/scheduled-notification-repository';
+import { NotificationTemplateRepository } from './services/notification-template-repository';
+import { NotificationTemplateService } from './services/notification-template-service';
+import { TemplateAuditTrail } from './services/template-audit-trail';
+import { getTemplateCache } from './services/notification-template-cache';
 import { NotificationAPI } from './services/notification-api';
+import { CleanupService } from './services/cleanup-service';
+import { ArchiveService } from './services/archive-service';
+import { ArchiveStore } from './services/archive-store';
+import { loadArchiveConfig } from './services/archive-config';
 import { initializeDatabase } from './database/database';
 import { DiscordNotificationService } from './services/discord-notification';
 import { TemplateService } from './services/template-service';
 import { TemplateRepository } from './services/template-repository';
 import { TemplateValidator } from './services/template-validator';
 import { TemplateRenderer } from './services/template-renderer';
+import { initNotificationAnalyticsAggregator } from './services/notification-analytics-aggregator';
+import { NotificationMetricsStore } from './services/notification-metrics-store';
+import { NotificationMetricsRunner } from './services/notification-metrics-runner';
+import { eventRegistry } from './store/event-registry';
 import logger from './utils/logger';
 import { loadConfig, ConfigError } from './config';
 
@@ -19,7 +32,9 @@ async function main() {
   const config = loadConfig();
 
   // Initialize database for scheduled notifications and templates
+  // Initialize database for templates, scheduler, and rate limiting
   let scheduler: NotificationScheduler | null = null;
+  let retryScheduler: RetryScheduler | null = null;
   let notificationAPI: NotificationAPI | null = null;
   let templateService: TemplateService | null = null;
 
@@ -27,7 +42,55 @@ async function main() {
     try {
       logger.info('Initializing database for scheduled notifications and templates');
       const db = await initializeDatabase(config.databasePath);
+  let templateService: NotificationTemplateService | null = null;
+  let cleanupService: CleanupService | null = null;
+  let archiveService: ArchiveService | null = null;
+  let archiveStore: ArchiveStore | null = null;
+  let metricsRunner: NotificationMetricsRunner | null = null;
+  let metricsStore: NotificationMetricsStore | null = null;
 
+  if (config.analytics?.enabled) {
+    initNotificationAnalyticsAggregator(config.analytics);
+  }
+
+  try {
+    logger.info('Initializing database');
+    const db = await initializeDatabase(config.databasePath);
+
+    // Rebuild registry with configured event TTL
+    if (config.cleanup) {
+      (eventRegistry as any).ttlMs = config.cleanup.eventRetentionMs;
+      eventRegistry.setTtlMs(config.cleanup.eventRetentionMs);
+    }
+
+    cleanupService = new CleanupService(db, eventRegistry, config.cleanup);
+    cleanupService.start();
+
+    if (config.analytics?.enabled) {
+      metricsStore = new NotificationMetricsStore(db);
+      metricsRunner = new NotificationMetricsRunner(config.analytics, metricsStore);
+      await metricsRunner.start();
+      logger.info('Notification metrics runner started successfully');
+    }
+
+    // Archive service: moves old notifications to the archive table.
+    const archiveCfg = loadArchiveConfig();
+    archiveStore = new ArchiveStore(db);
+    archiveService = new ArchiveService(db, archiveCfg);
+    await archiveService.initialize();
+    if (archiveCfg.enabled) {
+      archiveService.start();
+      logger.info('ArchiveService started');
+    }
+
+    const templateRepository = new NotificationTemplateRepository(
+      db,
+      new TemplateAuditTrail(db),
+      getTemplateCache(),
+    );
+    templateService = new NotificationTemplateService(templateRepository);
+
+    if (config.scheduler?.enabled) {
       const repository = new ScheduledNotificationRepository(db);
       notificationAPI = new NotificationAPI(repository);
 
@@ -53,20 +116,33 @@ async function main() {
       await scheduler.start();
 
       logger.info('Notification scheduler started successfully');
-    } catch (error) {
-      logger.error('Failed to initialize scheduler', { error });
-      throw error;
+
+      if (config.retryScheduler?.enabled) {
+        retryScheduler = new RetryScheduler(repository, config.retryScheduler, discordService);
+        await retryScheduler.start();
+        logger.info('Retry scheduler started successfully');
+      }
     }
+  } catch (error) {
+    logger.error('Failed to initialize database or scheduler', { error });
+    throw error;
   }
 
-  // Start events server and subscriber
   const eventsServer = startEventsServer({
     port: config.eventsApiPort,
     corsOrigin: config.eventsApiCorsOrigin,
     stellarRpcUrl: config.stellarRpcUrl,
+    stellarNetworkPassphrase: config.stellarNetworkPassphrase,
+    contractAddresses: config.contractAddresses,
     discordWebhookUrl: config.discord?.webhookUrl,
     notificationAPI, // Pass API to events server for scheduling endpoints
     templateService, // Pass template service for template endpoints
+    notificationAPI,
+    templateService,
+    rateLimit: config.rateLimit,
+    archiveStore,
+    archiveService,
+    metricsStore,
   });
 
   const subscriber = new EventSubscriber(config);
@@ -75,8 +151,24 @@ async function main() {
   const shutdown = async () => {
     logger.info('Shutting down services...');
 
+    if (cleanupService) {
+      await cleanupService.stop();
+    }
+
+    if (metricsRunner) {
+      await metricsRunner.stop();
+    }
+
+    if (archiveService) {
+      await archiveService.stop();
+    }
+
     if (scheduler) {
       await scheduler.stop();
+    }
+
+    if (retryScheduler) {
+      await retryScheduler.stop();
     }
 
     await subscriber.stop();

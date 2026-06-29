@@ -1,5 +1,4 @@
 import * as sqlite3 from 'sqlite3';
-import { promisify } from 'util';
 import * as fs from 'fs';
 import * as path from 'path';
 import logger from '../utils/logger';
@@ -22,7 +21,7 @@ export class Database {
    */
   async initialize(): Promise<void> {
     if (this.isInitialized) {
-      logger.warn('Database already initialized');
+      await this.applyIncrementalMigrations();
       return;
     }
 
@@ -80,18 +79,27 @@ export class Database {
     }
 
     const schema = fs.readFileSync(schemaPath, 'utf-8');
-    
-    // Split by semicolon and execute each statement
-    const statements = schema
-      .split(';')
-      .map(s => s.trim())
-      .filter(s => s.length > 0);
 
-    for (const statement of statements) {
-      await this.run(statement);
+    // Execute the schema as one script so trigger bodies with semicolons work.
+    await this.exec(schema);
+
+    await this.applyIncrementalMigrations();
+
+    logger.info('Database migrations completed');
+  }
+
+  /**
+   * Apply migrations for databases created before schema.sql was updated in-place.
+   */
+  private async applyIncrementalMigrations(): Promise<void> {
+    try {
+      await this.run('ALTER TABLE scheduled_notifications ADD COLUMN next_retry_at DATETIME');
+    } catch (error) {
+      const message = String(error);
+      if (!message.includes('duplicate column')) {
+        throw error;
+      }
     }
-
-    logger.info('Database migrations completed', { statements: statements.length });
   }
 
   /**
@@ -149,6 +157,24 @@ export class Database {
   }
 
   /**
+   * Execute a SQL script that may contain multiple statements.
+   */
+  async exec(sql: string): Promise<void> {
+    if (!this.db) throw new Error('Database not initialized');
+
+    return new Promise((resolve, reject) => {
+      this.db!.exec(sql, (err) => {
+        if (err) {
+          logger.error('Database exec error', { sql, error: err });
+          reject(err);
+        } else {
+          resolve();
+        }
+      });
+    });
+  }
+
+  /**
    * Execute multiple statements in a transaction
    */
   async transaction(callback: () => Promise<void>): Promise<void> {
@@ -196,6 +222,16 @@ export class Database {
 
 // Singleton instance
 let dbInstance: Database | null = null;
+
+/**
+ * Reset the database singleton (for tests).
+ */
+export async function resetDatabaseSingleton(): Promise<void> {
+  if (dbInstance) {
+    await dbInstance.close();
+    dbInstance = null;
+  }
+}
 
 /**
  * Get or create database singleton instance

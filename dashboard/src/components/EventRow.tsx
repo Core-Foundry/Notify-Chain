@@ -1,12 +1,9 @@
 import { memo } from 'react';
 import type { BlockchainEvent } from '../types/event';
+import { formatTimestamp } from '../utils/formatTime';
 
 interface EventRowProps {
   event: BlockchainEvent;
-}
-
-function formatTime(timestamp: number): string {
-  return new Date(timestamp).toLocaleString();
 }
 
 function shortenAddress(address: string): string {
@@ -32,7 +29,7 @@ export const EventRow = memo(function EventRow({ event }: EventRowProps) {
         </span>
         <span>
           <span className="sr-only">Received: </span>
-          {formatTime(event.receivedAt)}
+          {formatTimestamp(event.receivedAt)}
         </span>
       </div>
       <div className="event-row__details">
