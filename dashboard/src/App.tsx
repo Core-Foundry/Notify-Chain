@@ -3,11 +3,9 @@ import { EventExplorerPage } from './pages/EventExplorerPage';
 import { NotificationTimelineView } from './components/NotificationTimelineView';
 import { ActivityFeed } from './components/ActivityFeed';
 import { WebhookDashboardPage } from './pages/WebhookDashboardPage';
-
-type Tab = 'explorer' | 'timeline' | 'activity' | 'webhooks';
 import { ExportHistoryPage } from './pages/ExportHistoryPage';
 
-type Tab = 'explorer' | 'timeline' | 'activity' | 'export-history';
+type Tab = 'explorer' | 'timeline' | 'activity' | 'webhooks' | 'export-history';
 
 export function App() {
   const [tab, setTab] = useState<Tab>('explorer');
@@ -46,6 +44,9 @@ export function App() {
           onClick={() => setTab('webhooks')}
         >
           Webhook Performance
+        </button>
+        <button
+          role="tab"
           aria-selected={tab === 'export-history'}
           className={`app-tabs__btn${tab === 'export-history' ? ' app-tabs__btn--active' : ''}`}
           onClick={() => setTab('export-history')}
