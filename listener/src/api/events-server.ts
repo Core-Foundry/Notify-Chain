@@ -40,6 +40,7 @@ import { handleArchiveRequest } from './archive-api';
 import { ArchiveStore } from '../services/archive-store';
 import { ArchiveService } from '../services/archive-service';
 import { NotificationMetricsStore } from '../services/notification-metrics-store';
+import { NotificationHealthMonitor } from '../services/notification-health-monitor';
 
 export interface EventsServerOptions {
   port: number;
@@ -66,6 +67,8 @@ export interface EventsServerOptions {
   metricsStore?: NotificationMetricsStore | null;
   /** Maximum age of signed requests in seconds (default: 300 = 5 minutes). */
   signatureExpirationSeconds?: number;
+  /** Optional health monitor — exposes its last report at GET /api/notifications/health. */
+  healthMonitor?: NotificationHealthMonitor | null;
 }
 
 type ServiceStatus = 'ok' | 'error' | 'not_configured';
@@ -462,6 +465,20 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
 
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(response));
+      return;
+    }
+
+    // GET /api/notifications/health
+    if (req.method === 'GET' && url.pathname === '/api/notifications/health') {
+      const report = options.healthMonitor?.getLastReport() ?? null;
+      if (!report) {
+        res.writeHead(503, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Health monitor not configured or no report yet' }));
+        return;
+      }
+      const httpStatus = report.status === 'unhealthy' ? 503 : report.status === 'degraded' ? 200 : 200;
+      res.writeHead(httpStatus, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(report));
       return;
     }
 

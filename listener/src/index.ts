@@ -21,6 +21,8 @@ import { NotificationMetricsRunner } from './services/notification-metrics-runne
 import { eventRegistry } from './store/event-registry';
 import logger from './utils/logger';
 import { loadConfig, ConfigError } from './config';
+import { NotificationHealthMonitor } from './services/notification-health-monitor';
+import { getWorkerManager } from './services/worker-manager';
 
 dotenv.config();
 
@@ -37,6 +39,8 @@ async function main() {
   let archiveStore: ArchiveStore | null = null;
   let metricsRunner: NotificationMetricsRunner | null = null;
   let metricsStore: NotificationMetricsStore | null = null;
+
+  const healthMonitor = new NotificationHealthMonitor(null, getWorkerManager());
 
   if (config.analytics?.enabled) {
     initNotificationAnalyticsAggregator(config.analytics);
@@ -118,13 +122,18 @@ async function main() {
     archiveStore,
     archiveService,
     metricsStore,
+    healthMonitor,
   });
+
+  healthMonitor.start();
 
   const subscriber = new EventSubscriber(config);
   await subscriber.start();
 
   const shutdown = async () => {
     logger.info('Shutting down services...');
+
+    healthMonitor.stop();
 
     if (cleanupService) {
       await cleanupService.stop();

@@ -377,3 +377,49 @@ pub struct ReputationTierChanged {
     pub min_expiration_seconds: u64,
     pub max_batch_size: u32,
 }
+
+// ============================================================================
+// Schema Version Tracking  (Issue #309)
+// ============================================================================
+
+/// Emitted when the on-chain notification schema version is set or upgraded.
+///
+/// Off-chain consumers should read `schema_version` from every event to gate
+/// their parsing logic. Unsupported versions must be rejected at the listener
+/// layer so incompatible payloads never reach downstream consumers.
+#[contractevent]
+#[derive(Clone)]
+pub struct SchemaVersionSet {
+    #[topic]
+    pub admin: Address,
+    #[topic]
+    pub category: NotificationCategory,
+    #[topic]
+    pub priority: NotificationPriority,
+    /// New schema version number.
+    pub schema_version: u32,
+    /// Previous schema version (0 when first set).
+    pub previous_version: u32,
+}
+
+// ============================================================================
+// Access Logging  (Issue #312)
+// ============================================================================
+
+/// Emitted whenever a protected notification record is accessed.
+///
+/// Off-chain indexers should key off `(notification_id, accessor)` to build an
+/// immutable access trail. The `accessed_at` timestamp is provided for ordering
+/// and compliance reporting.
+#[contractevent]
+#[derive(Clone)]
+pub struct NotificationAccessed {
+    #[topic]
+    pub notification_id: BytesN<32>,
+    #[topic]
+    pub accessor: Address,
+    #[topic]
+    pub category: NotificationCategory,
+    /// Ledger timestamp (seconds) when the access occurred.
+    pub accessed_at: u64,
+}
