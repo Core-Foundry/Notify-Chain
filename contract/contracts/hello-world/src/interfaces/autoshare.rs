@@ -23,6 +23,22 @@ pub trait AutoShareTrait {
     /// Returns the current pause status.
     fn get_paused_status(env: Env) -> bool;
 
+    /// Registers a notification category in the on-chain registry.
+    fn register_category(
+        env: Env,
+        admin: Address,
+        category: crate::base::events::NotificationCategory,
+    );
+
+    /// Returns all registered notification categories.
+    fn get_registered_categories(env: Env) -> Vec<crate::base::events::NotificationCategory>;
+
+    /// Returns whether a notification category is registered.
+    fn is_category_registered(
+        env: Env,
+        category: crate::base::events::NotificationCategory,
+    ) -> bool;
+
     /// Returns the current admin address.
     fn get_admin(env: Env) -> Address;
 

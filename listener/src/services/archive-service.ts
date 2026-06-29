@@ -23,6 +23,7 @@ import { Database } from '../database/database';
 import { ArchiveConfig } from './archive-config';
 import { ArchiveStore } from './archive-store';
 import logger from '../utils/logger';
+import { getWorkerManager } from './worker-manager';
 
 /** Shape of the raw SQLite row from scheduled_notifications. */
 interface NotificationRow {
@@ -82,19 +83,39 @@ export class ArchiveService {
     this.timer = setInterval(() => void this.runCycle(), this.config.intervalMs);
   }
 
-  stop(): void {
+  async stop(): Promise<void> {
     if (this.timer) {
       clearInterval(this.timer);
       this.timer = null;
     }
+
+    // Wait for any in-flight archival cycles to complete
+    const workerManager = getWorkerManager();
+    if (workerManager.getActiveJobCount() > 0) {
+      logger.info('Waiting for active archival jobs to complete', {
+        activeJobs: workerManager.getActiveJobCount(),
+      });
+      await workerManager.initiateGracefulShutdown();
+    }
+
     logger.info('ArchiveService stopped');
   }
 
   /**
    * Run one full archive + purge cycle.
    * Exposed publicly so callers (tests, admin tooling) can trigger on demand.
+   * Tracks job execution with WorkerManager for graceful shutdown.
    */
   async runCycle(): Promise<ArchiveCycleResult> {
+    const jobId = `archive-cycle-${Date.now()}`;
+    const workerManager = getWorkerManager();
+
+    // Skip this cycle if shutdown is in progress
+    if (!workerManager.startJob(jobId)) {
+      logger.info('Skipping archival cycle - shutdown in progress');
+      return { archived: 0, purged: 0, durationMs: 0 };
+    }
+
     const t0 = Date.now();
     let archived = 0;
     let purged = 0;
@@ -103,11 +124,13 @@ export class ArchiveService {
       archived = await this._archiveOldNotifications();
       purged = await this._purgeExpiredArchive();
     } catch (err) {
-      logger.error('ArchiveService: cycle error', { error: err });
+      logger.error('ArchiveService: cycle error', { error: err, jobId });
+    } finally {
+      workerManager.completeJob(jobId);
     }
 
     const durationMs = Date.now() - t0;
-    logger.info('ArchiveService: cycle complete', { archived, purged, durationMs });
+    logger.info('ArchiveService: cycle complete', { archived, purged, durationMs, jobId });
     return { archived, purged, durationMs };
   }
 
@@ -117,6 +140,12 @@ export class ArchiveService {
 
   private async _archiveOldNotifications(): Promise<number> {
     const cutoff = new Date(Date.now() - this.config.archiveAfterMs).toISOString();
+
+    logger.debug('Identifying archival candidates', {
+      cutoff,
+      maxRows: this.config.batchSize,
+      archiveAfterDays: Math.round(this.config.archiveAfterMs / (1000 * 60 * 60 * 24)),
+    });
 
     const rows = await this.db.all<NotificationRow>(
       `SELECT id, payload, notification_type, target_recipient, execute_at,
@@ -131,7 +160,10 @@ export class ArchiveService {
       [cutoff, this.config.batchSize],
     );
 
-    if (rows.length === 0) return 0;
+    if (rows.length === 0) {
+      logger.debug('No notifications eligible for archival');
+      return 0;
+    }
 
     // Copy to archive, then delete originals — done inside a transaction.
     let inserted = 0;
@@ -161,20 +193,42 @@ export class ArchiveService {
         `DELETE FROM scheduled_notifications WHERE id IN (${placeholders})`,
         ids,
       );
+
+      logger.info('ArchiveService: archived notifications', {
+        count: inserted,
+        cutoff,
+        statusDistribution: {
+          completed: rows.filter((r) => r.status === 'COMPLETED').length,
+          failed: rows.filter((r) => r.status === 'FAILED').length,
+          cancelled: rows.filter((r) => r.status === 'CANCELLED').length,
+        },
+      });
     });
 
-    logger.info('ArchiveService: archived notifications', { count: inserted, cutoff });
     return inserted;
   }
 
   private async _purgeExpiredArchive(): Promise<number> {
-    if (!this.config.deleteAfterMs) return 0;
+    if (!this.config.deleteAfterMs) {
+      logger.debug('Archive purge disabled (deleteAfterMs = 0)');
+      return 0;
+    }
 
     const cutoff = new Date(Date.now() - this.config.deleteAfterMs).toISOString();
+    logger.debug('Purging expired archive records', {
+      cutoff,
+      deleteAfterDays: Math.round(this.config.deleteAfterMs / (1000 * 60 * 60 * 24)),
+    });
+
     const purged = await this.store.purgeOlderThan(cutoff);
 
     if (purged > 0) {
-      logger.info('ArchiveService: purged expired archive records', { count: purged, cutoff });
+      logger.info('ArchiveService: purged expired archive records', {
+        count: purged,
+        cutoff,
+      });
+    } else {
+      logger.debug('No archived records eligible for purge');
     }
     return purged;
   }

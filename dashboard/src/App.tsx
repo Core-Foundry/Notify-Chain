@@ -29,17 +29,26 @@ export function App() {
         </button>
         <button
           role="tab"
-          aria-selected={tab === 'templates'}
-          className={`app-tabs__btn${tab === 'templates' ? ' app-tabs__btn--active' : ''}`}
-          onClick={() => setTab('templates')}
+          aria-selected={tab === 'activity'}
+          className={`app-tabs__btn${tab === 'activity' ? ' app-tabs__btn--active' : ''}`}
+          onClick={() => setTab('activity')}
         >
-          Templates
+          Activity Feed
+        </button>
+        <button
+          role="tab"
+          aria-selected={tab === 'export-history'}
+          className={`app-tabs__btn${tab === 'export-history' ? ' app-tabs__btn--active' : ''}`}
+          onClick={() => setTab('export-history')}
+        >
+          Export History
         </button>
       </nav>
 
       {tab === 'explorer' && <EventExplorerPage />}
       {tab === 'timeline' && <NotificationTimelineView />}
-      {tab === 'templates' && <TemplatesPage />}
+      {tab === 'activity' && <ActivityFeed />}
+      {tab === 'export-history' && <ExportHistoryPage />}
     </div>
   );
 }

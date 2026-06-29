@@ -15,9 +15,9 @@ import {
   extractKeyId,
   getSecretForKey,
   collectRawBody,
+  isTimestampValid,
 } from '../services/webhook-verifier';
 import { WebhookSecret, RateLimitConfig, ContractConfig } from '../types';
-import { WebhookSecret, RateLimitConfig } from '../types';
 import { RateLimiter } from './rate-limiter';
 import {
   getNotificationAnalyticsAggregator,
@@ -35,9 +35,11 @@ import {
   serializeTemplate,
 } from './template-api';
 import { CreateNotificationTemplateInput } from '../types/notification-template';
+import { BatchValidationService } from '../services/batch-validation-service';
 import { handleArchiveRequest } from './archive-api';
 import { ArchiveStore } from '../services/archive-store';
 import { ArchiveService } from '../services/archive-service';
+import { NotificationMetricsStore } from '../services/notification-metrics-store';
 
 export interface EventsServerOptions {
   port: number;
@@ -60,6 +62,10 @@ export interface EventsServerOptions {
   archiveStore?: ArchiveStore | null;
   /** Archive service for the admin /run endpoint (optional). */
   archiveService?: ArchiveService | null;
+  /** Persisted metrics snapshots for historical analytics (optional). */
+  metricsStore?: NotificationMetricsStore | null;
+  /** Maximum age of signed requests in seconds (default: 300 = 5 minutes). */
+  signatureExpirationSeconds?: number;
 }
 
 type ServiceStatus = 'ok' | 'error' | 'not_configured';
@@ -177,14 +183,20 @@ async function getContractPauseStatus(
 
     const simulation = await server.simulateTransaction(tx);
 
-    if (!StellarSDK.rpc.isSuccessfulSim(simulation) || !simulation.result) {
-      return { 
-        paused: false, 
-        error: simulation.error ? simulation.error.message : 'Failed to simulate contract call' 
+    // Check if simulation was successful by looking for error property
+    if ('error' in simulation && simulation.error) {
+      const errorMsg = typeof simulation.error === 'object' && 'message' in simulation.error
+        ? (simulation.error as any).message
+        : 'Failed to simulate contract call';
+      return {
+        paused: false,
+        error: errorMsg
       };
     }
 
-    const value = StellarSDK.scValToNative(simulation.result.retval);
+    // At this point, simulation is successful and has a result property
+    const simResult = (simulation as any).result;
+    const value = StellarSDK.scValToNative(simResult.retval);
     return { paused: !!value };
   } catch (err) {
     return { 
@@ -215,6 +227,9 @@ async function buildStatusResponse(options: EventsServerOptions): Promise<{
   return {
     timestamp: new Date().toISOString(),
     contracts: contractStatuses
+  };
+}
+
 async function fetchNetworkTipLedger(rpcUrl: string): Promise<{
   ledger: number | null;
   errorDetail?: string;
@@ -480,8 +495,38 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
       return;
     }
 
+    // GET /api/analytics/history
+    if (req.method === 'GET' && url.pathname === '/api/analytics/history') {
+      const metricsStore = options.metricsStore;
+      if (!metricsStore) {
+        res.writeHead(503, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Metrics history store unavailable' }));
+        return;
+      }
+
+      const limit = Math.min(
+        100,
+        Math.max(1, Number.parseInt(url.searchParams.get('limit') ?? '50', 10) || 50),
+      );
+      const sinceParam = url.searchParams.get('since');
+      const since = sinceParam ? new Date(sinceParam) : undefined;
+
+      const history = await metricsStore.getHistory(limit, since);
+
+      logger.info('Handling GET /api/analytics/history', {
+        requestId,
+        correlationId,
+        count: history.length,
+        durationMs: Date.now() - startTime,
+      });
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ snapshots: history }));
+      return;
+    }
+
     // GET /api/analytics
-    if (req.method === 'GET' && url.pathname.startsWith('/api/analytics')) {
+    if (req.method === 'GET' && url.pathname === '/api/analytics') {
       const aggregator =
         options.analyticsAggregator !== undefined
           ? options.analyticsAggregator
@@ -549,6 +594,20 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
           return;
         }
 
+        // Validate request timestamp to prevent replay attacks
+        const timestampHeader = req.headers['x-webhook-timestamp'] ?? req.headers['X-Webhook-Timestamp'];
+        const maxAgeSeconds = options.signatureExpirationSeconds ?? 300; // Default: 5 minutes
+
+        if (timestampHeader) {
+          const timestamp = Array.isArray(timestampHeader) ? timestampHeader[0] : timestampHeader;
+          if (!isTimestampValid(timestamp, maxAgeSeconds)) {
+            logger.warn('Webhook request signature expired', { requestId, correlationId, keyId, timestamp });
+            res.writeHead(401, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Request signature expired' }));
+            return;
+          }
+        }
+
         if (!verifySignature(rawBody, signatureHeader, secret)) {
           logger.warn('Webhook invalid signature', { requestId, correlationId, keyId });
           res.writeHead(401, { 'Content-Type': 'application/json' });
@@ -563,6 +622,36 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
         logger.error('Failed to read webhook body', { requestId, correlationId, error: err });
         res.writeHead(400, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'Failed to read request body' }));
+      });
+      return;
+    }
+
+    // POST /api/notifications/validate-batch
+    if (req.method === 'POST' && url.pathname === '/api/notifications/validate-batch') {
+      let body = '';
+      req.on('data', (chunk) => { body += chunk.toString(); });
+      req.on('end', () => {
+        try {
+          const data = JSON.parse(body || 'null');
+          const batch = Array.isArray(data) ? data : data?.notifications;
+          const validator = new BatchValidationService();
+          const result = validator.validate(batch);
+
+          if (!result.valid) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify(result));
+            logger.warn('Batch validation rejected', { requestId, correlationId, errorCount: result.errors.length });
+            return;
+          }
+
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(result));
+          logger.info('Batch validation passed', { requestId, correlationId, processedCount: result.processedCount });
+        } catch (error) {
+          logger.error('Failed to validate notification batch', { error, requestId, correlationId });
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ valid: false, processedCount: 0, errors: [{ index: -1, code: 'PARSE_ERROR', message: 'Request body must be valid JSON.' }] }));
+        }
       });
       return;
     }
