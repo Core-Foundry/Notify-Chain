@@ -84,6 +84,13 @@ export class Database {
     // Execute the schema as one script so trigger bodies with semicolons work.
     await this.exec(schema);
 
+    // Additive migrations — safe to run repeatedly (errors ignored if column exists)
+    await this.run(
+      `ALTER TABLE scheduled_notifications ADD COLUMN payload_hash TEXT`
+    ).catch(() => {
+      // Column already exists — nothing to do
+    });
+
     logger.info('Database migrations completed');
   }
 

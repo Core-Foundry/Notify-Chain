@@ -7,6 +7,7 @@ import {
   NotificationStatus,
   NotificationExecutionLog,
 } from '../types/scheduled-notification';
+import { hashPayload } from '../utils/payload-integrity';
 
 /**
  * Repository for scheduled notifications database operations
@@ -19,15 +20,20 @@ export class ScheduledNotificationRepository {
    * Create a new scheduled notification
    */
   async create(input: CreateScheduledNotificationInput, requestId?: string): Promise<number> {
+    const payloadJson = JSON.stringify(input.payload);
+    const secret = process.env.PAYLOAD_INTEGRITY_SECRET;
+    const payloadHash = secret ? hashPayload(payloadJson, secret) : null;
+
     const sql = `
       INSERT INTO scheduled_notifications (
-        payload, notification_type, target_recipient, execute_at,
+        payload, payload_hash, notification_type, target_recipient, execute_at,
         max_retries, event_id, contract_address, priority, metadata
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
 
     const params = [
-      JSON.stringify(input.payload),
+      payloadJson,
+      payloadHash,
       input.notificationType,
       input.targetRecipient,
       input.executeAt.toISOString(),
@@ -326,6 +332,7 @@ export class ScheduledNotificationRepository {
     return {
       id: row.id,
       payload: row.payload,
+      payloadHash: row.payload_hash,
       notificationType: row.notification_type as any,
       targetRecipient: row.target_recipient,
       executeAt: new Date(row.execute_at),
