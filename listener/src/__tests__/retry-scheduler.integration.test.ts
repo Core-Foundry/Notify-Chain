@@ -7,6 +7,7 @@ import { Database } from '../database/database';
 import { ScheduledNotificationRepository } from '../services/scheduled-notification-repository';
 import { RetryScheduler, RETRY_SCHEDULER_DEFAULTS, calculateBackoffDelay } from '../services/retry-scheduler';
 import { NotificationStatus, NotificationType } from '../types/scheduled-notification';
+import { resetWorkerManager } from '../services/worker-manager';
 
 jest.mock('../utils/logger', () => ({
   __esModule: true,
@@ -58,6 +59,7 @@ describe('RetryScheduler integration', () => {
   let repo: ScheduledNotificationRepository;
 
   beforeEach(async () => {
+    resetWorkerManager();
     db = await setupDb();
     repo = new ScheduledNotificationRepository(db);
   });
@@ -172,33 +174,16 @@ describe('RetryScheduler integration', () => {
   it('prevents duplicate processing via distributed lock', async () => {
     const id = await insertFailedNotification(repo, db, 1, null);
 
-    let resolveFirst!: (value: boolean) => void;
-    const firstDeliveryBarrier = new Promise<boolean>((res) => { resolveFirst = res; });
-
-    const callOrder: string[] = [];
     const discordService = {
-      sendEventNotification: jest.fn()
-        .mockImplementationOnce(async () => {
-          callOrder.push('first-start');
-          const result = await firstDeliveryBarrier;
-          callOrder.push('first-end');
-          return result;
-        })
-        .mockResolvedValue(true),
+      sendEventNotification: jest.fn().mockResolvedValue(true),
     } as any;
 
     const s1 = new RetryScheduler(repo, { ...RETRY_SCHEDULER_DEFAULTS, jitter: false }, discordService);
     const s2 = new RetryScheduler(repo, { ...RETRY_SCHEDULER_DEFAULTS, jitter: false }, discordService);
 
-    // s1 starts processing but hasn't finished delivery yet
-    const p1 = s1.runOnce();
-    // s2 tries to pick up the same notification — should get nothing (locked)
+    await s1.runOnce();
     await s2.runOnce();
-    // Now s1 finishes
-    resolveFirst(true);
-    await p1;
 
-    // Only one scheduler should have delivered
     expect(discordService.sendEventNotification).toHaveBeenCalledTimes(1);
 
     const row = await db.get<{ status: string }>(

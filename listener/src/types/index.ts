@@ -57,6 +57,7 @@ export interface Config {
   databasePath?: string;
   rateLimit?: RateLimitConfig;
   cleanup?: AppCleanupConfig;
+  analytics?: AnalyticsConfig;
 }
 
 export interface SchedulerConfig {
@@ -88,6 +89,8 @@ export interface AppCleanupConfig {
   rateLimitEventRetentionMs: number;
   /** Retain in-memory events for this long (ms). */
   eventRetentionMs: number;
+  /** Retain notification execution log rows for this long (ms). */
+  executionLogRetentionMs: number;
 }
 
 export interface RetrySchedulerOptions {
@@ -100,5 +103,16 @@ export interface RetrySchedulerOptions {
   multiplier: number;
   maxDelayMs: number;
   jitter: boolean;
+}
+
+export interface AnalyticsConfig {
+  enabled: boolean;
+  maxRecords: number;
+  maxBuckets: number;
+  bucketSizeMs: number;
+  /** How often to persist summarized snapshots (ms). */
+  persistIntervalMs: number;
+  /** How long to retain persisted snapshots (days). */
+  snapshotRetentionDays: number;
 }
 

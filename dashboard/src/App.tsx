@@ -1,36 +1,10 @@
 import { useState } from 'react';
 import { EventExplorerPage } from './pages/EventExplorerPage';
+import { NotificationTimelineView } from './components/NotificationTimelineView';
+import { ActivityFeed } from './components/ActivityFeed';
 import { ExportHistoryPage } from './pages/ExportHistoryPage';
 
-export function App() {
-  const [activeTab, setActiveTab] = useState<'explorer' | 'exports'>('explorer');
-
-  return (
-    <div className="app">
-      <nav className="nav-header">
-        <span className="nav-brand">Notify-Chain</span>
-        <div className="nav-tabs">
-          <button
-            type="button"
-            className={`nav-tab-btn ${activeTab === 'explorer' ? 'nav-tab-btn--active' : ''}`}
-            onClick={() => setActiveTab('explorer')}
-          >
-            Event Explorer
-          </button>
-          <button
-            type="button"
-            className={`nav-tab-btn ${activeTab === 'exports' ? 'nav-tab-btn--active' : ''}`}
-            onClick={() => setActiveTab('exports')}
-          >
-            Export Center
-          </button>
-        </div>
-      </nav>
-
-      {activeTab === 'explorer' ? <EventExplorerPage /> : <ExportHistoryPage />}
-import { NotificationTimelineView } from './components/NotificationTimelineView';
-
-type Tab = 'explorer' | 'timeline';
+type Tab = 'explorer' | 'timeline' | 'activity' | 'export-history';
 
 export function App() {
   const [tab, setTab] = useState<Tab>('explorer');
@@ -54,10 +28,28 @@ export function App() {
         >
           Delivery Timeline
         </button>
+        <button
+          role="tab"
+          aria-selected={tab === 'activity'}
+          className={`app-tabs__btn${tab === 'activity' ? ' app-tabs__btn--active' : ''}`}
+          onClick={() => setTab('activity')}
+        >
+          Activity Feed
+        </button>
+        <button
+          role="tab"
+          aria-selected={tab === 'export-history'}
+          className={`app-tabs__btn${tab === 'export-history' ? ' app-tabs__btn--active' : ''}`}
+          onClick={() => setTab('export-history')}
+        >
+          Export History
+        </button>
       </nav>
 
       {tab === 'explorer' && <EventExplorerPage />}
       {tab === 'timeline' && <NotificationTimelineView />}
+      {tab === 'activity' && <ActivityFeed />}
+      {tab === 'export-history' && <ExportHistoryPage />}
     </div>
   );
 }
