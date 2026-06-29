@@ -224,7 +224,8 @@ export class ScheduledNotificationRepository {
     maxRetries: number,
     nextRetryAt?: Date
   ): Promise<void> {
-    const isFailed = currentRetryCount >= maxRetries;
+    const nextRetryCount = currentRetryCount + 1;
+    const isFailed = nextRetryCount >= maxRetries;
     const newStatus = isFailed ? NotificationStatus.FAILED : NotificationStatus.PENDING;
 
     const sql = `
@@ -241,6 +242,7 @@ export class ScheduledNotificationRepository {
       WHERE id = ?
     `;
 
+    const completedAt = isFailed ? new Date().toISOString() : null;
     const errorDetails = JSON.stringify({
       message: error.message,
       stack: error.stack,
@@ -249,18 +251,18 @@ export class ScheduledNotificationRepository {
 
     await this.db.run(sql, [
       newStatus,
-      currentRetryCount + 1,
+      nextRetryCount,
       error.message,
       errorDetails,
       isFailed ? null : (nextRetryAt?.toISOString() ?? null),
-      isFailed ? new Date().toISOString() : null,
+      completedAt,
       id,
     ]);
 
     logger.info('Notification marked for retry or failed', {
       id,
       newStatus,
-      retryCount: currentRetryCount + 1,
+      retryCount: nextRetryCount,
       maxRetries,
       nextRetryAt: nextRetryAt?.toISOString(),
     });
