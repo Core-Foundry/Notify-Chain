@@ -542,6 +542,36 @@ impl AutoShareContract {
     pub fn get_sender_reputation_tier(env: Env, sender: Address) -> u32 {
         reputation_logic::get_reputation_tier(&env, &sender).unwrap_or(0)
     }
+
+    // ============================================================================
+    // Schema Version Tracking  (Issue #309)
+    // ============================================================================
+
+    /// Sets the on-chain notification schema version. Only the admin can call.
+    /// Emits a SchemaVersionSet event. Rejects versions outside the supported range.
+    pub fn set_schema_version(env: Env, admin: Address, schema_version: u32) {
+        autoshare_logic::set_schema_version(env, admin, schema_version).unwrap();
+    }
+
+    /// Returns the current on-chain schema version (0 if never set).
+    pub fn get_schema_version(env: Env) -> u32 {
+        autoshare_logic::get_schema_version(env)
+    }
+
+    /// Returns true if the given schema version is within the supported range.
+    pub fn is_version_supported(env: Env, version: u32) -> bool {
+        autoshare_logic::is_version_supported(env, version)
+    }
+
+    // ============================================================================
+    // Access Logging  (Issue #312)
+    // ============================================================================
+
+    /// Emits a NotificationAccessed event for the specified notification.
+    /// Call whenever a protected notification record is read to build an immutable access trail.
+    pub fn record_notification_access(env: Env, notification_id: BytesN<32>, accessor: Address) {
+        autoshare_logic::record_notification_access(env, notification_id, accessor).unwrap();
+    }
 }
 
 #[cfg(test)]
@@ -602,4 +632,10 @@ mod tests {
 
     #[path = "../tests/fuzz_test.rs"]
     mod fuzz_test;
+
+    #[path = "../tests/schema_version_test.rs"]
+    mod schema_version_test;
+
+    #[path = "../tests/access_log_test.rs"]
+    mod access_log_test;
 }

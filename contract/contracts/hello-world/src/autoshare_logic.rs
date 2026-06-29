@@ -7,6 +7,7 @@ use crate::base::events::{
     Withdrawal, BatchProcessingCompleted,
     NotificationExtended, NotificationLimitsConfigured, NotificationPriority, NotificationRevoked,
     NotificationScheduled, ScheduledNotificationCancelled, Withdrawal,
+    SchemaVersionSet, NotificationAccessed,
 };
 use crate::base::types::{
     AuditRecord, AutoShareDetails, GroupMember, NotificationLimits, PaymentHistory,
@@ -53,6 +54,8 @@ pub enum DataKey {
     NotificationRevokers(BytesN<32>),
     NotificationLimits,
     RegisteredCategories,
+    /// Stores the current on-chain notification schema version.
+    SchemaVersion,
 }
 
 // ============================================================================
@@ -1622,4 +1625,97 @@ pub fn get_notification_limits(env: Env) -> NotificationLimits {
             min_expiration_seconds: 60,                 // 1 minute
             max_batch_size: 1000,
         })
+}
+
+// ============================================================================
+// Schema Version Tracking  (Issue #309)
+// ============================================================================
+
+/// The minimum schema version this contract supports.
+const MIN_SUPPORTED_SCHEMA_VERSION: u32 = 1;
+/// The maximum (current) schema version this contract supports.
+const MAX_SUPPORTED_SCHEMA_VERSION: u32 = 1;
+
+/// Sets the on-chain notification schema version. Only the admin can call this.
+///
+/// Emits a [`SchemaVersionSet`] event so off-chain consumers can detect protocol
+/// upgrades and reject payloads whose version they cannot handle.
+///
+/// # Errors
+/// - [`Error::Unauthorized`]  – caller is not the admin.
+/// - [`Error::InvalidInput`]  – `schema_version` is outside the supported range.
+pub fn set_schema_version(env: Env, admin: Address, schema_version: u32) -> Result<(), Error> {
+    admin.require_auth();
+
+    let stored_admin = get_admin(env.clone())?;
+    if admin != stored_admin {
+        return Err(Error::Unauthorized);
+    }
+
+    if schema_version < MIN_SUPPORTED_SCHEMA_VERSION || schema_version > MAX_SUPPORTED_SCHEMA_VERSION {
+        return Err(Error::InvalidInput);
+    }
+
+    let key = DataKey::SchemaVersion;
+    let previous_version: u32 = env
+        .storage()
+        .persistent()
+        .get::<DataKey, u32>(&key)
+        .unwrap_or(0);
+
+    env.storage().persistent().set(&key, &schema_version);
+
+    SchemaVersionSet {
+        admin,
+        category: NotificationCategory::Admin,
+        priority: NotificationPriority::Medium,
+        schema_version,
+        previous_version,
+    }
+    .publish(&env);
+
+    Ok(())
+}
+
+/// Returns the current on-chain schema version (0 if never set).
+pub fn get_schema_version(env: Env) -> u32 {
+    env.storage()
+        .persistent()
+        .get::<DataKey, u32>(&DataKey::SchemaVersion)
+        .unwrap_or(0)
+}
+
+/// Returns whether `version` is within the supported range.
+pub fn is_version_supported(_env: Env, version: u32) -> bool {
+    version >= MIN_SUPPORTED_SCHEMA_VERSION && version <= MAX_SUPPORTED_SCHEMA_VERSION
+}
+
+// ============================================================================
+// Access Logging  (Issue #312)
+// ============================================================================
+
+/// Emits a [`NotificationAccessed`] event for the given notification.
+///
+/// Call this whenever a protected notification record is read so that
+/// off-chain indexers can build an immutable access trail for compliance.
+pub fn record_notification_access(
+    env: Env,
+    notification_id: BytesN<32>,
+    accessor: Address,
+) -> Result<(), Error> {
+    // Verify the notification exists.
+    let key = DataKey::ScheduledNotification(notification_id.clone());
+    if !env.storage().persistent().has(&key) {
+        return Err(Error::NotFound);
+    }
+
+    NotificationAccessed {
+        notification_id,
+        accessor,
+        category: NotificationCategory::Notification,
+        accessed_at: env.ledger().timestamp(),
+    }
+    .publish(&env);
+
+    Ok(())
 }
