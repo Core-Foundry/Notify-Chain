@@ -98,6 +98,76 @@ describe('NotificationScheduler', () => {
       expect(notifications[0].lockExpiresAt).toBeDefined();
     });
 
+    test('should dispatch missed schedules and schedule retry after temporary failure', async () => {
+      const executeAt = new Date(Date.now() - 60_000);
+
+      const id = await repository.create({
+        payload: { event: {}, contractConfig: {}, message: 'Missed schedule catch-up' },
+        notificationType: NotificationType.DISCORD,
+        targetRecipient: 'test-webhook',
+        executeAt,
+        maxRetries: 3,
+      });
+
+      const discordService = {
+        sendEventNotification: jest
+          .fn()
+          .mockRejectedValueOnce(new Error('temporary discord outage'))
+          .mockResolvedValueOnce(true),
+      } as any;
+
+      scheduler = new NotificationScheduler(
+        repository,
+        {
+          enabled: true,
+          pollIntervalMs: 1000,
+          lockTimeoutMs: 30000,
+          processorId: 'dispatcher-test',
+          batchSize: 10,
+          timingBufferMs: 1000,
+          retryDelayMs: 2000,
+        },
+        discordService
+      );
+
+      await (scheduler as any).processPendingNotifications();
+
+      let notification = await repository.getById(id);
+      expect(discordService.sendEventNotification).toHaveBeenCalledTimes(1);
+      expect(notification!.status).toBe(NotificationStatus.PENDING);
+      expect(notification!.retryCount).toBe(1);
+      expect(notification!.nextRetryAt).toBeInstanceOf(Date);
+      expect(notification!.nextRetryAt!.getTime()).toBeGreaterThan(Date.now());
+
+      await db.run('UPDATE scheduled_notifications SET next_retry_at = ? WHERE id = ?', [
+        new Date(Date.now() - 1000).toISOString(),
+        id,
+      ]);
+
+      const { RetryScheduler } = await import('../services/retry-scheduler');
+      const retryScheduler = new RetryScheduler(
+        repository,
+        {
+          enabled: true,
+          pollIntervalMs: 1000,
+          lockTimeoutMs: 30000,
+          batchSize: 10,
+          baseDelayMs: 100,
+          multiplier: 2,
+          maxDelayMs: 1000,
+          jitter: false,
+        },
+        discordService
+      );
+
+      await retryScheduler.runOnce();
+
+      notification = await repository.getById(id);
+      expect(discordService.sendEventNotification).toHaveBeenCalledTimes(2);
+      expect(notification!.status).toBe(NotificationStatus.COMPLETED);
+      expect(notification!.retryCount).toBe(1);
+    });
+
     test('should prevent race conditions with distributed locking', async () => {
       const executeAt = new Date(Date.now() - 1000);
 
@@ -194,11 +264,11 @@ describe('NotificationScheduler', () => {
       });
 
       const error = new Error('Test error');
-      await repository.markAsFailedOrRetry(id, error, 3, 3);
+      await repository.markAsFailedOrRetry(id, error, 2, 3);
 
       const notification = await repository.getById(id);
       expect(notification!.status).toBe(NotificationStatus.FAILED);
-      expect(notification!.retryCount).toBe(4);
+      expect(notification!.retryCount).toBe(3);
     });
 
     test('should cancel pending notification', async () => {

@@ -308,14 +308,29 @@ describe('NotificationScheduler (Refactored)', () => {
 
       // 2. Create a notification in the past (overdue, pending)
       const overdueId = await repository.create(
+      // 2. Create a notification in the past that is currently PROCESSING but lock is expired
+      const staleId = await repository.create(
         NotificationFixtureBuilder
           .aScheduledNotificationInput()
           .forImmediateExecution()
           .build()
       );
+      const pastLock = NotificationFixtureBuilder.dates.past(1000);
+      await db.run(
+        `UPDATE scheduled_notifications
+         SET status = ?, processor_id = ?, lock_expires_at = ?, processing_started_at = ?
+         WHERE id = ?`,
+        [
+          NotificationStatus.PROCESSING,
+          'processor-1',
+          pastLock.toISOString(),
+          pastLock.toISOString(),
+          staleId,
+        ]
+      );
 
-      // 3. Create a notification in the past that is currently PROCESSING but lock is expired
-      const staleId = await repository.create(
+      // 3. Create a notification in the past (overdue, pending) - created AFTER locking to remain in PENDING status
+      await repository.create(
         NotificationFixtureBuilder
           .aScheduledNotificationInput()
           .forImmediateExecution()
