@@ -15,11 +15,14 @@ The project enables developers to build reactive decentralized applications with
 3. [Event Flow](#event-flow)
 4. [Local Development Guide](#local-development-guide)
 5. [Smart Contract Upgrade Guide](#smart-contract-upgrade-guide)
-6. [Features](#features)
-7. [Use Cases](#use-cases)
-8. [Tech Stack](#tech-stack)
-9. [Contributing](#contributing)
-10. [License](#license)
+6. [Contract API Examples](#contract-api-examples)
+7. [Freighter Troubleshooting](#freighter-troubleshooting)
+8. [Wallet UX States](#wallet-ux-states)
+9. [Features](#features)
+10. [Use Cases](#use-cases)
+11. [Tech Stack](#tech-stack)
+12. [Contributing](#contributing)
+13. [License](#license)
 
 > **Listener service docs**:
 > - [API Contract and Event Reference](listener/API_CONTRACT_EVENT_REFERENCE.md)
@@ -427,6 +430,152 @@ rules, or deployment artifacts, read the
 recommended upgrade workflow, prerequisites, testnet verification steps,
 rollback procedures, risk checklist, and PR template for NotifyChain contract
 changes.
+
+---
+
+## Contract API Examples
+
+Full examples with concrete parameter values live in [`docs/contract-api.md`](docs/contract-api.md).
+Quick reference below.
+
+### subscribe — create a group
+
+```bash
+stellar contract invoke \
+  --id <CONTRACT_ID> --source creator-key --network testnet \
+  -- create \
+  --id 0000000000000000000000000000000000000000000000000000000000000001 \
+  --name "Team Alpha Plan" \
+  --creator GABC1234...XYZ \
+  --usage_count 100 \
+  --payment_token CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC
+```
+
+Expected: group stored on-chain with `is_active = true`; `AutoshareCreated` event emitted; creator debited `100 × usage_fee` tokens.
+
+### execute_payment — top up usages
+
+```bash
+stellar contract invoke \
+  --id <CONTRACT_ID> --source payer-key --network testnet \
+  -- topup_subscription \
+  --id 0000000000000000000000000000000000000000000000000000000000000001 \
+  --additional_usages 50 \
+  --payment_token CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC \
+  --payer GABC1234...XYZ
+```
+
+Expected: `usage_count` increases by 50; payer debited `50 × usage_fee`; `PaymentHistory` record appended.
+
+### cancel — deactivate a group
+
+```bash
+stellar contract invoke \
+  --id <CONTRACT_ID> --source creator-key --network testnet \
+  -- deactivate_group \
+  --id 0000000000000000000000000000000000000000000000000000000000000001 \
+  --caller GABC1234...XYZ
+```
+
+Expected: `is_active` set to `false`; `GroupDeactivated` event emitted; subsequent payment calls will fail.
+
+---
+
+## Freighter Troubleshooting
+
+Common Freighter wallet issues and how to resolve them.
+
+### Extension not detected
+
+**Symptom:** `window.freighter` is `undefined` after page load.
+
+**Steps:**
+1. Install the [Freighter extension](https://www.freighter.app/) for Chrome or Firefox.
+2. Refresh the page — Freighter injects `window.freighter` on load.
+3. If still undefined, check that the extension is enabled in your browser's extension manager.
+4. Disable other wallet extensions temporarily; some conflict with Freighter's injection.
+
+### Connection request never appears
+
+**Symptom:** Calling `freighter.requestAccess()` returns but no popup opens.
+
+**Steps:**
+1. Click the Freighter icon in the browser toolbar and unlock the wallet with your password.
+2. Check that the site URL matches the allowed origins in Freighter → Settings → Connected Apps.
+3. Disable popup-blocking for `localhost` or your dApp domain.
+4. Try in an incognito window with only Freighter enabled.
+
+### User rejected the connection
+
+**Symptom:** `freighter.requestAccess()` throws or returns `{ error: "User declined" }`.
+
+**Steps:**
+1. Re-prompt the user — the rejection is not permanent.
+2. If auto-rejected, go to Freighter → Connected Apps and remove the site entry, then retry.
+
+### Signing request times out or hangs
+
+**Symptom:** `freighter.signTransaction()` never resolves.
+
+**Steps:**
+1. Unlock Freighter and switch to the correct network (Testnet / Mainnet).
+2. Check that the transaction's `networkPassphrase` matches the network selected in Freighter.
+3. Ensure the transaction fee is sufficient — underfunded transactions are silently dropped.
+4. Rebuild the transaction with a fresh sequence number if the account state changed.
+
+### Wrong network selected
+
+**Symptom:** Transaction is signed but fails with `txBAD_SEQ` or similar.
+
+**Steps:**
+1. Open Freighter and switch to the matching network (Testnet for development, Mainnet for production).
+2. Verify `Networks.TESTNET` / `Networks.MAINNET` passphrase is passed to the transaction builder.
+
+### Permission prompt appears on every page load
+
+**Symptom:** Freighter asks for access each session.
+
+**Steps:**
+1. Call `freighter.isConnected()` before `requestAccess()`; skip the prompt when already connected.
+2. Ensure your dApp is served over HTTPS (or `localhost`) — Freighter restricts persistent permissions to secure origins.
+
+---
+
+## Wallet UX States
+
+The frontend models four wallet connection states. Every UI that depends on the wallet must handle all of them.
+
+| State | Description | User-facing message |
+|-------|-------------|---------------------|
+| `disconnected` | No wallet connected or access not yet granted | "Connect your Freighter wallet to continue." |
+| `connected` | Wallet access granted, public key available, no pending action | "Wallet connected: `G…XYZ`" |
+| `waiting_for_signature` | Transaction built and sent to Freighter, awaiting user approval | "Check Freighter — please approve the transaction." |
+| `error` | Connection failed, user rejected, or transaction error | "Wallet error: \<message\>. Please try again." |
+
+### State transition diagram
+
+```
+disconnected
+    │  user clicks "Connect"
+    ▼
+[requestAccess()]
+    │ granted          │ rejected / error
+    ▼                  ▼
+connected           error ──► disconnected (retry)
+    │  user submits form
+    ▼
+[signTransaction()]
+    │ pending approval
+    ▼
+waiting_for_signature
+    │ approved         │ rejected / timeout
+    ▼                  ▼
+connected           error
+```
+
+### Implementation reference
+
+See [`frontend/src/components/SubscriptionForm.tsx`](frontend/src/components/SubscriptionForm.tsx) for a working example of all four states.
 
 ---
 
