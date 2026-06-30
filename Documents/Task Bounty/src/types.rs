@@ -28,13 +28,13 @@ pub struct Task {
     pub poster: Address,
     pub title: String,
     pub description: String,
-    pub token: Address,           // Token address for reward
-    pub reward: i128,             // Reward amount
-    pub deadline: u64,            // Unix timestamp
+    pub token: Address, // Token address for reward
+    pub reward: i128,   // Reward amount
+    pub deadline: u64,  // Unix timestamp
     pub max_submissions: u32,
     pub submission_count: u32,
     pub status: TaskStatus,
-    pub created_at: u64,          // Unix timestamp
+    pub created_at: u64, // Unix timestamp
 }
 
 /// Submission structure
@@ -44,9 +44,9 @@ pub struct Submission {
     pub id: u64,
     pub task_id: u64,
     pub contributor: Address,
-    pub work_url: String,         // IPFS, Arweave, GitHub, etc.
+    pub work_url: String, // IPFS, Arweave, GitHub, etc.
     pub description: String,
-    pub submitted_at: u64,        // Unix timestamp
+    pub submitted_at: u64, // Unix timestamp
     pub status: SubmissionStatus,
 }
 

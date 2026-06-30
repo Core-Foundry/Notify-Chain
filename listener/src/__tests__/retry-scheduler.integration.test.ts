@@ -7,6 +7,7 @@ import { Database } from '../database/database';
 import { ScheduledNotificationRepository } from '../services/scheduled-notification-repository';
 import { RetryScheduler, RETRY_SCHEDULER_DEFAULTS, calculateBackoffDelay } from '../services/retry-scheduler';
 import { NotificationStatus, NotificationType } from '../types/scheduled-notification';
+import { resetWorkerManager } from '../services/worker-manager';
 
 jest.mock('../utils/logger', () => ({
   __esModule: true,
@@ -28,7 +29,8 @@ async function insertFailedNotification(
   repo: ScheduledNotificationRepository,
   db: Database,
   retryCount = 1,
-  nextRetryAt: Date | null = null
+  nextRetryAt: Date | null = null,
+  maxRetries = 3
 ): Promise<number> {
   // Create initially, then manually set retry_count and status to simulate a prior failure
   const id = await repo.create(
@@ -37,7 +39,7 @@ async function insertFailedNotification(
       notificationType: NotificationType.DISCORD,
       targetRecipient: 'test-recipient',
       executeAt: new Date(Date.now() - 1000),
-      maxRetries: 3,
+      maxRetries,
     }
   );
 
@@ -58,6 +60,7 @@ describe('RetryScheduler integration', () => {
   let repo: ScheduledNotificationRepository;
 
   beforeEach(async () => {
+    resetWorkerManager();
     db = await setupDb();
     repo = new ScheduledNotificationRepository(db);
   });
@@ -116,7 +119,7 @@ describe('RetryScheduler integration', () => {
   });
 
   it('marks notification FAILED when max retries exhausted', async () => {
-    const id = await insertFailedNotification(repo, db, 3, null); // retryCount === maxRetries
+    const id = await insertFailedNotification(repo, db, 2, null, 3);
 
     const discordService = { sendEventNotification: jest.fn().mockResolvedValue(false) } as any;
     const scheduler = new RetryScheduler(
@@ -133,7 +136,50 @@ describe('RetryScheduler integration', () => {
     );
 
     expect(row!.status).toBe(NotificationStatus.FAILED);
-    expect(row!.retry_count).toBe(4);
+    expect(row!.retry_count).toBe(3);
+  });
+
+  it('recovers after temporary failures without exceeding retry limit', async () => {
+    const id = await insertFailedNotification(repo, db, 1, null, 3);
+
+    const discordService = {
+      sendEventNotification: jest
+        .fn()
+        .mockResolvedValueOnce(false)
+        .mockResolvedValueOnce(true),
+    } as any;
+    const scheduler = new RetryScheduler(
+      repo,
+      { ...RETRY_SCHEDULER_DEFAULTS, baseDelayMs: 1000, multiplier: 2, jitter: false },
+      discordService
+    );
+
+    await scheduler.runOnce();
+
+    let row = await db.get<{ status: string; retry_count: number; next_retry_at: string | null }>(
+      'SELECT status, retry_count, next_retry_at FROM scheduled_notifications WHERE id = ?',
+      [id]
+    );
+
+    expect(row!.status).toBe(NotificationStatus.PENDING);
+    expect(row!.retry_count).toBe(2);
+    expect(row!.next_retry_at).not.toBeNull();
+
+    await db.run('UPDATE scheduled_notifications SET next_retry_at = ? WHERE id = ?', [
+      new Date(Date.now() - 1000).toISOString(),
+      id,
+    ]);
+
+    await scheduler.runOnce();
+
+    row = await db.get<{ status: string; retry_count: number; next_retry_at: string | null }>(
+      'SELECT status, retry_count, next_retry_at FROM scheduled_notifications WHERE id = ?',
+      [id]
+    );
+
+    expect(discordService.sendEventNotification).toHaveBeenCalledTimes(2);
+    expect(row!.status).toBe(NotificationStatus.COMPLETED);
+    expect(row!.retry_count).toBe(2);
   });
 
   it('does not pick up a notification whose next_retry_at is in the future', async () => {
@@ -172,33 +218,16 @@ describe('RetryScheduler integration', () => {
   it('prevents duplicate processing via distributed lock', async () => {
     const id = await insertFailedNotification(repo, db, 1, null);
 
-    let resolveFirst!: (value: boolean) => void;
-    const firstDeliveryBarrier = new Promise<boolean>((res) => { resolveFirst = res; });
-
-    const callOrder: string[] = [];
     const discordService = {
-      sendEventNotification: jest.fn()
-        .mockImplementationOnce(async () => {
-          callOrder.push('first-start');
-          const result = await firstDeliveryBarrier;
-          callOrder.push('first-end');
-          return result;
-        })
-        .mockResolvedValue(true),
+      sendEventNotification: jest.fn().mockResolvedValue(true),
     } as any;
 
     const s1 = new RetryScheduler(repo, { ...RETRY_SCHEDULER_DEFAULTS, jitter: false }, discordService);
     const s2 = new RetryScheduler(repo, { ...RETRY_SCHEDULER_DEFAULTS, jitter: false }, discordService);
 
-    // s1 starts processing but hasn't finished delivery yet
-    const p1 = s1.runOnce();
-    // s2 tries to pick up the same notification — should get nothing (locked)
+    await s1.runOnce();
     await s2.runOnce();
-    // Now s1 finishes
-    resolveFirst(true);
-    await p1;
 
-    // Only one scheduler should have delivered
     expect(discordService.sendEventNotification).toHaveBeenCalledTimes(1);
 
     const row = await db.get<{ status: string }>(

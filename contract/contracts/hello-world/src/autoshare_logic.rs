@@ -1,11 +1,30 @@
 use crate::base::errors::Error;
 use crate::base::events::{
+    AdminTransferred, AuthorizationFailure, AutoshareCreated, AutoshareUpdated, CategoryRegistered,
+    ContractPaused, ContractUnpaused, GroupActivated, GroupDeactivated, NotificationCategory,
+    NotificationDelivered, NotificationExpired, NotificationExtended, NotificationLimitsConfigured,
+    NotificationPriority, NotificationRecalled, NotificationRevoked, NotificationScheduled,
+    ScheduledNotificationCancelled, Withdrawal,
     AdminTransferred, AuthorizationFailure, AutoshareCreated, AutoshareUpdated, ContractPaused,
+    ContractUnpaused, GroupActivated, GroupDeactivated, NotificationAcknowledged,
+    NotificationCategory, NotificationExpired, NotificationPriority, NotificationRevoked,
+    NotificationScheduled, ScheduledNotificationCancelled, Withdrawal,
+    AdminTransferred, AuditAction, AuditRecordAppended, AuthorizationFailure, AutoshareCreated,
+    AutoshareUpdated, BatchNotificationsCreated, CategoryRegistered, ContractPaused,
     ContractUnpaused, GroupActivated, GroupDeactivated, NotificationCategory, NotificationExpired,
+    NotificationPriority, NotificationRevoked, NotificationScheduled,
     NotificationExtended, NotificationPriority, NotificationRevoked, NotificationScheduled,
     ScheduledNotificationCancelled, Withdrawal,
+    NotificationPriority, NotificationRevoked, NotificationScheduled, ScheduledNotificationCancelled,
+    Withdrawal, BatchProcessingCompleted,
+    NotificationExtended, NotificationLimitsConfigured, NotificationPriority, NotificationRevoked,
+    NotificationScheduled, ScheduledNotificationCancelled, Withdrawal,
+    SchemaVersionSet, NotificationAccessed,
 };
-use crate::base::types::{AutoShareDetails, GroupMember, PaymentHistory, ScheduledNotification};
+use crate::base::types::{
+    AuditRecord, AutoShareDetails, GroupMember, NotificationLimits, PaymentHistory,
+    ScheduledNotification,
+};
 use soroban_sdk::{contracttype, token, Address, BytesN, Env, String, Vec};
 
 /// Storage key layout (optimized):
@@ -40,7 +59,15 @@ pub enum DataKey {
     GroupMembers(BytesN<32>),
     IsPaused,
     ScheduledNotification(BytesN<32>),
+    /// Monotonically increasing counter for audit record sequence numbers.
+    AuditSeq,
+    /// All audit records stored in a single Vec for full-scan queries.
+    AuditLog,
     NotificationRevokers(BytesN<32>),
+    NotificationLimits,
+    RegisteredCategories,
+    /// Stores the current on-chain notification schema version.
+    SchemaVersion,
 }
 
 // ============================================================================
@@ -242,7 +269,7 @@ pub fn add_group_member(
     });
 
     // Validate total percentage after adding
-    validate_members(&details.members)?;
+    validate_members(&env, &details.members)?;
 
     // Save updated details
     env.storage().persistent().set(&key, &details);
@@ -279,8 +306,71 @@ pub fn initialize_admin(env: Env, admin: Address) {
 
         // Initialize empty supported tokens list in instance storage
         let empty_tokens: Vec<Address> = Vec::new(&env);
-        env.storage().instance().set(&INSTANCE_TOKENS, &empty_tokens);
+        env.storage()
+            .instance()
+            .set(&INSTANCE_TOKENS, &empty_tokens);
+
+        seed_default_categories(&env);
     }
+}
+
+fn seed_default_categories(env: &Env) {
+    let key = DataKey::RegisteredCategories;
+    if env.storage().persistent().has(&key) {
+        return;
+    }
+
+    let categories: Vec<NotificationCategory> = Vec::new(env);
+    env.storage().persistent().set(&key, &categories);
+}
+
+pub fn get_registered_categories(env: Env) -> Vec<NotificationCategory> {
+    let key = DataKey::RegisteredCategories;
+    env.storage()
+        .persistent()
+        .get(&key)
+        .unwrap_or(Vec::new(&env))
+}
+
+pub fn is_category_registered(env: Env, category: NotificationCategory) -> bool {
+    let categories = get_registered_categories(env.clone());
+    for i in 0..categories.len() {
+        if categories.get(i).unwrap() == category {
+            return true;
+        }
+    }
+    false
+}
+
+pub fn register_category(
+    env: Env,
+    admin: Address,
+    category: NotificationCategory,
+) -> Result<(), Error> {
+    admin.require_auth();
+    require_admin(&env, &admin)?;
+
+    if is_category_registered(env.clone(), category) {
+        return Err(Error::AlreadyExists);
+    }
+
+    let key = DataKey::RegisteredCategories;
+    let mut categories: Vec<NotificationCategory> = env
+        .storage()
+        .persistent()
+        .get(&key)
+        .unwrap_or(Vec::new(&env));
+    categories.push_back(category);
+    env.storage().persistent().set(&key, &categories);
+
+    CategoryRegistered {
+        admin: admin.clone(),
+        category,
+        priority: NotificationPriority::Medium,
+    }
+    .publish(&env);
+
+    Ok(())
 }
 
 fn publish_authorization_failure(env: &Env, caller: &Address, action: &str) {
@@ -350,9 +440,8 @@ pub fn pause(env: Env, admin: Address) -> Result<(), Error> {
     }
 
     env.storage().instance().set(&INSTANCE_PAUSED, &true);
-    ContractPaused {}.publish(&env);
-    env.storage().persistent().set(&pause_key, &true);
     ContractPaused {
+        admin: admin.clone(),
         category: NotificationCategory::Admin,
         priority: NotificationPriority::High,
     }
@@ -375,9 +464,8 @@ pub fn unpause(env: Env, admin: Address) -> Result<(), Error> {
     }
 
     env.storage().instance().set(&INSTANCE_PAUSED, &false);
-    ContractUnpaused {}.publish(&env);
-    env.storage().persistent().set(&pause_key, &false);
     ContractUnpaused {
+        admin: admin.clone(),
         category: NotificationCategory::Admin,
         priority: NotificationPriority::High,
     }
@@ -482,10 +570,7 @@ pub fn set_usage_fee(env: Env, fee: u32, admin: Address) -> Result<(), Error> {
 }
 
 pub fn get_usage_fee(env: Env) -> u32 {
-    env.storage()
-        .instance()
-        .get(&INSTANCE_FEE)
-        .unwrap_or(10u32)
+    env.storage().instance().get(&INSTANCE_FEE).unwrap_or(10u32)
 }
 
 // ============================================================================
@@ -855,7 +940,7 @@ pub fn withdraw(
     Ok(())
 }
 
-fn validate_members(members: &Vec<GroupMember>) -> Result<(), Error> {
+fn validate_members(env: &Env, members: &Vec<GroupMember>) -> Result<(), Error> {
     if members.is_empty() {
         return Err(Error::EmptyMembers);
     }
@@ -863,7 +948,6 @@ fn validate_members(members: &Vec<GroupMember>) -> Result<(), Error> {
     if members.len() > MAX_MEMBERS {
         return Err(Error::TooManyMembers);
     }
-    let env = members.env();
     let mut total_percentage: u32 = 0;
     let mut seen_addresses = Vec::new(env);
 
@@ -911,12 +995,20 @@ fn is_revoked(notification: &ScheduledNotification) -> bool {
 ///
 /// The notification is stored with an `expires_at` of `now + ttl_seconds`. A
 /// zero duration (or one that overflows the ledger clock) is rejected, as is a
-/// duplicate identifier. Emits [`NotificationScheduled`].
+/// duplicate identifier. Metadata is validated for consistency and length.
+/// Emits [`NotificationScheduled`].
+///
+/// # Errors
+/// - `ContractPaused` if the contract is paused
+/// - `InvalidExpirationDuration` if ttl_seconds is 0 or would overflow
+/// - `AlreadyExists` if notification_id is already registered
+/// - `InvalidInput` if metadata is malformed
 pub fn schedule_notification(
     env: Env,
     notification_id: BytesN<32>,
     creator: Address,
     ttl_seconds: u64,
+    title: String,
 ) -> Result<(), Error> {
     creator.require_auth();
 
@@ -926,6 +1018,11 @@ pub fn schedule_notification(
 
     if ttl_seconds == 0 {
         return Err(Error::InvalidExpirationDuration);
+    }
+
+    // Validate metadata (title is required)
+    if title.is_empty() {
+        return Err(Error::InvalidInput);
     }
 
     let key = DataKey::ScheduledNotification(notification_id.clone());
@@ -945,8 +1042,20 @@ pub fn schedule_notification(
         expires_at,
         revoked_by: None,
         revoked_at: None,
+        delivered: false,
+        delivered_at: None,
+        recalled_by: None,
+        recalled_at: None,
+        title,
     };
     env.storage().persistent().set(&key, &notification);
+
+    append_audit_record(
+        &env,
+        notification_id.clone(),
+        AuditAction::Created,
+        creator.clone(),
+    );
 
     NotificationScheduled {
         creator,
@@ -999,6 +1108,13 @@ pub fn expire_notification(env: Env, notification_id: BytesN<32>) -> Result<(), 
 
     env.storage().persistent().remove(&key);
 
+    append_audit_record(
+        &env,
+        notification_id.clone(),
+        AuditAction::Expired,
+        env.current_contract_address(),
+    );
+
     NotificationExpired {
         notification_id,
         category: NotificationCategory::Notification,
@@ -1042,11 +1158,142 @@ pub fn cancel_notification(
             .remove(&DataKey::ScheduledNotification(notification_id.clone()));
     }
 
+    append_audit_record(
+        &env,
+        notification_id.clone(),
+        AuditAction::Cancelled,
+        caller.clone(),
+    );
+
     ScheduledNotificationCancelled {
         caller,
         category: NotificationCategory::Notification,
         priority: NotificationPriority::Low,
         notification_id,
+    }
+    .publish(&env);
+
+    Ok(())
+}
+
+// ============================================================================
+// Batch Notification Creation
+// ============================================================================
+
+/// Maximum number of notifications that can be created in a single batch call.
+const MAX_BATCH_SIZE: u32 = 50;
+
+/// Creates multiple scheduled notifications in a single transaction.
+///
+/// Each `ids[i]` is paired with `ttl_seconds[i]`. Both slices must have the same
+/// length and must not be empty. The length must not exceed [`MAX_BATCH_SIZE`].
+/// The same validation applied by [`schedule_notification`] is applied to each
+/// entry; if any entry fails the entire call is rejected.
+///
+/// A [`NotificationScheduled`] event is emitted for every created notification,
+/// followed by a single [`BatchNotificationsCreated`] summary event carrying the
+/// full list of ids and the count.
+pub fn batch_schedule_notifications(
+    env: Env,
+    ids: Vec<BytesN<32>>,
+    creator: Address,
+    ttl_seconds: Vec<u64>,
+    titles: Vec<String>,
+) -> Result<(), Error> {
+    creator.require_auth();
+
+    if get_paused_status(&env) {
+        return Err(Error::ContractPaused);
+    }
+
+    let count = ids.len();
+
+    // Must have at least one notification.
+    if count == 0 {
+        return Err(Error::InvalidInput);
+    }
+
+    // Lengths must match.
+    if count != ttl_seconds.len() || count != titles.len() {
+        return Err(Error::InvalidInput);
+    }
+
+    // Enforce maximum batch size.
+    if count > MAX_BATCH_SIZE {
+        return Err(Error::BatchTooLarge);
+    }
+
+    let created_at = env.ledger().timestamp();
+
+    // Validate all entries before persisting any (all-or-nothing semantics).
+    // Also track ids seen within this batch to catch intra-batch duplicates.
+    let mut seen_in_batch: Vec<BytesN<32>> = Vec::new(&env);
+    for i in 0..count {
+        let ttl = ttl_seconds.get(i).unwrap();
+        if ttl == 0 {
+            return Err(Error::InvalidExpirationDuration);
+        }
+        let id = ids.get(i).unwrap();
+        let title = titles.get(i).unwrap();
+        if title.is_empty() {
+            return Err(Error::InvalidInput);
+        }
+
+        // Check for intra-batch duplicates.
+        for seen in seen_in_batch.iter() {
+            if seen == id {
+                return Err(Error::AlreadyExists);
+            }
+        }
+        seen_in_batch.push_back(id.clone());
+
+        let key = DataKey::ScheduledNotification(id.clone());
+        if env.storage().persistent().has(&key) {
+            return Err(Error::AlreadyExists);
+        }
+        // Validate ttl doesn't overflow.
+        created_at
+            .checked_add(ttl)
+            .ok_or(Error::InvalidExpirationDuration)?;
+    }
+
+    // Persist and emit per-notification events.
+    for i in 0..count {
+        let ttl = ttl_seconds.get(i).unwrap();
+        let id = ids.get(i).unwrap();
+        let title = titles.get(i).unwrap();
+        let expires_at = created_at + ttl;
+
+        let notification = ScheduledNotification {
+            id: id.clone(),
+            creator: creator.clone(),
+            created_at,
+            expires_at,
+            revoked_by: None,
+            revoked_at: None,
+            title,
+        };
+        let key = DataKey::ScheduledNotification(id.clone());
+        env.storage().persistent().set(&key, &notification);
+
+        append_audit_record(&env, id.clone(), AuditAction::Created, creator.clone());
+
+        NotificationScheduled {
+            creator: creator.clone(),
+            category: NotificationCategory::Notification,
+            priority: NOTIFICATION_PRIORITY,
+            notification_id: id.clone(),
+        }
+        .publish(&env);
+    }
+
+    // Summary event.
+    BatchNotificationsCreated {
+        creator: creator.clone(),
+        category: NotificationCategory::Notification,
+        priority: NOTIFICATION_PRIORITY,
+        count,
+        ids,
     }
     .publish(&env);
 
@@ -1062,6 +1309,110 @@ pub fn cancel_notification(
 ///
 /// Revoked notifications maintain their state for transparency and auditing:
 /// they can still be queried but cannot be cancelled or expired.
+pub fn confirm_notification_delivery(
+    env: Env,
+    notification_id: BytesN<32>,
+    caller: Address,
+) -> Result<(), Error> {
+    caller.require_auth();
+
+    if get_paused_status(&env) {
+        return Err(Error::ContractPaused);
+    }
+
+    let key = DataKey::ScheduledNotification(notification_id.clone());
+    let mut notification = load_notification(&env, &notification_id).ok_or(Error::NotFound)?;
+
+    if is_revoked(&notification) {
+        return Err(Error::NotificationRevoked);
+    }
+
+    if is_expired(&env, &notification) {
+        return Err(Error::NotificationExpired);
+    }
+
+    if notification.delivered {
+        return Err(Error::NotificationDelivered);
+    }
+
+    let admin = get_admin(env.clone()).ok();
+    let is_creator = caller == notification.creator;
+    let is_admin = admin.as_ref().map_or(false, |a| caller == *a);
+
+    if !is_creator && !is_admin {
+        return Err(Error::Unauthorized);
+    }
+
+    let delivered_at = env.ledger().timestamp();
+    notification.delivered = true;
+    notification.delivered_at = Some(delivered_at);
+
+    env.storage().persistent().set(&key, &notification);
+
+    NotificationDelivered {
+        notification_id,
+        delivered_by: caller,
+        category: NotificationCategory::Notification,
+        priority: NotificationPriority::High,
+        delivered_at,
+    }
+    .publish(&env);
+
+    Ok(())
+}
+
+pub fn recall_notification(
+    env: Env,
+    notification_id: BytesN<32>,
+    caller: Address,
+) -> Result<(), Error> {
+    caller.require_auth();
+
+    if get_paused_status(&env) {
+        return Err(Error::ContractPaused);
+    }
+
+    let key = DataKey::ScheduledNotification(notification_id.clone());
+    let mut notification = load_notification(&env, &notification_id).ok_or(Error::NotFound)?;
+
+    if is_revoked(&notification) {
+        return Err(Error::NotificationRevoked);
+    }
+
+    if is_expired(&env, &notification) {
+        return Err(Error::NotificationExpired);
+    }
+
+    if notification.delivered {
+        return Err(Error::NotificationDelivered);
+    }
+
+    let admin = get_admin(env.clone()).ok();
+    let is_creator = caller == notification.creator;
+    let is_admin = admin.as_ref().map_or(false, |a| caller == *a);
+
+    if !is_creator && !is_admin {
+        return Err(Error::Unauthorized);
+    }
+
+    let recalled_at = env.ledger().timestamp();
+    notification.recalled_by = Some(caller.clone());
+    notification.recalled_at = Some(recalled_at);
+
+    env.storage().persistent().set(&key, &notification);
+
+    NotificationRecalled {
+        notification_id,
+        recalled_by: caller,
+        category: NotificationCategory::Notification,
+        priority: NotificationPriority::High,
+        recalled_at,
+    }
+    .publish(&env);
+
+    Ok(())
+}
+
 pub fn revoke_notification(
     env: Env,
     notification_id: BytesN<32>,
@@ -1109,10 +1460,137 @@ pub fn revoke_notification(
         revoked_by: caller,
         category: NotificationCategory::Notification,
         priority: NotificationPriority::High,
-        revoked_at,
     }
     .publish(&env);
 
+    Ok(())
+}
+
+// ============================================================================
+// Audit Logging
+// ============================================================================
+
+/// Appends an immutable [`AuditRecord`] to the on-chain audit log and emits an
+/// [`AuditRecordAppended`] event. The sequence number is auto-incremented.
+fn append_audit_record(
+    env: &Env,
+    notification_id: BytesN<32>,
+    action: AuditAction,
+    actor: Address,
+) {
+    // Increment sequence counter.
+    let seq_key = DataKey::AuditSeq;
+    let seq: u64 = env.storage().instance().get(&seq_key).unwrap_or(0u64) + 1;
+    env.storage().instance().set(&seq_key, &seq);
+
+    let timestamp = env.ledger().timestamp();
+
+    let record = AuditRecord {
+        seq,
+        notification_id: notification_id.clone(),
+        action,
+        actor: actor.clone(),
+        timestamp,
+    };
+
+    // Append to the full log (used for full-scan / range queries).
+    let log_key = DataKey::AuditLog;
+    let mut log: Vec<AuditRecord> = env
+        .storage()
+        .persistent()
+        .get(&log_key)
+        .unwrap_or(Vec::new(env));
+    log.push_back(record);
+    env.storage().persistent().set(&log_key, &log);
+
+    AuditRecordAppended {
+        notification_id,
+        action,
+        category: NotificationCategory::Notification,
+        seq,
+        actor,
+    }
+    .publish(env);
+}
+
+/// Returns all audit records in creation order.
+///
+/// Records are immutable and append-only; this list can only grow over time.
+pub fn get_audit_log(env: Env) -> Vec<AuditRecord> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::AuditLog)
+        .unwrap_or(Vec::new(&env))
+}
+
+/// Returns all audit records for a specific notification identifier.
+pub fn get_audit_records_for_notification(
+    env: Env,
+    notification_id: BytesN<32>,
+) -> Vec<AuditRecord> {
+    let log: Vec<AuditRecord> = env
+        .storage()
+        .persistent()
+        .get(&DataKey::AuditLog)
+        .unwrap_or(Vec::new(&env));
+
+    let mut result: Vec<AuditRecord> = Vec::new(&env);
+    for record in log.iter() {
+        if record.notification_id == notification_id {
+            result.push_back(record);
+        }
+    }
+    result
+}
+
+/// Records a delivery attempt for a notification in the audit log.
+///
+/// This is a permissionless write so any authorised service (an off-chain
+/// relay, a keeper) can record that it attempted delivery.
+pub fn record_delivery_attempt(
+    env: Env,
+    notification_id: BytesN<32>,
+    actor: Address,
+) -> Result<(), Error> {
+    actor.require_auth();
+
+    if get_paused_status(&env) {
+        return Err(Error::ContractPaused);
+    }
+
+    append_audit_record(&env, notification_id, AuditAction::DeliveryAttempt, actor);
+    Ok(())
+}
+
+/// Records a delivery failure for a notification in the audit log.
+pub fn record_delivery_failure(
+    env: Env,
+    notification_id: BytesN<32>,
+    actor: Address,
+) -> Result<(), Error> {
+    actor.require_auth();
+
+    if get_paused_status(&env) {
+        return Err(Error::ContractPaused);
+    }
+
+    append_audit_record(&env, notification_id, AuditAction::DeliveryFailed, actor);
+    Ok(())
+}
+
+/// Records that the recipient acknowledged a notification.
+pub fn record_acknowledgment(
+    env: Env,
+    notification_id: BytesN<32>,
+    actor: Address,
+) -> Result<(), Error> {
+    actor.require_auth();
+
+    if get_paused_status(&env) {
+        return Err(Error::ContractPaused);
+    }
+
+    append_audit_record(&env, notification_id, AuditAction::Acknowledged, actor);
     Ok(())
 }
 
@@ -1124,6 +1602,26 @@ pub fn is_notification_revoked(env: Env, notification_id: BytesN<32>) -> Result<
     Ok(is_revoked(&notification))
 }
 
+/// Acknowledges multiple scheduled notifications in a single batch.
+///
+/// Only the creator of the notification can acknowledge it. The notification
+/// must exist, not be revoked, and not be expired.
+/// Emits a [`NotificationAcknowledged`] event for each valid notification.
+pub fn acknowledge_notifications(
+    env: Env,
+    caller: Address,
+    notification_ids: Vec<BytesN<32>>,
+/// Emits a `BatchProcessingCompleted` event for off-chain consumers.
+pub fn emit_batch_completed(env: Env, batch_id: BytesN<32>, processed_count: u32) -> Result<(), Error> {
+    BatchProcessingCompleted {
+        batch_id,
+        category: NotificationCategory::Notification,
+        priority: NotificationPriority::Medium,
+        processed_count,
+    }
+    .publish(&env);
+    Ok(())
+}
 /// Extends the expiration period of a scheduled notification by `extension_seconds`.
 ///
 /// Only authorized callers (the notification creator or the contract admin) can
@@ -1141,6 +1639,32 @@ pub fn extend_notification_expiry(
         return Err(Error::ContractPaused);
     }
 
+    let timestamp = env.ledger().timestamp();
+
+    for id in notification_ids.iter() {
+        let notification = load_notification(&env, &id).ok_or(Error::NotFound)?;
+
+        if notification.creator != caller {
+            return Err(Error::NotAuthorizedToAcknowledge);
+        }
+
+        if is_revoked(&notification) {
+            return Err(Error::NotificationRevoked);
+        }
+
+        if is_expired(&env, &notification) {
+            return Err(Error::NotificationExpired);
+        }
+
+        NotificationAcknowledged {
+            notification_id: id,
+            acknowledger: caller.clone(),
+            category: NotificationCategory::Notification,
+            priority: NOTIFICATION_PRIORITY,
+            timestamp,
+        }
+        .publish(&env);
+    }
     if extension_seconds == 0 {
         return Err(Error::InvalidExpirationDuration);
     }
@@ -1191,3 +1715,183 @@ pub fn extend_notification_expiry(
     Ok(())
 }
 
+// ============================================================================
+// Notification Limits Configuration
+// ============================================================================
+
+/// Configures protocol-level notification limits. Only admin can call.
+/// Validates that min expiration is less than max expiration.
+/// Emits a `NotificationLimitsConfigured` event on success.
+pub fn configure_notification_limits(
+    env: Env,
+    admin: Address,
+    max_payload_size: u32,
+    max_expiration_seconds: u64,
+    min_expiration_seconds: u64,
+    max_batch_size: u32,
+) -> Result<(), Error> {
+    // Require authentication
+    admin.require_auth();
+
+    // Verify caller is admin
+    let current_admin = get_admin(env.clone())?;
+    if admin != current_admin {
+        AuthorizationFailure {
+            caller: admin,
+            category: NotificationCategory::Admin,
+            priority: NotificationPriority::Critical,
+            action: String::from_bytes(&env, b"configure_notification_limits"),
+        }
+        .publish(&env);
+        return Err(Error::Unauthorized);
+    }
+
+    // Validate that min <= max expiration
+    if min_expiration_seconds > max_expiration_seconds {
+        return Err(Error::InvalidExpirationDuration);
+    }
+
+    // Validate that batch size is at least 1
+    if max_batch_size == 0 {
+        return Err(Error::InvalidLimit);
+    }
+
+    // Validate that payload size is at least 1 byte
+    if max_payload_size == 0 {
+        return Err(Error::InvalidLimit);
+    }
+
+    let limits = NotificationLimits {
+        max_payload_size,
+        max_expiration_seconds,
+        min_expiration_seconds,
+        max_batch_size,
+    };
+
+    // Store in persistent storage
+    let key = DataKey::NotificationLimits;
+    env.storage().persistent().set(&key, &limits);
+
+    // Emit configuration event
+    NotificationLimitsConfigured {
+        admin,
+        category: NotificationCategory::Admin,
+        priority: NotificationPriority::Medium,
+        max_payload_size,
+        max_expiration_seconds,
+        min_expiration_seconds,
+        max_batch_size,
+    }
+    .publish(&env);
+
+    Ok(())
+}
+
+/// Retrieves the current notification limits.
+/// Returns default limits if none have been configured.
+pub fn get_notification_limits(env: Env) -> NotificationLimits {
+    let key = DataKey::NotificationLimits;
+
+    env.storage()
+        .persistent()
+        .get::<DataKey, NotificationLimits>(&key)
+        .unwrap_or(NotificationLimits {
+            max_payload_size: 10_000,
+            max_expiration_seconds: 365 * 24 * 60 * 60, // 1 year
+            min_expiration_seconds: 60,                 // 1 minute
+            max_batch_size: 1000,
+        })
+}
+
+// ============================================================================
+// Schema Version Tracking  (Issue #309)
+// ============================================================================
+
+/// The minimum schema version this contract supports.
+const MIN_SUPPORTED_SCHEMA_VERSION: u32 = 1;
+/// The maximum (current) schema version this contract supports.
+const MAX_SUPPORTED_SCHEMA_VERSION: u32 = 1;
+
+/// Sets the on-chain notification schema version. Only the admin can call this.
+///
+/// Emits a [`SchemaVersionSet`] event so off-chain consumers can detect protocol
+/// upgrades and reject payloads whose version they cannot handle.
+///
+/// # Errors
+/// - [`Error::Unauthorized`]  – caller is not the admin.
+/// - [`Error::InvalidInput`]  – `schema_version` is outside the supported range.
+pub fn set_schema_version(env: Env, admin: Address, schema_version: u32) -> Result<(), Error> {
+    admin.require_auth();
+
+    let stored_admin = get_admin(env.clone())?;
+    if admin != stored_admin {
+        return Err(Error::Unauthorized);
+    }
+
+    if schema_version < MIN_SUPPORTED_SCHEMA_VERSION || schema_version > MAX_SUPPORTED_SCHEMA_VERSION {
+        return Err(Error::InvalidInput);
+    }
+
+    let key = DataKey::SchemaVersion;
+    let previous_version: u32 = env
+        .storage()
+        .persistent()
+        .get::<DataKey, u32>(&key)
+        .unwrap_or(0);
+
+    env.storage().persistent().set(&key, &schema_version);
+
+    SchemaVersionSet {
+        admin,
+        category: NotificationCategory::Admin,
+        priority: NotificationPriority::Medium,
+        schema_version,
+        previous_version,
+    }
+    .publish(&env);
+
+    Ok(())
+}
+
+/// Returns the current on-chain schema version (0 if never set).
+pub fn get_schema_version(env: Env) -> u32 {
+    env.storage()
+        .persistent()
+        .get::<DataKey, u32>(&DataKey::SchemaVersion)
+        .unwrap_or(0)
+}
+
+/// Returns whether `version` is within the supported range.
+pub fn is_version_supported(_env: Env, version: u32) -> bool {
+    version >= MIN_SUPPORTED_SCHEMA_VERSION && version <= MAX_SUPPORTED_SCHEMA_VERSION
+}
+
+// ============================================================================
+// Access Logging  (Issue #312)
+// ============================================================================
+
+/// Emits a [`NotificationAccessed`] event for the given notification.
+///
+/// Call this whenever a protected notification record is read so that
+/// off-chain indexers can build an immutable access trail for compliance.
+pub fn record_notification_access(
+    env: Env,
+    notification_id: BytesN<32>,
+    accessor: Address,
+) -> Result<(), Error> {
+    // Verify the notification exists.
+    let key = DataKey::ScheduledNotification(notification_id.clone());
+    if !env.storage().persistent().has(&key) {
+        return Err(Error::NotFound);
+    }
+
+    NotificationAccessed {
+        notification_id,
+        accessor,
+        category: NotificationCategory::Notification,
+        accessed_at: env.ledger().timestamp(),
+    }
+    .publish(&env);
+
+    Ok(())
+}

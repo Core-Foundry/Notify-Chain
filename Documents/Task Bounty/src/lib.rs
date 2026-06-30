@@ -12,19 +12,21 @@
 //! - Dispute resolution
 //! - Multi-token support (XLM and SAC tokens)
 
-mod types;
-mod storage;
-mod task;
-mod submission;
 mod dispute;
 mod events;
 mod api_keys;
+mod storage;
+mod submission;
+mod task;
+mod types;
 
 #[cfg(test)]
 mod test;
 
 use soroban_sdk::{contract, contractimpl, Address, BytesN, Env, String, Vec};
 use types::{Task, Submission, TaskStatus, SubmissionStatus};
+use soroban_sdk::{contract, contractimpl, Address, Env, String, Vec};
+use types::{Submission, SubmissionStatus, Task, TaskStatus};
 
 #[contract]
 pub struct TaskBountyContract;
@@ -108,12 +110,7 @@ impl TaskBountyContract {
     /// * `task_id` - ID of the task
     /// * `submission_id` - ID of the submission to approve
     /// * `poster` - Address of the task poster (for auth)
-    pub fn approve_submission(
-        env: Env,
-        task_id: u64,
-        submission_id: u64,
-        poster: Address,
-    ) {
+    pub fn approve_submission(env: Env, task_id: u64, submission_id: u64, poster: Address) {
         poster.require_auth();
 
         submission::approve_submission(&env, task_id, submission_id, poster)

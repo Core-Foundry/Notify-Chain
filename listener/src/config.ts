@@ -1,5 +1,5 @@
-import { Config, ContractConfig, DiscordConfig, WebhookSecret, AppCleanupConfig, EventQueueConfig } from './types';
-import { Config, ContractConfig, DiscordConfig, WebhookSecret, AppCleanupConfig, RetrySchedulerOptions } from './types';
+import { Config, ContractConfig, DiscordConfig, WebhookSecret, AppCleanupConfig, EventQueueConfig, RetrySchedulerOptions } from './types';
+import { Config, ContractConfig, DiscordConfig, WebhookSecret, AppCleanupConfig, EventQueueConfig, RetrySchedulerOptions, AnalyticsConfig } from './types';
 
 export class ConfigError extends Error {
   constructor(message: string) {
@@ -113,12 +113,50 @@ function validateWebhookSecrets(value: unknown): WebhookSecret[] {
   });
 }
 
+function validateApiKeys(value: unknown): ApiKey[] {
+  if (!Array.isArray(value)) {
+    throw new ConfigError('API_KEYS must be a JSON array of key objects.');
+  }
+
+  return value.map((item, index) => {
+    if (typeof item !== 'object' || item === null) {
+      throw new ConfigError(
+        `API_KEYS[${index}] must be an object with key (and optional name).`
+      );
+    }
+
+    const key = (item as any).key;
+    const name = (item as any).name;
+
+    if (typeof key !== 'string' || !key.trim()) {
+      throw new ConfigError(`API_KEYS[${index}].key must be a non-empty string.`);
+    }
+
+    return { key: key.trim(), name: name?.trim() };
+  });
+}
+
 function loadCleanupConfig(): AppCleanupConfig {
   return {
     intervalMs: parseIntegerEnv('CLEANUP_INTERVAL_MS', String(60 * 60 * 1000)),
     notificationRetentionMs: parseIntegerEnv('NOTIFICATION_RETENTION_MS', String(7 * 24 * 60 * 60 * 1000)),
     rateLimitEventRetentionMs: parseIntegerEnv('RATE_LIMIT_EVENT_RETENTION_MS', String(24 * 60 * 60 * 1000)),
     eventRetentionMs: parseIntegerEnv('EVENT_RETENTION_MS', String(24 * 60 * 60 * 1000)),
+    executionLogRetentionMs: parseIntegerEnv(
+      'EXECUTION_LOG_RETENTION_MS',
+      String(90 * 24 * 60 * 60 * 1000),
+    ),
+  };
+}
+
+function loadAnalyticsConfig(): AnalyticsConfig {
+  return {
+    enabled: trimEnv('ANALYTICS_ENABLED') !== 'false',
+    maxRecords: parseIntegerEnv('ANALYTICS_MAX_RECORDS', '10000'),
+    maxBuckets: parseIntegerEnv('ANALYTICS_MAX_BUCKETS', '168'),
+    bucketSizeMs: parseIntegerEnv('ANALYTICS_BUCKET_SIZE_MS', String(60 * 60 * 1000)),
+    persistIntervalMs: parseIntegerEnv('ANALYTICS_PERSIST_INTERVAL_MS', '300000'),
+    snapshotRetentionDays: parseIntegerEnv('ANALYTICS_SNAPSHOT_RETENTION_DAYS', '30'),
   };
 }
 
@@ -140,7 +178,6 @@ export function loadConfig(): Config {
   const discord = loadDiscordConfig();
   const rawContractAddresses = parseJsonEnv<unknown>('CONTRACT_ADDRESSES', '[]');
   const rawWebhookSecrets = parseJsonEnv<unknown>('WEBHOOK_SECRETS', '[]');
-  const clientOverrides = parseJsonEnv<Record<string, { maxRequests: number; windowMs?: number>>(
   const clientOverrides = parseJsonEnv<Record<string, { maxRequests: number; windowMs?: number }>>(
     'RATE_LIMIT_CLIENT_OVERRIDES',
     '{}'
@@ -164,6 +201,7 @@ export function loadConfig(): Config {
       maxRetries: parseIntegerEnv('RETRY_MAX_RETRIES', '5'),
       multiplier: parseIntegerEnv('RETRY_MULTIPLIER', '2'),
       jitter: trimEnv('RETRY_JITTER') !== 'false',
+      processIntervalMs: parseIntegerEnv('RETRY_QUEUE_PROCESS_INTERVAL_MS', '5000'),
     },
     eventQueue: {
       maxConcurrency: parseIntegerEnv('EVENT_QUEUE_MAX_CONCURRENCY', '1'),
@@ -172,6 +210,7 @@ export function loadConfig(): Config {
       pollIntervalMs: parseIntegerEnv('EVENT_QUEUE_POLL_INTERVAL_MS', '1000'),
     },
     webhookSecrets: validateWebhookSecrets(rawWebhookSecrets),
+    apiKeys: validateApiKeys(rawApiKeys),
     scheduler: {
       enabled: trimEnv('SCHEDULER_ENABLED') !== 'false',
       pollIntervalMs: parseIntegerEnv('SCHEDULER_POLL_INTERVAL_MS', '10000'),
@@ -188,6 +227,7 @@ export function loadConfig(): Config {
       clientOverrides,
     },
     cleanup: loadCleanupConfig(),
+    analytics: loadAnalyticsConfig(),
   };
 }
 

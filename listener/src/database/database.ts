@@ -21,7 +21,7 @@ export class Database {
    */
   async initialize(): Promise<void> {
     if (this.isInitialized) {
-      logger.warn('Database already initialized');
+      await this.applyIncrementalMigrations();
       return;
     }
 
@@ -83,7 +83,63 @@ export class Database {
     // Execute the schema as one script so trigger bodies with semicolons work.
     await this.exec(schema);
 
+    await this.applyIncrementalMigrations();
+
     logger.info('Database migrations completed');
+  }
+
+  /**
+   * Split SQL statements intelligently, preserving BEGIN...END blocks
+   */
+  private splitSqlStatements(sql: string): string[] {
+    const statements: string[] = [];
+    let current = '';
+    let inBeginBlock = false;
+    
+    const lines = sql.split(/\r?\n/);
+    
+    for (const line of lines) {
+      const trimmed = line.trim();
+      
+      // Check for BEGIN keyword (case insensitive)
+      if (/^\s*BEGIN\s*$/i.test(trimmed)) {
+        inBeginBlock = true;
+      }
+      
+      current += line + '\n';
+      
+      // Check for END; which closes the BEGIN block
+      if (inBeginBlock && /^\s*END\s*;/i.test(trimmed)) {
+        inBeginBlock = false;
+        statements.push(current.trim());
+        current = '';
+        continue;
+      }
+      
+      // If not in BEGIN block and line ends with semicolon, it's a complete statement
+      if (!inBeginBlock && trimmed.endsWith(';')) {
+        statements.push(current.trim());
+        current = '';
+      }
+    }
+    
+    // Add any remaining content
+    if (current.trim().length > 0) {
+      statements.push(current.trim());
+    }
+    
+    return statements.filter(s => s.length > 0 && !s.startsWith('--'));
+   * Apply migrations for databases created before schema.sql was updated in-place.
+   */
+  private async applyIncrementalMigrations(): Promise<void> {
+    try {
+      await this.run('ALTER TABLE scheduled_notifications ADD COLUMN next_retry_at DATETIME');
+    } catch (error) {
+      const message = String(error);
+      if (!message.includes('duplicate column')) {
+        throw error;
+      }
+    }
   }
 
   /**
@@ -206,6 +262,16 @@ export class Database {
 
 // Singleton instance
 let dbInstance: Database | null = null;
+
+/**
+ * Reset the database singleton (for tests).
+ */
+export async function resetDatabaseSingleton(): Promise<void> {
+  if (dbInstance) {
+    await dbInstance.close();
+    dbInstance = null;
+  }
+}
 
 /**
  * Get or create database singleton instance

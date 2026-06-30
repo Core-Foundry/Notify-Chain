@@ -18,6 +18,7 @@ export interface RetryQueueConfig {
   multiplier?: number;
   jitter?: boolean;
   maxRetries?: number;
+  processIntervalMs?: number;
 }
 
 export interface WebhookSecret {
@@ -30,6 +31,11 @@ export interface RateLimitConfig {
   windowMs: number;
   maxRequests: number;
   clientOverrides: Record<string, { maxRequests: number; windowMs?: number }>;
+}
+
+export interface ApiKey {
+  key: string;
+  name?: string;
 }
 
 export interface Config {
@@ -46,11 +52,13 @@ export interface Config {
   retryQueue?: RetryQueueConfig;
   eventQueue?: EventQueueConfig;
   webhookSecrets?: WebhookSecret[];
+  apiKeys?: ApiKey[];
   scheduler?: SchedulerConfig;
   retryScheduler?: RetrySchedulerOptions;
   databasePath?: string;
   rateLimit?: RateLimitConfig;
   cleanup?: AppCleanupConfig;
+  analytics?: AnalyticsConfig;
 }
 
 export interface SchedulerConfig {
@@ -82,6 +90,8 @@ export interface AppCleanupConfig {
   rateLimitEventRetentionMs: number;
   /** Retain in-memory events for this long (ms). */
   eventRetentionMs: number;
+  /** Retain notification execution log rows for this long (ms). */
+  executionLogRetentionMs: number;
 }
 
 export interface RetrySchedulerOptions {
@@ -94,5 +104,16 @@ export interface RetrySchedulerOptions {
   multiplier: number;
   maxDelayMs: number;
   jitter: boolean;
+}
+
+export interface AnalyticsConfig {
+  enabled: boolean;
+  maxRecords: number;
+  maxBuckets: number;
+  bucketSizeMs: number;
+  /** How often to persist summarized snapshots (ms). */
+  persistIntervalMs: number;
+  /** How long to retain persisted snapshots (days). */
+  snapshotRetentionDays: number;
 }
 
