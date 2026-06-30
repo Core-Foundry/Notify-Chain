@@ -818,6 +818,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
       const url = new URL(req.url, 'http://localhost');
       const limit = url.searchParams.get('limit') ? parseInt(url.searchParams.get('limit')!, 10) : undefined;
       const offset = url.searchParams.get('offset') ? parseInt(url.searchParams.get('offset')!, 10) : undefined;
+      const cursor = url.searchParams.get('cursor') || undefined;
       const status = url.searchParams.get('status') as 'SUCCESS' | 'FAILED' | 'RETRY' | null;
       const startDate = url.searchParams.get('startDate');
       const endDate = url.searchParams.get('endDate');
@@ -827,6 +828,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
         correlationId,
         limit,
         offset,
+        cursor,
         status,
         startDate,
         endDate,
@@ -835,6 +837,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
       historyService.getHistory({
         limit,
         offset,
+        cursor,
         status: status || undefined,
         startDate: startDate || undefined,
         endDate: endDate || undefined,

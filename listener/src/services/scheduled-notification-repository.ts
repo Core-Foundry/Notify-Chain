@@ -163,6 +163,7 @@ export class ScheduledNotificationRepository {
             last_error = ?,
             error_details = ?,
             processing_completed_at = ?,
+            updated_at = ?,
             processor_id = NULL,
             lock_expires_at = NULL
           WHERE id = ?
@@ -180,6 +181,7 @@ export class ScheduledNotificationRepository {
           errorMsg,
           errorDetails,
           isFailed ? now.toISOString() : null,
+          now.toISOString(),
           model.id,
         ]);
 
@@ -210,14 +212,17 @@ export class ScheduledNotificationRepository {
       SET 
         status = ?,
         processing_completed_at = ?,
+        updated_at = ?,
         processor_id = NULL,
         lock_expires_at = NULL
       WHERE id = ?
     `;
 
+    const now = new Date().toISOString();
     await this.db.run(sql, [
       NotificationStatus.COMPLETED,
-      new Date().toISOString(),
+      now,
+      now,
       id,
     ]);
 
@@ -247,16 +252,18 @@ export class ScheduledNotificationRepository {
         error_details = ?,
         next_retry_at = ?,
         processing_completed_at = ?,
+        updated_at = ?,
         processor_id = NULL,
         lock_expires_at = NULL
       WHERE id = ?
     `;
 
+    const now = new Date().toISOString();
     const completedAt = isFailed ? new Date().toISOString() : null;
     const errorDetails = JSON.stringify({
       message: error.message,
       stack: error.stack,
-      timestamp: new Date().toISOString(),
+      timestamp: now,
     });
 
     await this.db.run(sql, [
@@ -264,6 +271,8 @@ export class ScheduledNotificationRepository {
       nextRetryCount,
       error.message,
       errorDetails,
+      isFailed ? now : null,
+      now,
       isFailed ? null : (nextRetryAt?.toISOString() ?? null),
       completedAt,
       id,
@@ -499,6 +508,15 @@ export class ScheduledNotificationRepository {
    * Convert database row to model
    */
   private rowToModel(row: ScheduledNotificationRow): ScheduledNotification {
+    // SQLite CURRENT_TIMESTAMP produces "YYYY-MM-DD HH:MM:SS" (UTC, no Z suffix).
+    // Appending Z ensures JS parses the value as UTC rather than local time,
+    // which prevents timezone-shifted timestamps in rowToModel output.
+    const parseUtc = (value: string | null | undefined): Date | undefined => {
+      if (!value) return undefined;
+      const normalized = value.includes('T') || value.endsWith('Z') ? value : value.replace(' ', 'T') + 'Z';
+      return new Date(normalized);
+    };
+
     return {
       id: row.id,
       payload: decompressPayload(row.payload),
@@ -506,18 +524,16 @@ export class ScheduledNotificationRepository {
       payloadHash: row.payload_hash,
       notificationType: row.notification_type as any,
       targetRecipient: row.target_recipient,
-      executeAt: new Date(row.execute_at),
-      createdAt: new Date(row.created_at),
-      updatedAt: new Date(row.updated_at),
+      executeAt: parseUtc(row.execute_at) as Date,
+      createdAt: parseUtc(row.created_at),
+      updatedAt: parseUtc(row.updated_at),
       status: row.status as NotificationStatus,
       retryCount: row.retry_count,
       maxRetries: row.max_retries,
-      processingStartedAt: row.processing_started_at ? new Date(row.processing_started_at) : null,
-      processingCompletedAt: row.processing_completed_at
-        ? new Date(row.processing_completed_at)
-        : null,
+      processingStartedAt: parseUtc(row.processing_started_at) ?? null,
+      processingCompletedAt: parseUtc(row.processing_completed_at) ?? null,
       processorId: row.processor_id,
-      lockExpiresAt: row.lock_expires_at ? new Date(row.lock_expires_at) : null,
+      lockExpiresAt: parseUtc(row.lock_expires_at) ?? null,
       lastError: row.last_error,
       errorDetails: row.error_details,
       eventId: row.event_id,

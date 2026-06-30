@@ -19,6 +19,7 @@ import { useWalletAccountSync } from '../hooks/useWalletAccountSync';
 const DEFAULT_EVENT_COUNT = 5000;
 const DEFAULT_LIMIT = 12;
 const API_URL = import.meta.env.VITE_EVENTS_API_URL ?? 'http://localhost:8787/api/events';
+const POLL_INTERVAL_MS = 15_000;
 const LISTENER_BASE_URL = API_URL.replace('/api/events', '');
 const INDEXING_HEALTH_URL =
   import.meta.env.VITE_INDEXING_HEALTH_URL ?? resolveIndexingHealthUrl(API_URL);
@@ -102,8 +103,23 @@ export function EventExplorerPage() {
     loadEvents();
     loadStatus();
 
+    // Poll for status updates so delivered/failed notifications are reflected
+    // without requiring a manual page refresh.
+    const intervalId = setInterval(async () => {
+      try {
+        const remoteEvents = await fetchEvents(API_URL);
+        if (!cancelled) {
+          setEvents(remoteEvents);
+        }
+      } catch {
+        // Silently ignore polling errors — the error banner is reserved for
+        // the initial load failure so background polls don't disrupt the user.
+      }
+    }, POLL_INTERVAL_MS);
+
     return () => {
       cancelled = true;
+      clearInterval(intervalId);
     };
   }, [lastFetchedAt, setEvents, setError, setLoading]);
 
