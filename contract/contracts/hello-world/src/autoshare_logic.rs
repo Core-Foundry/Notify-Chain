@@ -1,11 +1,16 @@
 use crate::base::errors::Error;
 use crate::base::events::{
     AdminTransferred, AuditAction, AuditRecordAppended, AuthorizationFailure, AutoshareCreated,
-    AutoshareUpdated, BatchNotificationsCreated, BatchProcessingCompleted, CategoryRegistered,
-    ContractPaused, ContractUnpaused, GroupActivated, GroupDeactivated, NotificationAccessed,
-    NotificationCategory, NotificationExpired, NotificationExtended, NotificationLimitsConfigured,
+    AutoshareUpdated, BatchNotificationsCreated, CategoryRegistered, ContractPaused,
+    ContractUnpaused, GroupActivated, GroupDeactivated, NotificationCategory, NotificationExpired,
     NotificationPriority, NotificationRevoked, NotificationScheduled,
-    ScheduledNotificationCancelled, SchemaVersionSet, Withdrawal,
+    NotificationExtended, NotificationPriority, NotificationRevoked, NotificationScheduled,
+    ScheduledNotificationCancelled, Withdrawal,
+    NotificationPriority, NotificationRevoked, NotificationScheduled, ScheduledNotificationCancelled,
+    Withdrawal, BatchProcessingCompleted,
+    NotificationExtended, NotificationLimitsConfigured, NotificationPriority, NotificationRevoked,
+    NotificationScheduled, ScheduledNotificationCancelled, Withdrawal,
+    SchemaVersionSet, NotificationAccessed,
 };
 use crate::base::types::{
     AuditRecord, AutoShareDetails, GroupMember, NotificationLimits, PaymentHistory,
@@ -54,8 +59,6 @@ pub enum DataKey {
     RegisteredCategories,
     /// Stores the current on-chain notification schema version.
     SchemaVersion,
-    /// Per-sender reputation record.
-    Reputation(Address),
 }
 
 // ============================================================================

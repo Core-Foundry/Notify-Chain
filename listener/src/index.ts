@@ -153,8 +153,6 @@ async function main() {
 
     if (reconciliationEngine) {
       reconciliationEngine.stop();
-    }
-
     if (metricsRunner) {
       await metricsRunner.stop();
     }

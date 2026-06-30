@@ -189,8 +189,8 @@ describe('RateLimiter', () => {
       expect(res3._getHeaders().get('retry-after')).toBeDefined();
 
       const body = JSON.parse(res3._getBody());
-      expect(body.error).toBe('TooManyRequests');
-      expect(body.message).toBe('Rate limit exceeded. Please try again later.');
+      expect(body.error).toBe('Too Many Requests');
+      expect(body.message).toContain('Rate limit exceeded');
       limiter.destroy();
     });
 

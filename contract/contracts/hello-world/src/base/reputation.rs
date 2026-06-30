@@ -126,7 +126,6 @@ impl SenderReputation {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use soroban_sdk::testutils::Address as _;
 
     #[test]
     fn test_reputation_tier_classification() {
@@ -157,8 +156,7 @@ mod tests {
 
     #[test]
     fn test_sender_reputation_tracking() {
-        let env = Env::default();
-        let sender = Address::generate(&env);
+        let sender = Address::random(&Default::default());
         let mut rep = SenderReputation::new(sender.clone(), 1000);
 
         assert_eq!(rep.reputation_score, INITIAL_REPUTATION_SCORE);

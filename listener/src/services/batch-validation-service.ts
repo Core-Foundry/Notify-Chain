@@ -187,7 +187,7 @@ export class BatchValidationService {
       } else {
         invalidEntries.push({
           index,
-          error: validation.error ?? 'Invalid entry',
+          error: validation.error,
         });
       }
     });

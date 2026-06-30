@@ -758,8 +758,8 @@ Retry-After: 12
 X-Request-Id: 8b4c3d2e-...
 
 {
-  "error": "TooManyRequests",
-  "message": "Rate limit exceeded. Please try again later."
+  "error": "Too Many Requests",
+  "message": "Rate limit exceeded. Try again in 12 seconds."
 }
 ```
 
