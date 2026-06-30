@@ -1,5 +1,12 @@
 # Contributor Environment Setup Guide
 
+> **Goal**: A new contributor should be able to set up NotifyChain from scratch
+> on a clean machine without asking maintainers for help.
+
+This guide walks you through setting up a local development environment for
+NotifyChain. By the end, you will have the listener service, the dashboard,
+the frontend analytics app, and the smart contracts building and running on
+your machine.
 This guide walks you through setting up a local development environment for NotifyChain. By the end, you will have the listener service, the dashboard, and the smart contracts building and running on your machine.
 
 ---
@@ -10,6 +17,13 @@ This guide walks you through setting up a local development environment for Noti
 2. [Clone the Repository](#2-clone-the-repository)
 3. [Listener Service Setup](#3-listener-service-setup)
 4. [Dashboard Setup](#4-dashboard-setup)
+5. [Frontend (Next.js Analytics) Setup](#5-frontend-nextjs-analytics-setup)
+6. [Smart Contracts Setup](#6-smart-contracts-setup)
+7. [Environment Variables Reference](#7-environment-variables-reference)
+8. [Full-Stack Verification Checklist](#8-full-stack-verification-checklist)
+9. [Running Tests](#9-running-tests)
+10. [VS Code Setup (Recommended)](#10-vs-code-setup-recommended)
+11. [Troubleshooting & FAQ](#11-troubleshooting--faq)
 5. [Smart Contracts Setup](#5-smart-contracts-setup)
 6. [Environment Variables Reference](#6-environment-variables-reference)
 7. [Running Tests](#7-running-tests)
@@ -80,6 +94,7 @@ rustc --version && cargo --version && stellar --version
 ## 2. Clone the Repository
 
 ```bash
+git clone https://github.com/CollinsC1O/Notify-Chain.git
 git clone https://github.com/Core-Foundry/Notify-Chain.git
 cd Notify-Chain
 ```
@@ -89,6 +104,7 @@ If you plan to contribute, fork the repository first, then clone your fork:
 ```bash
 git clone https://github.com/YOUR-USERNAME/Notify-Chain.git
 cd Notify-Chain
+git remote add upstream https://github.com/CollinsC1O/Notify-Chain.git
 git remote add upstream https://github.com/Core-Foundry/Notify-Chain.git
 ```
 
@@ -120,6 +136,17 @@ STELLAR_RPC_URL=https://soroban-testnet.stellar.org:443
 CONTRACT_ADDRESSES=[{"address":"YOUR_CONTRACT_ID","events":["*"]}]
 ```
 
+If you plan to use Discord notifications, also set:
+
+```bash
+DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/YOUR_WEBHOOK_ID/YOUR_TOKEN
+DISCORD_WEBHOOK_ID=YOUR_WEBHOOK_ID
+```
+
+> **Note**: Both `DISCORD_WEBHOOK_URL` and `DISCORD_WEBHOOK_ID` are required
+> together. If either is missing, Discord notifications are disabled.
+
+For a full reference of every variable, see [Environment Variables Reference](#7-environment-variables-reference).
 For a full reference of every variable, see [Environment Variables Reference](#6-environment-variables-reference).
 
 ### 3.3 Initialize the Database
@@ -206,6 +233,55 @@ Open [http://localhost:5173](http://localhost:5173) in your browser. The dashboa
 
 ---
 
+## 5. Frontend (Next.js Analytics) Setup
+
+> **Note**: The frontend is a legacy Next.js app for analytics visualization.
+> Most contributors only need the **Dashboard** (section 4). Skip this section
+> unless you are working on analytics features.
+
+The frontend is a Next.js 14 application with Chart.js for analytics
+dashboards and Tailwind CSS for styling.
+
+### 5.1 Install Dependencies
+
+```bash
+cd frontend
+npm install
+```
+
+### 5.2 Configure Environment
+
+The frontend reads from the listener's API and does not require its own
+`.env` file for basic operation. If you need to override defaults, create:
+
+```bash
+echo "NEXT_PUBLIC_API_URL=http://localhost:8787" > .env.local
+```
+
+### 5.3 Run the Frontend
+
+```bash
+npm run dev
+```
+
+Opens at [http://localhost:3000](http://localhost:3000).
+
+### 5.4 Useful Frontend Commands
+
+| Command | Purpose |
+|---------|---------|
+| `npm run dev` | Start Next.js dev server |
+| `npm run build` | Production build |
+| `npm start` | Start production server |
+| `npm run lint` | Run Next.js linting |
+
+---
+
+## 6. Smart Contracts Setup
+
+The project contains two Soroban smart contracts. Building them is optional — you only need to do this if you are modifying contracts or deploying your own instances.
+
+### 6.1 Build Contracts
 ## 5. Smart Contracts Setup
 
 The project contains two Soroban smart contracts. Building them is optional — you only need to do this if you are modifying contracts or deploying your own instances.
@@ -228,6 +304,7 @@ cd Documents/Task\ Bounty
 stellar contract build
 ```
 
+### 6.2 Run Contract Tests
 ### 5.2 Run Contract Tests
 
 ```bash
@@ -240,6 +317,7 @@ cd Documents/Task\ Bounty
 cargo test
 ```
 
+### 6.3 Deploy to Testnet (Optional)
 ### 5.3 Deploy to Testnet (Optional)
 
 This requires a funded Stellar testnet identity:
@@ -259,6 +337,41 @@ stellar contract deploy \
 # The contract ID is printed after successful deployment
 ```
 
+### 6.4 Initialize a Deployed Contract
+
+Most contracts require initialization after deployment. For the AutoShare
+contract:
+
+```bash
+# Find your wallet address
+stellar keys address my-identity
+
+# Initialize the contract with your admin address
+stellar contract invoke \
+  --id YOUR_CONTRACT_ID \
+  --source my-identity \
+  --network testnet \
+  -- \
+  initialize_admin \
+  --admin YOUR_WALLET_ADDRESS
+```
+
+For the TaskBounty contract (see `Documents/Task Bounty/SETUP.md` for
+detailed configuration):
+
+```bash
+stellar contract invoke \
+  --id YOUR_CONTRACT_ID \
+  --source my-identity \
+  --network testnet \
+  -- \
+  initialize
+```
+
+After initializing, add the contract ID to your `listener/.env`
+`CONTRACT_ADDRESSES` so the listener knows to monitor it.
+
+### 6.5 Useful Contract Commands
 ### 5.4 Useful Contract Commands
 
 | Command                                          | Purpose                     |
@@ -273,6 +386,9 @@ stellar contract deploy \
 
 ---
 
+## 7. Environment Variables Reference
+
+### 7.1 Listener (`listener/.env`)
 ## 6. Environment Variables Reference
 
 ### 6.1 Listener (`listener/.env`)
@@ -294,6 +410,9 @@ stellar contract deploy \
 | `WEBHOOK_SECRETS` | No | `[]` | JSON array of webhook secrets for HMAC verification. Format: `[{"id":"default","secret":"whsec_..."}]` |
 | **Discord Notifications** | | | |
 | `DISCORD_WEBHOOK_URL` | No | — | Discord webhook URL for sending notifications |
+| `DISCORD_WEBHOOK_ID` | No | — | Discord webhook ID (required together with webhook URL) |
+| `NOTIFICATION_DEDUPLICATION_WINDOW_MS` | No | `60000` | In-memory dedup window for Discord notifications (ms) |
+| `NOTIFICATION_DEDUPLICATION_MAX_SIZE` | No | `10000` | Max entries in in-memory dedup cache |
 | `DISCORD_WEBHOOK_ID` | No | — | Discord webhook ID (required if webhook URL is set) |
 | **Retry Queue** | | | |
 | `RETRY_BASE_DELAY_MS` | No | `5000` | Base delay for notification retry exponential backoff |
@@ -326,6 +445,7 @@ stellar contract deploy \
 | `LOG_LEVEL` | No | `info` | Winston log level (`error`, `warn`, `info`, `debug`) |
 | `NODE_ENV` | No | — | Set to `production` for newline-delimited JSON log output |
 
+### 7.2 Dashboard (`dashboard/.env`)
 ### 6.2 Dashboard (`dashboard/.env`)
 
 | Variable | Required | Default | Description |
@@ -333,6 +453,7 @@ stellar contract deploy \
 | `VITE_EVENTS_API_URL` | No | `http://localhost:8787/api/events` | Listener API endpoint for fetching events |
 | `VITE_STELLAR_NETWORK` | No | `TESTNET` | Stellar network for wallet integration (`TESTNET` or `MAINNET`) |
 
+### 7.3 Minimum Viable Configuration
 ### 6.3 Minimum Viable Configuration
 
 To run the listener with no optional features:
@@ -342,12 +463,91 @@ STELLAR_RPC_URL=https://soroban-testnet.stellar.org:443
 CONTRACT_ADDRESSES=[{"address":"C...","events":["*"]}]
 EVENTS_API_PORT=8787
 EVENTS_API_CORS_ORIGIN=http://localhost:5173
+DATABASE_PATH=./data/notifications.db
 ```
 
 To add Discord notifications, also set:
 
 ```bash
 DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/YOUR_WEBHOOK_ID/YOUR_TOKEN
+DISCORD_WEBHOOK_ID=YOUR_WEBHOOK_ID
+```
+
+---
+
+## 8. Full-Stack Verification Checklist
+
+Run these checks to confirm every component is working correctly.
+
+### 8.1 Listener Health
+
+```bash
+# Check the health endpoint
+curl http://localhost:8787/health
+
+# Expected: {"status":"ok","services":{"stellarRpc":{"status":"ok"},"eventRegistry":{"status":"ok","eventCount":0}}}
+```
+
+### 8.2 Event Feed
+
+```bash
+# Check the events API (may be empty if no contracts are active)
+curl http://localhost:8787/api/events
+
+# Expected: {"events":[],"total":0} (or populated with events)
+```
+
+### 8.3 Scheduler Stats
+
+```bash
+# Check scheduler status
+curl http://localhost:8787/api/schedule/stats
+
+# Expected: {"pending":0,"processing":0,"completed":0,"failed":0,"overdue":0}
+```
+
+### 8.4 Dashboard
+
+Open [http://localhost:5173](http://localhost:5173) in your browser and
+confirm:
+- The page loads without errors
+- The events feed renders (may be empty)
+- No CORS errors in the browser console (F12 → Console)
+
+### 8.5 Frontend Analytics
+
+If you set up the frontend, open
+[http://localhost:3000](http://localhost:3000) and confirm:
+- The analytics dashboard loads
+- Charts render without errors
+
+### 8.6 Database Inspection
+
+```bash
+# Verify the database exists and has the correct schema
+sqlite3 listener/data/notifications.db ".tables"
+
+# Expected: notification_execution_log  notification_templates        polling_cursors
+#           notification_template_audit_log  processed_events        rate_limit_events
+#           scheduled_notifications
+```
+
+### 8.7 Clean Up and Start Fresh
+
+If you need to reset everything:
+
+```bash
+# Reset listener database
+rm -f listener/data/notifications.db
+cd listener && npm run migrate
+
+# Clear listener event registry (restart the process)
+# Stop with Ctrl+C, then npm run dev again
+```
+
+---
+
+## 9. Running Tests
 ```
 
 ---
@@ -404,6 +604,7 @@ cargo test --workspace --all-features --verbose
 
 ---
 
+## 10. VS Code Setup (Recommended)
 ## 8. VS Code Setup (Recommended)
 
 ### Extensions
@@ -431,6 +632,7 @@ This configures `rust-analyzer` to use the `wasm32` target and avoids false-posi
 
 ---
 
+## 11. Troubleshooting & FAQ
 ## 9. Troubleshooting & FAQ
 
 > A more extensive troubleshooting guide is available at [`TROUBLESHOOTING.md`](TROUBLESHOOTING.md). This section covers the most common setup issues.
@@ -449,6 +651,9 @@ npm rebuild sqlite3
 npm uninstall sqlite3 && npm install
 ```
 
+On Windows, ensure you have Visual Studio Build Tools installed with the
+"C++ build tools" workload. On macOS, install Xcode Command Line Tools:
+`xcode-select --install`.
 On Windows, ensure you have Visual Studio Build Tools installed with the "C++ build tools" workload.
 
 ---
@@ -560,6 +765,7 @@ stellar contract build
 
 ### After a `git pull`
 
+If things stop working after pulling latest changes, run the full refresh:
 If things stop working after pulling latest changes:
 
 ```bash
@@ -571,12 +777,16 @@ cd listener && npm install && npm run migrate
 
 # Dashboard
 cd dashboard && npm install
+
+# Frontend
+cd frontend && npm install
 ```
 
 ---
 
 ### Still Stuck?
 
+1. Search [open issues](https://github.com/CollinsC1O/Notify-Chain/issues) — your problem may already be reported.
 1. Search [open issues](https://github.com/Core-Foundry/Notify-Chain/issues) — your problem may already be reported.
 2. Read the detailed [Troubleshooting Guide](TROUBLESHOOTING.md).
 3. Open a new issue with:
@@ -615,6 +825,10 @@ Notify-Chain/
 │
 ├── Documents/Task Bounty/             #  TaskBounty contract (Soroban)
 │
+├── frontend/                          #  Next.js analytics dashboard (Chart.js)
+│   └── app/
+│       ├── analytics/                 # Analytics pages with charts
+│       └── page.tsx                   # Landing page
 ├── frontend/                          # Legacy Next.js frontend (not actively maintained)
 │
 ├── scripts/                           # Helper scripts (health check, etc.)
@@ -623,5 +837,6 @@ Notify-Chain/
 ├── CONTRIBUTING.md                    # Contribution guidelines & PR workflow
 ├── TROUBLESHOOTING.md                 # Detailed troubleshooting reference
 ├── ARCHITECTURE_OVERVIEW.md           # High-level architecture walkthrough
+├── SYSTEM_ARCHITECTURE.md             # Visual architecture with Mermaid diagrams
 └── README.md                          # Project overview and quick start
 ```

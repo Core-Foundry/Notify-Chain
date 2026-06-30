@@ -227,6 +227,104 @@ describe('GET /api/notifications/history', () => {
     expect(status).toBe(200);
     expect((body as any).limit).toBeLessThanOrEqual(100);
   });
+
+  it('supports cursor-based pagination', async () => {
+    server = await startServer(BASE_OPTIONS);
+
+    for (let i = 0; i < 5; i++) {
+      await db.run(
+        `INSERT INTO scheduled_notifications 
+         (payload, notification_type, target_recipient, execute_at, status)
+         VALUES (?, ?, ?, ?, ?)`,
+        [JSON.stringify({ test: true }), 'discord', 'test_user', new Date().toISOString(), 'COMPLETED']
+      );
+    }
+
+    const times = [
+      '2026-06-20T10:00:00.000Z',
+      '2026-06-20T10:00:01.000Z',
+      '2026-06-20T10:00:02.000Z',
+      '2026-06-20T10:00:03.000Z',
+      '2026-06-20T10:00:04.000Z',
+    ];
+
+    for (let i = 1; i <= 5; i++) {
+      await db.run(
+        `INSERT INTO notification_execution_log 
+         (scheduled_notification_id, execution_attempt, execution_time, status, duration_ms)
+         VALUES (?, ?, ?, ?, ?)`,
+        [i, 1, times[i - 1], 'SUCCESS', 100]
+      );
+    }
+
+    const { status: status1, body: body1 } = await makeRequest(
+      server,
+      '/api/notifications/history?limit=2'
+    );
+
+    expect(status1).toBe(200);
+    expect((body1 as any).records.length).toBe(2);
+    expect((body1 as any).records[0].executionTime).toBe(times[4]); // DESC order
+    expect((body1 as any).records[1].executionTime).toBe(times[3]);
+    expect((body1 as any).nextCursor).toBeDefined();
+
+    const cursor = encodeURIComponent((body1 as any).nextCursor);
+    const { status: status2, body: body2 } = await makeRequest(
+      server,
+      `/api/notifications/history?limit=2&cursor=${cursor}`
+    );
+
+    expect(status2).toBe(200);
+    expect((body2 as any).records.length).toBe(2);
+    expect((body2 as any).records[0].executionTime).toBe(times[2]);
+    expect((body2 as any).records[1].executionTime).toBe(times[1]);
+  });
+
+  it('handles sorting consistency with tie-breakers', async () => {
+    server = await startServer(BASE_OPTIONS);
+
+    for (let i = 0; i < 3; i++) {
+      await db.run(
+        `INSERT INTO scheduled_notifications 
+         (payload, notification_type, target_recipient, execute_at, status)
+         VALUES (?, ?, ?, ?, ?)`,
+        [JSON.stringify({ test: true }), 'discord', 'test_user', new Date().toISOString(), 'COMPLETED']
+      );
+    }
+
+    const sameTime = '2026-06-20T10:00:00.000Z';
+
+    // Insert multiple records with the exact same execution_time
+    for (let i = 1; i <= 3; i++) {
+      await db.run(
+        `INSERT INTO notification_execution_log 
+         (scheduled_notification_id, execution_attempt, execution_time, status, duration_ms)
+         VALUES (?, ?, ?, ?, ?)`,
+        [i, 1, sameTime, 'SUCCESS', 100]
+      );
+    }
+
+    const { status: status1, body: body1 } = await makeRequest(
+      server,
+      '/api/notifications/history?limit=2'
+    );
+
+    expect(status1).toBe(200);
+    expect((body1 as any).records.length).toBe(2);
+    expect((body1 as any).records[0].id).toBe(3); // DESC order
+    expect((body1 as any).records[1].id).toBe(2);
+    expect((body1 as any).nextCursor).toBeDefined();
+
+    const cursor = encodeURIComponent((body1 as any).nextCursor);
+    const { status: status2, body: body2 } = await makeRequest(
+      server,
+      `/api/notifications/history?limit=2&cursor=${cursor}`
+    );
+
+    expect(status2).toBe(200);
+    expect((body2 as any).records.length).toBe(1);
+    expect((body2 as any).records[0].id).toBe(1);
+  });
 });
 
 describe('GET /api/notifications/history database failures', () => {

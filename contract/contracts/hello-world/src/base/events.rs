@@ -201,6 +201,36 @@ pub struct ScheduledNotificationCancelled {
     pub notification_id: BytesN<32>,
 }
 
+/// Emitted when a notification is confirmed as delivered to its intended recipient.
+#[contractevent(data_format = "single-value")]
+#[derive(Clone)]
+pub struct NotificationDelivered {
+    #[topic]
+    pub notification_id: BytesN<32>,
+    #[topic]
+    pub delivered_by: Address,
+    #[topic]
+    pub category: NotificationCategory,
+    #[topic]
+    pub priority: NotificationPriority,
+    pub delivered_at: u64,
+}
+
+/// Emitted when a sender recalls a scheduled notification before delivery confirmation.
+#[contractevent(data_format = "single-value")]
+#[derive(Clone)]
+pub struct NotificationRecalled {
+    #[topic]
+    pub notification_id: BytesN<32>,
+    #[topic]
+    pub recalled_by: Address,
+    #[topic]
+    pub category: NotificationCategory,
+    #[topic]
+    pub priority: NotificationPriority,
+    pub recalled_at: u64,
+}
+
 /// Emitted when a notification is scheduled on-chain with a bounded lifetime.
 ///
 /// Off-chain consumers can use this to track the notification's existence and
@@ -273,7 +303,7 @@ pub struct AuditRecordAppended {
     pub category: NotificationCategory,
     pub seq: u64,
     pub actor: Address,
-    pub timestamp: u64,
+    // GAS: Removed `timestamp` — derivable from ledger metadata
 }
 
 /// Emitted when a batch of notifications is created in a single transaction.
@@ -297,8 +327,8 @@ pub struct BatchNotificationsCreated {
 ///
 /// The `notification_id` is published as an indexed topic so consumers can
 /// subscribe to the revocation of a specific notification; the `revoked_by`
-/// address indicates who initiated the revocation, and `revoked_at` records
-/// the ledger timestamp when the revocation occurred.
+/// address indicates who initiated the revocation. The timestamp when the
+/// revocation occurred is derivable from ledger metadata.
 #[contractevent(data_format = "single-value")]
 #[derive(Clone)]
 pub struct NotificationRevoked {
@@ -310,7 +340,7 @@ pub struct NotificationRevoked {
     pub category: NotificationCategory,
     #[topic]
     pub priority: NotificationPriority,
-    pub revoked_at: u64,
+    // GAS: Removed `revoked_at` — derivable from ledger metadata
 }
 
 /// Emitted when an off-chain batch of notifications finishes processing.
@@ -422,4 +452,19 @@ pub struct NotificationAccessed {
     pub category: NotificationCategory,
     /// Ledger timestamp (seconds) when the access occurred.
     pub accessed_at: u64,
+}
+
+/// Emitted when a notification is acknowledged by an authorized user.
+#[contractevent(data_format = "single-value")]
+#[derive(Clone)]
+pub struct NotificationAcknowledged {
+    #[topic]
+    pub notification_id: BytesN<32>,
+    #[topic]
+    pub acknowledger: Address,
+    #[topic]
+    pub category: NotificationCategory,
+    #[topic]
+    pub priority: NotificationPriority,
+    pub timestamp: u64,
 }

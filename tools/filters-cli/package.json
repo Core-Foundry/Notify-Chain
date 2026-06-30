@@ -1,0 +1,14 @@
+{
+  "name": "notify-chain-filters-cli",
+  "version": "0.1.0",
+  "private": true,
+  "bin": {
+    "notify-filters": "index.js"
+  },
+  "scripts": {
+    "test": "node ./__tests__/cli.test.js"
+  },
+  "dependencies": {
+    "commander": "^11.0.0"
+  }
+}

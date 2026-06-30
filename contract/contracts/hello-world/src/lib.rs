@@ -389,9 +389,25 @@ impl AutoShareContract {
         autoshare_logic::expire_notification(env, notification_id).unwrap();
     }
 
+    /// Confirms delivery of a scheduled notification.
+    ///
+    /// Only the notification creator or the contract admin can confirm delivery.
+    /// The notification must exist, not already be revoked or expired, and not yet be marked delivered.
+    pub fn confirm_notification_delivery(env: Env, notification_id: BytesN<32>, caller: Address) {
+        autoshare_logic::confirm_notification_delivery(env, notification_id, caller).unwrap();
+    }
+
+    /// Recalls a scheduled notification before delivery confirmation.
+    ///
+    /// Only the notification creator or the contract admin can recall a notification.
+    /// The notification must exist, not already be revoked or expired, and not yet be delivered.
+    pub fn recall_notification(env: Env, notification_id: BytesN<32>, caller: Address) {
+        autoshare_logic::recall_notification(env, notification_id, caller).unwrap();
     /// Emits a `BatchProcessingCompleted` event for off-chain listeners.
     pub fn emit_batch_completed(env: Env, batch_id: BytesN<32>, processed_count: u32) {
         autoshare_logic::emit_batch_completed(env, batch_id, processed_count).unwrap();
+    }
+
     // ============================================================================
     // Batch Notification Creation
     // ============================================================================
@@ -457,6 +473,9 @@ impl AutoShareContract {
         autoshare_logic::is_notification_revoked(env, notification_id).unwrap()
     }
 
+    /// Acknowledges multiple scheduled notifications in a single batch.
+    pub fn acknowledge_notifications(env: Env, caller: Address, notification_ids: Vec<BytesN<32>>) {
+        autoshare_logic::acknowledge_notifications(env, caller, notification_ids).unwrap();
     /// Extends the expiration period of a scheduled notification by `extension_seconds`.
     ///
     /// Only the notification creator or the contract admin can extend it.
@@ -630,6 +649,8 @@ mod tests {
     #[path = "../tests/revocation_test.rs"]
     mod revocation_test;
 
+    #[path = "../tests/batch_ack_test.rs"]
+    mod batch_ack_test;
     #[path = "../tests/fuzz_test.rs"]
     mod fuzz_test;
 

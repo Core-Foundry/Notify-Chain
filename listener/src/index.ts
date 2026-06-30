@@ -15,6 +15,14 @@ import { ArchiveStore } from './services/archive-store';
 import { loadArchiveConfig } from './services/archive-config';
 import { initializeDatabase } from './database/database';
 import { DiscordNotificationService } from './services/discord-notification';
+import { TemplateService } from './services/template-service';
+import { TemplateRepository } from './services/template-repository';
+import { TemplateValidator } from './services/template-validator';
+import { TemplateRenderer } from './services/template-renderer';
+import {
+  IndexingReconciliationEngine,
+  createDefaultAlertSink,
+} from './services/indexing-reconciliation-engine';
 import { initNotificationAnalyticsAggregator } from './services/notification-analytics-aggregator';
 import { NotificationMetricsStore } from './services/notification-metrics-store';
 import { NotificationMetricsRunner } from './services/notification-metrics-runner';
@@ -35,6 +43,7 @@ async function main() {
   let notificationAPI: NotificationAPI | null = null;
   let templateService: NotificationTemplateService | null = null;
   let cleanupService: CleanupService | null = null;
+  let reconciliationEngine: IndexingReconciliationEngine | null = null;
   let archiveService: ArchiveService | null = null;
   let archiveStore: ArchiveStore | null = null;
   let metricsRunner: NotificationMetricsRunner | null = null;
@@ -62,6 +71,13 @@ async function main() {
     cleanupService = new CleanupService(db, eventRegistry, config.cleanup);
     cleanupService.start();
 
+    reconciliationEngine = new IndexingReconciliationEngine({
+      db,
+      rpcUrl: config.stellarRpcUrl,
+      contractAddresses: config.contractAddresses.map((c) => c.address),
+      alertSink: createDefaultAlertSink(config.discord?.webhookUrl),
+    });
+    reconciliationEngine.start();
     if (config.analytics?.enabled) {
       metricsStore = new NotificationMetricsStore(db);
       metricsRunner = new NotificationMetricsRunner(config.analytics, metricsStore);
@@ -89,6 +105,18 @@ async function main() {
     if (config.scheduler?.enabled) {
       const repository = new ScheduledNotificationRepository(db);
       notificationAPI = new NotificationAPI(repository);
+
+      // Initialize template service
+      const templateRepository = new TemplateRepository(db);
+      const templateValidator = new TemplateValidator();
+      const templateRenderer = new TemplateRenderer();
+      templateService = new TemplateService(
+        templateRepository,
+        templateValidator,
+        templateRenderer
+      );
+
+      logger.info('Template service initialized successfully');
 
       // Initialize scheduler with Discord service if available
       let discordService: DiscordNotificationService | null = null;
@@ -119,6 +147,8 @@ async function main() {
     stellarNetworkPassphrase: config.stellarNetworkPassphrase,
     contractAddresses: config.contractAddresses,
     discordWebhookUrl: config.discord?.webhookUrl,
+    webhookSecrets: config.webhookSecrets,
+    apiKeys: config.apiKeys,
     notificationAPI,
     templateService,
     rateLimit: config.rateLimit,
@@ -142,6 +172,8 @@ async function main() {
       await cleanupService.stop();
     }
 
+    if (reconciliationEngine) {
+      reconciliationEngine.stop();
     if (metricsRunner) {
       await metricsRunner.stop();
     }
