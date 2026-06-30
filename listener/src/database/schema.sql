@@ -117,6 +117,16 @@ CREATE INDEX IF NOT EXISTS idx_rate_limit_events_timestamp
 CREATE INDEX IF NOT EXISTS idx_rate_limit_events_client_id 
   ON rate_limit_events(client_id);
 
+
+-- Migration tracking table: stores the hash of the last applied schema
+-- so CI/deployments can detect pending (unapplied) schema changes.
+-- See: scripts/migration-check.ts and issue #103.
+CREATE TABLE IF NOT EXISTS schema_migrations (
+  version TEXT PRIMARY KEY,           -- Human-readable identifier (e.g. 'v1', 'v2-...')
+  schema_hash TEXT NOT NULL,          -- SHA-256 of the schema.sql contents at apply time
+  applied_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  source TEXT NOT NULL DEFAULT 'manual'  -- 'manual', 'migrate', 'migrate:check'
+);
 -- Notification templates
 CREATE TABLE IF NOT EXISTS notification_templates (
   id TEXT PRIMARY KEY,

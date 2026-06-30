@@ -69,6 +69,11 @@ jobs:
       - name: Run tests
         working-directory: listener
         run: npm test --silent
+      - name: Verify database schema is up-to-date
+        working-directory: listener
+        run: |
+          npm run migrate
+          npm run migrate:check
 
   check-migrations:
     name: Check Pending Migrations
