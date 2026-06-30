@@ -98,4 +98,5 @@ export interface SchedulerConfig {
   processorId?: string;
   batchSize: number;
   timingBufferMs: number;
+  retryDelayMs?: number;
 }
