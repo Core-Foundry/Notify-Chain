@@ -149,6 +149,11 @@ export class NotificationTemplateRepository {
     return persisted;
   }
 
+  async getAll(): Promise<NotificationTemplate[]> {
+    const rows = await this.db.all<NotificationTemplateRow>(
+      'SELECT * FROM notification_templates',
+    );
+    return rows.map(row => this.rowToModel(row));
   async listAll(): Promise<NotificationTemplate[]> {
     const rows = await this.db.all<NotificationTemplateRow>(
       'SELECT * FROM notification_templates ORDER BY created_at DESC',

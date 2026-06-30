@@ -4187,6 +4187,11 @@ body {
   }
 }
 
+/* ─── Templates Page Styles ────────────────────────────────────────────────── */
+.templates-page {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 24px;
 @media (max-width: 600px) {
   /* Stack rows as definition lists on very small screens */
   .export-table,
@@ -4583,6 +4588,30 @@ body {
   border-color: var(--hm-cell-hover-ring);
 }
 
+.templates-preview__variable input {
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 8px;
+  padding: 8px 12px;
+  background: rgba(255, 255, 255, 0.05);
+  color: inherit;
+  font-size: 0.95rem;
+}
+
+.templates-preview__content {
+  padding: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.templates-preview__subject,
+.templates-preview__body {
+  margin-top: 12px;
+}
+
+.templates-preview__body pre {
+  margin: 8px 0 0;
+  white-space: pre-wrap;
 .theme-toggle:focus-visible {
   outline: 2px solid var(--hm-accent);
   outline-offset: 2px;

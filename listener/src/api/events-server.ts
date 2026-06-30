@@ -1024,6 +1024,58 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
       return;
     }
 
+    // GET /api/templates
+    if (req.method === 'GET' && url.pathname === '/api/templates') {
+      if (!options.templateService) {
+        res.writeHead(503, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Template service not enabled' }));
+        return;
+      }
+
+      logger.info('Handling GET /api/templates', { requestId, correlationId });
+      options.templateService.getAll()
+        .then((templates) => {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(templates.map(serializeTemplate)));
+        })
+        .catch((error) => {
+          logger.error('Failed to load templates', { error, requestId, correlationId });
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: (error as Error).message }));
+        });
+      return;
+    }
+
+    // DELETE /api/templates/:id
+    const deleteTemplateMatch = url.pathname.match(/^\/api\/templates\/([^/]+)$/);
+    if (req.method === 'DELETE' && deleteTemplateMatch) {
+      if (!options.templateService) {
+        res.writeHead(503, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Template service not enabled' }));
+        return;
+      }
+
+      const templateId = decodeURIComponent(deleteTemplateMatch[1]);
+      logger.info('Handling DELETE /api/templates/:id', { requestId, correlationId, templateId });
+
+      options.templateService.delete(templateId)
+        .then(() => {
+          res.writeHead(204);
+          res.end();
+        })
+        .catch((error) => {
+          if (error instanceof TemplateNotFoundError) {
+            res.writeHead(404, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: error.message }));
+            return;
+          }
+          logger.error('Failed to delete template', { error, requestId, correlationId, templateId });
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: (error as Error).message }));
+        });
+      return;
+    }
+
     // POST /api/templates
     if (req.method === 'POST' && url.pathname === '/api/templates') {
       if (!options.templateService) {

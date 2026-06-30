@@ -126,6 +126,9 @@ export function App() {
           onClick={() => setCurrentPage('events')}
           type="button"
 import { NotificationTimelineView } from './components/NotificationTimelineView';
+import { TemplatesPage } from './pages/TemplatesPage';
+
+type Tab = 'explorer' | 'timeline' | 'templates';
 import { ActivityFeed } from './components/ActivityFeed';
 import { WebhookDashboardPage } from './pages/WebhookDashboardPage';
 import { ExportHistoryPage } from './pages/ExportHistoryPage';
