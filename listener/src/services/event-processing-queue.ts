@@ -63,6 +63,15 @@ export class EventProcessingQueue {
     processingTimes: [] as number[],
   };
 
+  // Metrics
+  private metrics = {
+    totalEnqueued: 0,
+    totalProcessed: 0,
+    totalSucceeded: 0,
+    totalFailed: 0,
+    processingTimes: [] as number[],
+  };
+
   constructor(processor: EventProcessor, options?: EventProcessingQueueOptions) {
     this.processor = processor;
     this.maxConcurrency = Math.max(1, options?.maxConcurrency ?? DEFAULTS.maxConcurrency);
