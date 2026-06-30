@@ -10,6 +10,7 @@
     "lint": "node ./node_modules/typescript/bin/tsc --noEmit",
     "test": "node ./node_modules/jest/bin/jest.js",
     "migrate": "ts-node src/scripts/migrate-db.ts",
+    "check-migrations": "ts-node src/scripts/check-migrations.ts",
     "validate:batch": "ts-node src/utils/batch-validator.ts"
   },
   "keywords": [],

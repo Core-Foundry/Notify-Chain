@@ -1,7 +1,7 @@
-use soroban_sdk::{Address, Env, String, token};
-use crate::types::{Submission, SubmissionStatus, TaskStatus, Error};
-use crate::storage;
 use crate::events;
+use crate::storage;
+use crate::types::{Error, Submission, SubmissionStatus, TaskStatus};
+use soroban_sdk::{token, Address, Env, String};
 
 /// Submit work for a task
 pub fn submit_work(
@@ -68,12 +68,7 @@ pub fn submit_work(
 }
 
 /// Approve a submission and release payment
-pub fn approve_submission(
-    env: &Env,
-    task_id: u64,
-    submission_id: u64,
-    poster: Address,
-) {
+pub fn approve_submission(env: &Env, task_id: u64, submission_id: u64, poster: Address) {
     // Get task
     if !storage::task_exists(env, task_id) {
         panic_with_error!(env, Error::TaskNotFound);
