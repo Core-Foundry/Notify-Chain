@@ -5,13 +5,21 @@ use crate::base::events::{
     NotificationDelivered, NotificationExpired, NotificationExtended, NotificationLimitsConfigured,
     NotificationPriority, NotificationRecalled, NotificationRevoked, NotificationScheduled,
     ScheduledNotificationCancelled, Withdrawal,
+    AdminTransferred, AuthorizationFailure, AutoshareCreated, AutoshareUpdated, ContractPaused,
+    ContractUnpaused, GroupActivated, GroupDeactivated, NotificationAcknowledged,
+    NotificationCategory, NotificationExpired, NotificationPriority, NotificationRevoked,
+    NotificationScheduled, ScheduledNotificationCancelled, Withdrawal,
     AdminTransferred, AuditAction, AuditRecordAppended, AuthorizationFailure, AutoshareCreated,
     AutoshareUpdated, BatchNotificationsCreated, CategoryRegistered, ContractPaused,
     ContractUnpaused, GroupActivated, GroupDeactivated, NotificationCategory, NotificationExpired,
+    NotificationPriority, NotificationRevoked, NotificationScheduled,
+    NotificationExtended, NotificationPriority, NotificationRevoked, NotificationScheduled,
+    ScheduledNotificationCancelled, Withdrawal,
     NotificationPriority, NotificationRevoked, NotificationScheduled, ScheduledNotificationCancelled,
     Withdrawal, BatchProcessingCompleted,
     NotificationExtended, NotificationLimitsConfigured, NotificationPriority, NotificationRevoked,
     NotificationScheduled, ScheduledNotificationCancelled, Withdrawal,
+    SchemaVersionSet, NotificationAccessed,
 };
 use crate::base::types::{
     AuditRecord, AutoShareDetails, GroupMember, NotificationLimits, PaymentHistory,
@@ -58,6 +66,8 @@ pub enum DataKey {
     NotificationRevokers(BytesN<32>),
     NotificationLimits,
     RegisteredCategories,
+    /// Stores the current on-chain notification schema version.
+    SchemaVersion,
 }
 
 // ============================================================================
@@ -254,15 +264,29 @@ pub fn add_group_member(
 
     // Add new member
     details.members.push_back(GroupMember {
-        address,
+        address: member_address.clone(),
         percentage,
     });
 
     // Validate total percentage after adding
-    validate_members(&details.members)?;
+    validate_members(&env, &details.members)?;
 
     // Save updated details
     env.storage().persistent().set(&key, &details);
+
+    let members_key = DataKey::GroupMembers(id);
+    let mut stored_members: Vec<GroupMember> = env
+        .storage()
+        .persistent()
+        .get(&members_key)
+        .unwrap_or(Vec::new(&env));
+    stored_members.push_back(GroupMember {
+        address: member_address,
+        percentage,
+    });
+    env.storage()
+        .persistent()
+        .set(&members_key, &stored_members);
     Ok(())
 }
 
@@ -692,13 +716,23 @@ pub fn get_total_usages_paid(env: Env, id: BytesN<32>) -> Result<u32, Error> {
     Ok(details.total_usages_paid)
 }
 
-pub fn reduce_usage(env: Env, id: BytesN<32>) -> Result<(), Error> {
+pub fn reduce_usage(env: Env, id: BytesN<32>, caller: Address) -> Result<(), Error> {
+    caller.require_auth();
+
     let key = DataKey::AutoShare(id);
     let mut details: AutoShareDetails = env
         .storage()
         .persistent()
         .get(&key)
         .ok_or(Error::NotFound)?;
+
+    if details.creator != caller {
+        return Err(Error::Unauthorized);
+    }
+
+    if !details.is_active {
+        return Err(Error::GroupInactive);
+    }
 
     if details.usage_count == 0 {
         return Err(Error::NoUsagesRemaining);
@@ -906,7 +940,7 @@ pub fn withdraw(
     Ok(())
 }
 
-fn validate_members(members: &Vec<GroupMember>) -> Result<(), Error> {
+fn validate_members(env: &Env, members: &Vec<GroupMember>) -> Result<(), Error> {
     if members.is_empty() {
         return Err(Error::EmptyMembers);
     }
@@ -914,7 +948,6 @@ fn validate_members(members: &Vec<GroupMember>) -> Result<(), Error> {
     if members.len() > MAX_MEMBERS {
         return Err(Error::TooManyMembers);
     }
-    let env = members.env();
     let mut total_percentage: u32 = 0;
     let mut seen_addresses = Vec::new(env);
 
@@ -1427,7 +1460,6 @@ pub fn revoke_notification(
         revoked_by: caller,
         category: NotificationCategory::Notification,
         priority: NotificationPriority::High,
-        revoked_at,
     }
     .publish(&env);
 
@@ -1477,7 +1509,6 @@ fn append_audit_record(
         category: NotificationCategory::Notification,
         seq,
         actor,
-        timestamp,
     }
     .publish(env);
 }
@@ -1571,6 +1602,15 @@ pub fn is_notification_revoked(env: Env, notification_id: BytesN<32>) -> Result<
     Ok(is_revoked(&notification))
 }
 
+/// Acknowledges multiple scheduled notifications in a single batch.
+///
+/// Only the creator of the notification can acknowledge it. The notification
+/// must exist, not be revoked, and not be expired.
+/// Emits a [`NotificationAcknowledged`] event for each valid notification.
+pub fn acknowledge_notifications(
+    env: Env,
+    caller: Address,
+    notification_ids: Vec<BytesN<32>>,
 /// Emits a `BatchProcessingCompleted` event for off-chain consumers.
 pub fn emit_batch_completed(env: Env, batch_id: BytesN<32>, processed_count: u32) -> Result<(), Error> {
     BatchProcessingCompleted {
@@ -1599,6 +1639,32 @@ pub fn extend_notification_expiry(
         return Err(Error::ContractPaused);
     }
 
+    let timestamp = env.ledger().timestamp();
+
+    for id in notification_ids.iter() {
+        let notification = load_notification(&env, &id).ok_or(Error::NotFound)?;
+
+        if notification.creator != caller {
+            return Err(Error::NotAuthorizedToAcknowledge);
+        }
+
+        if is_revoked(&notification) {
+            return Err(Error::NotificationRevoked);
+        }
+
+        if is_expired(&env, &notification) {
+            return Err(Error::NotificationExpired);
+        }
+
+        NotificationAcknowledged {
+            notification_id: id,
+            acknowledger: caller.clone(),
+            category: NotificationCategory::Notification,
+            priority: NOTIFICATION_PRIORITY,
+            timestamp,
+        }
+        .publish(&env);
+    }
     if extension_seconds == 0 {
         return Err(Error::InvalidExpirationDuration);
     }
@@ -1735,4 +1801,97 @@ pub fn get_notification_limits(env: Env) -> NotificationLimits {
             min_expiration_seconds: 60,                 // 1 minute
             max_batch_size: 1000,
         })
+}
+
+// ============================================================================
+// Schema Version Tracking  (Issue #309)
+// ============================================================================
+
+/// The minimum schema version this contract supports.
+const MIN_SUPPORTED_SCHEMA_VERSION: u32 = 1;
+/// The maximum (current) schema version this contract supports.
+const MAX_SUPPORTED_SCHEMA_VERSION: u32 = 1;
+
+/// Sets the on-chain notification schema version. Only the admin can call this.
+///
+/// Emits a [`SchemaVersionSet`] event so off-chain consumers can detect protocol
+/// upgrades and reject payloads whose version they cannot handle.
+///
+/// # Errors
+/// - [`Error::Unauthorized`]  – caller is not the admin.
+/// - [`Error::InvalidInput`]  – `schema_version` is outside the supported range.
+pub fn set_schema_version(env: Env, admin: Address, schema_version: u32) -> Result<(), Error> {
+    admin.require_auth();
+
+    let stored_admin = get_admin(env.clone())?;
+    if admin != stored_admin {
+        return Err(Error::Unauthorized);
+    }
+
+    if schema_version < MIN_SUPPORTED_SCHEMA_VERSION || schema_version > MAX_SUPPORTED_SCHEMA_VERSION {
+        return Err(Error::InvalidInput);
+    }
+
+    let key = DataKey::SchemaVersion;
+    let previous_version: u32 = env
+        .storage()
+        .persistent()
+        .get::<DataKey, u32>(&key)
+        .unwrap_or(0);
+
+    env.storage().persistent().set(&key, &schema_version);
+
+    SchemaVersionSet {
+        admin,
+        category: NotificationCategory::Admin,
+        priority: NotificationPriority::Medium,
+        schema_version,
+        previous_version,
+    }
+    .publish(&env);
+
+    Ok(())
+}
+
+/// Returns the current on-chain schema version (0 if never set).
+pub fn get_schema_version(env: Env) -> u32 {
+    env.storage()
+        .persistent()
+        .get::<DataKey, u32>(&DataKey::SchemaVersion)
+        .unwrap_or(0)
+}
+
+/// Returns whether `version` is within the supported range.
+pub fn is_version_supported(_env: Env, version: u32) -> bool {
+    version >= MIN_SUPPORTED_SCHEMA_VERSION && version <= MAX_SUPPORTED_SCHEMA_VERSION
+}
+
+// ============================================================================
+// Access Logging  (Issue #312)
+// ============================================================================
+
+/// Emits a [`NotificationAccessed`] event for the given notification.
+///
+/// Call this whenever a protected notification record is read so that
+/// off-chain indexers can build an immutable access trail for compliance.
+pub fn record_notification_access(
+    env: Env,
+    notification_id: BytesN<32>,
+    accessor: Address,
+) -> Result<(), Error> {
+    // Verify the notification exists.
+    let key = DataKey::ScheduledNotification(notification_id.clone());
+    if !env.storage().persistent().has(&key) {
+        return Err(Error::NotFound);
+    }
+
+    NotificationAccessed {
+        notification_id,
+        accessor,
+        category: NotificationCategory::Notification,
+        accessed_at: env.ledger().timestamp(),
+    }
+    .publish(&env);
+
+    Ok(())
 }
