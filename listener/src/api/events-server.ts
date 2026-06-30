@@ -221,6 +221,17 @@ async function buildStatusResponse(options: EventsServerOptions): Promise<{
   }>;
   timestamp: string;
 }> {
+  const contractStatuses = options.contractAddresses 
+    ? await Promise.all(
+        options.contractAddresses.map(async (contractConfig) => {
+          const status = await getContractPauseStatus(contractConfig.address, options.stellarRpcUrl);
+          return {
+            address: contractConfig.address,
+            ...status
+          };
+        })
+      )
+    : [];
   const contractStatuses = await Promise.all(
     (options.contractAddresses ?? []).map(async (contractConfig) => {
       const status = await getContractPauseStatus(contractConfig.address, options.stellarRpcUrl);
