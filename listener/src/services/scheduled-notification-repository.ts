@@ -1,5 +1,6 @@
 import { Database } from '../database/database';
 import logger from '../utils/logger';
+import { compressPayload, decompressPayload } from '../utils/payload-compression';
 import {
   ScheduledNotification,
   ScheduledNotificationRow,
@@ -7,6 +8,7 @@ import {
   NotificationStatus,
   NotificationExecutionLog,
 } from '../types/scheduled-notification';
+import { hashPayload } from '../utils/payload-integrity';
 
 /**
  * Repository for scheduled notifications database operations
@@ -19,15 +21,23 @@ export class ScheduledNotificationRepository {
    * Create a new scheduled notification
    */
   async create(input: CreateScheduledNotificationInput, requestId?: string): Promise<number> {
+    const payloadJson = JSON.stringify(input.payload);
+    const secret = process.env.PAYLOAD_INTEGRITY_SECRET;
+    const payloadHash = secret ? hashPayload(payloadJson, secret) : null;
+
     const sql = `
       INSERT INTO scheduled_notifications (
-        payload, notification_type, target_recipient, execute_at,
+        payload, payload_hash, notification_type, target_recipient, execute_at,
         max_retries, event_id, contract_address, priority, metadata
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
 
+    const serializedPayload = compressPayload(input.payload);
+
     const params = [
-      JSON.stringify(input.payload),
+      serializedPayload,
+      payloadJson,
+      payloadHash,
       input.notificationType,
       input.targetRecipient,
       input.executeAt.toISOString(),
@@ -224,7 +234,8 @@ export class ScheduledNotificationRepository {
     maxRetries: number,
     nextRetryAt?: Date
   ): Promise<void> {
-    const isFailed = currentRetryCount >= maxRetries;
+    const nextRetryCount = currentRetryCount + 1;
+    const isFailed = nextRetryCount >= maxRetries;
     const newStatus = isFailed ? NotificationStatus.FAILED : NotificationStatus.PENDING;
 
     const sql = `
@@ -241,6 +252,7 @@ export class ScheduledNotificationRepository {
       WHERE id = ?
     `;
 
+    const completedAt = isFailed ? new Date().toISOString() : null;
     const errorDetails = JSON.stringify({
       message: error.message,
       stack: error.stack,
@@ -249,18 +261,18 @@ export class ScheduledNotificationRepository {
 
     await this.db.run(sql, [
       newStatus,
-      currentRetryCount + 1,
+      nextRetryCount,
       error.message,
       errorDetails,
       isFailed ? null : (nextRetryAt?.toISOString() ?? null),
-      isFailed ? new Date().toISOString() : null,
+      completedAt,
       id,
     ]);
 
     logger.info('Notification marked for retry or failed', {
       id,
       newStatus,
-      retryCount: currentRetryCount + 1,
+      retryCount: nextRetryCount,
       maxRetries,
       nextRetryAt: nextRetryAt?.toISOString(),
     });
@@ -489,7 +501,9 @@ export class ScheduledNotificationRepository {
   private rowToModel(row: ScheduledNotificationRow): ScheduledNotification {
     return {
       id: row.id,
+      payload: decompressPayload(row.payload),
       payload: row.payload,
+      payloadHash: row.payload_hash,
       notificationType: row.notification_type as any,
       targetRecipient: row.target_recipient,
       executeAt: new Date(row.execute_at),

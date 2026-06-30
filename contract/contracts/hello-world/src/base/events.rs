@@ -273,7 +273,7 @@ pub struct AuditRecordAppended {
     pub category: NotificationCategory,
     pub seq: u64,
     pub actor: Address,
-    pub timestamp: u64,
+    // GAS: Removed `timestamp` — derivable from ledger metadata
 }
 
 /// Emitted when a batch of notifications is created in a single transaction.
@@ -297,8 +297,8 @@ pub struct BatchNotificationsCreated {
 ///
 /// The `notification_id` is published as an indexed topic so consumers can
 /// subscribe to the revocation of a specific notification; the `revoked_by`
-/// address indicates who initiated the revocation, and `revoked_at` records
-/// the ledger timestamp when the revocation occurred.
+/// address indicates who initiated the revocation. The timestamp when the
+/// revocation occurred is derivable from ledger metadata.
 #[contractevent(data_format = "single-value")]
 #[derive(Clone)]
 pub struct NotificationRevoked {
@@ -310,7 +310,7 @@ pub struct NotificationRevoked {
     pub category: NotificationCategory,
     #[topic]
     pub priority: NotificationPriority,
-    pub revoked_at: u64,
+    // GAS: Removed `revoked_at` — derivable from ledger metadata
 }
 
 /// Emitted when an off-chain batch of notifications finishes processing.

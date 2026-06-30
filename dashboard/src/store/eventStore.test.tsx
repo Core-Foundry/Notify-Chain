@@ -70,6 +70,7 @@ describe('pagination + filter interaction', () => {
     const events = generateMockEvents(200);
     useEventStore.setState({
       events,
+      filters: { search: '', contractAddress: 'all', eventType: 'all' },
       filters: { search: '', contractAddress: 'all', eventType: 'all', status: 'all', dateFrom: '', dateTo: '' },
       isLoading: false,
       error: null,
@@ -93,6 +94,7 @@ describe('pagination + filter interaction', () => {
   it('filter change resets scroll position to top', async () => {
     useEventStore.setState({
       events: generateMockEvents(100),
+      filters: { search: '', contractAddress: 'all', eventType: 'all' },
       filters: { search: '', contractAddress: 'all', eventType: 'all', status: 'all', dateFrom: '', dateTo: '' },
       isLoading: false,
       error: null,

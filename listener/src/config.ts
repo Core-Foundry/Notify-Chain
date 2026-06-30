@@ -177,6 +177,7 @@ export function loadConfig(): Config {
       maxRetries: parseIntegerEnv('RETRY_MAX_RETRIES', '5'),
       multiplier: parseIntegerEnv('RETRY_MULTIPLIER', '2'),
       jitter: trimEnv('RETRY_JITTER') !== 'false',
+      processIntervalMs: parseIntegerEnv('RETRY_QUEUE_PROCESS_INTERVAL_MS', '5000'),
     },
     eventQueue: {
       maxConcurrency: parseIntegerEnv('EVENT_QUEUE_MAX_CONCURRENCY', '1'),

@@ -3,6 +3,9 @@ use crate::base::events::{
     AdminTransferred, AuditAction, AuditRecordAppended, AuthorizationFailure, AutoshareCreated,
     AutoshareUpdated, BatchNotificationsCreated, CategoryRegistered, ContractPaused,
     ContractUnpaused, GroupActivated, GroupDeactivated, NotificationCategory, NotificationExpired,
+    NotificationPriority, NotificationRevoked, NotificationScheduled,
+    NotificationExtended, NotificationPriority, NotificationRevoked, NotificationScheduled,
+    ScheduledNotificationCancelled, Withdrawal,
     NotificationPriority, NotificationRevoked, NotificationScheduled, ScheduledNotificationCancelled,
     Withdrawal, BatchProcessingCompleted,
     NotificationExtended, NotificationLimitsConfigured, NotificationPriority, NotificationRevoked,
@@ -1317,7 +1320,6 @@ pub fn revoke_notification(
         revoked_by: caller,
         category: NotificationCategory::Notification,
         priority: NotificationPriority::High,
-        revoked_at,
     }
     .publish(&env);
 
@@ -1367,7 +1369,6 @@ fn append_audit_record(
         category: NotificationCategory::Notification,
         seq,
         actor,
-        timestamp,
     }
     .publish(env);
 }

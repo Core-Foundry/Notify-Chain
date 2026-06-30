@@ -2,6 +2,8 @@
 
 Base URL: `http://localhost:8787` (configured via `EVENTS_API_PORT`)
 
+For a centralized list of API errors, causes, examples, and troubleshooting steps, see [API_ERROR_REFERENCE.md](./API_ERROR_REFERENCE.md).
+
 ---
 
 ## Events
