@@ -55,6 +55,9 @@ async function main() {
     logger.info('Initializing database');
     const db = await initializeDatabase(config.databasePath);
 
+    // Initialize deduplication service
+    deduplicationService = new EventDeduplicationService(db);
+
     // Rebuild registry with configured event TTL
     if (config.cleanup) {
       (eventRegistry as any).ttlMs = config.cleanup.eventRetentionMs;
