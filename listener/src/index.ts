@@ -106,6 +106,18 @@ async function main() {
       const repository = new ScheduledNotificationRepository(db);
       notificationAPI = new NotificationAPI(repository);
 
+      // Initialize template service
+      const templateRepository = new TemplateRepository(db);
+      const templateValidator = new TemplateValidator();
+      const templateRenderer = new TemplateRenderer();
+      templateService = new TemplateService(
+        templateRepository,
+        templateValidator,
+        templateRenderer
+      );
+
+      logger.info('Template service initialized successfully');
+
       // Initialize scheduler with Discord service if available
       let discordService: DiscordNotificationService | null = null;
       if (config.discord) {
