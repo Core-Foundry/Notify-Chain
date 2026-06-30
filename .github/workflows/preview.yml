@@ -38,8 +38,18 @@ jobs:
           VITE_STELLAR_NETWORK: TESTNET
         run: npm run build
 
+      - name: Check for Cloudflare credentials
+        id: cf_check
+        run: |
+          if [ -n "${{ secrets.CLOUDFLARE_API_TOKEN }}" ] && [ -n "${{ secrets.CLOUDFLARE_ACCOUNT_ID }}" ]; then
+            echo "has_creds=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_creds=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Deploy to Cloudflare Pages
         id: deploy
+        if: steps.cf_check.outputs.has_creds == 'true'
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -49,6 +59,7 @@ jobs:
       - name: Post preview URL comment
         uses: actions/github-script@v7
         env:
+          HAS_CREDS: ${{ steps.cf_check.outputs.has_creds }}
           DEPLOYMENT_URL: ${{ steps.deploy.outputs.deployment-url }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           COMMIT_SHA: ${{ github.event.pull_request.head.sha }}
@@ -64,15 +75,16 @@ jobs:
             const existing = comments.find(c => c.body.includes(marker));
 
             const short = process.env.COMMIT_SHA.slice(0, 7);
+            const hasCreds = process.env.HAS_CREDS === 'true';
             const body = [
               marker,
               '## 🚀 Preview Deployment',
               '',
               `| | |`,
               `|---|---|`,
-              `| **URL** | ${process.env.DEPLOYMENT_URL} |`,
+              `| **URL** | ${hasCreds ? process.env.DEPLOYMENT_URL : '_unavailable for this PR_'} |`,
               `| **Commit** | \`${short}\` |`,
-              `| **Status** | ✅ Ready |`,
+              `| **Status** | ${hasCreds ? '✅ Ready' : '⚠️ Skipped — Cloudflare credentials are not available to PRs from forks'} |`,
               '',
               '_This comment is updated automatically on every push to the PR._',
             ].join('\n');
