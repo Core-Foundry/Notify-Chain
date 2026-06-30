@@ -21,7 +21,7 @@ export class Database {
    */
   async initialize(): Promise<void> {
     if (this.isInitialized) {
-      logger.warn('Database already initialized');
+      await this.applyIncrementalMigrations();
       return;
     }
 
@@ -83,6 +83,8 @@ export class Database {
     // Execute the schema as one script so trigger bodies with semicolons work.
     await this.exec(schema);
 
+    await this.applyIncrementalMigrations();
+
     logger.info('Database migrations completed');
   }
 
@@ -127,6 +129,17 @@ export class Database {
     }
     
     return statements.filter(s => s.length > 0 && !s.startsWith('--'));
+   * Apply migrations for databases created before schema.sql was updated in-place.
+   */
+  private async applyIncrementalMigrations(): Promise<void> {
+    try {
+      await this.run('ALTER TABLE scheduled_notifications ADD COLUMN next_retry_at DATETIME');
+    } catch (error) {
+      const message = String(error);
+      if (!message.includes('duplicate column')) {
+        throw error;
+      }
+    }
   }
 
   /**
@@ -249,6 +262,16 @@ export class Database {
 
 // Singleton instance
 let dbInstance: Database | null = null;
+
+/**
+ * Reset the database singleton (for tests).
+ */
+export async function resetDatabaseSingleton(): Promise<void> {
+  if (dbInstance) {
+    await dbInstance.close();
+    dbInstance = null;
+  }
+}
 
 /**
  * Get or create database singleton instance

@@ -1,18 +1,28 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { EventFiltersBar } from '../components/EventFiltersBar';
+import { NotificationSearchBar } from '../components/NotificationSearchBar';
 import { WalletConnectButton } from '../components/WalletConnectButton';
 import { EventExplorerTable } from '../components/EventExplorerTable';
 import { EventExplorerSkeleton } from '../components/EventExplorerSkeleton';
 import { PaginationControls } from '../components/PaginationControls';
+import { NotificationDetailsDrawer } from '../components/NotificationDetailsDrawer';
+import { IndexingHealthPanel } from '../components/IndexingHealthPanel';
 import { useEventFilters, useEventLoadingState, useFilteredEvents } from '../hooks/useEventSelectors';
 import { useEventStore } from '../store/eventStore';
-import { fetchEvents } from '../services/eventsApi';
+import { fetchEvents, fetchStatus, type ContractStatus } from '../services/eventsApi';
+import { resolveIndexingHealthUrl } from '../services/indexingHealthApi';
 import { generateMockEvents } from '../utils/eventData';
 import { restoreWalletSession } from '../services/wallet';
+import type { BlockchainEvent } from '../types/event';
+import { useWalletAccountSync } from '../hooks/useWalletAccountSync';
 
 const DEFAULT_EVENT_COUNT = 5000;
 const DEFAULT_LIMIT = 12;
 const API_URL = import.meta.env.VITE_EVENTS_API_URL ?? 'http://localhost:8787/api/events';
+const POLL_INTERVAL_MS = 15_000;
+const LISTENER_BASE_URL = API_URL.replace('/api/events', '');
+const INDEXING_HEALTH_URL =
+  import.meta.env.VITE_INDEXING_HEALTH_URL ?? resolveIndexingHealthUrl(API_URL);
 
 function parsePageParam(search: string) {
   const params = new URLSearchParams(search);
@@ -30,10 +40,16 @@ export function EventExplorerPage() {
   const initialSearch = typeof window !== 'undefined' ? window.location.search : '';
   const [page, setPage] = useState(() => parsePageParam(initialSearch));
   const [limit, setLimit] = useState(() => parseLimitParam(initialSearch));
+  const [selectedNotification, setSelectedNotification] = useState<BlockchainEvent | null>(null);
+  const [contractStatuses, setContractStatuses] = useState<ContractStatus[]>([]);
 
   const setEvents = useEventStore((state) => state.setEvents);
   const setLoading = useEventStore((state) => state.setLoading);
   const setError = useEventStore((state) => state.setError);
+  // Re-fetch whenever lastFetchedAt is reset to 0 (via invalidateEvents()) so
+  // that a successful blockchain status-change transaction is reflected on the
+  // next render cycle without requiring a full hard refresh.
+  const lastFetchedAt = useEventStore((state) => state.lastFetchedAt);
   const { isLoading, error } = useEventLoadingState();
   const filters = useEventFilters();
   const filteredEvents = useFilteredEvents();
@@ -43,6 +59,13 @@ export function EventExplorerPage() {
   }, []);
 
   useEffect(() => {
+    // Guard: skip the re-fetch if we already have fresh data from this session.
+    // lastFetchedAt === 0 means either first load or an explicit cache
+    // invalidation (e.g. after a blockchain transaction mutated notification state).
+    if (lastFetchedAt !== 0) {
+      return;
+    }
+
     let cancelled = false;
 
     async function loadEvents() {
@@ -66,12 +89,60 @@ export function EventExplorerPage() {
       }
     }
 
+    async function loadStatus() {
+      try {
+        const status = await fetchStatus(LISTENER_BASE_URL);
+        if (!cancelled) {
+          setContractStatuses(status.contracts);
+        }
+      } catch {
+        // Ignore status fetch errors, just don't show status
+      }
+    }
+
     loadEvents();
+    loadStatus();
+
+    // Poll for status updates so delivered/failed notifications are reflected
+    // without requiring a manual page refresh.
+    const intervalId = setInterval(async () => {
+      try {
+        const remoteEvents = await fetchEvents(API_URL);
+        if (!cancelled) {
+          setEvents(remoteEvents);
+        }
+      } catch {
+        // Silently ignore polling errors — the error banner is reserved for
+        // the initial load failure so background polls don't disrupt the user.
+      }
+    }, POLL_INTERVAL_MS);
 
     return () => {
       cancelled = true;
+      clearInterval(intervalId);
     };
-  }, [setEvents, setError, setLoading]);
+  }, [lastFetchedAt, setEvents, setError, setLoading]);
+
+  // Clear stale events and re-fetch whenever the connected wallet address
+  // changes (switch or disconnect). This is the fix for issue #175.
+  useWalletAccountSync(() => {
+    setEvents([]);
+    setError(null);
+    setPage(1);
+
+    setLoading(true);
+    fetchEvents(API_URL)
+      .then((remoteEvents) => {
+        setEvents(remoteEvents);
+      })
+      .catch(() => {
+        setEvents(generateMockEvents(DEFAULT_EVENT_COUNT));
+        setError('Listener API unavailable — showing mock events for demo.');
+      })
+      .finally(() => {
+        setLoading(false);
+      });
+  });
 
   const pageCount = useMemo(
     () => Math.max(1, Math.ceil(filteredEvents.length / limit)),
@@ -86,7 +157,7 @@ export function EventExplorerPage() {
 
   useEffect(() => {
     setPage(1);
-  }, [filters.search, filters.contractAddress, filters.eventType]);
+  }, [filters.search, filters.contractAddress, filters.eventType, filters.status, filters.dateFrom, filters.dateTo]);
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -123,6 +194,14 @@ export function EventExplorerPage() {
     }
   }, [setError, setEvents, setLoading]);
 
+  const handleSelectEvent = useCallback((event: BlockchainEvent) => {
+    setSelectedNotification(event);
+  }, []);
+
+  const handleCloseDrawer = useCallback(() => {
+    setSelectedNotification(null);
+  }, []);
+
   return (
     <main className="event-explorer-page">
       <header className="event-explorer__header">
@@ -137,7 +216,30 @@ export function EventExplorerPage() {
         <WalletConnectButton />
       </header>
 
+      {contractStatuses.length > 0 && (
+        <section className="contract-statuses">
+          <h2 className="contract-statuses__title">Contract Status</h2>
+          <div className="contract-statuses__list">
+            {contractStatuses.map((contract) => (
+              <div key={contract.address} className="contract-status-card">
+                <div className="contract-status-card__address">{contract.address}</div>
+                <div className={`contract-status-card__badge ${contract.paused ? 'contract-status-card__badge--paused' : 'contract-status-card__badge--active'}`}>
+                  {contract.paused ? 'PAUSED' : 'ACTIVE'}
+                </div>
+                {contract.error && (
+                  <div className="contract-status-card__error">
+                    Error: {contract.error}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+      <IndexingHealthPanel healthUrl={INDEXING_HEALTH_URL} />
+
       <EventFiltersBar />
+      <NotificationSearchBar />
 
       {error && (
         <section className="event-explorer__error-banner" role="alert">
@@ -161,7 +263,8 @@ export function EventExplorerPage() {
       {isLoading ? (
         <EventExplorerSkeleton rows={Math.min(limit, 8)} />
       ) : currentPageEvents.length > 0 ? (
-        <EventExplorerTable events={currentPageEvents} />
+        <EventExplorerTable events={currentPageEvents} onSelectEvent={handleSelectEvent} />
+        <EventExplorerTable events={currentPageEvents} contractStatuses={contractStatuses} />
       ) : (
         <section className="event-explorer__empty-state" role="status" aria-live="polite">
           <h2>No events found</h2>
@@ -179,6 +282,12 @@ export function EventExplorerPage() {
         totalCount={filteredEvents.length}
         onPageChange={setPage}
         onLimitChange={setLimit}
+      />
+
+      <NotificationDetailsDrawer
+        isOpen={Boolean(selectedNotification)}
+        notification={selectedNotification}
+        onClose={handleCloseDrawer}
       />
     </main>
   );

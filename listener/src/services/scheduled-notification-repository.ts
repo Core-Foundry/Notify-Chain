@@ -1,5 +1,6 @@
 import { Database } from '../database/database';
 import logger from '../utils/logger';
+import { compressPayload, decompressPayload } from '../utils/payload-compression';
 import {
   ScheduledNotification,
   ScheduledNotificationRow,
@@ -7,6 +8,7 @@ import {
   NotificationStatus,
   NotificationExecutionLog,
 } from '../types/scheduled-notification';
+import { hashPayload } from '../utils/payload-integrity';
 
 /**
  * Repository for scheduled notifications database operations
@@ -19,15 +21,23 @@ export class ScheduledNotificationRepository {
    * Create a new scheduled notification
    */
   async create(input: CreateScheduledNotificationInput, requestId?: string): Promise<number> {
+    const payloadJson = JSON.stringify(input.payload);
+    const secret = process.env.PAYLOAD_INTEGRITY_SECRET;
+    const payloadHash = secret ? hashPayload(payloadJson, secret) : null;
+
     const sql = `
       INSERT INTO scheduled_notifications (
-        payload, notification_type, target_recipient, execute_at,
+        payload, payload_hash, notification_type, target_recipient, execute_at,
         max_retries, event_id, contract_address, priority, metadata
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
 
+    const serializedPayload = compressPayload(input.payload);
+
     const params = [
-      JSON.stringify(input.payload),
+      serializedPayload,
+      payloadJson,
+      payloadHash,
       input.notificationType,
       input.targetRecipient,
       input.executeAt.toISOString(),
@@ -153,6 +163,7 @@ export class ScheduledNotificationRepository {
             last_error = ?,
             error_details = ?,
             processing_completed_at = ?,
+            updated_at = ?,
             processor_id = NULL,
             lock_expires_at = NULL
           WHERE id = ?
@@ -170,6 +181,7 @@ export class ScheduledNotificationRepository {
           errorMsg,
           errorDetails,
           isFailed ? now.toISOString() : null,
+          now.toISOString(),
           model.id,
         ]);
 
@@ -200,14 +212,17 @@ export class ScheduledNotificationRepository {
       SET 
         status = ?,
         processing_completed_at = ?,
+        updated_at = ?,
         processor_id = NULL,
         lock_expires_at = NULL
       WHERE id = ?
     `;
 
+    const now = new Date().toISOString();
     await this.db.run(sql, [
       NotificationStatus.COMPLETED,
-      new Date().toISOString(),
+      now,
+      now,
       id,
     ]);
 
@@ -215,15 +230,17 @@ export class ScheduledNotificationRepository {
   }
 
   /**
-   * Mark notification as failed or retry
+   * Mark notification as failed or retry (sets next_retry_at for backoff scheduling)
    */
   async markAsFailedOrRetry(
     id: number,
     error: Error,
     currentRetryCount: number,
-    maxRetries: number
+    maxRetries: number,
+    nextRetryAt?: Date
   ): Promise<void> {
-    const isFailed = currentRetryCount >= maxRetries;
+    const nextRetryCount = currentRetryCount + 1;
+    const isFailed = nextRetryCount >= maxRetries;
     const newStatus = isFailed ? NotificationStatus.FAILED : NotificationStatus.PENDING;
 
     const sql = `
@@ -233,33 +250,100 @@ export class ScheduledNotificationRepository {
         retry_count = ?,
         last_error = ?,
         error_details = ?,
+        next_retry_at = ?,
         processing_completed_at = ?,
+        updated_at = ?,
         processor_id = NULL,
         lock_expires_at = NULL
       WHERE id = ?
     `;
 
+    const now = new Date().toISOString();
+    const completedAt = isFailed ? new Date().toISOString() : null;
     const errorDetails = JSON.stringify({
       message: error.message,
       stack: error.stack,
-      timestamp: new Date().toISOString(),
+      timestamp: now,
     });
 
     await this.db.run(sql, [
       newStatus,
-      currentRetryCount + 1,
+      nextRetryCount,
       error.message,
       errorDetails,
-      isFailed ? new Date().toISOString() : null,
+      isFailed ? now : null,
+      now,
+      isFailed ? null : (nextRetryAt?.toISOString() ?? null),
+      completedAt,
       id,
     ]);
 
     logger.info('Notification marked for retry or failed', {
       id,
       newStatus,
-      retryCount: currentRetryCount + 1,
+      retryCount: nextRetryCount,
       maxRetries,
+      nextRetryAt: nextRetryAt?.toISOString(),
     });
+  }
+
+  /**
+   * Fetch PENDING notifications whose next_retry_at is due (or null, meaning immediately schedulable).
+   * Used by RetryScheduler to pick up failed notifications for re-attempt.
+   */
+  async fetchDueRetries(
+    processorId: string,
+    lockTimeoutMs: number,
+    batchSize: number = 10,
+    requestId?: string
+  ): Promise<ScheduledNotification[]> {
+    const now = new Date();
+    const lockExpiresAt = new Date(now.getTime() + lockTimeoutMs);
+
+    const updateSql = `
+      UPDATE scheduled_notifications
+      SET
+        status = ?,
+        processor_id = ?,
+        lock_expires_at = ?,
+        processing_started_at = ?
+      WHERE id IN (
+        SELECT id FROM scheduled_notifications
+        WHERE status = ?
+          AND retry_count > 0
+          AND (next_retry_at IS NULL OR next_retry_at <= ?)
+        ORDER BY priority ASC, next_retry_at ASC
+        LIMIT ?
+      )
+    `;
+
+    const updateResult = await this.db.run(updateSql, [
+      NotificationStatus.PROCESSING,
+      processorId,
+      lockExpiresAt.toISOString(),
+      now.toISOString(),
+      NotificationStatus.PENDING,
+      now.toISOString(),
+      batchSize,
+    ]);
+
+    if (updateResult.changes === 0) return [];
+
+    const selectSql = `
+      SELECT * FROM scheduled_notifications
+      WHERE processor_id = ? AND status = ? AND lock_expires_at = ?
+        AND retry_count > 0
+    `;
+
+    const rows = await this.db.all<ScheduledNotificationRow>(selectSql, [
+      processorId,
+      NotificationStatus.PROCESSING,
+      lockExpiresAt.toISOString(),
+    ]);
+
+    logger.info('Fetched due retries', { requestId, count: rows.length, processorId });
+
+    return rows.map(this.rowToModel.bind(this));
   }
 
   /**
@@ -315,6 +399,58 @@ export class ScheduledNotificationRepository {
       log.responseData ?? null,
       log.durationMs ?? null,
     ]);
+  }
+
+  /**
+   * Delete terminal notifications older than the retention window.
+   */
+  async deleteExpiredNotifications(retentionDays: number): Promise<number> {
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - Math.max(1, retentionDays));
+
+    const sql = `
+      DELETE FROM scheduled_notifications
+      WHERE status IN (?, ?, ?)
+        AND updated_at < ?
+    `;
+
+    const result = await this.db.run(sql, [
+      NotificationStatus.COMPLETED,
+      NotificationStatus.FAILED,
+      NotificationStatus.CANCELLED,
+      cutoff.toISOString(),
+    ]);
+
+    if (result.changes > 0) {
+      logger.info('Deleted expired scheduled notifications', {
+        deleted: result.changes,
+        retentionDays,
+      });
+    }
+
+    return result.changes;
+  }
+
+  /**
+   * Delete execution log rows older than the retention window.
+   */
+  async deleteExpiredExecutionLogs(retentionDays: number): Promise<number> {
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - Math.max(1, retentionDays));
+
+    const result = await this.db.run(
+      'DELETE FROM notification_execution_log WHERE execution_time < ?',
+      [cutoff.toISOString()],
+    );
+
+    if (result.changes > 0) {
+      logger.info('Deleted expired notification execution logs', {
+        deleted: result.changes,
+        retentionDays,
+      });
+    }
+
+    return result.changes;
   }
 
   /**
@@ -483,29 +619,39 @@ export class ScheduledNotificationRepository {
    * Convert database row to model
    */
   private rowToModel(row: ScheduledNotificationRow): ScheduledNotification {
+    // SQLite CURRENT_TIMESTAMP produces "YYYY-MM-DD HH:MM:SS" (UTC, no Z suffix).
+    // Appending Z ensures JS parses the value as UTC rather than local time,
+    // which prevents timezone-shifted timestamps in rowToModel output.
+    const parseUtc = (value: string | null | undefined): Date | undefined => {
+      if (!value) return undefined;
+      const normalized = value.includes('T') || value.endsWith('Z') ? value : value.replace(' ', 'T') + 'Z';
+      return new Date(normalized);
+    };
+
     return {
       id: row.id,
+      payload: decompressPayload(row.payload),
       payload: row.payload,
+      payloadHash: row.payload_hash,
       notificationType: row.notification_type as any,
       targetRecipient: row.target_recipient,
-      executeAt: new Date(row.execute_at),
-      createdAt: new Date(row.created_at),
-      updatedAt: new Date(row.updated_at),
+      executeAt: parseUtc(row.execute_at) as Date,
+      createdAt: parseUtc(row.created_at),
+      updatedAt: parseUtc(row.updated_at),
       status: row.status as NotificationStatus,
       retryCount: row.retry_count,
       maxRetries: row.max_retries,
-      processingStartedAt: row.processing_started_at ? new Date(row.processing_started_at) : null,
-      processingCompletedAt: row.processing_completed_at
-        ? new Date(row.processing_completed_at)
-        : null,
+      processingStartedAt: parseUtc(row.processing_started_at) ?? null,
+      processingCompletedAt: parseUtc(row.processing_completed_at) ?? null,
       processorId: row.processor_id,
-      lockExpiresAt: row.lock_expires_at ? new Date(row.lock_expires_at) : null,
+      lockExpiresAt: parseUtc(row.lock_expires_at) ?? null,
       lastError: row.last_error,
       errorDetails: row.error_details,
       eventId: row.event_id,
       contractAddress: row.contract_address,
       priority: row.priority,
       metadata: row.metadata,
+      nextRetryAt: row.next_retry_at ? new Date(row.next_retry_at) : null,
     };
   }
 }

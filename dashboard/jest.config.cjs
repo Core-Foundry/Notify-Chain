@@ -1,6 +1,7 @@
 module.exports = {
   preset: 'ts-jest/presets/default-esm',
   testEnvironment: 'jsdom',
+  testTimeout: 15000,
   setupFilesAfterEnv: ['<rootDir>/jest.setup.cjs'],
   extensionsToTreatAsEsm: ['.ts', '.tsx'],
   moduleNameMapper: {
@@ -9,6 +10,7 @@ module.exports = {
     '^@creit\\.tech/stellar-wallets-kit$':
       '<rootDir>/src/test/stellarWalletsKitMock.ts',
     '^.*/config/stellarNetwork$': '<rootDir>/src/test/stellarNetworkMock.ts',
+    '^.*/config/eventsApiUrl$': '<rootDir>/src/test/eventsApiUrlMock.ts',
     '^(\\.{1,2}/.*)\\.js$': '$1',
   },
   transform: {

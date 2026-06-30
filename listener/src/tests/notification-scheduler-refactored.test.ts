@@ -307,28 +307,52 @@ describe('NotificationScheduler (Refactored)', () => {
       );
 
       // 2. Create a notification in the past (overdue, pending)
-      await repository.create(
-        NotificationFixtureBuilder
-          .aScheduledNotificationInput()
-          .forImmediateExecution()
-          .build()
-      );
-
-      // 3. Create a notification in the past that is currently PROCESSING but lock is expired
+      const overdueId = await repository.create(
+      // 2. Create a notification in the past that is currently PROCESSING but lock is expired
       const staleId = await repository.create(
         NotificationFixtureBuilder
           .aScheduledNotificationInput()
           .forImmediateExecution()
           .build()
       );
+      const pastLock = NotificationFixtureBuilder.dates.past(1000);
+      await db.run(
+        `UPDATE scheduled_notifications
+         SET status = ?, processor_id = ?, lock_expires_at = ?, processing_started_at = ?
+         WHERE id = ?`,
+        [
+          NotificationStatus.PROCESSING,
+          'processor-1',
+          pastLock.toISOString(),
+          pastLock.toISOString(),
+          staleId,
+        ]
+      );
+
+      // 3. Create a notification in the past (overdue, pending) - created AFTER locking to remain in PENDING status
+      await repository.create(
+        NotificationFixtureBuilder
+          .aScheduledNotificationInput()
+          .forImmediateExecution()
+          .build()
+      );
+      // Lock only the stale notification — fetchAndLock picks up past items by priority order,
+      // so we lock both past items then restore item 2 to PENDING to isolate the stale case.
       await repository.fetchAndLockPendingNotifications('processor-1', 30000, 10);
+      await db.run(
+        "UPDATE scheduled_notifications SET status = 'PENDING', processor_id = NULL, lock_expires_at = NULL WHERE id = ?",
+        [overdueId]
+      );
       const pastLock = NotificationFixtureBuilder.dates.past(1000);
       await db.run('UPDATE scheduled_notifications SET lock_expires_at = ? WHERE id = ?', [
         pastLock.toISOString(),
         staleId,
       ]);
 
-      // Get stats BEFORE recovery
+      // Get stats BEFORE recovery:
+      // - item 1: PENDING (future)
+      // - item 2: PENDING (restored, overdue)
+      // - item 3: PROCESSING with expired lock → getStats adjusts to PENDING
       const stats = await repository.getStats();
       
       expect(stats.pending).toBe(3);

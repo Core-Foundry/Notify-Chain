@@ -1,20 +1,27 @@
 import { ScheduledNotificationRepository } from './scheduled-notification-repository';
+import { IdempotencyKeyService } from './idempotency-key-service';
 import { CreateScheduledNotificationInput, NotificationType } from '../types/scheduled-notification';
 import logger from '../utils/logger';
 
 /**
  * High-level API for scheduling notifications
  * This is the main interface that application code should use
+ * Includes support for idempotent request handling
  */
 export class NotificationAPI {
-  constructor(private repository: ScheduledNotificationRepository) {}
+  constructor(
+    private repository: ScheduledNotificationRepository,
+    private idempotencyService?: IdempotencyKeyService
+  ) {}
 
   /**
    * Schedule a notification for future delivery
+   * Supports idempotent request handling via idempotency keys
    */
   async scheduleNotification(
     input: CreateScheduledNotificationInput,
-    requestId?: string
+    requestId?: string,
+    idempotencyKey?: string
   ): Promise<number> {
     // Validate input
     if (!input.executeAt || !(input.executeAt instanceof Date) || isNaN(input.executeAt.getTime())) {
@@ -35,10 +42,33 @@ export class NotificationAPI {
 
     logger.info('Scheduling new notification', {
       requestId,
+      idempotencyKey,
       type: input.notificationType,
       executeAt: input.executeAt,
       recipient: input.targetRecipient,
     });
+
+    // If idempotency service is available, use it for deduplication
+    if (this.idempotencyService && idempotencyKey) {
+      const { result, isDuplicate, notificationId } =
+        await this.idempotencyService.processWithIdempotency(
+          idempotencyKey,
+          input,
+          async () => {
+            return await this.repository.create(input, requestId);
+          }
+        );
+
+      if (isDuplicate) {
+        logger.info('Returned duplicate notification response', {
+          requestId,
+          idempotencyKey,
+          notificationId,
+        });
+      }
+
+      return typeof result === 'number' ? result : (result as { id: number }).id;
+    }
 
     return await this.repository.create(input, requestId);
   }
