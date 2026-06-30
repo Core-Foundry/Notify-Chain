@@ -1,5 +1,9 @@
 use crate::base::errors::Error;
 use crate::base::events::{
+    AdminTransferred, AuthorizationFailure, AutoshareCreated, AutoshareUpdated, ContractPaused,
+    ContractUnpaused, GroupActivated, GroupDeactivated, NotificationAcknowledged,
+    NotificationCategory, NotificationExpired, NotificationPriority, NotificationRevoked,
+    NotificationScheduled, ScheduledNotificationCancelled, Withdrawal,
     AdminTransferred, AuditAction, AuditRecordAppended, AuthorizationFailure, AutoshareCreated,
     AutoshareUpdated, BatchNotificationsCreated, CategoryRegistered, ContractPaused,
     ContractUnpaused, GroupActivated, GroupDeactivated, NotificationCategory, NotificationExpired,
@@ -1462,6 +1466,15 @@ pub fn is_notification_revoked(env: Env, notification_id: BytesN<32>) -> Result<
     Ok(is_revoked(&notification))
 }
 
+/// Acknowledges multiple scheduled notifications in a single batch.
+///
+/// Only the creator of the notification can acknowledge it. The notification
+/// must exist, not be revoked, and not be expired.
+/// Emits a [`NotificationAcknowledged`] event for each valid notification.
+pub fn acknowledge_notifications(
+    env: Env,
+    caller: Address,
+    notification_ids: Vec<BytesN<32>>,
 /// Emits a `BatchProcessingCompleted` event for off-chain consumers.
 pub fn emit_batch_completed(env: Env, batch_id: BytesN<32>, processed_count: u32) -> Result<(), Error> {
     BatchProcessingCompleted {
@@ -1490,6 +1503,32 @@ pub fn extend_notification_expiry(
         return Err(Error::ContractPaused);
     }
 
+    let timestamp = env.ledger().timestamp();
+
+    for id in notification_ids.iter() {
+        let notification = load_notification(&env, &id).ok_or(Error::NotFound)?;
+
+        if notification.creator != caller {
+            return Err(Error::NotAuthorizedToAcknowledge);
+        }
+
+        if is_revoked(&notification) {
+            return Err(Error::NotificationRevoked);
+        }
+
+        if is_expired(&env, &notification) {
+            return Err(Error::NotificationExpired);
+        }
+
+        NotificationAcknowledged {
+            notification_id: id,
+            acknowledger: caller.clone(),
+            category: NotificationCategory::Notification,
+            priority: NOTIFICATION_PRIORITY,
+            timestamp,
+        }
+        .publish(&env);
+    }
     if extension_seconds == 0 {
         return Err(Error::InvalidExpirationDuration);
     }

@@ -459,6 +459,9 @@ impl AutoShareContract {
         autoshare_logic::is_notification_revoked(env, notification_id).unwrap()
     }
 
+    /// Acknowledges multiple scheduled notifications in a single batch.
+    pub fn acknowledge_notifications(env: Env, caller: Address, notification_ids: Vec<BytesN<32>>) {
+        autoshare_logic::acknowledge_notifications(env, caller, notification_ids).unwrap();
     /// Extends the expiration period of a scheduled notification by `extension_seconds`.
     ///
     /// Only the notification creator or the contract admin can extend it.
@@ -632,6 +635,8 @@ mod tests {
     #[path = "../tests/revocation_test.rs"]
     mod revocation_test;
 
+    #[path = "../tests/batch_ack_test.rs"]
+    mod batch_ack_test;
     #[path = "../tests/fuzz_test.rs"]
     mod fuzz_test;
 
