@@ -5,6 +5,7 @@ import { WalletConnectButton } from '../components/WalletConnectButton';
 import { EventExplorerTable } from '../components/EventExplorerTable';
 import { EventExplorerSkeleton } from '../components/EventExplorerSkeleton';
 import { PaginationControls } from '../components/PaginationControls';
+import { NotificationDetailsDrawer } from '../components/NotificationDetailsDrawer';
 import { IndexingHealthPanel } from '../components/IndexingHealthPanel';
 import { useEventFilters, useEventLoadingState, useFilteredEvents } from '../hooks/useEventSelectors';
 import { useEventStore } from '../store/eventStore';
@@ -12,6 +13,7 @@ import { fetchEvents, fetchStatus, type ContractStatus } from '../services/event
 import { resolveIndexingHealthUrl } from '../services/indexingHealthApi';
 import { generateMockEvents } from '../utils/eventData';
 import { restoreWalletSession } from '../services/wallet';
+import type { BlockchainEvent } from '../types/event';
 import { useWalletAccountSync } from '../hooks/useWalletAccountSync';
 
 const DEFAULT_EVENT_COUNT = 5000;
@@ -37,11 +39,16 @@ export function EventExplorerPage() {
   const initialSearch = typeof window !== 'undefined' ? window.location.search : '';
   const [page, setPage] = useState(() => parsePageParam(initialSearch));
   const [limit, setLimit] = useState(() => parseLimitParam(initialSearch));
+  const [selectedNotification, setSelectedNotification] = useState<BlockchainEvent | null>(null);
   const [contractStatuses, setContractStatuses] = useState<ContractStatus[]>([]);
 
   const setEvents = useEventStore((state) => state.setEvents);
   const setLoading = useEventStore((state) => state.setLoading);
   const setError = useEventStore((state) => state.setError);
+  // Re-fetch whenever lastFetchedAt is reset to 0 (via invalidateEvents()) so
+  // that a successful blockchain status-change transaction is reflected on the
+  // next render cycle without requiring a full hard refresh.
+  const lastFetchedAt = useEventStore((state) => state.lastFetchedAt);
   const { isLoading, error } = useEventLoadingState();
   const filters = useEventFilters();
   const filteredEvents = useFilteredEvents();
@@ -51,6 +58,13 @@ export function EventExplorerPage() {
   }, []);
 
   useEffect(() => {
+    // Guard: skip the re-fetch if we already have fresh data from this session.
+    // lastFetchedAt === 0 means either first load or an explicit cache
+    // invalidation (e.g. after a blockchain transaction mutated notification state).
+    if (lastFetchedAt !== 0) {
+      return;
+    }
+
     let cancelled = false;
 
     async function loadEvents() {
@@ -91,7 +105,7 @@ export function EventExplorerPage() {
     return () => {
       cancelled = true;
     };
-  }, [setEvents, setError, setLoading]);
+  }, [lastFetchedAt, setEvents, setError, setLoading]);
 
   // Clear stale events and re-fetch whenever the connected wallet address
   // changes (switch or disconnect). This is the fix for issue #175.
@@ -164,6 +178,14 @@ export function EventExplorerPage() {
     }
   }, [setError, setEvents, setLoading]);
 
+  const handleSelectEvent = useCallback((event: BlockchainEvent) => {
+    setSelectedNotification(event);
+  }, []);
+
+  const handleCloseDrawer = useCallback(() => {
+    setSelectedNotification(null);
+  }, []);
+
   return (
     <main className="event-explorer-page">
       <header className="event-explorer__header">
@@ -225,6 +247,7 @@ export function EventExplorerPage() {
       {isLoading ? (
         <EventExplorerSkeleton rows={Math.min(limit, 8)} />
       ) : currentPageEvents.length > 0 ? (
+        <EventExplorerTable events={currentPageEvents} onSelectEvent={handleSelectEvent} />
         <EventExplorerTable events={currentPageEvents} contractStatuses={contractStatuses} />
       ) : (
         <section className="event-explorer__empty-state" role="status" aria-live="polite">
@@ -243,6 +266,12 @@ export function EventExplorerPage() {
         totalCount={filteredEvents.length}
         onPageChange={setPage}
         onLimitChange={setLimit}
+      />
+
+      <NotificationDetailsDrawer
+        isOpen={Boolean(selectedNotification)}
+        notification={selectedNotification}
+        onClose={handleCloseDrawer}
       />
     </main>
   );

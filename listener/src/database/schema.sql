@@ -6,7 +6,7 @@ CREATE TABLE IF NOT EXISTS scheduled_notifications (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   
   -- Notification content and metadata
-  payload TEXT NOT NULL,                    -- JSON payload of the notification
+  payload TEXT NOT NULL,                    -- JSON payload of the notification (compressed when large)
   notification_type VARCHAR(50) NOT NULL,   -- Type: 'discord', 'email', 'webhook', etc.
   target_recipient TEXT NOT NULL,           -- User ID, webhook URL, or recipient identifier
   

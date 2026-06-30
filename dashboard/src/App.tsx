@@ -1,5 +1,35 @@
 import { useState } from 'react';
 import { EventExplorerPage } from './pages/EventExplorerPage';
+import { DeliveryHeatmap } from './components/DeliveryHeatmap';
+import { ThemeToggle } from './components/ThemeToggle';
+import { useTheme } from './hooks/useTheme';
+import { useEventStore } from './store/eventStore';
+
+export function App() {
+  const { theme, toggleTheme } = useTheme();
+  const events = useEventStore((state) => state.events);
+
+  return (
+    <div className="app">
+      <div className="app__theme-bar">
+        <ThemeToggle theme={theme} onToggle={toggleTheme} />
+      </div>
+      <EventExplorerPage />
+      <DeliveryHeatmap events={events} />
+import { TemplatePreviewDemoPage } from './pages/TemplatePreviewDemoPage';
+
+type Page = 'events' | 'templates';
+
+export function App() {
+  const [currentPage, setCurrentPage] = useState<Page>('templates');
+
+  return (
+    <div className="app">
+      <nav className="app-nav">
+        <button
+          className={`app-nav__button ${currentPage === 'events' ? 'app-nav__button--active' : ''}`}
+          onClick={() => setCurrentPage('events')}
+          type="button"
 import { NotificationTimelineView } from './components/NotificationTimelineView';
 import { ActivityFeed } from './components/ActivityFeed';
 import { ExportHistoryPage } from './pages/ExportHistoryPage';
@@ -21,6 +51,18 @@ export function App() {
           Event Explorer
         </button>
         <button
+          className={`app-nav__button ${currentPage === 'templates' ? 'app-nav__button--active' : ''}`}
+          onClick={() => setCurrentPage('templates')}
+          type="button"
+        >
+          Template Preview
+        </button>
+      </nav>
+      
+      <main className="app-content">
+        {currentPage === 'events' && <EventExplorerPage />}
+        {currentPage === 'templates' && <TemplatePreviewDemoPage />}
+      </main>
           role="tab"
           aria-selected={tab === 'timeline'}
           className={`app-tabs__btn${tab === 'timeline' ? ' app-tabs__btn--active' : ''}`}

@@ -5,14 +5,21 @@ use soroban_sdk::{
     testutils::{Address as _, Ledger, LedgerInfo},
     token, Address, Env, String,
 };
-use types::{TaskStatus, SubmissionStatus};
+use types::{SubmissionStatus, TaskStatus};
 
 fn create_token_contract<'a>(env: &Env, admin: &Address) -> token::Client<'a> {
     let token_address = env.register_stellar_asset_contract(admin.clone());
     token::Client::new(env, &token_address)
 }
 
-fn setup_test() -> (Env, Address, Address, Address, token::Client<'static>, Address) {
+fn setup_test() -> (
+    Env,
+    Address,
+    Address,
+    Address,
+    token::Client<'static>,
+    Address,
+) {
     let env = Env::default();
     env.mock_all_auths();
 
@@ -231,7 +238,10 @@ fn test_approve_submission() {
 
     // Check payment
     let contributor_balance_after = token_client.balance(&contributor);
-    assert_eq!(contributor_balance_after, contributor_balance_before + reward);
+    assert_eq!(
+        contributor_balance_after,
+        contributor_balance_before + reward
+    );
 
     // Check statuses
     let task = client.get_task(&task_id);

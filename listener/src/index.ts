@@ -15,12 +15,18 @@ import { ArchiveStore } from './services/archive-store';
 import { loadArchiveConfig } from './services/archive-config';
 import { initializeDatabase } from './database/database';
 import { DiscordNotificationService } from './services/discord-notification';
+import {
+  IndexingReconciliationEngine,
+  createDefaultAlertSink,
+} from './services/indexing-reconciliation-engine';
 import { initNotificationAnalyticsAggregator } from './services/notification-analytics-aggregator';
 import { NotificationMetricsStore } from './services/notification-metrics-store';
 import { NotificationMetricsRunner } from './services/notification-metrics-runner';
 import { eventRegistry } from './store/event-registry';
 import logger from './utils/logger';
 import { loadConfig, ConfigError } from './config';
+import { NotificationHealthMonitor } from './services/notification-health-monitor';
+import { getWorkerManager } from './services/worker-manager';
 
 dotenv.config();
 
@@ -33,10 +39,13 @@ async function main() {
   let notificationAPI: NotificationAPI | null = null;
   let templateService: NotificationTemplateService | null = null;
   let cleanupService: CleanupService | null = null;
+  let reconciliationEngine: IndexingReconciliationEngine | null = null;
   let archiveService: ArchiveService | null = null;
   let archiveStore: ArchiveStore | null = null;
   let metricsRunner: NotificationMetricsRunner | null = null;
   let metricsStore: NotificationMetricsStore | null = null;
+
+  const healthMonitor = new NotificationHealthMonitor(null, getWorkerManager());
 
   if (config.analytics?.enabled) {
     initNotificationAnalyticsAggregator(config.analytics);
@@ -45,6 +54,9 @@ async function main() {
   try {
     logger.info('Initializing database');
     const db = await initializeDatabase(config.databasePath);
+
+    // Initialize deduplication service
+    deduplicationService = new EventDeduplicationService(db);
 
     // Rebuild registry with configured event TTL
     if (config.cleanup) {
@@ -55,6 +67,13 @@ async function main() {
     cleanupService = new CleanupService(db, eventRegistry, config.cleanup);
     cleanupService.start();
 
+    reconciliationEngine = new IndexingReconciliationEngine({
+      db,
+      rpcUrl: config.stellarRpcUrl,
+      contractAddresses: config.contractAddresses.map((c) => c.address),
+      alertSink: createDefaultAlertSink(config.discord?.webhookUrl),
+    });
+    reconciliationEngine.start();
     if (config.analytics?.enabled) {
       metricsStore = new NotificationMetricsStore(db);
       metricsRunner = new NotificationMetricsRunner(config.analytics, metricsStore);
@@ -112,13 +131,18 @@ async function main() {
     stellarNetworkPassphrase: config.stellarNetworkPassphrase,
     contractAddresses: config.contractAddresses,
     discordWebhookUrl: config.discord?.webhookUrl,
+    webhookSecrets: config.webhookSecrets,
+    apiKeys: config.apiKeys,
     notificationAPI,
     templateService,
     rateLimit: config.rateLimit,
     archiveStore,
     archiveService,
     metricsStore,
+    healthMonitor,
   });
+
+  healthMonitor.start();
 
   const subscriber = new EventSubscriber(config);
   await subscriber.start();
@@ -126,10 +150,14 @@ async function main() {
   const shutdown = async () => {
     logger.info('Shutting down services...');
 
+    healthMonitor.stop();
+
     if (cleanupService) {
       await cleanupService.stop();
     }
 
+    if (reconciliationEngine) {
+      reconciliationEngine.stop();
     if (metricsRunner) {
       await metricsRunner.stop();
     }

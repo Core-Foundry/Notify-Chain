@@ -113,6 +113,29 @@ function validateWebhookSecrets(value: unknown): WebhookSecret[] {
   });
 }
 
+function validateApiKeys(value: unknown): ApiKey[] {
+  if (!Array.isArray(value)) {
+    throw new ConfigError('API_KEYS must be a JSON array of key objects.');
+  }
+
+  return value.map((item, index) => {
+    if (typeof item !== 'object' || item === null) {
+      throw new ConfigError(
+        `API_KEYS[${index}] must be an object with key (and optional name).`
+      );
+    }
+
+    const key = (item as any).key;
+    const name = (item as any).name;
+
+    if (typeof key !== 'string' || !key.trim()) {
+      throw new ConfigError(`API_KEYS[${index}].key must be a non-empty string.`);
+    }
+
+    return { key: key.trim(), name: name?.trim() };
+  });
+}
+
 function loadCleanupConfig(): AppCleanupConfig {
   return {
     intervalMs: parseIntegerEnv('CLEANUP_INTERVAL_MS', String(60 * 60 * 1000)),
@@ -178,6 +201,7 @@ export function loadConfig(): Config {
       maxRetries: parseIntegerEnv('RETRY_MAX_RETRIES', '5'),
       multiplier: parseIntegerEnv('RETRY_MULTIPLIER', '2'),
       jitter: trimEnv('RETRY_JITTER') !== 'false',
+      processIntervalMs: parseIntegerEnv('RETRY_QUEUE_PROCESS_INTERVAL_MS', '5000'),
     },
     eventQueue: {
       maxConcurrency: parseIntegerEnv('EVENT_QUEUE_MAX_CONCURRENCY', '1'),
@@ -186,6 +210,7 @@ export function loadConfig(): Config {
       pollIntervalMs: parseIntegerEnv('EVENT_QUEUE_POLL_INTERVAL_MS', '1000'),
     },
     webhookSecrets: validateWebhookSecrets(rawWebhookSecrets),
+    apiKeys: validateApiKeys(rawApiKeys),
     scheduler: {
       enabled: trimEnv('SCHEDULER_ENABLED') !== 'false',
       pollIntervalMs: parseIntegerEnv('SCHEDULER_POLL_INTERVAL_MS', '10000'),
