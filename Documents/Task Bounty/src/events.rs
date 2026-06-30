@@ -1,11 +1,17 @@
-use soroban_sdk::{Address, Env, String, Symbol, symbol_short};
 use crate::types::Task;
+use soroban_sdk::{symbol_short, Address, Env, String, Symbol};
 
 /// Emit TaskCreated event
 pub fn emit_task_created(env: &Env, task: &Task) {
     env.events().publish(
         (symbol_short!("task"), symbol_short!("created")),
-        (task.id, task.poster.clone(), task.title.clone(), task.reward, task.deadline),
+        (
+            task.id,
+            task.poster.clone(),
+            task.title.clone(),
+            task.reward,
+            task.deadline,
+        ),
     );
 }
 
@@ -19,7 +25,12 @@ pub fn emit_work_submitted(
 ) {
     env.events().publish(
         (symbol_short!("work"), symbol_short!("submit")),
-        (task_id, submission_id, contributor.clone(), work_url.clone()),
+        (
+            task_id,
+            submission_id,
+            contributor.clone(),
+            work_url.clone(),
+        ),
     );
 }
 

@@ -6,7 +6,7 @@ CREATE TABLE IF NOT EXISTS scheduled_notifications (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   
   -- Notification content and metadata
-  payload TEXT NOT NULL,                    -- JSON payload of the notification
+  payload TEXT NOT NULL,                    -- JSON payload of the notification (compressed when large)
   notification_type VARCHAR(50) NOT NULL,   -- Type: 'discord', 'email', 'webhook', etc.
   target_recipient TEXT NOT NULL,           -- User ID, webhook URL, or recipient identifier
   
@@ -34,7 +34,8 @@ CREATE TABLE IF NOT EXISTS scheduled_notifications (
   event_id TEXT,                            -- Reference to the original event (if applicable)
   contract_address TEXT,                    -- Stellar contract address (if applicable)
   priority INTEGER NOT NULL DEFAULT 5,      -- 1-10, lower = higher priority
-  metadata TEXT                             -- Additional JSON metadata
+  metadata TEXT,                            -- Additional JSON metadata
+  next_retry_at DATETIME                    -- Explicit retry scheduling timestamp
 );
 
 -- Indexes for performance optimization
@@ -48,6 +49,10 @@ CREATE INDEX IF NOT EXISTS idx_scheduled_notifications_status_execute_at
 CREATE INDEX IF NOT EXISTS idx_scheduled_notifications_lock_expires 
   ON scheduled_notifications(lock_expires_at, status) 
   WHERE status = 'PROCESSING';
+
+CREATE INDEX IF NOT EXISTS idx_scheduled_notifications_next_retry_at
+  ON scheduled_notifications(next_retry_at, status)
+  WHERE status = 'PENDING';
 
 CREATE INDEX IF NOT EXISTS idx_scheduled_notifications_created_at 
   ON scheduled_notifications(created_at);
@@ -82,6 +87,8 @@ CREATE INDEX IF NOT EXISTS idx_execution_log_execution_time
 CREATE INDEX IF NOT EXISTS idx_execution_log_status_execution_time 
   ON notification_execution_log(status, execution_time);
 
+-- Migration: add next_retry_at for explicit retry scheduling (no-op when column exists in CREATE TABLE)
+-- SQLite does not support IF NOT EXISTS for ADD COLUMN; runMigrations tolerates duplicate-column errors.
 -- Trigger to update updated_at timestamp
 CREATE TRIGGER IF NOT EXISTS update_scheduled_notifications_timestamp 
 AFTER UPDATE ON scheduled_notifications
@@ -166,4 +173,141 @@ FOR EACH ROW
 BEGIN
   SELECT RAISE(ABORT, 'Audit records are immutable');
 END;
+
+-- Event processing deduplication table - tracks processed events to prevent duplicates during reorgs
+-- This table ensures idempotent processing of events even after blockchain reorganizations
+CREATE TABLE IF NOT EXISTS processed_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  
+  -- Event identification (fingerprint components)
+  event_id TEXT NOT NULL,                   -- Unique identifier from blockchain RPC
+  contract_address TEXT NOT NULL,           -- Contract that emitted the event
+  fingerprint TEXT NOT NULL UNIQUE,         -- Composite key: contract_address:event_id (for faster lookups)
+  
+  -- Processing metadata
+  ledger_number INTEGER NOT NULL,           -- Ledger in which the event occurred
+  tx_hash TEXT,                             -- Transaction hash (if available)
+  event_type VARCHAR(50) NOT NULL,          -- Type from RPC (contract, system, etc)
+  processed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  
+  -- Reorg detection and tracking
+  is_reorg_duplicate BOOLEAN NOT NULL DEFAULT 0, -- Flag indicating this is a duplicate from a reorg
+  reorg_detection_count INTEGER NOT NULL DEFAULT 0, -- Number of times this event was redetected
+  last_redetected_at DATETIME,              -- When the event was last detected again (for reorg monitoring)
+  
+  -- Status and metadata
+  status VARCHAR(20) NOT NULL DEFAULT 'PROCESSED', -- PROCESSED, SKIPPED, ERROR
+  notification_sent BOOLEAN NOT NULL DEFAULT 0,     -- Whether a notification was sent for this event
+  error_reason TEXT                         -- If status is ERROR, what went wrong
+);
+
+-- Indexes for efficient lookups
+CREATE INDEX IF NOT EXISTS idx_processed_events_fingerprint 
+  ON processed_events(fingerprint);
+
+CREATE INDEX IF NOT EXISTS idx_processed_events_contract_event 
+  ON processed_events(contract_address, event_id);
+
+CREATE INDEX IF NOT EXISTS idx_processed_events_processed_at 
+  ON processed_events(processed_at);
+
+CREATE INDEX IF NOT EXISTS idx_processed_events_reorg_duplicates 
+  ON processed_events(is_reorg_duplicate, processed_at) 
+  WHERE is_reorg_duplicate = 1;
+
+CREATE INDEX IF NOT EXISTS idx_processed_events_ledger_contract 
+  ON processed_events(ledger_number, contract_address);
+
+-- Cursor tracking for event polling to detect reorgs
+CREATE TABLE IF NOT EXISTS polling_cursors (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  
+  -- Contract tracking
+  contract_address TEXT NOT NULL UNIQUE,    -- Which contract this cursor is for
+  
+  -- Cursor information
+  cursor TEXT NOT NULL,                     -- Last known cursor from RPC
+  ledger_number INTEGER NOT NULL,           -- Ledger number associated with this cursor
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  
+  -- Reorg detection
+  reorg_detected BOOLEAN NOT NULL DEFAULT 0, -- Whether a reorg was detected on the last poll
+  reorg_detection_count INTEGER NOT NULL DEFAULT 0 -- Total number of reorgs detected for this contract
+);
+
+CREATE INDEX IF NOT EXISTS idx_polling_cursors_contract 
+  ON polling_cursors(contract_address);
+
+CREATE INDEX IF NOT EXISTS idx_polling_cursors_updated_at
+  ON polling_cursors(updated_at);
+
+-- Idempotency keys table for request deduplication
+CREATE TABLE IF NOT EXISTS idempotency_keys (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+  -- Key identification
+  idempotency_key TEXT NOT NULL UNIQUE,      -- Client-provided idempotency key
+
+  -- Request and response tracking
+  request_hash TEXT NOT NULL,                -- Hash of request body for validation
+  response_notification_id INTEGER NOT NULL, -- ID of the created notification
+  response_data TEXT NOT NULL,               -- JSON response to return on duplicate
+
+  -- Lifecycle management
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  expires_at DATETIME NOT NULL,              -- When this key should be purged
+
+  -- Status tracking
+  status VARCHAR(20) NOT NULL DEFAULT 'PROCESSED', -- PROCESSED, EXPIRED
+
+  FOREIGN KEY (response_notification_id) REFERENCES scheduled_notifications(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_idempotency_keys_key
+  ON idempotency_keys(idempotency_key);
+
+CREATE INDEX IF NOT EXISTS idx_idempotency_keys_expires_at
+  ON idempotency_keys(expires_at);
+
+CREATE INDEX IF NOT EXISTS idx_idempotency_keys_created_at
+  ON idempotency_keys(created_at);
+
+-- Backpressure events table for tracking queue saturation and recovery
+CREATE TABLE IF NOT EXISTS backpressure_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+  -- Event tracking
+  event_type VARCHAR(20) NOT NULL,            -- ACTIVATED or DEACTIVATED
+  queue_size INTEGER NOT NULL,                -- Queue size when event occurred
+  target_throughput_per_sec INTEGER NOT NULL, -- Target throughput limit during this event
+
+  -- Duration tracking (for deactivation events)
+  duration_ms INTEGER,                        -- How long backpressure was active
+
+  -- Additional metadata
+  reason TEXT,                                -- Optional reason/context for the event
+  timestamp DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_backpressure_events_type
+  ON backpressure_events(event_type);
+
+CREATE INDEX IF NOT EXISTS idx_backpressure_events_timestamp
+  ON backpressure_events(timestamp);
+
+CREATE INDEX IF NOT EXISTS idx_backpressure_events_type_timestamp
+  ON backpressure_events(event_type, timestamp);
+
+-- Persisted notification delivery metrics snapshots for historical analytics
+CREATE TABLE IF NOT EXISTS notification_metrics_snapshots (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  captured_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  window_start INTEGER NOT NULL,
+  window_end INTEGER NOT NULL,
+  total_recorded INTEGER NOT NULL,
+  snapshot_json TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_metrics_snapshots_captured_at
+  ON notification_metrics_snapshots(captured_at);
 

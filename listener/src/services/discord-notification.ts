@@ -4,6 +4,7 @@ import { ContractConfig, DiscordConfig } from '../types';
 import { getEventName } from '../utils/event-utils';
 import { NotificationDeduplicator, generateFingerprint } from './notification-deduplicator';
 import { getNotificationAnalyticsAggregator, NotificationAnalyticsAggregator } from './notification-analytics-aggregator';
+import { sendWebhook } from './webhook-sender';
 import { NotificationType } from '../types/scheduled-notification';
 
 export interface DiscordMessage {
@@ -186,31 +187,20 @@ export class DiscordNotificationService {
   }
 
   private async sendWebhook(message: DiscordMessage): Promise<Response> {
-    const timeoutMs = this.config.timeoutMs ?? 5000;
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-
     try {
-      const response = await fetch(this.config.webhookUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(message),
-        signal: controller.signal as any,
+      const response = await sendWebhook(this.config.webhookUrl, message, {
+        timeoutMs: this.config.timeoutMs,
       });
       return response;
     } catch (error: any) {
-      if (error.name === 'AbortError') {
+      if (error && error.name === 'AbortError') {
         this.timeoutCount++;
         logger.error('Discord webhook request timed out', {
           webhookId: this.config.webhookId,
-          timeoutMs,
+          timeoutMs: this.config.timeoutMs ?? 5000,
         });
       }
       throw error;
-    } finally {
-      clearTimeout(timeoutId);
     }
   }
 

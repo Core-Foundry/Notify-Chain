@@ -14,6 +14,23 @@ export function App() {
           className={`app-nav__button ${currentPage === 'events' ? 'app-nav__button--active' : ''}`}
           onClick={() => setCurrentPage('events')}
           type="button"
+import { NotificationTimelineView } from './components/NotificationTimelineView';
+import { ActivityFeed } from './components/ActivityFeed';
+import { ExportHistoryPage } from './pages/ExportHistoryPage';
+
+type Tab = 'explorer' | 'timeline' | 'activity' | 'export-history';
+
+export function App() {
+  const [tab, setTab] = useState<Tab>('explorer');
+
+  return (
+    <div className="app">
+      <nav className="app-tabs" role="tablist" aria-label="Main navigation">
+        <button
+          role="tab"
+          aria-selected={tab === 'explorer'}
+          className={`app-tabs__btn${tab === 'explorer' ? ' app-tabs__btn--active' : ''}`}
+          onClick={() => setTab('explorer')}
         >
           Event Explorer
         </button>
@@ -30,6 +47,35 @@ export function App() {
         {currentPage === 'events' && <EventExplorerPage />}
         {currentPage === 'templates' && <TemplatePreviewDemoPage />}
       </main>
+          role="tab"
+          aria-selected={tab === 'timeline'}
+          className={`app-tabs__btn${tab === 'timeline' ? ' app-tabs__btn--active' : ''}`}
+          onClick={() => setTab('timeline')}
+        >
+          Delivery Timeline
+        </button>
+        <button
+          role="tab"
+          aria-selected={tab === 'activity'}
+          className={`app-tabs__btn${tab === 'activity' ? ' app-tabs__btn--active' : ''}`}
+          onClick={() => setTab('activity')}
+        >
+          Activity Feed
+        </button>
+        <button
+          role="tab"
+          aria-selected={tab === 'export-history'}
+          className={`app-tabs__btn${tab === 'export-history' ? ' app-tabs__btn--active' : ''}`}
+          onClick={() => setTab('export-history')}
+        >
+          Export History
+        </button>
+      </nav>
+
+      {tab === 'explorer' && <EventExplorerPage />}
+      {tab === 'timeline' && <NotificationTimelineView />}
+      {tab === 'activity' && <ActivityFeed />}
+      {tab === 'export-history' && <ExportHistoryPage />}
     </div>
   );
 }
