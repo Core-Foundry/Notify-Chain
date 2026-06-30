@@ -262,9 +262,9 @@ impl AutoShareContract {
         autoshare_logic::get_total_usages_paid(env, id).unwrap()
     }
 
-    /// Reduces the usage count by 1 (dummy function for testing).
-    pub fn reduce_usage(env: Env, id: BytesN<32>) {
-        autoshare_logic::reduce_usage(env, id).unwrap();
+    /// Reduces the usage count by 1.
+    pub fn reduce_usage(env: Env, id: BytesN<32>, caller: Address) {
+        autoshare_logic::reduce_usage(env, id, caller).unwrap();
     }
 
     // ============================================================================
@@ -389,9 +389,25 @@ impl AutoShareContract {
         autoshare_logic::expire_notification(env, notification_id).unwrap();
     }
 
+    /// Confirms delivery of a scheduled notification.
+    ///
+    /// Only the notification creator or the contract admin can confirm delivery.
+    /// The notification must exist, not already be revoked or expired, and not yet be marked delivered.
+    pub fn confirm_notification_delivery(env: Env, notification_id: BytesN<32>, caller: Address) {
+        autoshare_logic::confirm_notification_delivery(env, notification_id, caller).unwrap();
+    }
+
+    /// Recalls a scheduled notification before delivery confirmation.
+    ///
+    /// Only the notification creator or the contract admin can recall a notification.
+    /// The notification must exist, not already be revoked or expired, and not yet be delivered.
+    pub fn recall_notification(env: Env, notification_id: BytesN<32>, caller: Address) {
+        autoshare_logic::recall_notification(env, notification_id, caller).unwrap();
     /// Emits a `BatchProcessingCompleted` event for off-chain listeners.
     pub fn emit_batch_completed(env: Env, batch_id: BytesN<32>, processed_count: u32) {
         autoshare_logic::emit_batch_completed(env, batch_id, processed_count).unwrap();
+    }
+
     // ============================================================================
     // Batch Notification Creation
     // ============================================================================
@@ -457,6 +473,9 @@ impl AutoShareContract {
         autoshare_logic::is_notification_revoked(env, notification_id).unwrap()
     }
 
+    /// Acknowledges multiple scheduled notifications in a single batch.
+    pub fn acknowledge_notifications(env: Env, caller: Address, notification_ids: Vec<BytesN<32>>) {
+        autoshare_logic::acknowledge_notifications(env, caller, notification_ids).unwrap();
     /// Extends the expiration period of a scheduled notification by `extension_seconds`.
     ///
     /// Only the notification creator or the contract admin can extend it.
@@ -542,6 +561,36 @@ impl AutoShareContract {
     pub fn get_sender_reputation_tier(env: Env, sender: Address) -> u32 {
         reputation_logic::get_reputation_tier(&env, &sender).unwrap_or(0)
     }
+
+    // ============================================================================
+    // Schema Version Tracking  (Issue #309)
+    // ============================================================================
+
+    /// Sets the on-chain notification schema version. Only the admin can call.
+    /// Emits a SchemaVersionSet event. Rejects versions outside the supported range.
+    pub fn set_schema_version(env: Env, admin: Address, schema_version: u32) {
+        autoshare_logic::set_schema_version(env, admin, schema_version).unwrap();
+    }
+
+    /// Returns the current on-chain schema version (0 if never set).
+    pub fn get_schema_version(env: Env) -> u32 {
+        autoshare_logic::get_schema_version(env)
+    }
+
+    /// Returns true if the given schema version is within the supported range.
+    pub fn is_version_supported(env: Env, version: u32) -> bool {
+        autoshare_logic::is_version_supported(env, version)
+    }
+
+    // ============================================================================
+    // Access Logging  (Issue #312)
+    // ============================================================================
+
+    /// Emits a NotificationAccessed event for the specified notification.
+    /// Call whenever a protected notification record is read to build an immutable access trail.
+    pub fn record_notification_access(env: Env, notification_id: BytesN<32>, accessor: Address) {
+        autoshare_logic::record_notification_access(env, notification_id, accessor).unwrap();
+    }
 }
 
 #[cfg(test)]
@@ -600,6 +649,14 @@ mod tests {
     #[path = "../tests/revocation_test.rs"]
     mod revocation_test;
 
+    #[path = "../tests/batch_ack_test.rs"]
+    mod batch_ack_test;
     #[path = "../tests/fuzz_test.rs"]
     mod fuzz_test;
+
+    #[path = "../tests/schema_version_test.rs"]
+    mod schema_version_test;
+
+    #[path = "../tests/access_log_test.rs"]
+    mod access_log_test;
 }

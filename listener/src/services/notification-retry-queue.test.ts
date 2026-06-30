@@ -1,6 +1,10 @@
 import { xdr } from '@stellar/stellar-sdk';
 import * as StellarSDK from '@stellar/stellar-sdk';
 import { NotificationRetryQueue, NotificationFn } from './notification-retry-queue';
+import {
+  NotificationAnalyticsAggregator,
+  setNotificationAnalyticsAggregator,
+} from './notification-analytics-aggregator';
 
 jest.mock('../utils/logger', () => ({
   __esModule: true,
@@ -294,6 +298,66 @@ describe('NotificationRetryQueue', () => {
 
       expect(notificationFn).toHaveBeenCalledTimes(1);
       queue.stop();
+    });
+  });
+
+  describe('analytics success counter (regression: no duplicate-counting)', () => {
+    let aggregator: NotificationAnalyticsAggregator;
+
+    beforeEach(() => {
+      aggregator = new NotificationAnalyticsAggregator();
+      setNotificationAnalyticsAggregator(aggregator);
+    });
+
+    afterEach(() => {
+      setNotificationAnalyticsAggregator(null);
+    });
+
+    it('increments success exactly once when an operation succeeds after multiple failed retries', async () => {
+      // Fails on attempts 1 and 2, succeeds on attempt 3.
+      let callCount = 0;
+      const notificationFn: NotificationFn = jest.fn().mockImplementation(async () => {
+        callCount++;
+        return callCount >= 3;
+      });
+
+      const queue = new NotificationRetryQueue(notificationFn, {
+        baseDelayMs: 100,
+        maxRetries: 5,
+        processIntervalMs: 50,
+        jitter: false,
+      });
+      queue.start();
+
+      queue.enqueue(createMockEvent({ id: 'evt-multi-retry' }), mockContractConfig, 'req-regression');
+
+      const flush = async () => { for (let i = 0; i < 8; i++) await Promise.resolve(); };
+
+      // Attempt 1 at t=100 (base delay), fails → retry recorded
+      jest.advanceTimersByTime(100);
+      await flush();
+      // Attempt 2 at t=300 (100 + 100*2^1), fails → retry recorded
+      jest.advanceTimersByTime(200);
+      await flush();
+      // Attempt 3 at t=700 (300 + 100*2^2), succeeds → success recorded
+      jest.advanceTimersByTime(400);
+      await flush();
+
+      queue.stop();
+
+      const snap = aggregator.snapshot();
+
+      // The notification fn was called exactly 3 times
+      expect(notificationFn).toHaveBeenCalledTimes(3);
+
+      // Success must be exactly 1 — not 0 (missing) and not >1 (duplicate)
+      expect(snap.overall.success).toBe(1);
+
+      // Three retry-attempt events were emitted (one per call before success is known)
+      expect(snap.overall.retry).toBe(3);
+
+      // No failure outcome — the operation ultimately succeeded
+      expect(snap.overall.failure).toBe(0);
     });
   });
 });

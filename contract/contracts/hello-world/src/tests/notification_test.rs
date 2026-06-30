@@ -12,12 +12,13 @@
 //! - the change is backward compatible: the event name remains the first topic
 //!   and the previously defined topics/data are unchanged.
 
+use crate::base::errors::Error;
 use crate::base::events::{NotificationCategory, NotificationPriority};
 use crate::test_utils::{create_test_group, setup_test_env};
 use crate::AutoShareContractClient;
 
 use soroban_sdk::testutils::{Address as _, Events};
-use soroban_sdk::{Address, BytesN, Symbol, TryFromVal, Val, Vec};
+use soroban_sdk::{Address, BytesN, String, Symbol, TryFromVal, Val, Vec};
 
 /// Returns the topic list of the most recently emitted event whose first topic
 /// matches `event_name` (the snake_case event name produced by `#[contractevent]`).
@@ -540,6 +541,77 @@ fn test_multiple_cancellations_emit_distinct_events() {
             "event data must carry the notification id that was cancelled (n = {n})"
         );
     }
+}
+
+#[test]
+fn test_recall_notification_emits_event_for_sender() {
+    let test_env = setup_test_env();
+    let client = AutoShareContractClient::new(&test_env.env, &test_env.autoshare_contract);
+    let creator = test_env.users.get(0).unwrap().clone();
+
+    let mut id_bytes = [0u8; 32];
+    id_bytes[0] = 40;
+    let notification_id = BytesN::from_array(&test_env.env, &id_bytes);
+
+    client.schedule_notification(
+        &notification_id,
+        &creator,
+        &3600u64,
+        &String::from_str(&test_env.env, "Recall me"),
+    );
+    client.recall_notification(&notification_id, &creator);
+
+    assert!(topics_of(&test_env.env, "notification_recalled").is_some());
+}
+
+#[test]
+fn test_recall_notification_rejects_unauthorized_sender() {
+    let test_env = setup_test_env();
+    let client = AutoShareContractClient::new(&test_env.env, &test_env.autoshare_contract);
+    let creator = test_env.users.get(0).unwrap().clone();
+    let other = test_env.users.get(1).unwrap().clone();
+
+    let mut id_bytes = [0u8; 32];
+    id_bytes[0] = 41;
+    let notification_id = BytesN::from_array(&test_env.env, &id_bytes);
+
+    client.schedule_notification(
+        &notification_id,
+        &creator,
+        &3600u64,
+        &String::from_str(&test_env.env, "Nope"),
+    );
+
+    let result = client.try_recall_notification(&notification_id, &other);
+    assert!(
+        result.is_err(),
+        "recall should fail for an unauthorized caller"
+    );
+}
+
+#[test]
+fn test_recall_notification_rejects_after_delivery_confirmation() {
+    let test_env = setup_test_env();
+    let client = AutoShareContractClient::new(&test_env.env, &test_env.autoshare_contract);
+    let creator = test_env.users.get(0).unwrap().clone();
+
+    let mut id_bytes = [0u8; 32];
+    id_bytes[0] = 42;
+    let notification_id = BytesN::from_array(&test_env.env, &id_bytes);
+
+    client.schedule_notification(
+        &notification_id,
+        &creator,
+        &3600u64,
+        &String::from_str(&test_env.env, "Delivered"),
+    );
+    client.confirm_notification_delivery(&notification_id, &creator);
+
+    let result = client.try_recall_notification(&notification_id, &creator);
+    assert!(
+        result.is_err(),
+        "recall should fail after delivery confirmation"
+    );
 }
 
 /// Backward compatibility: the event name is still the first topic, the

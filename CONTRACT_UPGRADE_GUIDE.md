@@ -21,6 +21,21 @@ review trail that maintainers can audit later. Every upgrade PR should answer:
 - How can a deployer verify the new Wasm before and after deployment?
 - What is the rollback or fallback plan if verification fails?
 
+## Upgrade Strategy
+
+Use a conservative, reversible approach for every upgrade.
+
+1. Keep the change small and easy to review.
+2. Preserve compatibility whenever possible, especially for public methods and
+   event names.
+3. Verify the new Wasm on testnet before touching a live deployment.
+4. Record the Wasm hash, contract ID, and deployment command for reviewers.
+5. Stop the rollout immediately if auth, storage, or event behavior looks risky.
+
+If the change affects storage layout, initialization, authorization, or the
+listener/dashboard contract interface, treat it as a high-risk upgrade and
+require extra review.
+
 ## Prerequisites
 
 Install the standard Soroban toolchain:
@@ -164,7 +179,22 @@ Confirm that exported functions, event names, and argument types match the
 intended change. If the inspect output differs from the PR description, stop
 and fix the code or docs before opening the PR.
 
-## 6. Deploy to Testnet for Verification
+## 6. Deployment Sequence
+
+Use this sequence for every contract change so contributors can follow the same
+safe process.
+
+1. Confirm the target contract and the exact scope of the upgrade.
+2. Create a dedicated branch for the change.
+3. Update the contract code, tests, and docs in the same PR.
+4. Run local build and test commands for the affected workspace.
+5. Build the Wasm artifact and record its hash.
+6. Inspect the contract interface to confirm the exported methods and events.
+7. Deploy the artifact to testnet with a test-only identity.
+8. Initialize or invoke the contract using testnet values.
+9. Compare the behavior with the documented expectations.
+10. Only after successful verification should a maintainer consider a live
+    deployment.
 
 Use testnet for upgrade rehearsals. Do not use production keys in local testing
 or PR evidence.
@@ -215,7 +245,22 @@ stellar contract invoke \
 Use placeholder values in documentation and PR comments. Never paste private
 keys, seeds, live account credentials, or production secrets.
 
-## 7. Verification Checklist
+## 7. Common Risks
+
+Be aware of these common issues before deploying a contract upgrade:
+
+- Storage collisions: a new key or changed struct layout can break existing data
+  or make old state unreadable.
+- Broken authorization: changes to admin checks, pause logic, or role handling
+  can accidentally block legitimate calls or allow unauthorized access.
+- Event schema changes: renamed or removed events can break listeners, the
+  dashboard, or downstream automation.
+- Incompatible public methods: changing argument names, types, or method
+  behavior can break clients that already depend on the contract.
+- Missing migration steps: if old state is expected to remain valid, the new
+  code must explain how it will be read or upgraded.
+- Weak verification: deploying without testnet validation can expose issues that
+  only appear on live contracts.
 
 Before requesting review, confirm:
 
@@ -234,9 +279,10 @@ For docs-only upgrade guidance, verify:
 - Commands match the current repository layout.
 - No production secrets, private keys, or wallet recovery phrases are included.
 
-## 8. Rollback and Fallback Procedures
+## 8. Rollback Recommendations
 
-Rollback depends on the type of upgrade.
+Rollback depends on the type of upgrade. Use the safest option available and do
+not proceed with a live deployment if the rollback path is unclear.
 
 ### Documentation or Client-Only Issue
 
@@ -260,6 +306,19 @@ Then return to the previous known-good commit and rebuild.
 Stop before signing any mainnet transaction. Re-run the testnet verification
 checklist with a fresh test identity and require maintainer review before
 continuing.
+
+### Live Upgrade Failure
+
+If a live upgrade or deployment fails after it starts:
+
+1. Stop the rollout immediately.
+2. Keep the previous contract ID and Wasm artifact available for comparison.
+3. Preserve the failing Wasm hash, transaction IDs, and error output.
+4. If the contract exposes admin or pause controls, disable the affected flow
+   until the issue is understood.
+5. Revert to the last known-good deployment or redeploy the prior verified
+   Wasm if the current version cannot safely operate.
+6. Document the incident and add a regression test before repeating the rollout.
 
 ### Post-Deployment Regression
 

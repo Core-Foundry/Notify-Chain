@@ -32,7 +32,7 @@ export class NotificationScheduler {
     batchValidator?: BatchValidationService
   ) {
     this.repository = repository;
-    this.config = config;
+    this.config = { retryDelayMs: 5_000, ...config };
     this.discordService = discordService ?? null;
     this.processorId = config.processorId || uuidv4();
     this.batchValidator = batchValidator ?? new BatchValidationService();
@@ -254,6 +254,38 @@ export class NotificationScheduler {
         return;
       }
 
+      if (timeDiff > this.config.timingBufferMs) {
+        logger.warn('Missed scheduled notification detected; dispatching catch-up delivery', {
+          requestId,
+          id: notification.id,
+          executeAt: notification.executeAt,
+          now,
+          missedByMs: timeDiff,
+        });
+      // Verify payload integrity before executing
+      const secret = process.env.PAYLOAD_INTEGRITY_SECRET;
+      if (secret) {
+        if (!notification.payloadHash) {
+          logger.warn('Payload integrity check skipped — no hash stored', {
+            requestId,
+            id: notification.id,
+          });
+        } else if (!verifyPayloadIntegrity(notification.payload, notification.payloadHash, secret)) {
+          logger.error('Payload integrity verification failed — rejecting notification', {
+            requestId,
+            id: notification.id,
+            type: notification.notificationType,
+          });
+          await this.repository.markAsFailedOrRetry(
+            notification.id!,
+            new Error('Payload integrity check failed: hash mismatch'),
+            notification.maxRetries, // exhaust retries — don't retry a tampered payload
+            notification.maxRetries
+          );
+          return;
+        }
+      }
+
       // Execute notification based on type
       const success = await this.executeNotification(notification, requestId);
 
@@ -288,18 +320,24 @@ export class NotificationScheduler {
         durationMs,
       });
 
+      const willRetry = notification.retryCount + 1 < notification.maxRetries;
+      const nextRetryAt = willRetry
+        ? new Date(Date.now() + (this.config.retryDelayMs ?? 5_000))
+        : undefined;
+
       await this.repository.markAsFailedOrRetry(
         notification.id!,
         error as Error,
         notification.retryCount,
-        notification.maxRetries
+        notification.maxRetries,
+        nextRetryAt
       );
 
       await this.repository.logExecution({
         scheduledNotificationId: notification.id!,
         executionAttempt,
         executionTime: new Date(),
-        status: notification.retryCount >= notification.maxRetries ? 'FAILED' : 'RETRY',
+        status: willRetry ? 'RETRY' : 'FAILED',
         errorMessage: (error as Error).message,
         durationMs,
       });
