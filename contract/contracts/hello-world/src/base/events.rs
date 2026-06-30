@@ -201,6 +201,36 @@ pub struct ScheduledNotificationCancelled {
     pub notification_id: BytesN<32>,
 }
 
+/// Emitted when a notification is confirmed as delivered to its intended recipient.
+#[contractevent(data_format = "single-value")]
+#[derive(Clone)]
+pub struct NotificationDelivered {
+    #[topic]
+    pub notification_id: BytesN<32>,
+    #[topic]
+    pub delivered_by: Address,
+    #[topic]
+    pub category: NotificationCategory,
+    #[topic]
+    pub priority: NotificationPriority,
+    pub delivered_at: u64,
+}
+
+/// Emitted when a sender recalls a scheduled notification before delivery confirmation.
+#[contractevent(data_format = "single-value")]
+#[derive(Clone)]
+pub struct NotificationRecalled {
+    #[topic]
+    pub notification_id: BytesN<32>,
+    #[topic]
+    pub recalled_by: Address,
+    #[topic]
+    pub category: NotificationCategory,
+    #[topic]
+    pub priority: NotificationPriority,
+    pub recalled_at: u64,
+}
+
 /// Emitted when a notification is scheduled on-chain with a bounded lifetime.
 ///
 /// Off-chain consumers can use this to track the notification's existence and

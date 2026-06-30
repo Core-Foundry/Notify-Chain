@@ -68,5 +68,8 @@ pub enum Error {
     NotAuthorizedToAcknowledge = 29,
     AlreadyRevoked = 29,
     /// Triggered when an invalid limit configuration is provided.
+    InvalidLimit = 29,
+    /// Triggered when a notification has already been delivered and cannot be recalled.
+    NotificationDelivered = 30,
     InvalidLimit = 30,
 }

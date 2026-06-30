@@ -1,5 +1,10 @@
 use crate::base::errors::Error;
 use crate::base::events::{
+    AdminTransferred, AuthorizationFailure, AutoshareCreated, AutoshareUpdated, CategoryRegistered,
+    ContractPaused, ContractUnpaused, GroupActivated, GroupDeactivated, NotificationCategory,
+    NotificationDelivered, NotificationExpired, NotificationExtended, NotificationLimitsConfigured,
+    NotificationPriority, NotificationRecalled, NotificationRevoked, NotificationScheduled,
+    ScheduledNotificationCancelled, Withdrawal,
     AdminTransferred, AuthorizationFailure, AutoshareCreated, AutoshareUpdated, ContractPaused,
     ContractUnpaused, GroupActivated, GroupDeactivated, NotificationAcknowledged,
     NotificationCategory, NotificationExpired, NotificationPriority, NotificationRevoked,
@@ -1013,6 +1018,10 @@ pub fn schedule_notification(
         expires_at,
         revoked_by: None,
         revoked_at: None,
+        delivered: false,
+        delivered_at: None,
+        recalled_by: None,
+        recalled_at: None,
         title,
     };
     env.storage().persistent().set(&key, &notification);
@@ -1276,6 +1285,110 @@ pub fn batch_schedule_notifications(
 ///
 /// Revoked notifications maintain their state for transparency and auditing:
 /// they can still be queried but cannot be cancelled or expired.
+pub fn confirm_notification_delivery(
+    env: Env,
+    notification_id: BytesN<32>,
+    caller: Address,
+) -> Result<(), Error> {
+    caller.require_auth();
+
+    if get_paused_status(&env) {
+        return Err(Error::ContractPaused);
+    }
+
+    let key = DataKey::ScheduledNotification(notification_id.clone());
+    let mut notification = load_notification(&env, &notification_id).ok_or(Error::NotFound)?;
+
+    if is_revoked(&notification) {
+        return Err(Error::NotificationRevoked);
+    }
+
+    if is_expired(&env, &notification) {
+        return Err(Error::NotificationExpired);
+    }
+
+    if notification.delivered {
+        return Err(Error::NotificationDelivered);
+    }
+
+    let admin = get_admin(env.clone()).ok();
+    let is_creator = caller == notification.creator;
+    let is_admin = admin.as_ref().map_or(false, |a| caller == *a);
+
+    if !is_creator && !is_admin {
+        return Err(Error::Unauthorized);
+    }
+
+    let delivered_at = env.ledger().timestamp();
+    notification.delivered = true;
+    notification.delivered_at = Some(delivered_at);
+
+    env.storage().persistent().set(&key, &notification);
+
+    NotificationDelivered {
+        notification_id,
+        delivered_by: caller,
+        category: NotificationCategory::Notification,
+        priority: NotificationPriority::High,
+        delivered_at,
+    }
+    .publish(&env);
+
+    Ok(())
+}
+
+pub fn recall_notification(
+    env: Env,
+    notification_id: BytesN<32>,
+    caller: Address,
+) -> Result<(), Error> {
+    caller.require_auth();
+
+    if get_paused_status(&env) {
+        return Err(Error::ContractPaused);
+    }
+
+    let key = DataKey::ScheduledNotification(notification_id.clone());
+    let mut notification = load_notification(&env, &notification_id).ok_or(Error::NotFound)?;
+
+    if is_revoked(&notification) {
+        return Err(Error::NotificationRevoked);
+    }
+
+    if is_expired(&env, &notification) {
+        return Err(Error::NotificationExpired);
+    }
+
+    if notification.delivered {
+        return Err(Error::NotificationDelivered);
+    }
+
+    let admin = get_admin(env.clone()).ok();
+    let is_creator = caller == notification.creator;
+    let is_admin = admin.as_ref().map_or(false, |a| caller == *a);
+
+    if !is_creator && !is_admin {
+        return Err(Error::Unauthorized);
+    }
+
+    let recalled_at = env.ledger().timestamp();
+    notification.recalled_by = Some(caller.clone());
+    notification.recalled_at = Some(recalled_at);
+
+    env.storage().persistent().set(&key, &notification);
+
+    NotificationRecalled {
+        notification_id,
+        recalled_by: caller,
+        category: NotificationCategory::Notification,
+        priority: NotificationPriority::High,
+        recalled_at,
+    }
+    .publish(&env);
+
+    Ok(())
+}
+
 pub fn revoke_notification(
     env: Env,
     notification_id: BytesN<32>,
