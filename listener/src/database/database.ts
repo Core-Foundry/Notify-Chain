@@ -120,6 +120,46 @@ export class Database {
        VALUES (?, ?, ?)`,
       [version, hash, source]
     );
+   * Split SQL statements intelligently, preserving BEGIN...END blocks
+   */
+  private splitSqlStatements(sql: string): string[] {
+    const statements: string[] = [];
+    let current = '';
+    let inBeginBlock = false;
+    
+    const lines = sql.split(/\r?\n/);
+    
+    for (const line of lines) {
+      const trimmed = line.trim();
+      
+      // Check for BEGIN keyword (case insensitive)
+      if (/^\s*BEGIN\s*$/i.test(trimmed)) {
+        inBeginBlock = true;
+      }
+      
+      current += line + '\n';
+      
+      // Check for END; which closes the BEGIN block
+      if (inBeginBlock && /^\s*END\s*;/i.test(trimmed)) {
+        inBeginBlock = false;
+        statements.push(current.trim());
+        current = '';
+        continue;
+      }
+      
+      // If not in BEGIN block and line ends with semicolon, it's a complete statement
+      if (!inBeginBlock && trimmed.endsWith(';')) {
+        statements.push(current.trim());
+        current = '';
+      }
+    }
+    
+    // Add any remaining content
+    if (current.trim().length > 0) {
+      statements.push(current.trim());
+    }
+    
+    return statements.filter(s => s.length > 0 && !s.startsWith('--'));
    * Apply migrations for databases created before schema.sql was updated in-place.
    */
   private async applyIncrementalMigrations(): Promise<void> {
