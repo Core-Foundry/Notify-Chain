@@ -1,11 +1,18 @@
-use soroban_sdk::{Address, Env, String, Symbol, symbol_short};
+use crate::types::{ApiCredential, ApiCredentialRotation, Task};
 use crate::types::Task;
+use soroban_sdk::{symbol_short, Address, Env, String, Symbol};
 
 /// Emit TaskCreated event
 pub fn emit_task_created(env: &Env, task: &Task) {
     env.events().publish(
         (symbol_short!("task"), symbol_short!("created")),
-        (task.id, task.poster.clone(), task.title.clone(), task.reward, task.deadline),
+        (
+            task.id,
+            task.poster.clone(),
+            task.title.clone(),
+            task.reward,
+            task.deadline,
+        ),
     );
 }
 
@@ -19,7 +26,12 @@ pub fn emit_work_submitted(
 ) {
     env.events().publish(
         (symbol_short!("work"), symbol_short!("submit")),
-        (task_id, submission_id, contributor.clone(), work_url.clone()),
+        (
+            task_id,
+            submission_id,
+            contributor.clone(),
+            work_url.clone(),
+        ),
     );
 }
 
@@ -69,5 +81,40 @@ pub fn emit_dispute_raised(
     env.events().publish(
         (symbol_short!("dispute"), symbol_short!("raised")),
         (task_id, submission_id, raiser.clone(), reason.clone()),
+    );
+}
+
+/// Emit ApiKeyRegistered event
+pub fn emit_api_key_registered(env: &Env, credential: &ApiCredential) {
+    env.events().publish(
+        (symbol_short!("api"), symbol_short!("register")),
+        (
+            credential.organization.clone(),
+            credential.id,
+            credential.label.clone(),
+            credential.fingerprint.clone(),
+        ),
+    );
+}
+
+/// Emit ApiKeyRotated event
+pub fn emit_api_key_rotated(env: &Env, rotation: &ApiCredentialRotation) {
+    env.events().publish(
+        (symbol_short!("api"), symbol_short!("rotate")),
+        (
+            rotation.organization.clone(),
+            rotation.old_credential_id,
+            rotation.new_credential_id,
+            rotation.actor.clone(),
+            rotation.reason.clone(),
+        ),
+    );
+}
+
+/// Emit ApiKeyRevoked event
+pub fn emit_api_key_revoked(env: &Env, organization: &Address, credential_id: u64) {
+    env.events().publish(
+        (symbol_short!("api"), symbol_short!("revoke")),
+        (organization.clone(), credential_id),
     );
 }

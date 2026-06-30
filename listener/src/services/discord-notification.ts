@@ -4,6 +4,7 @@ import { ContractConfig, DiscordConfig } from '../types';
 import { getEventName } from '../utils/event-utils';
 import { NotificationDeduplicator, generateFingerprint } from './notification-deduplicator';
 import { getNotificationAnalyticsAggregator, NotificationAnalyticsAggregator } from './notification-analytics-aggregator';
+import { sendWebhook } from './webhook-sender';
 import { NotificationType } from '../types/scheduled-notification';
 
 export interface DiscordMessage {
@@ -74,13 +75,30 @@ export class DiscordNotificationService {
     logger.info('Sending Discord notification', logContext);
 
     const message = this.formatEventMessage(event, contractConfig);
-    const startTime = Date.now();
+    const maxRetries = this.config.retryCount ?? 5;
+    const backoffBaseSeconds = this.config.backoffBaseSeconds ?? 1;
 
-    try {
-      const response = await this.sendWebhook(message);
-      const durationMs = Date.now() - startTime;
+    let attempt = 0;
+    while (attempt <= maxRetries) {
+      const attemptStart = Date.now();
+      try {
+        const response = await this.sendWebhook(message);
+        const durationMs = Date.now() - attemptStart;
 
-      if (!response.ok) {
+        if (response.ok) {
+          this.deduplicator.markSent(fingerprint);
+          logger.info('Discord notification sent successfully', {
+            eventId: event.id,
+            contractAddress: contractConfig.address,
+          });
+          logger.info('Discord notification delivered', {
+            ...logContext,
+            durationMs,
+            attempt,
+          });
+          return true;
+        }
+
         const errorText = await response.text();
         this.analytics?.record({
           notificationType: NotificationType.DISCORD,
@@ -96,10 +114,24 @@ export class DiscordNotificationService {
           statusText: response.statusText,
           error: errorText,
           durationMs,
+          attempt,
         });
-        return false;
+      } catch (error) {
+        const durationMs = Date.now() - attemptStart;
+        logger.error('Error sending Discord notification', {
+          ...logContext,
+          error,
+          durationMs,
+          attempt,
+        });
       }
 
+      // If we've exhausted retries, break and return false
+      if (attempt >= maxRetries) break;
+
+      // Exponential backoff: base * 2^attempt (seconds)
+      const delayMs = Math.pow(2, attempt) * backoffBaseSeconds * 1000;
+      logger.warn('Retrying Discord webhook', {
       this.deduplicator.markSent(fingerprint);
       this.analytics?.record({
         notificationType: NotificationType.DISCORD,
@@ -126,11 +158,19 @@ export class DiscordNotificationService {
       });
       logger.error('Error sending Discord notification', {
         ...logContext,
-        error,
-        durationMs: Date.now() - startTime,
+        attempt: attempt + 1,
+        nextDelayMs: delayMs,
+        maxRetries,
       });
-      return false;
+      await this.delay(delayMs);
+      attempt++;
     }
+
+    logger.error('Exceeded max Discord retry attempts', {
+      ...logContext,
+      maxRetries,
+    });
+    return false;
   }
 
   getMetrics() {
@@ -185,32 +225,25 @@ export class DiscordNotificationService {
     }
   }
 
-  private async sendWebhook(message: DiscordMessage): Promise<Response> {
-    const timeoutMs = this.config.timeoutMs ?? 5000;
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  private delay(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
 
+  private async sendWebhook(message: DiscordMessage): Promise<Response> {
     try {
-      const response = await fetch(this.config.webhookUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(message),
-        signal: controller.signal as any,
+      const response = await sendWebhook(this.config.webhookUrl, message, {
+        timeoutMs: this.config.timeoutMs,
       });
       return response;
     } catch (error: any) {
-      if (error.name === 'AbortError') {
+      if (error && error.name === 'AbortError') {
         this.timeoutCount++;
         logger.error('Discord webhook request timed out', {
           webhookId: this.config.webhookId,
-          timeoutMs,
+          timeoutMs: this.config.timeoutMs ?? 5000,
         });
       }
       throw error;
-    } finally {
-      clearTimeout(timeoutId);
     }
   }
 

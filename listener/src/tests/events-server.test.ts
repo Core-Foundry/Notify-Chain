@@ -27,6 +27,8 @@ describe('correlation ID propagation', () => {
     server = createEventsServer({
       port: TEST_PORT,
       stellarRpcUrl: 'http://localhost:8000',
+      stellarNetworkPassphrase: 'Test SDF Network ; September 2015',
+      contractAddresses: [],
     });
     server.listen(TEST_PORT, done);
   });

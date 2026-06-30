@@ -1,6 +1,7 @@
 import { render, screen, fireEvent, act } from '@testing-library/react';
 import { NotificationSearchBar } from './NotificationSearchBar';
 import { useEventStore } from '../store/eventStore';
+import { filterEvents } from '../utils/eventData';
 
 // Reset store between tests
 beforeEach(() => {
@@ -92,7 +93,6 @@ describe('NotificationSearchBar', () => {
 
 describe('filterEvents with new filter fields', () => {
   it('filters by status=unread correctly', () => {
-    const { filterEvents } = require('../utils/eventData');
     const events = [
       { eventId: '1', read: false, contractAddress: 'A', eventName: 'X', receivedAt: Date.now(), ledger: 1, type: 'c', topic: [], value: '' },
       { eventId: '2', read: true,  contractAddress: 'A', eventName: 'X', receivedAt: Date.now(), ledger: 2, type: 'c', topic: [], value: '' },
@@ -103,7 +103,6 @@ describe('filterEvents with new filter fields', () => {
   });
 
   it('filters by date range', () => {
-    const { filterEvents } = require('../utils/eventData');
     const jan1 = new Date('2026-01-01').getTime() + 1000;
     const jan15 = new Date('2026-01-15').getTime() + 1000;
     const feb1 = new Date('2026-02-01').getTime() + 1000;

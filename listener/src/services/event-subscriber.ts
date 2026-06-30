@@ -364,4 +364,11 @@ export class EventSubscriber {
   private delay(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
+
+  getQueueMetrics() {
+    return {
+      eventQueue: this.eventQueue?.getMetrics() || null,
+      retryQueue: this.retryQueue?.getMetrics() || null,
+    };
+  }
 }
