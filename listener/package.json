@@ -10,6 +10,10 @@
     "lint": "node ./node_modules/typescript/bin/tsc --noEmit",
     "test": "node ./node_modules/jest/bin/jest.js",
     "migrate": "ts-node src/scripts/migrate-db.ts",
+    "migrate:templates": "ts-node src/scripts/migrate-templates.ts"
+    "typecheck": "node ./node_modules/typescript/bin/tsc --noEmit",
+    "lint": "node ./node_modules/typescript/bin/tsc --noEmit",
+    "migrate": "ts-node src/scripts/migrate-db.ts",
     "check-migrations": "ts-node src/scripts/check-migrations.ts",
     "validate:batch": "ts-node src/utils/batch-validator.ts"
   },

@@ -37,10 +37,17 @@ dotenv.config();
 async function main() {
   const config = loadConfig();
 
+  // Initialize database for scheduled notifications and templates
   // Initialize database for templates, scheduler, and rate limiting
   let scheduler: NotificationScheduler | null = null;
   let retryScheduler: RetryScheduler | null = null;
   let notificationAPI: NotificationAPI | null = null;
+  let templateService: TemplateService | null = null;
+
+  if (config.scheduler?.enabled) {
+    try {
+      logger.info('Initializing database for scheduled notifications and templates');
+      const db = await initializeDatabase(config.databasePath);
   let templateService: NotificationTemplateService | null = null;
   let cleanupService: CleanupService | null = null;
   let reconciliationEngine: IndexingReconciliationEngine | null = null;
@@ -147,6 +154,8 @@ async function main() {
     stellarNetworkPassphrase: config.stellarNetworkPassphrase,
     contractAddresses: config.contractAddresses,
     discordWebhookUrl: config.discord?.webhookUrl,
+    notificationAPI, // Pass API to events server for scheduling endpoints
+    templateService, // Pass template service for template endpoints
     webhookSecrets: config.webhookSecrets,
     apiKeys: config.apiKeys,
     notificationAPI,

@@ -6,6 +6,9 @@ import { PreferencesUpdateInput } from '../types/preferences';
 import { NotificationAPI } from '../services/notification-api';
 import { NotificationType } from '../types/scheduled-notification';
 import logger from '../utils/logger';
+import { generateRequestId } from '../utils/request-id';
+import { TemplateService } from '../services/template-service';
+import { handleTemplateRoutes } from './template-routes';
 import { generateRequestId, resolveCorrelationId } from '../utils/request-id';
 import { NotificationHistoryService } from '../services/notification-history';
 import { SearchSuggestionService } from '../services/search-suggestion';
@@ -55,6 +58,7 @@ export interface EventsServerOptions {
   webhookSecrets?: WebhookSecret[];
   apiKeys?: Array<{ key: string; name?: string }>;
   notificationAPI?: NotificationAPI | null;
+  templateService?: TemplateService | null;
   rateLimit?: RateLimitConfig;
   /**
    * Optional override for the analytics aggregator. Tests use this to inject
@@ -376,6 +380,8 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
 
     res.setHeader('Access-Control-Allow-Origin', corsOrigin);
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-API-Key, Authorization, X-Correlation-Id');
     res.setHeader('X-Request-Id', requestId);
     res.setHeader('X-Correlation-Id', correlationId);
@@ -399,6 +405,24 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
       return;
     }
 
+    // Template API routes (handled first for priority)
+    if (options.templateService && req.url?.startsWith('/api/templates')) {
+      handleTemplateRoutes(req, res, requestId, options.templateService)
+        .then((handled) => {
+          if (!handled) {
+            res.writeHead(404, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Not found' }));
+          }
+        })
+        .catch((error) => {
+          logger.error('Template route handler error', { error, requestId });
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Internal server error' }));
+        });
+      return;
+    }
+
+    if (req.method === 'GET' && req.url === '/health') {
     // GET /health
     if (req.method === 'GET' && url.pathname === '/health') {
       buildHealthResponse(options).then((health) => {
