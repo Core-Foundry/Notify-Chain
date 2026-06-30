@@ -48,4 +48,25 @@ pub enum Error {
     NameTooLong = 21,
     /// Triggered when the number of members exceeds the maximum allowed.
     TooManyMembers = 22,
+    /// Triggered when interacting with a notification that has already expired.
+    NotificationExpired = 23,
+    /// Triggered when an invalid expiration duration is provided (e.g., zero or
+    /// one that overflows the ledger clock).
+    InvalidExpirationDuration = 24,
+    /// Triggered when attempting to expire a notification whose lifetime has not
+    /// yet elapsed.
+    NotificationNotExpired = 25,
+    /// Triggered when a batch operation exceeds the maximum allowed size.
+    BatchTooLarge = 26,
+    /// Triggered when attempting to interact with a revoked notification.
+    NotificationRevoked = 27,
+    /// Triggered when the caller is not authorized to revoke a notification.
+    NotAuthorizedToRevoke = 28,
+    /// Triggered when attempting to revoke a notification that is already revoked.
+    AlreadyRevoked = 28,
+    /// Triggered when the caller is not authorized to acknowledge a notification.
+    NotAuthorizedToAcknowledge = 29,
+    AlreadyRevoked = 29,
+    /// Triggered when an invalid limit configuration is provided.
+    InvalidLimit = 30,
 }

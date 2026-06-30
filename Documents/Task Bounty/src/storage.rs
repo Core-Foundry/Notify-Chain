@@ -1,5 +1,5 @@
+use crate::types::{Dispute, Submission, Task};
 use soroban_sdk::{Address, Env, Vec};
-use crate::types::{Task, Submission, Dispute};
 
 // Storage keys
 const TASK_COUNTER: &str = "TASK_CNT";
@@ -90,10 +90,7 @@ pub fn set_active_dispute(env: &Env, task_id: u64, submission_id: u64, dispute_i
 
 // Counters
 pub fn get_task_counter(env: &Env) -> u64 {
-    env.storage()
-        .instance()
-        .get(&TASK_COUNTER)
-        .unwrap_or(0)
+    env.storage().instance().get(&TASK_COUNTER).unwrap_or(0)
 }
 
 pub fn set_task_counter(env: &Env, count: u64) {
@@ -124,10 +121,7 @@ pub fn increment_submission_counter(env: &Env) -> u64 {
 }
 
 pub fn get_dispute_counter(env: &Env) -> u64 {
-    env.storage()
-        .instance()
-        .get(&DISPUTE_COUNTER)
-        .unwrap_or(0)
+    env.storage().instance().get(&DISPUTE_COUNTER).unwrap_or(0)
 }
 
 pub fn increment_dispute_counter(env: &Env) -> u64 {
