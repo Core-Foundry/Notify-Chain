@@ -11,6 +11,9 @@ import { Database, getDatabase, resetDatabaseSingleton } from '../database/datab
 jest.mock('@stellar/stellar-sdk', () => ({
   rpc: {
     Server: jest.fn().mockImplementation(() => ({
+      getHealth: mockGetHealth,
+      simulateTransaction: mockSimulateTransaction,
+      getAccount: jest.fn<Promise<unknown>, []>().mockRejectedValue(new Error('not found')),
       getHealth: jest.fn(),
       simulateTransaction: jest.fn(),
       getAccount: jest.fn().mockRejectedValue(new Error('not found') as never),
