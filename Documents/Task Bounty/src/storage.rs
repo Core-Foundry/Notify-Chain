@@ -1,3 +1,4 @@
+use crate::types::{ApiCredential, ApiCredentialRotation, Dispute, Submission, Task};
 use crate::types::{Dispute, Submission, Task};
 use soroban_sdk::{Address, Env, Vec};
 
@@ -5,6 +6,7 @@ use soroban_sdk::{Address, Env, Vec};
 const TASK_COUNTER: &str = "TASK_CNT";
 const SUBMISSION_COUNTER: &str = "SUB_CNT";
 const DISPUTE_COUNTER: &str = "DISP_CNT";
+const API_KEY_COUNTER: &str = "API_KEY_CNT";
 const DISPUTE_RESOLVER: &str = "DISP_RES";
 const ADMIN: &str = "ADMIN";
 
@@ -145,4 +147,48 @@ pub fn get_admin(env: &Env) -> Address {
 
 pub fn set_admin(env: &Env, address: &Address) {
     env.storage().instance().set(&ADMIN, address);
+}
+
+// API credential storage
+pub fn get_api_credentials(env: &Env, organization: &Address) -> Vec<ApiCredential> {
+    let key = (b"API_KEYS", organization);
+    env.storage()
+        .persistent()
+        .get(&key)
+        .unwrap_or(Vec::new(env))
+}
+
+pub fn set_api_credentials(env: &Env, organization: &Address, credentials: &Vec<ApiCredential>) {
+    let key = (b"API_KEYS", organization);
+    env.storage().persistent().set(&key, credentials);
+}
+
+pub fn get_api_rotation_history(env: &Env, organization: &Address) -> Vec<ApiCredentialRotation> {
+    let key = (b"API_ROT", organization);
+    env.storage()
+        .persistent()
+        .get(&key)
+        .unwrap_or(Vec::new(env))
+}
+
+pub fn set_api_rotation_history(
+    env: &Env,
+    organization: &Address,
+    history: &Vec<ApiCredentialRotation>,
+) {
+    let key = (b"API_ROT", organization);
+    env.storage().persistent().set(&key, history);
+}
+
+pub fn increment_api_key_counter(env: &Env) -> u64 {
+    let count = get_api_key_counter(env) + 1;
+    env.storage().instance().set(&API_KEY_COUNTER, &count);
+    count
+}
+
+pub fn get_api_key_counter(env: &Env) -> u64 {
+    env.storage()
+        .instance()
+        .get(&API_KEY_COUNTER)
+        .unwrap_or(0)
 }

@@ -430,3 +430,113 @@ fn test_get_total_tasks() {
 
     assert_eq!(client.get_total_tasks(), 2);
 }
+
+#[test]
+fn test_register_api_key() {
+    let (env, _, _, admin, _, contract_id) = setup_test();
+    let client = TaskBountyContractClient::new(&env, &contract_id);
+
+    let label = String::from_str(&env, "Primary Key");
+    let fingerprint = BytesN::from_array(&env, &[1u8; 32]);
+
+    let key_id = client.register_api_key(&admin, &label, &fingerprint);
+    assert_eq!(key_id, 1);
+
+    let keys = client.get_active_api_keys(&admin);
+    assert_eq!(keys.len(), 1);
+
+    let key = keys.get(0).unwrap();
+    assert_eq!(key.id, key_id);
+    assert_eq!(key.label, label);
+    assert!(key.is_active);
+    assert!(key.is_primary);
+    assert_eq!(key.fingerprint, fingerprint);
+    assert!(client.is_api_key_active(&admin, &fingerprint));
+}
+
+#[test]
+fn test_rotate_api_key_keeps_old_key_active() {
+    let (env, _, _, admin, _, contract_id) = setup_test();
+    let client = TaskBountyContractClient::new(&env, &contract_id);
+
+    let initial_label = String::from_str(&env, "Primary Key");
+    let initial_fingerprint = BytesN::from_array(&env, &[1u8; 32]);
+    let original_key_id = client.register_api_key(&admin, &initial_label, &initial_fingerprint);
+
+    let rotated_label = String::from_str(&env, "Rotated Key");
+    let rotated_fingerprint = BytesN::from_array(&env, &[2u8; 32]);
+    let reason = String::from_str(&env, "Quarterly rotation");
+
+    let new_key_id = client.rotate_api_key(
+        &admin,
+        &original_key_id,
+        &rotated_label,
+        &rotated_fingerprint,
+        &reason,
+    );
+
+    assert_eq!(new_key_id, 2);
+    assert!(client.is_api_key_active(&admin, &initial_fingerprint));
+    assert!(client.is_api_key_active(&admin, &rotated_fingerprint));
+
+    let keys = client.get_active_api_keys(&admin);
+    assert_eq!(keys.len(), 2);
+
+    let old_key = keys.get(0).unwrap();
+    let new_key = keys.get(1).unwrap();
+
+    assert_eq!(old_key.id, original_key_id);
+    assert!(!old_key.is_primary);
+    assert!(old_key.is_active);
+
+    assert_eq!(new_key.id, new_key_id);
+    assert!(new_key.is_primary);
+    assert!(new_key.is_active);
+    assert_eq!(new_key.previous_credential_id, original_key_id);
+
+    let history = client.get_api_key_rotation_history(&admin);
+    assert_eq!(history.len(), 1);
+    let entry = history.get(0).unwrap();
+    assert_eq!(entry.old_credential_id, original_key_id);
+    assert_eq!(entry.new_credential_id, new_key_id);
+    assert_eq!(entry.reason, reason);
+}
+
+#[test]
+#[should_panic(expected = "ApiKeyAlreadyExists")]
+fn test_register_api_key_rejects_duplicate_active_fingerprint() {
+    let (env, _, _, admin, _, contract_id) = setup_test();
+    let client = TaskBountyContractClient::new(&env, &contract_id);
+
+    let label = String::from_str(&env, "Primary Key");
+    let fingerprint = BytesN::from_array(&env, &[1u8; 32]);
+
+    client.register_api_key(&admin, &label, &fingerprint);
+    client.register_api_key(&admin, &String::from_str(&env, "Duplicate"), &fingerprint);
+}
+
+#[test]
+fn test_revoke_api_key_promotes_remaining_primary() {
+    let (env, _, _, admin, _, contract_id) = setup_test();
+    let client = TaskBountyContractClient::new(&env, &contract_id);
+
+    let first = client.register_api_key(
+        &admin,
+        &String::from_str(&env, "Primary"),
+        &BytesN::from_array(&env, &[1u8; 32]),
+    );
+    let second = client.register_api_key(
+        &admin,
+        &String::from_str(&env, "Backup"),
+        &BytesN::from_array(&env, &[2u8; 32]),
+    );
+
+    client.revoke_api_key(&admin, &first);
+
+    let keys = client.get_active_api_keys(&admin);
+    assert_eq!(keys.len(), 1);
+    let remaining = keys.get(0).unwrap();
+    assert_eq!(remaining.id, second);
+    assert!(remaining.is_primary);
+    assert!(client.is_api_key_active(&admin, &BytesN::from_array(&env, &[2u8; 32])));
+}

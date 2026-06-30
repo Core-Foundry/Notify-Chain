@@ -1,4 +1,4 @@
-use soroban_sdk::{contracttype, Address, String};
+use soroban_sdk::{contracttype, Address, BytesN, String};
 
 /// Task status enum
 #[contracttype]
@@ -62,6 +62,32 @@ pub struct Dispute {
     pub created_at: u64,
 }
 
+/// API credential record scoped to an organization.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct ApiCredential {
+    pub id: u64,
+    pub organization: Address,
+    pub label: String,
+    pub fingerprint: BytesN<32>,
+    pub created_at: u64,
+    pub is_active: bool,
+    pub is_primary: bool,
+    pub previous_credential_id: u64,
+}
+
+/// Rotation audit entry for API credentials.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct ApiCredentialRotation {
+    pub organization: Address,
+    pub old_credential_id: u64,
+    pub new_credential_id: u64,
+    pub actor: Address,
+    pub reason: String,
+    pub rotated_at: u64,
+}
+
 /// Error codes
 #[contracttype]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -80,4 +106,10 @@ pub enum Error {
     MaxSubmissionsReached = 11,
     PaymentFailed = 12,
     DisputeAlreadyExists = 13,
+    ApiKeyNotFound = 14,
+    ApiKeyAlreadyExists = 15,
+    NoActiveApiKeys = 16,
+    InvalidApiKeyRotation = 17,
+    ApiKeyRevoked = 18,
+    UnauthorizedApiKeyAction = 19,
 }
