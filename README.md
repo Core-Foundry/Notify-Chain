@@ -21,7 +21,15 @@ The project enables developers to build reactive decentralized applications with
 9. [Contributing](#contributing)
 10. [License](#license)
 
+> **Listener service docs**:
+> - [API Contract and Event Reference](listener/API_CONTRACT_EVENT_REFERENCE.md)
+> - [API Usage Cookbook](listener/API_USAGE_COOKBOOK.md)
+> - [Notification Failure Recovery](NOTIFICATION_FAILURE_RECOVERY.md) — retry lifecycle, configuration, and troubleshooting.
+> [Notification Lifecycle](NOTIFICATION_LIFECYCLE.md) — creation, delivery, acknowledgment semantics, retries, and archival.
+> [Notification Failure Recovery](NOTIFICATION_FAILURE_RECOVERY.md) — retry lifecycle, configuration, and troubleshooting.
 > **Listener service docs**: [Notification Failure Recovery](NOTIFICATION_FAILURE_RECOVERY.md) — retry lifecycle, configuration, and troubleshooting.
+>
+> **Event reference**: [Smart Contract Event Reference Guide](CONTRACT_EVENT_REFERENCE.md) — all emitted events, parameters, data types, and usage recommendations for indexers and listeners.
 
 ---
 
@@ -63,6 +71,11 @@ run and developed independently.
                                             └────────────────────┘
 ```
 
+> A visual system architecture diagram with Mermaid diagrams spanning
+> all layers is available in
+> [`SYSTEM_ARCHITECTURE.md`](SYSTEM_ARCHITECTURE.md). It provides the
+> quickest way to understand the full system at a glance.
+>
 > A high-level, contributor-facing architecture guide lives in
 > [`ARCHITECTURE_OVERVIEW.md`](ARCHITECTURE_OVERVIEW.md). It walks new
 > contributors through the on-chain, off-chain, and dashboard layers,
@@ -181,6 +194,7 @@ Notify-Chain/
 │   └── settings.json
 ├── README.md                        # This file
 ├── ARCHITECTURE_OVERVIEW.md         # High-level architecture guide (issue #137)
+├── SYSTEM_ARCHITECTURE.md           # Visual system architecture with Mermaid diagrams (issue #97)
 └── .gitignore
 ```
 
