@@ -18,6 +18,7 @@ export interface RetryQueueConfig {
   multiplier?: number;
   jitter?: boolean;
   maxRetries?: number;
+  processIntervalMs?: number;
 }
 
 export interface WebhookSecret {
