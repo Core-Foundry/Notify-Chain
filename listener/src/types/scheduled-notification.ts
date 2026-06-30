@@ -20,6 +20,7 @@ export enum NotificationType {
 export interface ScheduledNotification {
   id?: number;
   payload: string; // JSON string
+  payloadHash?: string | null;
   notificationType: NotificationType;
   targetRecipient: string;
   executeAt: Date;
@@ -38,6 +39,8 @@ export interface ScheduledNotification {
   contractAddress?: string | null;
   priority: number;
   metadata?: string | null; // JSON string
+  /** When the next retry should be attempted (null if not retrying). */
+  nextRetryAt?: Date | null;
 }
 
 export interface CreateScheduledNotificationInput {
@@ -55,6 +58,7 @@ export interface CreateScheduledNotificationInput {
 export interface ScheduledNotificationRow {
   id: number;
   payload: string;
+  payload_hash: string | null;
   notification_type: string;
   target_recipient: string;
   execute_at: string;
@@ -73,6 +77,7 @@ export interface ScheduledNotificationRow {
   contract_address: string | null;
   priority: number;
   metadata: string | null;
+  next_retry_at: string | null;
 }
 
 export interface NotificationExecutionLog {

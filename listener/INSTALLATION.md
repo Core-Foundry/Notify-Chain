@@ -296,6 +296,66 @@ pm2 start npm --name "listener-2" -- start -- SCHEDULER_PROCESSOR_ID=worker-2
 pm2 start npm --name "listener-3" -- start -- SCHEDULER_PROCESSOR_ID=worker-3
 ```
 
+## Migration System
+
+The project uses a versioned migration system with the following features:
+
+- Migrations are stored in `src/migrations/` directory with numeric prefixes for ordering
+- Applied migrations are tracked in a `migrations` database table
+- Migrations are applied automatically on database initialization
+
+### Commands
+
+```bash
+# Apply all pending migrations
+npm run migrate
+
+# Check for pending migrations (used in CI)
+npm run check-migrations
+```
+
+### Adding a New Migration
+
+1. Create a new file in `src/migrations/` with the next numeric prefix (e.g., `002-add-new-table.ts`)
+2. The migration file should export an object with:
+   - `id`: The migration ID (matches the numeric prefix)
+   - `name`: A descriptive name for the migration
+   - `up`: Async function that applies the migration
+   - `down`: Async function that rolls back the migration
+
+Example migration file:
+```typescript
+import * as sqlite3 from 'sqlite3';
+
+export default {
+  id: '002',
+  name: 'add-new-table',
+  up: async (db: sqlite3.Database) => {
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS new_table (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL
+      )
+    `);
+  },
+  down: async (db: sqlite3.Database) => {
+    await db.run('DROP TABLE IF EXISTS new_table');
+  }
+};
+```
+
+## Migration Verification in CI
+
+The CI/CD pipeline automatically checks for pending migrations:
+- On PRs touching migration files, it runs `check-migrations`
+- On pushes to main/staging, it runs the check before deployment
+- If pending migrations are detected, the build fails
+
+To run the check locally:
+```bash
+npm run check-migrations
+```
+
 ## Next Steps
 
 - Read [README-SCHEDULER.md](./README-SCHEDULER.md) for detailed documentation
@@ -309,3 +369,8 @@ For issues or questions:
 2. Review application logs
 3. Inspect the database directly
 4. Open an issue on the project repository
+
+## See also
+
+- [API Usage Cookbook](API_USAGE_COOKBOOK.md) — practical end-to-end examples for every endpoint, including curl/Node.js signing and recovery workflows
+- [API Reference](API.md) — full request/response schema for every endpoint

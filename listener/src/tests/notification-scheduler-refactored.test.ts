@@ -230,6 +230,118 @@ describe('NotificationScheduler (Refactored)', () => {
       expect(stats.pending).toBe(2);
       expect(stats.overdue).toBe(1);
     });
+
+    test('should increment retry_count and log attempt on lock recovery', async () => {
+      const input = NotificationFixtureBuilder
+        .aScheduledNotificationInput()
+        .forImmediateExecution()
+        .withMaxRetries(3)
+        .build();
+
+      const id = await repository.create(input);
+
+      // Lock the notification
+      await repository.fetchAndLockPendingNotifications('processor-1', 30000, 10);
+
+      // Manually expire the lock
+      const pastLock = NotificationFixtureBuilder.dates.past(1000);
+      await db.run('UPDATE scheduled_notifications SET lock_expires_at = ? WHERE id = ?', [
+        pastLock.toISOString(),
+        id,
+      ]);
+
+      const recovered = await repository.recoverStaleLocks();
+      expect(recovered).toBe(1);
+
+      const notification = await repository.getById(id);
+      expect(notification!.status).toBe(NotificationStatus.PENDING);
+      expect(notification!.retryCount).toBe(1);
+      expect(notification!.lastError).toBe('Lock expired/Processor timeout');
+
+      // Verify execution log
+      const logs = await db.all('SELECT * FROM notification_execution_log WHERE scheduled_notification_id = ?', [id]);
+      expect(logs.length).toBe(1);
+      expect(logs[0].status).toBe('RETRY');
+      expect(logs[0].error_message).toBe('Lock expired/Processor timeout');
+    });
+
+    test('should mark as failed if retry_count reaches max_retries on lock recovery', async () => {
+      const input = NotificationFixtureBuilder
+        .aScheduledNotificationInput()
+        .forImmediateExecution()
+        .withMaxRetries(1)
+        .build();
+
+      const id = await repository.create(input);
+
+      // Lock the notification
+      await repository.fetchAndLockPendingNotifications('processor-1', 30000, 10);
+
+      // Manually expire the lock
+      const pastLock = NotificationFixtureBuilder.dates.past(1000);
+      await db.run('UPDATE scheduled_notifications SET lock_expires_at = ? WHERE id = ?', [
+        pastLock.toISOString(),
+        id,
+      ]);
+
+      const recovered = await repository.recoverStaleLocks();
+      expect(recovered).toBe(1);
+
+      const notification = await repository.getById(id);
+      expect(notification!.status).toBe(NotificationStatus.FAILED);
+      expect(notification!.retryCount).toBe(1);
+
+      // Verify execution log
+      const logs = await db.all('SELECT * FROM notification_execution_log WHERE scheduled_notification_id = ?', [id]);
+      expect(logs.length).toBe(1);
+      expect(logs[0].status).toBe('FAILED');
+    });
+
+    test('should return correct statistics accounting for stale locks', async () => {
+      // 1. Create a notification in the future (pending, not overdue)
+      await repository.create(
+        NotificationFixtureBuilder
+          .aScheduledNotificationInput()
+          .withExecuteAt(new Date(Date.now() + 3600000))
+          .build()
+      );
+
+      // 2. Create a notification in the past that is currently PROCESSING but lock is expired
+      const staleId = await repository.create(
+        NotificationFixtureBuilder
+          .aScheduledNotificationInput()
+          .forImmediateExecution()
+          .build()
+      );
+      const pastLock = NotificationFixtureBuilder.dates.past(1000);
+      await db.run(
+        `UPDATE scheduled_notifications
+         SET status = ?, processor_id = ?, lock_expires_at = ?, processing_started_at = ?
+         WHERE id = ?`,
+        [
+          NotificationStatus.PROCESSING,
+          'processor-1',
+          pastLock.toISOString(),
+          pastLock.toISOString(),
+          staleId,
+        ]
+      );
+
+      // 3. Create a notification in the past (overdue, pending) - created AFTER locking to remain in PENDING status
+      await repository.create(
+        NotificationFixtureBuilder
+          .aScheduledNotificationInput()
+          .forImmediateExecution()
+          .build()
+      );
+
+      // Get stats BEFORE recovery
+      const stats = await repository.getStats();
+      
+      expect(stats.pending).toBe(3);
+      expect(stats.overdue).toBe(2);
+      expect(stats.processing).toBe(0);
+    });
   });
 
   describe('NotificationAPI', () => {

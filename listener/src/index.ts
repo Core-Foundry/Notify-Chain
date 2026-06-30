@@ -2,58 +2,145 @@ import dotenv from 'dotenv';
 import { startEventsServer } from './api/events-server';
 import { EventSubscriber } from './services/event-subscriber';
 import { NotificationScheduler } from './services/notification-scheduler';
+import { RetryScheduler } from './services/retry-scheduler';
 import { ScheduledNotificationRepository } from './services/scheduled-notification-repository';
+import { NotificationTemplateRepository } from './services/notification-template-repository';
+import { NotificationTemplateService } from './services/notification-template-service';
+import { TemplateAuditTrail } from './services/template-audit-trail';
+import { getTemplateCache } from './services/notification-template-cache';
 import { NotificationAPI } from './services/notification-api';
+import { CleanupService } from './services/cleanup-service';
+import { ArchiveService } from './services/archive-service';
+import { ArchiveStore } from './services/archive-store';
+import { loadArchiveConfig } from './services/archive-config';
 import { initializeDatabase } from './database/database';
 import { DiscordNotificationService } from './services/discord-notification';
+import {
+  IndexingReconciliationEngine,
+  createDefaultAlertSink,
+} from './services/indexing-reconciliation-engine';
+import { initNotificationAnalyticsAggregator } from './services/notification-analytics-aggregator';
+import { NotificationMetricsStore } from './services/notification-metrics-store';
+import { NotificationMetricsRunner } from './services/notification-metrics-runner';
+import { eventRegistry } from './store/event-registry';
 import logger from './utils/logger';
 import { loadConfig, ConfigError } from './config';
+import { NotificationHealthMonitor } from './services/notification-health-monitor';
+import { getWorkerManager } from './services/worker-manager';
 
 dotenv.config();
 
 async function main() {
   const config = loadConfig();
 
-  // Initialize database if scheduler or rate limiting is enabled
+  // Initialize database for templates, scheduler, and rate limiting
   let scheduler: NotificationScheduler | null = null;
+  let retryScheduler: RetryScheduler | null = null;
   let notificationAPI: NotificationAPI | null = null;
-  const needDb = config.scheduler?.enabled || config.rateLimit?.enabled;
+  let templateService: NotificationTemplateService | null = null;
+  let cleanupService: CleanupService | null = null;
+  let reconciliationEngine: IndexingReconciliationEngine | null = null;
+  let archiveService: ArchiveService | null = null;
+  let archiveStore: ArchiveStore | null = null;
+  let metricsRunner: NotificationMetricsRunner | null = null;
+  let metricsStore: NotificationMetricsStore | null = null;
 
-  if (needDb) {
-    try {
-      logger.info('Initializing database');
-      const db = await initializeDatabase(config.databasePath);
+  const healthMonitor = new NotificationHealthMonitor(null, getWorkerManager());
 
-      if (config.scheduler?.enabled) {
-        const repository = new ScheduledNotificationRepository(db);
-        notificationAPI = new NotificationAPI(repository);
-
-        // Initialize scheduler with Discord service if available
-        let discordService: DiscordNotificationService | null = null;
-        if (config.discord) {
-          discordService = new DiscordNotificationService(config.discord);
-        }
-
-        scheduler = new NotificationScheduler(repository, config.scheduler, discordService);
-        await scheduler.start();
-
-        logger.info('Notification scheduler started successfully');
-      }
-    } catch (error) {
-      logger.error('Failed to initialize database or scheduler', { error });
-      throw error;
-    }
+  if (config.analytics?.enabled) {
+    initNotificationAnalyticsAggregator(config.analytics);
   }
 
-  // Start events server and subscriber
+  try {
+    logger.info('Initializing database');
+    const db = await initializeDatabase(config.databasePath);
+
+    // Initialize deduplication service
+    deduplicationService = new EventDeduplicationService(db);
+
+    // Rebuild registry with configured event TTL
+    if (config.cleanup) {
+      (eventRegistry as any).ttlMs = config.cleanup.eventRetentionMs;
+      eventRegistry.setTtlMs(config.cleanup.eventRetentionMs);
+    }
+
+    cleanupService = new CleanupService(db, eventRegistry, config.cleanup);
+    cleanupService.start();
+
+    reconciliationEngine = new IndexingReconciliationEngine({
+      db,
+      rpcUrl: config.stellarRpcUrl,
+      contractAddresses: config.contractAddresses.map((c) => c.address),
+      alertSink: createDefaultAlertSink(config.discord?.webhookUrl),
+    });
+    reconciliationEngine.start();
+    if (config.analytics?.enabled) {
+      metricsStore = new NotificationMetricsStore(db);
+      metricsRunner = new NotificationMetricsRunner(config.analytics, metricsStore);
+      await metricsRunner.start();
+      logger.info('Notification metrics runner started successfully');
+    }
+
+    // Archive service: moves old notifications to the archive table.
+    const archiveCfg = loadArchiveConfig();
+    archiveStore = new ArchiveStore(db);
+    archiveService = new ArchiveService(db, archiveCfg);
+    await archiveService.initialize();
+    if (archiveCfg.enabled) {
+      archiveService.start();
+      logger.info('ArchiveService started');
+    }
+
+    const templateRepository = new NotificationTemplateRepository(
+      db,
+      new TemplateAuditTrail(db),
+      getTemplateCache(),
+    );
+    templateService = new NotificationTemplateService(templateRepository);
+
+    if (config.scheduler?.enabled) {
+      const repository = new ScheduledNotificationRepository(db);
+      notificationAPI = new NotificationAPI(repository);
+
+      // Initialize scheduler with Discord service if available
+      let discordService: DiscordNotificationService | null = null;
+      if (config.discord) {
+        discordService = new DiscordNotificationService(config.discord);
+      }
+
+      scheduler = new NotificationScheduler(repository, config.scheduler, discordService);
+      await scheduler.start();
+
+      logger.info('Notification scheduler started successfully');
+
+      if (config.retryScheduler?.enabled) {
+        retryScheduler = new RetryScheduler(repository, config.retryScheduler, discordService);
+        await retryScheduler.start();
+        logger.info('Retry scheduler started successfully');
+      }
+    }
+  } catch (error) {
+    logger.error('Failed to initialize database or scheduler', { error });
+    throw error;
+  }
+
   const eventsServer = startEventsServer({
     port: config.eventsApiPort,
     corsOrigin: config.eventsApiCorsOrigin,
     stellarRpcUrl: config.stellarRpcUrl,
+    stellarNetworkPassphrase: config.stellarNetworkPassphrase,
+    contractAddresses: config.contractAddresses,
     discordWebhookUrl: config.discord?.webhookUrl,
-    notificationAPI, // Pass API to events server for scheduling endpoints
+    notificationAPI,
+    templateService,
     rateLimit: config.rateLimit,
+    archiveStore,
+    archiveService,
+    metricsStore,
+    healthMonitor,
   });
+
+  healthMonitor.start();
 
   const subscriber = new EventSubscriber(config);
   await subscriber.start();
@@ -61,8 +148,30 @@ async function main() {
   const shutdown = async () => {
     logger.info('Shutting down services...');
 
+    healthMonitor.stop();
+
+    if (cleanupService) {
+      await cleanupService.stop();
+    }
+
+    if (reconciliationEngine) {
+      reconciliationEngine.stop();
+    }
+
+    if (metricsRunner) {
+      await metricsRunner.stop();
+    }
+
+    if (archiveService) {
+      await archiveService.stop();
+    }
+
     if (scheduler) {
       await scheduler.stop();
+    }
+
+    if (retryScheduler) {
+      await retryScheduler.stop();
     }
 
     await subscriber.stop();
