@@ -254,6 +254,30 @@ export class NotificationScheduler {
         return;
       }
 
+      // Verify payload integrity before executing
+      const secret = process.env.PAYLOAD_INTEGRITY_SECRET;
+      if (secret) {
+        if (!notification.payloadHash) {
+          logger.warn('Payload integrity check skipped — no hash stored', {
+            requestId,
+            id: notification.id,
+          });
+        } else if (!verifyPayloadIntegrity(notification.payload, notification.payloadHash, secret)) {
+          logger.error('Payload integrity verification failed — rejecting notification', {
+            requestId,
+            id: notification.id,
+            type: notification.notificationType,
+          });
+          await this.repository.markAsFailedOrRetry(
+            notification.id!,
+            new Error('Payload integrity check failed: hash mismatch'),
+            notification.maxRetries, // exhaust retries — don't retry a tampered payload
+            notification.maxRetries
+          );
+          return;
+        }
+      }
+
       // Execute notification based on type
       const success = await this.executeNotification(notification, requestId);
 

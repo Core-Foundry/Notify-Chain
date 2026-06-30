@@ -20,6 +20,7 @@ export enum NotificationType {
 export interface ScheduledNotification {
   id?: number;
   payload: string; // JSON string
+  payloadHash?: string | null;
   notificationType: NotificationType;
   targetRecipient: string;
   executeAt: Date;
@@ -57,6 +58,7 @@ export interface CreateScheduledNotificationInput {
 export interface ScheduledNotificationRow {
   id: number;
   payload: string;
+  payload_hash: string | null;
   notification_type: string;
   target_recipient: string;
   execute_at: string;
