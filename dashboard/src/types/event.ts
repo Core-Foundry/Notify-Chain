@@ -45,10 +45,17 @@ export interface BlockchainEvent {
    * matching cached entry in-place.
    */
   relatedNotificationId?: string;
+  /** Whether the user has seen/read this notification. Default: false */
+  read?: boolean;
 }
+
+export type NotificationStatus = 'all' | 'read' | 'unread';
 
 export interface EventFilters {
   search: string;
   contractAddress: string;
   eventType: string;
+  status: NotificationStatus;
+  dateFrom: string; // ISO date string "YYYY-MM-DD" or ""
+  dateTo: string;   // ISO date string "YYYY-MM-DD" or ""
 }

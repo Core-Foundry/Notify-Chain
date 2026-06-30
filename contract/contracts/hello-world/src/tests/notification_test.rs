@@ -63,6 +63,16 @@ fn priority_of(env: &soroban_sdk::Env, event_name: &str) -> Option<NotificationP
     NotificationPriority::try_from_val(env, &last).ok()
 }
 
+/// Extracts the actor address from pause/unpause events (first topic after name).
+fn actor_of(env: &soroban_sdk::Env, event_name: &str) -> Option<Address> {
+    let topics = topics_of(env, event_name)?;
+    if topics.len() < 2 {
+        return None;
+    }
+    let actor_topic = topics.get(1)?;
+    Address::try_from_val(env, &actor_topic).ok()
+}
+
 /// Returns the category of the most recently emitted event — i.e. the metadata a
 /// streaming consumer would read off the event as it arrives.
 ///
@@ -213,6 +223,10 @@ fn test_pause_and_unpause_events_have_admin_category() {
         priority_of(&test_env.env, "contract_paused"),
         Some(NotificationPriority::High)
     );
+    assert_eq!(
+        actor_of(&test_env.env, "contract_paused"),
+        Some(test_env.admin.clone())
+    );
 
     client.unpause(&test_env.admin);
     assert_eq!(
@@ -222,6 +236,10 @@ fn test_pause_and_unpause_events_have_admin_category() {
     assert_eq!(
         priority_of(&test_env.env, "contract_unpaused"),
         Some(NotificationPriority::High)
+    );
+    assert_eq!(
+        actor_of(&test_env.env, "contract_unpaused"),
+        Some(test_env.admin.clone())
     );
 }
 

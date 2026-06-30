@@ -570,6 +570,47 @@ A service entry's `status` field can be `"ok"`, `"error"`, or `"not_configured"`
 
 ---
 
+## Contract Status
+
+### GET /api/status
+
+Returns the pause status of all configured smart contracts.
+
+**Response `200`**
+
+```json
+{
+  "timestamp": "2024-06-20T14:00:00.000Z",
+  "contracts": [
+    {
+      "address": "CCEMX6...",
+      "paused": false
+    },
+    {
+      "address": "CCEMX7...",
+      "paused": true,
+      "error": "Failed to simulate contract call"
+    }
+  ]
+}
+```
+
+| Field       | Type     | Description                                                                 |
+|-------------|----------|-----------------------------------------------------------------------------|
+| timestamp   | string   | ISO 8601 timestamp of when the status was fetched                          |
+| contracts   | array    | List of contracts and their statuses                                             |
+| address     | string   | Contract address                                                            |
+| paused      | boolean  | Whether the contract is currently paused                                   |
+| error       | string   | Optional. Error message if we could not fetch the status for this contract   |
+
+**Response `500`** — internal error fetching status
+
+```json
+{ "status": "error", "detail": "Internal status check failure" }
+```
+
+---
+
 ## Error Codes Reference
 
 Every error response is a JSON object. All errors carry an `error` string. Rate-limit responses also include a `message` field; health-check failures use `detail` instead.

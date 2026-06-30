@@ -5,10 +5,19 @@ import { getEventName } from '../utils/event-utils';
 import { getNotificationAnalyticsAggregator, NotificationAnalyticsAggregator } from './notification-analytics-aggregator';
 import { NotificationType } from '../types/scheduled-notification';
 
+export enum Priority {
+  Low = 0,
+  Medium = 1,
+  High = 2,
+}
+
 export interface RetryQueueOptions {
   baseDelayMs?: number;
+  multiplier?: number;
+  jitter?: boolean;
   maxRetries?: number;
   processIntervalMs?: number;
+  priorityWeights?: { high: number; medium: number; low: number };
 }
 
 interface RetryItem {
@@ -17,12 +26,17 @@ interface RetryItem {
   retryCount: number;
   nextRetryAt: number;
   requestId?: string;
+  priority: Priority;
+  enqueuedAt: number;
 }
 
 const DEFAULTS = {
   baseDelayMs: 5_000,
+  multiplier: 2,
+  jitter: true,
   maxRetries: 5,
   processIntervalMs: 5_000,
+  priorityWeights: { high: 5, medium: 2, low: 1 },
 };
 
 export type NotificationFn = (
@@ -35,24 +49,32 @@ export class NotificationRetryQueue {
   private queue: RetryItem[] = [];
   private readonly queuedFingerprints: Set<string> = new Set();
   private readonly baseDelayMs: number;
+  private readonly multiplier: number;
+  private readonly jitter: boolean;
   private readonly maxRetries: number;
   private readonly processIntervalMs: number;
+  private readonly priorityWeights: { high: number; medium: number; low: number };
   private timer: ReturnType<typeof setInterval> | null = null;
   private readonly notificationFn: NotificationFn;
   private readonly analytics: NotificationAnalyticsAggregator | null;
+  private priorityCounters: { high: number; medium: number; low: number } = { high: 0, medium: 0, low: 0 };
 
   constructor(notificationFn: NotificationFn, options?: RetryQueueOptions) {
     this.notificationFn = notificationFn;
     this.baseDelayMs = options?.baseDelayMs ?? DEFAULTS.baseDelayMs;
+    this.multiplier = options?.multiplier ?? DEFAULTS.multiplier;
+    this.jitter = options?.jitter ?? DEFAULTS.jitter;
     this.maxRetries = options?.maxRetries ?? DEFAULTS.maxRetries;
     this.processIntervalMs = options?.processIntervalMs ?? DEFAULTS.processIntervalMs;
+    this.priorityWeights = options?.priorityWeights ?? DEFAULTS.priorityWeights;
     this.analytics = getNotificationAnalyticsAggregator();
   }
 
   enqueue(
     event: StellarSDK.rpc.Api.EventResponse,
     contractConfig: ContractConfig,
-    requestId?: string
+    requestId?: string,
+    priority: Priority = Priority.Medium
   ): void {
     const fingerprint = buildRetryFingerprint(event, contractConfig.address);
 
@@ -76,10 +98,11 @@ export class NotificationRetryQueue {
       delayMs,
       nextRetryAt: new Date(nextRetryAt).toISOString(),
       maxRetries: this.maxRetries,
+      priority: Priority[priority],
     });
 
     this.queuedFingerprints.add(fingerprint);
-    this.queue.push({ event, contractConfig, retryCount: 0, nextRetryAt, requestId });
+    this.queue.push({ event, contractConfig, retryCount: 0, nextRetryAt, requestId, priority, enqueuedAt: Date.now() });
   }
 
   start(): void {
@@ -104,12 +127,39 @@ export class NotificationRetryQueue {
 
   private async processQueue(): Promise<void> {
     const now = Date.now();
-    const due = this.queue.filter((item) => item.nextRetryAt <= now);
+    const due = this.queue
+      .filter((item) => item.nextRetryAt <= now)
+      .sort((a, b) => {
+        const priorityA = this.getWeightedPriority(a);
+        const priorityB = this.getWeightedPriority(b);
+        if (priorityB !== priorityA) return priorityB - priorityA;
+        return a.enqueuedAt - b.enqueuedAt;
+      });
+
     this.queue = this.queue.filter((item) => item.nextRetryAt > now);
+
+    for (const item of due) {
+      if (item.priority === Priority.High) this.priorityCounters.high++;
+      else if (item.priority === Priority.Medium) this.priorityCounters.medium++;
+      else this.priorityCounters.low++;
+    }
 
     for (const item of due) {
       await this.retryItem(item);
     }
+  }
+
+  private getWeightedPriority(item: RetryItem): number {
+    const basePriority = item.priority;
+    const age = Date.now() - item.enqueuedAt;
+    const ageBonus = Math.floor(age / 60000);
+
+    let weight = 0;
+    if (item.priority === Priority.High) weight = this.priorityWeights.high;
+    else if (item.priority === Priority.Medium) weight = this.priorityWeights.medium;
+    else weight = this.priorityWeights.low;
+
+    return basePriority + ageBonus + weight;
   }
 
   private async retryItem(item: RetryItem): Promise<void> {
@@ -181,7 +231,8 @@ export class NotificationRetryQueue {
   }
 
   private calculateDelay(retryCount: number): number {
-    return this.baseDelayMs * Math.pow(2, retryCount);
+    const base = this.baseDelayMs * Math.pow(this.multiplier, retryCount);
+    return this.jitter ? base * (0.5 + Math.random() * 0.5) : base;
   }
 }
 

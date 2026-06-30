@@ -22,6 +22,9 @@ interface EventStoreState {
   setSearch: (search: string) => void;
   setContractFilter: (contractAddress: string) => void;
   setEventTypeFilter: (eventType: string) => void;
+  setStatusFilter: (status: NotificationStatus) => void;
+  setDateFrom: (dateFrom: string) => void;
+  setDateTo: (dateTo: string) => void;
   setLoading: (isLoading: boolean) => void;
   setError: (error: string | null) => void;
   /**
@@ -64,6 +67,9 @@ export const useEventStore = create<EventStoreState>((set) => ({
     search: '',
     contractAddress: 'all',
     eventType: 'all',
+    status: 'all',
+    dateFrom: '',
+    dateTo: '',
   },
   isLoading: false,
   error: null,
@@ -73,18 +79,17 @@ export const useEventStore = create<EventStoreState>((set) => ({
     set((state) => ({
       events: dedupeEventsById([...state.events, ...events]),
     })),
-  setSearch: (search) =>
-    set((state) => ({
-      filters: { ...state.filters, search },
-    })),
+  setSearch: (search) => set((state) => ({ filters: { ...state.filters, search } })),
   setContractFilter: (contractAddress) =>
-    set((state) => ({
-      filters: { ...state.filters, contractAddress },
-    })),
+    set((state) => ({ filters: { ...state.filters, contractAddress } })),
   setEventTypeFilter: (eventType) =>
-    set((state) => ({
-      filters: { ...state.filters, eventType },
-    })),
+    set((state) => ({ filters: { ...state.filters, eventType } })),
+  setStatusFilter: (status) =>
+    set((state) => ({ filters: { ...state.filters, status } })),
+  setDateFrom: (dateFrom) =>
+    set((state) => ({ filters: { ...state.filters, dateFrom } })),
+  setDateTo: (dateTo) =>
+    set((state) => ({ filters: { ...state.filters, dateTo } })),
   setLoading: (isLoading) => set({ isLoading }),
   setError: (error) => set({ error }),
   updateEventStatus: (targetEventId, status) =>
@@ -104,7 +109,10 @@ export function selectFilteredEvents(state: EventStoreState): BlockchainEvent[] 
     events,
     filters.search,
     filters.contractAddress,
-    filters.eventType
+    filters.eventType,
+    filters.status,
+    filters.dateFrom,
+    filters.dateTo
   );
 }
 
