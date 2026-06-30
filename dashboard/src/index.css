@@ -4686,3 +4686,202 @@ body {
   }
 }
 
+/* ── Notification Search Page ──────────────────────────────────────────────── */
+
+.notif-search-page {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 24px;
+}
+
+.notif-search-page__header {
+  margin-bottom: 24px;
+}
+
+.notif-search-page__header h1 {
+  margin: 4px 0 8px;
+  font-size: 1.75rem;
+}
+
+.notif-search-form {
+  background: rgba(255,255,255,0.03);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 12px;
+  padding: 16px;
+  margin-bottom: 24px;
+}
+
+.notif-search-form__row {
+  display: grid;
+  grid-template-columns: 2fr repeat(5, 1fr);
+  gap: 12px;
+  align-items: end;
+}
+
+.notif-search-form__group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.notif-search-form__group--wide {
+  grid-column: span 2;
+}
+
+.notif-search-form__label {
+  font-size: 0.82rem;
+  color: #9aa0a6;
+  font-weight: 500;
+}
+
+.notif-search-form__input {
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 8px;
+  color: #e8eaed;
+  font-size: 0.9rem;
+  padding: 8px 12px;
+  outline: none;
+  width: 100%;
+}
+
+.notif-search-form__input:focus {
+  border-color: #4a9eff;
+}
+
+.notif-search-page__status {
+  color: #9aa0a6;
+  padding: 8px 0;
+}
+
+.notif-search-page__empty {
+  text-align: center;
+  padding: 64px 24px;
+  color: #9aa0a6;
+}
+
+.notif-search-page__empty h2 {
+  margin: 0 0 8px;
+  font-size: 1.25rem;
+  color: #e8eaed;
+}
+
+.notif-search-page__empty p {
+  margin: 0;
+}
+
+.notif-search-results {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.notif-result-card {
+  background: rgba(255,255,255,0.03);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 10px;
+  padding: 14px 16px;
+}
+
+.notif-result-card__header {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+}
+
+.notif-result-card__source {
+  font-size: 0.75rem;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.notif-result-card__source--scheduled { background: rgba(74,158,255,0.15); color: #4a9eff; }
+.notif-result-card__source--processed { background: rgba(52,211,153,0.15); color: #34d399; }
+
+.notif-result-card__status {
+  font-size: 0.75rem;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.notif-result-card__status--completed,
+.notif-result-card__status--processed { background: rgba(52,211,153,0.1); color: #34d399; }
+.notif-result-card__status--pending { background: rgba(251,191,36,0.1); color: #fbbf24; }
+.notif-result-card__status--failed { background: rgba(239,68,68,0.1); color: #ef4444; }
+.notif-result-card__status--processing { background: rgba(74,158,255,0.1); color: #4a9eff; }
+.notif-result-card__status--cancelled { background: rgba(156,163,175,0.1); color: #9ca3af; }
+
+.notif-result-card__type {
+  font-size: 0.75rem;
+  color: #9aa0a6;
+  padding: 2px 8px;
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 4px;
+}
+
+.notif-result-card__fields {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 16px;
+  margin: 0;
+  font-size: 0.85rem;
+}
+
+.notif-result-card__fields dt {
+  color: #9aa0a6;
+  white-space: nowrap;
+}
+
+.notif-result-card__fields dd {
+  margin: 0;
+  color: #e8eaed;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.notif-result-card__fields code {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 0.8rem;
+  color: #a5d6ff;
+}
+
+.notif-search-page__pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  margin-top: 24px;
+}
+
+.pagination__info {
+  color: #9aa0a6;
+  font-size: 0.9rem;
+}
+
+@media (max-width: 768px) {
+  .notif-search-form__row {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .notif-search-form__group--wide {
+    grid-column: span 2;
+  }
+
+  .notif-result-card__fields {
+    grid-template-columns: 1fr;
+  }
+
+  .notif-result-card__fields dt {
+    font-weight: 600;
+    margin-top: 6px;
+  }
+}

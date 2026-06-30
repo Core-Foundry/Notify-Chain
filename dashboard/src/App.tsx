@@ -132,7 +132,9 @@ type Tab = 'explorer' | 'timeline' | 'templates';
 import { ActivityFeed } from './components/ActivityFeed';
 import { WebhookDashboardPage } from './pages/WebhookDashboardPage';
 import { ExportHistoryPage } from './pages/ExportHistoryPage';
+import { NotificationSearchPage } from './pages/NotificationSearchPage';
 
+type Tab = 'explorer' | 'timeline' | 'activity' | 'export-history' | 'search';
 type Tab = 'explorer' | 'timeline' | 'activity' | 'webhooks' | 'export-history';
 
 export function App() {
@@ -193,6 +195,14 @@ export function App() {
         >
           Export History
         </button>
+        <button
+          role="tab"
+          aria-selected={tab === 'search'}
+          className={`app-tabs__btn${tab === 'search' ? ' app-tabs__btn--active' : ''}`}
+          onClick={() => setTab('search')}
+        >
+          Notification Search
+        </button>
       </nav>
 
       {tab === 'explorer' && <EventExplorerPage />}
@@ -200,6 +210,7 @@ export function App() {
       {tab === 'activity' && <ActivityFeed />}
       {tab === 'webhooks' && <WebhookDashboardPage />}
       {tab === 'export-history' && <ExportHistoryPage />}
+      {tab === 'search' && <NotificationSearchPage />}
     </div>
   );
 }
