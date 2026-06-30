@@ -15,6 +15,10 @@ import { ArchiveStore } from './services/archive-store';
 import { loadArchiveConfig } from './services/archive-config';
 import { initializeDatabase } from './database/database';
 import { DiscordNotificationService } from './services/discord-notification';
+import { TemplateService } from './services/template-service';
+import { TemplateRepository } from './services/template-repository';
+import { TemplateValidator } from './services/template-validator';
+import { TemplateRenderer } from './services/template-renderer';
 import {
   IndexingReconciliationEngine,
   createDefaultAlertSink,

@@ -43,12 +43,10 @@ CREATE INDEX IF NOT EXISTS idx_scheduled_notifications_status
   ON scheduled_notifications(status);
 
 CREATE INDEX IF NOT EXISTS idx_scheduled_notifications_status_execute_at 
-  ON scheduled_notifications(status, execute_at) 
-  WHERE status = 'PENDING';
+  ON scheduled_notifications(status, execute_at);
 
 CREATE INDEX IF NOT EXISTS idx_scheduled_notifications_lock_expires 
-  ON scheduled_notifications(lock_expires_at, status) 
-  WHERE status = 'PROCESSING';
+  ON scheduled_notifications(lock_expires_at, status);
 
 -- Migration: add next_retry_at for explicit retry scheduling
 ALTER TABLE scheduled_notifications ADD COLUMN next_retry_at DATETIME;
@@ -61,8 +59,7 @@ CREATE INDEX IF NOT EXISTS idx_scheduled_notifications_created_at
   ON scheduled_notifications(created_at);
 
 CREATE INDEX IF NOT EXISTS idx_scheduled_notifications_event_id 
-  ON scheduled_notifications(event_id) 
-  WHERE event_id IS NOT NULL;
+  ON scheduled_notifications(event_id);
 
 CREATE INDEX IF NOT EXISTS idx_scheduled_notifications_target 
   ON scheduled_notifications(target_recipient, status);
