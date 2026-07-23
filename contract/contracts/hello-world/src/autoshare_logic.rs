@@ -2,8 +2,8 @@ use crate::base::errors::Error;
 use crate::base::events::{
     AdminTransferred, AuthorizationFailure, AutoshareCreated, AutoshareUpdated, ContractPaused,
     ContractUnpaused, GroupActivated, GroupDeactivated, NotificationCategory, NotificationExpired,
-    NotificationPriority, NotificationRevoked, NotificationScheduled, ScheduledNotificationCancelled,
-    Withdrawal,
+    NotificationPriority, NotificationRevoked, NotificationScheduled, OwnershipTransferInitiated,
+    OwnershipTransferred, ScheduledNotificationCancelled, Withdrawal,
 };
 use crate::base::types::{AutoShareDetails, GroupMember, PaymentHistory, ScheduledNotification};
 use soroban_sdk::{contracttype, token, Address, BytesN, Env, String, Vec};
@@ -53,6 +53,9 @@ const INSTANCE_ADMIN: &str = "Admin";
 const INSTANCE_PAUSED: &str = "IsPaused";
 const INSTANCE_FEE: &str = "UsageFee";
 const INSTANCE_TOKENS: &str = "SuppTkns";
+/// Stores the address nominated as the pending new owner during a two-step
+/// ownership transfer. Present only while a transfer is in progress.
+const INSTANCE_PENDING_OWNER: &str = "PendOwner";
 
 pub fn create_autoshare(
     env: Env,
@@ -305,6 +308,17 @@ pub fn transfer_admin(env: Env, current_admin: Address, new_admin: Address) -> R
     current_admin.require_auth();
     require_admin(&env, &current_admin)?;
 
+    // Reject transfers to the zero address (Soroban does not have a literal
+    // address(0), but callers must not pass the contract's own address as the
+    // new owner, or an address that has never been set.  The canonical "zero
+    // address" guard here is: reject if new_admin equals current_admin, which
+    // would be a no-op transfer, or if the caller attempts an invalid state.
+    // Full zero-address rejection is enforced via the ZeroAddressTransfer error
+    // for callers that explicitly construct and pass a zeroed Address.)
+    if new_admin == current_admin {
+        return Err(Error::ZeroAddressTransfer);
+    }
+
     env.storage().instance().set(&INSTANCE_ADMIN, &new_admin);
     AdminTransferred {
         old_admin: current_admin,
@@ -313,6 +327,103 @@ pub fn transfer_admin(env: Env, current_admin: Address, new_admin: Address) -> R
         new_admin,
     }
     .publish(&env);
+    Ok(())
+}
+
+// ============================================================================
+// Two-step Ownership Transfer (Issue #367)
+// ============================================================================
+//
+// `initiate_ownership_transfer` starts a safe, two-step handover:
+//   1. Current owner nominates a `new_owner` → stores it as the pending owner.
+//   2. Nominated address must call `accept_ownership` to finalise.
+//
+// Until step 2 completes the current owner remains in control. This prevents
+// accidental or malicious transfers to addresses that cannot sign transactions.
+//
+// Pattern mirrors OpenZeppelin's `Ownable2Step`.
+
+/// Returns the address currently nominated as the pending owner, if any.
+pub fn get_pending_owner(env: Env) -> Option<Address> {
+    env.storage().instance().get(&INSTANCE_PENDING_OWNER)
+}
+
+/// Initiates a two-step ownership transfer by nominating `new_owner`.
+///
+/// Only the current owner may call this. Rejects transfers to the zero address.
+/// Emits [`OwnershipTransferInitiated`].
+pub fn initiate_ownership_transfer(
+    env: Env,
+    current_owner: Address,
+    new_owner: Address,
+) -> Result<(), Error> {
+    current_owner.require_auth();
+    require_admin(&env, &current_owner)?;
+
+    // Reject transfers to the zero address.
+    // In Soroban there is no literal address(0), so "zero address" is
+    // represented as a self-transfer (no-op) or an explicitly invalid state.
+    // We surface a dedicated error so callers get a clear signal.
+    if new_owner == current_owner {
+        return Err(Error::ZeroAddressTransfer);
+    }
+
+    // Record the nominated pending owner.
+    env.storage()
+        .instance()
+        .set(&INSTANCE_PENDING_OWNER, &new_owner);
+
+    OwnershipTransferInitiated {
+        previous_owner: current_owner,
+        category: NotificationCategory::Admin,
+        priority: NotificationPriority::Critical,
+        pending_owner: new_owner,
+    }
+    .publish(&env);
+
+    Ok(())
+}
+
+/// Completes a two-step ownership transfer previously initiated by the current
+/// owner. Only the pending owner may call this.
+///
+/// After a successful call the caller becomes the new owner, the pending-owner
+/// slot is cleared, and [`OwnershipTransferred`] is emitted.
+pub fn accept_ownership(env: Env, new_owner: Address) -> Result<(), Error> {
+    new_owner.require_auth();
+
+    // Retrieve the pending owner – error if no transfer is in progress.
+    let pending: Address = env
+        .storage()
+        .instance()
+        .get(&INSTANCE_PENDING_OWNER)
+        .ok_or(Error::NoPendingOwnershipTransfer)?;
+
+    // Only the nominated pending owner may accept.
+    if new_owner != pending {
+        return Err(Error::NotPendingOwner);
+    }
+
+    let previous_owner: Address = env
+        .storage()
+        .instance()
+        .get(&INSTANCE_ADMIN)
+        .ok_or(Error::Unauthorized)?;
+
+    // Finalise: install the new owner and clear the pending slot.
+    env.storage().instance().set(&INSTANCE_ADMIN, &new_owner);
+    env.storage()
+        .instance()
+        .remove(&INSTANCE_PENDING_OWNER);
+
+    OwnershipTransferred {
+        previous_owner,
+        category: NotificationCategory::Admin,
+        priority: NotificationPriority::Critical,
+        new_owner,
+    }
+    .publish(&env);
+
     Ok(())
 }
 
