@@ -57,6 +57,7 @@ const testConfig: Config = {
   reconnectDelayMs: 100,
   eventsApiPort: 8787,
   eventsApiCorsOrigin: 'http://localhost:5173',
+  maxPayloadSizeBytes: 64 * 1024,
 };
 
 function createMockEvent(

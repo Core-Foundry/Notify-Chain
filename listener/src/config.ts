@@ -179,6 +179,7 @@ export function loadConfig(): Config {
       clientOverrides,
     },
     cleanup: loadCleanupConfig(),
+    maxPayloadSizeBytes: parseIntegerEnv('MAX_PAYLOAD_SIZE_BYTES', String(64 * 1024)),
   };
 }
 

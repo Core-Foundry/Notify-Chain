@@ -1,16 +1,35 @@
 import { ScheduledNotificationRepository } from './scheduled-notification-repository';
 import { CreateScheduledNotificationInput, NotificationType } from '../types/scheduled-notification';
+import {
+  validatePayloadSize,
+  DEFAULT_MAX_PAYLOAD_SIZE_BYTES,
+} from '../utils/payload-size-validator';
 import logger from '../utils/logger';
 
 /**
- * High-level API for scheduling notifications
- * This is the main interface that application code should use
+ * High-level API for scheduling notifications.
+ * This is the main interface that application code should use.
  */
 export class NotificationAPI {
-  constructor(private repository: ScheduledNotificationRepository) {}
+  /**
+   * Maximum allowed byte size for a notification payload (serialised JSON).
+   * Defaults to 64 KB (65 536 bytes).
+   */
+  public readonly maxPayloadSizeBytes: number;
+
+  constructor(
+    private repository: ScheduledNotificationRepository,
+    maxPayloadSizeBytes: number = DEFAULT_MAX_PAYLOAD_SIZE_BYTES
+  ) {
+    this.maxPayloadSizeBytes = maxPayloadSizeBytes;
+  }
 
   /**
-   * Schedule a notification for future delivery
+   * Schedule a notification for future delivery.
+   *
+   * @throws {Error} when required fields are missing or invalid.
+   * @throws {PayloadTooLargeError} when the payload serialises to more than
+   *   `maxPayloadSizeBytes` bytes.
    */
   async scheduleNotification(
     input: CreateScheduledNotificationInput,
@@ -33,6 +52,9 @@ export class NotificationAPI {
       throw new Error('targetRecipient is required');
     }
 
+    // Validate payload size BEFORE any storage or heavy processing operations.
+    validatePayloadSize(input.payload, this.maxPayloadSizeBytes);
+
     logger.info('Scheduling new notification', {
       requestId,
       type: input.notificationType,
@@ -44,7 +66,7 @@ export class NotificationAPI {
   }
 
   /**
-   * Schedule a Discord notification
+   * Schedule a Discord notification.
    */
   async scheduleDiscordNotification(
     webhookUrl: string,
@@ -68,7 +90,7 @@ export class NotificationAPI {
   }
 
   /**
-   * Cancel a scheduled notification
+   * Cancel a scheduled notification.
    */
   async cancelNotification(id: number, requestId?: string): Promise<boolean> {
     logger.info('Cancelling scheduled notification', { requestId, id });
@@ -76,14 +98,14 @@ export class NotificationAPI {
   }
 
   /**
-   * Get notification by ID
+   * Get notification by ID.
    */
   async getNotification(id: number) {
     return await this.repository.getById(id);
   }
 
   /**
-   * Get scheduler statistics
+   * Get scheduler statistics.
    */
   async getStatistics() {
     return await this.repository.getStats();

@@ -49,6 +49,12 @@ export interface Config {
   databasePath?: string;
   rateLimit?: RateLimitConfig;
   cleanup?: AppCleanupConfig;
+  /**
+   * Maximum allowed byte size for a notification payload (serialised JSON).
+   * Payloads exceeding this limit are rejected before storage.
+   * Defaults to 64 KB (65 536 bytes). Configurable via MAX_PAYLOAD_SIZE_BYTES env var.
+   */
+  maxPayloadSizeBytes: number;
 }
 
 export interface SchedulerConfig {
