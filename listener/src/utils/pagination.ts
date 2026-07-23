@@ -5,6 +5,28 @@ export interface PaginationMetadata {
   offset: number;
 }
 
+export interface CursorData {
+  executionTime: string;
+  id: number;
+}
+
+export function encodeCursor(executionTime: string, id: number): string {
+  return Buffer.from(`${executionTime},${id}`).toString('base64');
+}
+
+export function decodeCursor(cursor: string): CursorData | null {
+  try {
+    const decoded = Buffer.from(cursor, 'base64').toString('utf-8');
+    const [executionTime, idStr] = decoded.split(',');
+    if (!executionTime || !idStr) return null;
+    const id = parseInt(idStr, 10);
+    if (isNaN(id)) return null;
+    return { executionTime, id };
+  } catch {
+    return null;
+  }
+}
+
 export interface PaginationQueryParams {
   limit: number;
   offset: number;

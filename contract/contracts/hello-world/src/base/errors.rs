@@ -56,10 +56,12 @@ pub enum Error {
     /// Triggered when attempting to expire a notification whose lifetime has not
     /// yet elapsed.
     NotificationNotExpired = 25,
+    /// Triggered when a batch operation exceeds the maximum allowed size.
+    BatchTooLarge = 26,
     /// Triggered when attempting to interact with a revoked notification.
-    NotificationRevoked = 26,
+    NotificationRevoked = 27,
     /// Triggered when the caller is not authorized to revoke a notification.
-    NotAuthorizedToRevoke = 27,
+    NotAuthorizedToRevoke = 28,
     /// Triggered when attempting to revoke a notification that is already revoked.
     AlreadyRevoked = 28,
     /// Triggered when a transfer is attempted to the zero address.
@@ -68,4 +70,12 @@ pub enum Error {
     NoPendingOwnershipTransfer = 30,
     /// Triggered when a caller other than the pending owner calls `accept_ownership`.
     NotPendingOwner = 31,
+    /// Triggered when the caller is not authorized to acknowledge a notification.
+    NotAuthorizedToAcknowledge = 29,
+    AlreadyRevoked = 29,
+    /// Triggered when an invalid limit configuration is provided.
+    InvalidLimit = 29,
+    /// Triggered when a notification has already been delivered and cannot be recalled.
+    NotificationDelivered = 30,
+    InvalidLimit = 30,
 }

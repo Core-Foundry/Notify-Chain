@@ -1,6 +1,6 @@
 # Troubleshooting Guide — Local Development
 
-This guide documents the most common setup issues contributors encounter and how to fix them. If your problem is not listed here, please open a [GitHub Issue](https://github.com/Core-Foundry/Notify-Chain/issues).
+This guide documents the most common setup issues contributors encounter and how to fix them. If your problem is not listed here, please open a [GitHub Issue](https://github.com/CollinsC1O/Notify-Chain/issues).
 
 ---
 
@@ -65,19 +65,20 @@ Full reference with all available variables:
 # ── Stellar Network ──────────────────────────────────────────────────────────
 # RPC endpoint for the Stellar network to monitor
 STELLAR_RPC_URL=https://soroban-testnet.stellar.org
-# Network passphrase (do not change for testnet)
-STELLAR_NETWORK_PASSPHRASE=Test SDF Network ; September 2015
-# Comma-separated list of contract IDs to watch
-CONTRACT_IDS=CXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
+# Network name (testnet, pubnet, or custom)
+STELLAR_NETWORK=testnet
+# JSON array of contract addresses to monitor
+CONTRACT_ADDRESSES=[{"address":"CXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX","events":["*"]}]
 
 # ── Listener API ─────────────────────────────────────────────────────────────
 # Port the events HTTP API will listen on
-PORT=8787
+EVENTS_API_PORT=8787
 # How often (ms) the service polls for new on-chain events
-POLLING_INTERVAL_MS=5000
+POLL_INTERVAL_MS=30000
 
 # ── Discord Notifications (optional) ─────────────────────────────────────────
 DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/YOUR_WEBHOOK_ID/YOUR_TOKEN
+DISCORD_WEBHOOK_ID=YOUR_WEBHOOK_ID
 
 # ── Scheduler (optional) ─────────────────────────────────────────────────────
 SCHEDULER_ENABLED=true
@@ -90,7 +91,9 @@ SCHEDULER_TIMING_BUFFER_MS=60000
 SCHEDULER_PROCESSOR_ID=
 ```
 
-> **Tip for first-time contributors:** You only need `STELLAR_RPC_URL`, `CONTRACT_IDS`, and `PORT` to run the listener locally. Everything else is optional.
+> **Tip for first-time contributors:** You only need `STELLAR_RPC_URL`,
+> `CONTRACT_ADDRESSES`, and `EVENTS_API_PORT` to run the listener locally.
+> Everything else is optional.
 
 ### Dashboard (`dashboard/.env`)
 
@@ -101,7 +104,7 @@ cd dashboard
 Create a `.env` file:
 ```bash
 # URL where your local listener is running
-VITE_API_URL=http://localhost:8787
+VITE_EVENTS_API_URL=http://localhost:8787/api/events
 ```
 
 ---
@@ -242,16 +245,16 @@ npm install sqlite3
 ### ❌ Listener starts but no events appear
 
 **Checklist:**
-1. Is `CONTRACT_IDS` set correctly in your `.env`?
+1. Is `CONTRACT_ADDRESSES` set correctly in your `.env`?
    ```bash
-   grep CONTRACT_IDS listener/.env
+   grep CONTRACT_ADDRESSES listener/.env
    ```
 2. Is the contract deployed on the same network as `STELLAR_RPC_URL`?
 3. Check live logs:
    ```bash
    cd listener
    npm run dev
-   # Look for lines like: "Subscribed to contract C..."
+   # Look for lines like: "Received events" or "Processing event"
    ```
 4. Verify the API is responding:
    ```bash
@@ -279,7 +282,7 @@ taskkill /PID <PID> /F
 
 Or change the port in your `.env`:
 ```bash
-PORT=8788
+EVENTS_API_PORT=8788
 ```
 
 ---
@@ -306,15 +309,20 @@ PORT=8788
 
 **Checklist:**
 1. Is the listener running? (`npm run dev` inside `listener/`)
-2. Is `VITE_API_URL` set correctly in `dashboard/.env`?
+2. Is `VITE_EVENTS_API_URL` set correctly in `dashboard/.env`?
    ```bash
-   # Should match the port your listener is using
-   VITE_API_URL=http://localhost:8787
+   # Should match the listener's API events endpoint
+   VITE_EVENTS_API_URL=http://localhost:8787/api/events
    ```
 3. Restart the Vite dev server after editing `.env`:
    ```bash
    cd dashboard
    npm run dev
+   ```
+4. Check the browser console (F12 → Console) for CORS errors:
+   ```bash
+   # If you see CORS errors, update listener/.env:
+   EVENTS_API_CORS_ORIGIN=http://localhost:5173
    ```
 
 ---
@@ -358,6 +366,24 @@ npm run build
 
 ---
 
+### ❌ Frontend (Next.js) page loads with data errors
+
+**Cause:** The frontend cannot reach the listener API or the API URL is not configured.
+
+**Checklist:**
+1. Is the listener running? (`npm run dev` inside `listener/`)
+2. If using a custom API URL, create `frontend/.env.local`:
+   ```bash
+   NEXT_PUBLIC_API_URL=http://localhost:8787
+   ```
+3. Restart the Next.js dev server after creating `.env.local`:
+   ```bash
+   cd frontend
+   npm run dev
+   ```
+
+---
+
 ## 6. General Issues
 
 ### ❌ `git clone` fails (SSL / certificate error)
@@ -389,7 +415,7 @@ cd ../dashboard && npm install
 
 ### Still stuck?
 
-1. Search [open issues](https://github.com/Core-Foundry/Notify-Chain/issues) — your problem may already be reported.
+1. Search [open issues](https://github.com/CollinsC1O/Notify-Chain/issues) — your problem may already be reported.
 2. Open a new issue with:
    - Your OS and version
    - Output of `rustc --version`, `node --version`, `stellar --version`

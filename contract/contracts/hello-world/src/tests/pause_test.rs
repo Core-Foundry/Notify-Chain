@@ -3,7 +3,8 @@
 
 use crate::base::types::GroupMember;
 use crate::{AutoShareContract, AutoShareContractClient};
-use soroban_sdk::{testutils::Address as _, token, Address, BytesN, Env, String};
+use soroban_sdk::testutils::{Address as _, Events};
+use soroban_sdk::{token, Address, BytesN, Env, String, Symbol, TryFromVal, Val};
 
 fn create_token_contract<'a>(
     env: &Env,
@@ -14,6 +15,61 @@ fn create_token_contract<'a>(
         token::Client::new(env, &contract_address.address()),
         token::StellarAssetClient::new(env, &contract_address.address()),
     )
+}
+
+fn latest_event_topics(env: &Env, event_name: &str) -> Option<soroban_sdk::Vec<Val>> {
+    let target = Symbol::new(env, event_name);
+    let mut found = None;
+    for (_addr, topics, _data) in env.events().all().iter() {
+        if topics.is_empty() {
+            continue;
+        }
+        if let Ok(name) = Symbol::try_from_val(env, &topics.get(0).unwrap()) {
+            if name == target {
+                found = Some(topics);
+            }
+        }
+    }
+    found
+}
+
+#[test]
+fn test_pause_emits_event_with_admin_actor() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(AutoShareContract, ());
+    let client = AutoShareContractClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+
+    client.initialize_admin(&admin);
+    client.pause(&admin);
+
+    let topics = latest_event_topics(&env, "contract_paused").expect("pause event");
+    assert_eq!(topics.len(), 4);
+    assert_eq!(
+        Address::try_from_val(&env, &topics.get(1).unwrap()).unwrap(),
+        admin
+    );
+}
+
+#[test]
+fn test_unpause_emits_event_with_admin_actor() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(AutoShareContract, ());
+    let client = AutoShareContractClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+
+    client.initialize_admin(&admin);
+    client.pause(&admin);
+    client.unpause(&admin);
+
+    let topics = latest_event_topics(&env, "contract_unpaused").expect("unpause event");
+    assert_eq!(topics.len(), 4);
+    assert_eq!(
+        Address::try_from_val(&env, &topics.get(1).unwrap()).unwrap(),
+        admin
+    );
 }
 
 #[test]

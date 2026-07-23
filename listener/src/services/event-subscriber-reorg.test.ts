@@ -50,6 +50,7 @@ const contractConfig: ContractConfig = {
 
 const testConfig: Config = {
   stellarNetwork: 'testnet',
+  stellarNetworkPassphrase: 'Test SDF Network ; September 2015',
   stellarRpcUrl: 'https://soroban-testnet.stellar.org:443',
   contractAddresses: [contractConfig],
   pollIntervalMs: 30000,

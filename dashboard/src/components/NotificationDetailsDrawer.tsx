@@ -1,0 +1,273 @@
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import type { BlockchainEvent } from '../types/event';
+import { formatTimestamp } from '../utils/formatTime';
+import { copyTextToClipboard } from '../utils/clipboard';
+
+type FetchState<T> =
+  | { status: 'idle' }
+  | { status: 'loading' }
+  | { status: 'success'; data: T }
+  | { status: 'error'; message: string };
+
+export interface SenderDetails {
+  address: string;
+  metadata?: Record<string, string>;
+}
+
+export interface StatusHistoryEntry {
+  label: string;
+  timestampMs: number;
+  detail?: string;
+}
+
+export interface NotificationDetailsMetadata {
+  sender: SenderDetails;
+  statusHistory: StatusHistoryEntry[];
+}
+
+function shorten(value: string, head = 10, tail = 8) {
+  if (value.length <= head + tail + 3) return value;
+  return `${value.slice(0, head)}...${value.slice(-tail)}`;
+}
+
+function defaultMetadata(event: BlockchainEvent): NotificationDetailsMetadata {
+  return {
+    sender: {
+      address: event.contractAddress,
+      metadata: {
+        kind: event.type,
+        event: event.eventName ?? event.type,
+      },
+    },
+    statusHistory: [
+      {
+        label: 'Observed',
+        timestampMs: event.receivedAt,
+        detail: 'Event received by the listener.',
+      },
+      {
+        label: 'Visible',
+        timestampMs: Date.now(),
+        detail: 'Rendered in dashboard.',
+      },
+    ],
+  };
+}
+
+export interface NotificationDetailsDrawerProps {
+  isOpen: boolean;
+  notification: BlockchainEvent | null;
+  onClose: () => void;
+  fetchMetadata?: (event: BlockchainEvent) => Promise<NotificationDetailsMetadata>;
+}
+
+export function NotificationDetailsDrawer({
+  isOpen,
+  notification,
+  onClose,
+  fetchMetadata,
+}: NotificationDetailsDrawerProps) {
+  const [fetchState, setFetchState] = useState<FetchState<NotificationDetailsMetadata>>({
+    status: 'idle',
+  });
+  const [copyMessage, setCopyMessage] = useState<string | null>(null);
+
+  const resolvedFetcher = useMemo(
+    () => fetchMetadata ?? (async (e: BlockchainEvent) => defaultMetadata(e)),
+    [fetchMetadata]
+  );
+
+  useEffect(() => {
+    if (!isOpen || !notification) {
+      setFetchState({ status: 'idle' });
+      return;
+    }
+
+    // Fast path: no async metadata provider, keep the drawer snappy and avoid
+    // unnecessary loading states.
+    if (!fetchMetadata) {
+      setFetchState({ status: 'success', data: defaultMetadata(notification) });
+      return;
+    }
+
+    let cancelled = false;
+    setFetchState({ status: 'loading' });
+    resolvedFetcher(notification)
+      .then((data) => {
+        if (!cancelled) setFetchState({ status: 'success', data });
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        const message = err instanceof Error ? err.message : String(err);
+        setFetchState({ status: 'error', message });
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen, notification, resolvedFetcher]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [isOpen, onClose]);
+
+  useEffect(() => {
+    if (!copyMessage) return;
+    const id = window.setTimeout(() => setCopyMessage(null), 1500);
+    return () => window.clearTimeout(id);
+  }, [copyMessage]);
+
+  const tryCopy = useCallback(async (label: string, value: string) => {
+    const ok = await copyTextToClipboard(value);
+    setCopyMessage(ok ? `${label} copied` : `Copy failed`);
+  }, []);
+
+  if (!isOpen || !notification) {
+    return null;
+  }
+
+  const sender =
+    fetchState.status === 'success'
+      ? fetchState.data.sender
+      : { address: notification.contractAddress, metadata: undefined };
+
+  const statusHistory =
+    fetchState.status === 'success'
+      ? fetchState.data.statusHistory
+      : [];
+
+  const title = notification.eventName ?? notification.type;
+
+  return (
+    <div className="drawer" role="dialog" aria-modal="true" aria-label="Notification details">
+      <div className="drawer__backdrop" onClick={onClose} aria-hidden="true" />
+
+      <aside className="drawer__panel">
+        <header className="drawer__header">
+          <div>
+            <p className="drawer__eyebrow">Notification</p>
+            <h2 className="drawer__title">{title}</h2>
+          </div>
+          <button type="button" className="drawer__close" onClick={onClose} aria-label="Close drawer">
+            ×
+          </button>
+        </header>
+
+        {copyMessage && (
+          <div className="drawer__toast" role="status" aria-live="polite">
+            {copyMessage}
+          </div>
+        )}
+
+        <section className="drawer__section">
+          <h3 className="drawer__section-title">Sender Details</h3>
+          <div className="drawer__row">
+            <span className="drawer__label">Address</span>
+            <span className="drawer__value" title={sender.address}>{shorten(sender.address)}</span>
+            <button
+              type="button"
+              className="drawer__action"
+              onClick={() => void tryCopy('Address', sender.address)}
+            >
+              Copy
+            </button>
+          </div>
+          {sender.metadata && (
+            <dl className="drawer__meta">
+              {Object.entries(sender.metadata).map(([key, value]) => (
+                <div key={key} className="drawer__meta-row">
+                  <dt>{key}</dt>
+                  <dd>{value}</dd>
+                </div>
+              ))}
+            </dl>
+          )}
+        </section>
+
+        <section className="drawer__section">
+          <h3 className="drawer__section-title">Blockchain Context</h3>
+          <div className="drawer__row">
+            <span className="drawer__label">Ledger</span>
+            <span className="drawer__value">{notification.ledger.toLocaleString()}</span>
+          </div>
+          <div className="drawer__row">
+            <span className="drawer__label">Event ID</span>
+            <span className="drawer__value" title={notification.eventId}>{shorten(notification.eventId, 10, 6)}</span>
+            <button
+              type="button"
+              className="drawer__action"
+              onClick={() => void tryCopy('Event ID', notification.eventId)}
+            >
+              Copy
+            </button>
+          </div>
+          <div className="drawer__row">
+            <span className="drawer__label">Tx Hash</span>
+            <span className="drawer__value" title={notification.txHash ?? 'No transaction hash'}>
+              {notification.txHash ? shorten(notification.txHash) : '—'}
+            </span>
+            {notification.txHash && (
+              <button
+                type="button"
+                className="drawer__action"
+                onClick={() => void tryCopy('Tx Hash', notification.txHash!)}
+              >
+                Copy
+              </button>
+            )}
+          </div>
+          <div className="drawer__row">
+            <span className="drawer__label">Observed</span>
+            <span className="drawer__value">{formatTimestamp(notification.receivedAt)}</span>
+          </div>
+        </section>
+
+        <section className="drawer__section">
+          <h3 className="drawer__section-title">Notification Status History</h3>
+
+          {fetchState.status === 'loading' && (
+            <p className="drawer__muted" role="status">
+              Loading details…
+            </p>
+          )}
+
+          {fetchState.status === 'error' && (
+            <p className="drawer__error" role="alert">
+              Failed to load details: {fetchState.message}
+            </p>
+          )}
+
+          {fetchState.status === 'success' && statusHistory.length === 0 && (
+            <p className="drawer__muted">No status history available.</p>
+          )}
+
+          {fetchState.status === 'success' && statusHistory.length > 0 && (
+            <ol className="drawer__timeline">
+              {statusHistory
+                .slice()
+                .sort((a, b) => a.timestampMs - b.timestampMs)
+                .map((entry) => (
+                  <li key={`${entry.label}-${entry.timestampMs}`} className="drawer__timeline-item">
+                    <div className="drawer__timeline-dot" aria-hidden="true" />
+                    <div className="drawer__timeline-body">
+                      <div className="drawer__timeline-title">{entry.label}</div>
+                      <div className="drawer__timeline-time">{formatTimestamp(entry.timestampMs)}</div>
+                      {entry.detail && <div className="drawer__timeline-detail">{entry.detail}</div>}
+                    </div>
+                  </li>
+                ))}
+            </ol>
+          )}
+        </section>
+      </aside>
+    </div>
+  );
+}

@@ -1,4 +1,4 @@
-use soroban_sdk::{contracttype, Address, String};
+use soroban_sdk::{contracttype, Address, BytesN, String};
 
 /// Task status enum
 #[contracttype]
@@ -28,13 +28,13 @@ pub struct Task {
     pub poster: Address,
     pub title: String,
     pub description: String,
-    pub token: Address,           // Token address for reward
-    pub reward: i128,             // Reward amount
-    pub deadline: u64,            // Unix timestamp
+    pub token: Address, // Token address for reward
+    pub reward: i128,   // Reward amount
+    pub deadline: u64,  // Unix timestamp
     pub max_submissions: u32,
     pub submission_count: u32,
     pub status: TaskStatus,
-    pub created_at: u64,          // Unix timestamp
+    pub created_at: u64, // Unix timestamp
 }
 
 /// Submission structure
@@ -44,9 +44,9 @@ pub struct Submission {
     pub id: u64,
     pub task_id: u64,
     pub contributor: Address,
-    pub work_url: String,         // IPFS, Arweave, GitHub, etc.
+    pub work_url: String, // IPFS, Arweave, GitHub, etc.
     pub description: String,
-    pub submitted_at: u64,        // Unix timestamp
+    pub submitted_at: u64, // Unix timestamp
     pub status: SubmissionStatus,
 }
 
@@ -60,6 +60,32 @@ pub struct Dispute {
     pub raiser: Address,
     pub reason: String,
     pub created_at: u64,
+}
+
+/// API credential record scoped to an organization.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct ApiCredential {
+    pub id: u64,
+    pub organization: Address,
+    pub label: String,
+    pub fingerprint: BytesN<32>,
+    pub created_at: u64,
+    pub is_active: bool,
+    pub is_primary: bool,
+    pub previous_credential_id: u64,
+}
+
+/// Rotation audit entry for API credentials.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct ApiCredentialRotation {
+    pub organization: Address,
+    pub old_credential_id: u64,
+    pub new_credential_id: u64,
+    pub actor: Address,
+    pub reason: String,
+    pub rotated_at: u64,
 }
 
 /// Error codes
@@ -80,4 +106,10 @@ pub enum Error {
     MaxSubmissionsReached = 11,
     PaymentFailed = 12,
     DisputeAlreadyExists = 13,
+    ApiKeyNotFound = 14,
+    ApiKeyAlreadyExists = 15,
+    NoActiveApiKeys = 16,
+    InvalidApiKeyRotation = 17,
+    ApiKeyRevoked = 18,
+    UnauthorizedApiKeyAction = 19,
 }

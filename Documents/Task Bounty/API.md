@@ -360,6 +360,92 @@ Get total number of submissions.
 
 ---
 
+## API Credential Management
+
+Organizations can keep old and new API credentials active at the same time during a rotation window.
+
+### Workflow
+
+1. Register a new credential for the organization.
+2. Keep the existing credential active until integrations are migrated.
+3. Promote the new credential to primary for new traffic.
+4. Revoke the old credential after cutover.
+5. Review the rotation log for audit evidence.
+
+### Functions
+
+#### `registerApiKey`
+```solidity
+function registerApiKey(
+    address organization,
+    string calldata label,
+    bytes32 fingerprint
+) external returns (uint256 credentialId)
+```
+
+Registers a new active credential.
+
+**Requirements:**
+- Caller must control `organization`
+- Active fingerprints must be unique per organization
+
+#### `rotateApiKey`
+```solidity
+function rotateApiKey(
+    address organization,
+    uint256 currentCredentialId,
+    string calldata label,
+    bytes32 fingerprint,
+    string calldata reason
+) external returns (uint256 newCredentialId)
+```
+
+Registers a new primary credential and preserves the old one until revocation.
+
+**Requirements:**
+- Caller must control `organization`
+- Current credential must exist and be active
+- New fingerprint must not already be active
+
+#### `revokeApiKey`
+```solidity
+function revokeApiKey(address organization, uint256 credentialId) external
+```
+
+Revokes a credential and promotes another active credential if one exists.
+
+#### `getActiveApiKeys`
+```solidity
+function getActiveApiKeys(address organization)
+    external
+    view
+    returns (ApiCredential[] memory)
+```
+
+Returns all active credentials for an organization.
+
+#### `getApiKeyRotationHistory`
+```solidity
+function getApiKeyRotationHistory(address organization)
+    external
+    view
+    returns (ApiCredentialRotation[] memory)
+```
+
+Returns the immutable rotation history for audit review.
+
+#### `isApiKeyActive`
+```solidity
+function isApiKeyActive(address organization, bytes32 fingerprint)
+    external
+    view
+    returns (bool)
+```
+
+Checks whether a fingerprint is currently active.
+
+---
+
 ## DisputeResolver
 
 Handles dispute resolution for TaskBounty.
