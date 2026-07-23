@@ -473,6 +473,23 @@ maintainers track open questions actively.
 
 ## 9. Related Resources
 
+### Sequence Diagrams (Issue #354)
+
+Visual walkthroughs of the key data flows — the fastest way to build a
+mental model of how the system moves data end-to-end:
+
+| Diagram | What it covers |
+|---------|----------------|
+| [Notification Request Flow](API_SEQUENCE_DIAGRAMS.md#diagram-1--notification-request-flow) | Client → API validation → scheduled delivery to subscriber |
+| [Event Processing Lifecycle](API_SEQUENCE_DIAGRAMS.md#diagram-2--event-processing-lifecycle) | On-chain contract event → EventSubscriber → deduplication → Discord / dashboard |
+| [Scheduled Notification Delivery](API_SEQUENCE_DIAGRAMS.md#diagram-3--scheduled-notification-delivery) | POST /api/schedule → SQLite → background scheduler → delivery states |
+| [Retry & Failure Recovery](API_SEQUENCE_DIAGRAMS.md#diagram-4--retry--failure-recovery) | In-memory retry queue vs DB-backed retry; stale lock recovery |
+| [Dashboard Data Fetch](API_SEQUENCE_DIAGRAMS.md#diagram-5--dashboard-data-fetch) | React dashboard polling /api/events, /health, /api/analytics |
+
+→ **[View all sequence diagrams →](API_SEQUENCE_DIAGRAMS.md)**
+
+---
+
 ### Subsystem Architecture Docs (read alongside this guide)
 
 - `Documents/Task Bounty/ARCHITECTURE.md` — TaskBounty contract
