@@ -72,4 +72,10 @@ pub enum Error {
     /// Triggered when a notification has already been delivered and cannot be recalled.
     NotificationDelivered = 30,
     InvalidLimit = 30,
+    /// Triggered when referencing a template ID that does not exist in the registry.
+    TemplateNotFound = 31,
+    /// Triggered when a template name exceeds the maximum allowed length.
+    TemplateNameTooLong = 32,
+    /// Triggered when a template content field is empty.
+    TemplateContentEmpty = 33,
 }

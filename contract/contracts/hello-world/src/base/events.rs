@@ -468,3 +468,44 @@ pub struct NotificationAcknowledged {
     pub priority: NotificationPriority,
     pub timestamp: u64,
 }
+
+// ============================================================================
+// Template Registry  (Issue #352)
+// ============================================================================
+
+/// Emitted when a new notification template is registered on-chain.
+///
+/// Off-chain indexers key off `template_id` to track registered templates.
+/// The owner's address is published as an indexed topic for creator-based
+/// filtering.
+#[contractevent(data_format = "single-value")]
+#[derive(Clone)]
+pub struct TemplateRegistered {
+    /// Address that created and owns the template.
+    #[topic]
+    pub owner: Address,
+    #[topic]
+    pub category: NotificationCategory,
+    #[topic]
+    pub priority: NotificationPriority,
+    /// Unique identifier of the newly registered template.
+    pub template_id: BytesN<32>,
+}
+
+/// Emitted when an existing notification template is updated by its owner.
+///
+/// Off-chain indexers should use `template_id` to invalidate any cached
+/// versions of the template and re-fetch the updated content.
+#[contractevent(data_format = "single-value")]
+#[derive(Clone)]
+pub struct TemplateUpdated {
+    /// Address that owns (and updated) the template.
+    #[topic]
+    pub owner: Address,
+    #[topic]
+    pub category: NotificationCategory,
+    #[topic]
+    pub priority: NotificationPriority,
+    /// Unique identifier of the updated template.
+    pub template_id: BytesN<32>,
+}
