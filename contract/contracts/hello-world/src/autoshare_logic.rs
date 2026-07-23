@@ -37,8 +37,16 @@ pub enum DataKey {
     AllGroups,
     UserPaymentHistory(Address),
     GroupPaymentHistory(BytesN<32>),
-    GroupMembers(BytesN<32>),
-    IsPaused,
+    // NOTE: GroupMembers(BytesN<32>) has been intentionally removed.
+    // Members are embedded directly inside AutoShareDetails.members, so there
+    // is no need for a separate storage key.  Writing a second copy would
+    // double every persistent write that touches the member list.
+    //
+    // NOTE: IsPaused has been intentionally removed from this enum.
+    // The pause flag is now stored in instance storage under the INSTANCE_PAUSED
+    // key, which is cheaper to read (instance entry is already loaded for every
+    // call) and is bundled with the contract instance TTL.  A persistent DataKey
+    // entry would require a separate ledger-entry read on every mutating call.
     ScheduledNotification(BytesN<32>),
     NotificationRevokers(BytesN<32>),
 }
@@ -336,8 +344,6 @@ pub fn pause(env: Env, admin: Address) -> Result<(), Error> {
     }
 
     env.storage().instance().set(&INSTANCE_PAUSED, &true);
-    ContractPaused {}.publish(&env);
-    env.storage().persistent().set(&pause_key, &true);
     ContractPaused {
         category: NotificationCategory::Admin,
         priority: NotificationPriority::High,
@@ -361,8 +367,6 @@ pub fn unpause(env: Env, admin: Address) -> Result<(), Error> {
     }
 
     env.storage().instance().set(&INSTANCE_PAUSED, &false);
-    ContractUnpaused {}.publish(&env);
-    env.storage().persistent().set(&pause_key, &false);
     ContractUnpaused {
         category: NotificationCategory::Admin,
         priority: NotificationPriority::High,

@@ -312,7 +312,6 @@ impl AutoShareContract {
     ) -> bool {
         preferences_logic::is_category_enabled(env, recipient, category)
     }
-}
 
     // ============================================================================
     // Scheduled Notification Management
@@ -378,42 +377,41 @@ impl AutoShareContract {
 }
 
 #[cfg(test)]
-#[path = "tests/test_utils.rs"]
-pub mod test_utils;
+pub mod test_utils {
+    #[path = "tests/test_utils.rs"]
+    mod inner;
+    pub use inner::*;
+}
 
 #[cfg(test)]
-#[path = "tests/test_utils_test.rs"]
-mod test_utils_test;
-
-#[cfg(test)]
-#[path = "tests/storage_optimization_test.rs"]
-mod storage_optimization_test;
-
-#[cfg(test)]
-#[path = "tests/preferences_test.rs"]
-mod preferences_test;
 mod tests {
-    #[path = "../tests/autoshare_test.rs"]
-    mod autoshare_test;
-
-    #[path = "../tests/pause_test.rs"]
-    mod pause_test;
-
-    #[path = "../tests/mock_token_test.rs"]
-    mod mock_token_test;
-
-    #[path = "../tests/version_test.rs"]
-    mod version_test;
-
-    #[path = "../tests/test_utils_test.rs"]
+    #[path = "tests/test_utils_test.rs"]
     mod test_utils_test;
 
-    #[path = "../tests/notification_test.rs"]
+    #[path = "tests/storage_optimization_test.rs"]
+    mod storage_optimization_test;
+
+    #[path = "tests/preferences_test.rs"]
+    mod preferences_test;
+
+    #[path = "tests/autoshare_test.rs"]
+    mod autoshare_test;
+
+    #[path = "tests/pause_test.rs"]
+    mod pause_test;
+
+    #[path = "tests/mock_token_test.rs"]
+    mod mock_token_test;
+
+    #[path = "tests/version_test.rs"]
+    mod version_test;
+
+    #[path = "tests/notification_test.rs"]
     mod notification_test;
 
-    #[path = "../tests/expiration_test.rs"]
+    #[path = "tests/expiration_test.rs"]
     mod expiration_test;
 
-    #[path = "../tests/revocation_test.rs"]
+    #[path = "tests/revocation_test.rs"]
     mod revocation_test;
 }
