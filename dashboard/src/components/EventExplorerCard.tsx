@@ -35,17 +35,15 @@ interface EventExplorerCardProps {
   onCopyContract: (contractAddress: string) => void;
   isCopied: boolean;
   onSelect?: (event: BlockchainEvent) => void;
-}
-
-export function EventExplorerCard({ event, onCopyContract, isCopied, onSelect }: EventExplorerCardProps) {
-  contractStatuses: ContractStatus[];
+  contractStatuses?: ContractStatus[];
 }
 
 export function EventExplorerCard({
   event,
   onCopyContract,
   isCopied,
-  contractStatuses,
+  onSelect,
+  contractStatuses = [],
 }: EventExplorerCardProps) {
   const contractStatus = contractStatuses.find((c) => c.address === event.contractAddress);
   const isPaused = contractStatus?.paused ?? false;
@@ -73,26 +71,18 @@ export function EventExplorerCard({
       aria-label={onSelect ? `View details for ${label} notification` : undefined}
     >
       <div className="event-explorer__cell" data-label="Contract" role="cell">
-        <div>
+        <div className="event-explorer__contract-block">
           <p className="event-explorer__contract" title={event.contractAddress}>
             {shortenAddress(event.contractAddress)}
           </p>
-          <button
-            type="button"
-            className="event-explorer__copy-button"
-            onClick={(e) => {
-              e.stopPropagation();
-              onCopyContract(event.contractAddress);
-            }}
-            aria-label={`Copy contract address ${event.contractAddress}`}
-          >
-            {isCopied ? 'Copied' : 'Copy'}
-          </button>
-          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+          <div className="event-explorer__contract-actions">
             <button
               type="button"
               className="event-explorer__copy-button"
-              onClick={() => onCopyContract(event.contractAddress)}
+              onClick={(e) => {
+                e.stopPropagation();
+                onCopyContract(event.contractAddress);
+              }}
               aria-label={`Copy contract address ${event.contractAddress}`}
             >
               {isCopied ? 'Copied' : 'Copy'}
