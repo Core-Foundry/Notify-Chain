@@ -7,7 +7,10 @@ This guide walks you through setting up a local development environment for
 NotifyChain. By the end, you will have the listener service, the dashboard,
 the frontend analytics app, and the smart contracts building and running on
 your machine.
-This guide walks you through setting up a local development environment for NotifyChain. By the end, you will have the listener service, the dashboard, and the smart contracts building and running on your machine.
+
+For the canonical contribution workflow, start with
+[`CONTRIBUTOR_DEVELOPMENT_WORKFLOW_GUIDE.md`](CONTRIBUTOR_DEVELOPMENT_WORKFLOW_GUIDE.md).
+For a shorter setup path, see [`LOCAL_DEVELOPMENT.md`](LOCAL_DEVELOPMENT.md).
 
 ---
 
@@ -24,11 +27,6 @@ This guide walks you through setting up a local development environment for Noti
 9. [Running Tests](#9-running-tests)
 10. [VS Code Setup (Recommended)](#10-vs-code-setup-recommended)
 11. [Troubleshooting & FAQ](#11-troubleshooting--faq)
-5. [Smart Contracts Setup](#5-smart-contracts-setup)
-6. [Environment Variables Reference](#6-environment-variables-reference)
-7. [Running Tests](#7-running-tests)
-8. [VS Code Setup (Recommended)](#8-vs-code-setup-recommended)
-9. [Troubleshooting & FAQ](#9-troubleshooting--faq)
 
 ---
 
@@ -40,7 +38,7 @@ This guide walks you through setting up a local development environment for Noti
 |----------------|-----------------|-----------------------------------------|--------------------|
 | Rust           | stable          | [rustup.rs](https://rustup.rs)          | Smart contracts    |
 | `wasm32-unknown-unknown` | —       | `rustup target add wasm32-unknown-unknown` | Soroban contracts |
-| Stellar CLI    | latest          | `cargo install stellar-cli`             | Contract build/deploy |
+| Stellar CLI    | latest          | `cargo install --locked stellar-cli --features opt`             | Contract build/deploy |
 | Node.js        | **18** (dashboard), **20** (listener) | [nodejs.org](https://nodejs.org) or `nvm` | Listener, Dashboard |
 | npm            | comes with Node  | —                                       | Package management |
 | Git            | —               | Your package manager or [git-scm.com](https://git-scm.com) | Version control |
@@ -94,7 +92,6 @@ rustc --version && cargo --version && stellar --version
 ## 2. Clone the Repository
 
 ```bash
-git clone https://github.com/CollinsC1O/Notify-Chain.git
 git clone https://github.com/Core-Foundry/Notify-Chain.git
 cd Notify-Chain
 ```
@@ -104,7 +101,6 @@ If you plan to contribute, fork the repository first, then clone your fork:
 ```bash
 git clone https://github.com/YOUR-USERNAME/Notify-Chain.git
 cd Notify-Chain
-git remote add upstream https://github.com/CollinsC1O/Notify-Chain.git
 git remote add upstream https://github.com/Core-Foundry/Notify-Chain.git
 ```
 
@@ -786,7 +782,7 @@ cd frontend && npm install
 
 ### Still Stuck?
 
-1. Search [open issues](https://github.com/CollinsC1O/Notify-Chain/issues) — your problem may already be reported.
+1. Search [open issues](https://github.com/Core-Foundry/Notify-Chain/issues) — your problem may already be reported.
 1. Search [open issues](https://github.com/Core-Foundry/Notify-Chain/issues) — your problem may already be reported.
 2. Read the detailed [Troubleshooting Guide](TROUBLESHOOTING.md).
 3. Open a new issue with:

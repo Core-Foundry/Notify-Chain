@@ -1,6 +1,6 @@
 # Notification Lifecycle
 
-This document explains the implemented notification lifecycle in Notify-Chain.
+This document explains the implemented notification lifecycle in NotifyChain.
 It covers both:
 
 - Scheduled notifications managed in SQLite and executed by background schedulers.
@@ -8,9 +8,11 @@ It covers both:
 
 The focus is accuracy against current code paths in `listener/src`.
 
+See also: [`docs/notifications/lifecycle.md`](docs/notifications/lifecycle.md).
+
 ## High-Level Overview
 
-Notify-Chain currently has two delivery paths:
+NotifyChain currently has two delivery paths:
 
 1. Scheduled path (durable, DB-backed)
 - Creation via `NotificationAPI.scheduleNotification()` or `POST /api/schedule`.

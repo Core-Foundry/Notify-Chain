@@ -24,7 +24,7 @@ This guide walks you through setting up every component of NotifyChain on your l
 
 | Tool | Version | Install |
 |------|---------|---------|
-| Node.js | ≥ 18 | [nodejs.org](https://nodejs.org) |
+| Node.js | ≥ 18 (20 recommended for Listener) | [nodejs.org](https://nodejs.org) |
 | npm | ≥ 9 | Bundled with Node.js |
 | Rust | stable | `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \| sh` |
 | Stellar CLI | latest | `cargo install --locked stellar-cli --features opt` |
@@ -144,6 +144,14 @@ EVENTS_API_PORT=8787
 ```
 
 See [Environment Variables Reference](#environment-variables-reference) for all options.
+
+Use `npm ci` when installing from the lockfile (CI / clean setups). Use `npm install` for local dependency updates.
+
+### Initialize database
+
+```bash
+npm run migrate
+```
 
 ### Run in development mode
 
@@ -373,7 +381,7 @@ mkdir -p listener/data
 rustup target add wasm32-unknown-unknown
 ```
 
-### `cargo install stellar-cli` is slow or fails
+### `cargo install --locked stellar-cli --features opt` is slow or fails
 
 Try with the `--locked` flag to use pinned dependency versions:
 

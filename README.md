@@ -27,12 +27,12 @@ The project enables developers to build reactive decentralized applications with
 > **Listener service docs**:
 > - [API Contract and Event Reference](listener/API_CONTRACT_EVENT_REFERENCE.md)
 > - [API Usage Cookbook](listener/API_USAGE_COOKBOOK.md)
-> - [Notification Failure Recovery](NOTIFICATION_FAILURE_RECOVERY.md) — retry lifecycle, configuration, and troubleshooting.
-> [Notification Lifecycle](NOTIFICATION_LIFECYCLE.md) — creation, delivery, acknowledgment semantics, retries, and archival.
-> [Notification Failure Recovery](NOTIFICATION_FAILURE_RECOVERY.md) — retry lifecycle, configuration, and troubleshooting.
-> **Listener service docs**: [Notification Failure Recovery](NOTIFICATION_FAILURE_RECOVERY.md) — retry lifecycle, configuration, and troubleshooting.
+> - [Notification Lifecycle](NOTIFICATION_LIFECYCLE.md) — creation, delivery, acknowledgment semantics, retries, and archival
+> - [Notification Failure Recovery](NOTIFICATION_FAILURE_RECOVERY.md) — retry lifecycle, configuration, and troubleshooting
 >
 > **Event reference**: [Smart Contract Event Reference Guide](CONTRACT_EVENT_REFERENCE.md) — all emitted events, parameters, data types, and usage recommendations for indexers and listeners.
+>
+> **Dashboard Storybook**: [dashboard/STORYBOOK.md](dashboard/STORYBOOK.md) — component documentation for design and development reviews.
 
 ---
 
@@ -328,8 +328,8 @@ stellar --version
 
 1. **Clone the repository**:
    ```bash
-   git clone https://github.com/your-org/notify-chain.git
-   cd notify-chain
+   git clone https://github.com/Core-Foundry/Notify-Chain.git
+   cd Notify-Chain
    ```
 
 2. **Building the AutoShare contract**:
@@ -543,7 +543,7 @@ Common Freighter wallet issues and how to resolve them.
 
 ## Wallet UX States
 
-The frontend models four wallet connection states. Every UI that depends on the wallet must handle all of them.
+The frontend (legacy Next.js analytics app under `frontend/`) models four wallet connection states. Every UI that depends on the wallet must handle all of them.
 
 | State | Description | User-facing message |
 |-------|-------------|---------------------|
@@ -643,7 +643,9 @@ Contributions are welcome! Please follow these steps (or start with the canonica
 Please follow the project's coding standards and include tests where applicable.
 
 For more detailed contribution guidelines, check:
-- `Documents/Task Bounty/CONTRIBUTING.md`
+- [`CONTRIBUTING.md`](CONTRIBUTING.md)
+- [`CONTRIBUTOR_DEVELOPMENT_WORKFLOW_GUIDE.md`](CONTRIBUTOR_DEVELOPMENT_WORKFLOW_GUIDE.md)
+- `Documents/Task Bounty/CONTRIBUTING.md` (TaskBounty contract-specific)
 
 ---
 

@@ -4,6 +4,21 @@ Thank you for your interest in contributing to NotifyChain! This document provid
 
 **Start here instead (recommended):** [`CONTRIBUTOR_DEVELOPMENT_WORKFLOW_GUIDE.md`](CONTRIBUTOR_DEVELOPMENT_WORKFLOW_GUIDE.md)
 
+## Documentation conventions
+
+Use these names consistently in docs and PRs:
+
+| Concept | Standard form |
+|---------|----------------|
+| Product name (prose/titles) | **NotifyChain** |
+| GitHub repository / clone directory | **Notify-Chain** (`Core-Foundry/Notify-Chain`) |
+| Off-chain service | **Listener** (`listener/`) |
+| React + Vite UI | **Dashboard** (`dashboard/`) |
+| Legacy analytics app | **Frontend** (`frontend/`) |
+| On-chain code | **Smart contracts** (`contract/`, `Documents/Task Bounty/`) |
+
+Canonical setup path: workflow guide → [`LOCAL_DEVELOPMENT.md`](LOCAL_DEVELOPMENT.md) (quick) → [`CONTRIBUTOR_SETUP.md`](CONTRIBUTOR_SETUP.md) (detailed).
+
 ## Code of Conduct
 
 - Be respectful and inclusive
