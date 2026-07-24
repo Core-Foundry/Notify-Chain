@@ -1,6 +1,5 @@
 import { create } from 'zustand';
-import type { BlockchainEvent, EventFilters, NotificationStatus } from '../types/event';
-import { NOTIFICATION_STATUS_EVENTS } from '../types/event';
+import type { BlockchainEvent, EventFilters, NotificationLifecycleStatus, NotificationStatus } from '../types/event';
 import { filterEvents } from '../utils/eventData';
 
 interface EventStoreState {
@@ -38,7 +37,7 @@ interface EventStoreState {
    * of leaving the stale status in the store until the next hard refresh, we
    * update the matching entry in-place the moment the blockchain confirms.
    */
-  updateEventStatus: (targetEventId: string, status: NotificationStatus) => void;
+  updateEventStatus: (targetEventId: string, status: NotificationLifecycleStatus) => void;
   /**
    * Reset `lastFetchedAt` to `0`, forcing the next `loadEvents` call to treat
    * the cache as stale and re-fetch unconditionally. Call this after any
