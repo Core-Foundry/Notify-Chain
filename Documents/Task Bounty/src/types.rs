@@ -1,4 +1,4 @@
-use soroban_sdk::{contracttype, Address, String};
+use soroban_sdk::{contracttype, Address, BytesN, String};
 
 /// Task status enum
 #[contracttype]
@@ -49,20 +49,15 @@ pub struct Task {
     pub title: String,
     /// Full task description (requirements, acceptance criteria, etc.).
     pub description: String,
-    /// Token address used for the escrowed reward (XLM or SAC token).
-    pub token: Address,
-    /// Reward amount in the token's smallest unit.
-    pub reward: i128,
-    /// Unix timestamp (seconds) after which new submissions are rejected.
-    pub deadline: u64,
-    /// Unix timestamp (seconds) at which the task was created.
-    pub created_at: u64,
-    /// Maximum number of submissions this task will accept.
+    pub token: Address, // Token address for reward
+    pub reward: i128,   // Reward amount
+    pub deadline: u64,  // Unix timestamp
     pub max_submissions: u32,
     /// Number of submissions received so far.
     pub submission_count: u32,
     /// Current lifecycle state of the task.
     pub status: TaskStatus,
+    pub created_at: u64, // Unix timestamp
 }
 
 /// Submission structure
@@ -81,11 +76,9 @@ pub struct Submission {
     pub task_id: u64,
     /// Address of the contributor who submitted the work.
     pub contributor: Address,
-    /// URL pointing to the submitted work (IPFS, Arweave, GitHub, etc.).
-    pub work_url: String,
-    /// Human-readable description of the work done.
+    pub work_url: String, // IPFS, Arweave, GitHub, etc.
     pub description: String,
-    /// Current review status of this submission.
+    pub submitted_at: u64, // Unix timestamp
     pub status: SubmissionStatus,
     /// Unix timestamp (seconds) at which the submission was made.
     pub submitted_at: u64,
@@ -113,6 +106,32 @@ pub struct Dispute {
     pub created_at: u64,
 }
 
+/// API credential record scoped to an organization.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct ApiCredential {
+    pub id: u64,
+    pub organization: Address,
+    pub label: String,
+    pub fingerprint: BytesN<32>,
+    pub created_at: u64,
+    pub is_active: bool,
+    pub is_primary: bool,
+    pub previous_credential_id: u64,
+}
+
+/// Rotation audit entry for API credentials.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct ApiCredentialRotation {
+    pub organization: Address,
+    pub old_credential_id: u64,
+    pub new_credential_id: u64,
+    pub actor: Address,
+    pub reason: String,
+    pub rotated_at: u64,
+}
+
 /// Error codes
 #[contracttype]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -131,4 +150,10 @@ pub enum Error {
     MaxSubmissionsReached = 11,
     PaymentFailed = 12,
     DisputeAlreadyExists = 13,
+    ApiKeyNotFound = 14,
+    ApiKeyAlreadyExists = 15,
+    NoActiveApiKeys = 16,
+    InvalidApiKeyRotation = 17,
+    ApiKeyRevoked = 18,
+    UnauthorizedApiKeyAction = 19,
 }

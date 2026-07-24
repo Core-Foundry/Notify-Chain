@@ -6,7 +6,7 @@ CREATE TABLE IF NOT EXISTS scheduled_notifications (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   
   -- Notification content and metadata
-  payload TEXT NOT NULL,                    -- JSON payload of the notification
+  payload TEXT NOT NULL,                    -- JSON payload of the notification (compressed when large)
   notification_type VARCHAR(50) NOT NULL,   -- Type: 'discord', 'email', 'webhook', etc.
   target_recipient TEXT NOT NULL,           -- User ID, webhook URL, or recipient identifier
   
@@ -34,7 +34,9 @@ CREATE TABLE IF NOT EXISTS scheduled_notifications (
   event_id TEXT,                            -- Reference to the original event (if applicable)
   contract_address TEXT,                    -- Stellar contract address (if applicable)
   priority INTEGER NOT NULL DEFAULT 5,      -- 1-10, lower = higher priority
-  metadata TEXT                             -- Additional JSON metadata
+  metadata TEXT,                            -- Additional JSON metadata
+  next_retry_at DATETIME                    -- When the next retry should be attempted
+  next_retry_at DATETIME                    -- Explicit retry scheduling timestamp
 );
 
 -- Indexes for performance optimization
@@ -42,12 +44,13 @@ CREATE INDEX IF NOT EXISTS idx_scheduled_notifications_status
   ON scheduled_notifications(status);
 
 CREATE INDEX IF NOT EXISTS idx_scheduled_notifications_status_execute_at 
-  ON scheduled_notifications(status, execute_at) 
-  WHERE status = 'PENDING';
+  ON scheduled_notifications(status, execute_at);
 
 CREATE INDEX IF NOT EXISTS idx_scheduled_notifications_lock_expires 
-  ON scheduled_notifications(lock_expires_at, status) 
-  WHERE status = 'PROCESSING';
+  ON scheduled_notifications(lock_expires_at, status);
+
+-- Migration: add next_retry_at for explicit retry scheduling
+ALTER TABLE scheduled_notifications ADD COLUMN next_retry_at DATETIME;
 
 CREATE INDEX IF NOT EXISTS idx_scheduled_notifications_next_retry_at
   ON scheduled_notifications(next_retry_at, status)
@@ -57,8 +60,7 @@ CREATE INDEX IF NOT EXISTS idx_scheduled_notifications_created_at
   ON scheduled_notifications(created_at);
 
 CREATE INDEX IF NOT EXISTS idx_scheduled_notifications_event_id 
-  ON scheduled_notifications(event_id) 
-  WHERE event_id IS NOT NULL;
+  ON scheduled_notifications(event_id);
 
 CREATE INDEX IF NOT EXISTS idx_scheduled_notifications_target 
   ON scheduled_notifications(target_recipient, status);
@@ -86,9 +88,8 @@ CREATE INDEX IF NOT EXISTS idx_execution_log_execution_time
 CREATE INDEX IF NOT EXISTS idx_execution_log_status_execution_time 
   ON notification_execution_log(status, execution_time);
 
--- Migration: add next_retry_at for explicit retry scheduling
-ALTER TABLE scheduled_notifications ADD COLUMN next_retry_at DATETIME;
-
+-- Migration: add next_retry_at for explicit retry scheduling (no-op when column exists in CREATE TABLE)
+-- SQLite does not support IF NOT EXISTS for ADD COLUMN; runMigrations tolerates duplicate-column errors.
 -- Trigger to update updated_at timestamp
 CREATE TRIGGER IF NOT EXISTS update_scheduled_notifications_timestamp 
 AFTER UPDATE ON scheduled_notifications
@@ -99,6 +100,79 @@ BEGIN
   WHERE id = NEW.id;
 END;
 
+-- ===============================================
+-- NOTIFICATION TEMPLATE SYSTEM SCHEMA
+-- ===============================================
+
+-- Main table for notification templates
+CREATE TABLE IF NOT EXISTS notification_templates (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  
+  -- Template identification
+  unique_key VARCHAR(100) NOT NULL UNIQUE,  -- e.g., 'welcome_email', 'payment_confirmation'
+  name VARCHAR(255) NOT NULL,               -- Human-readable name
+  description TEXT,                         -- Template purpose/usage description
+  
+  -- Template content
+  channel_type VARCHAR(50) NOT NULL,        -- EMAIL, SMS, DISCORD, PUSH, WEBHOOK
+  subject_template TEXT,                    -- Optional subject (for EMAIL, PUSH)
+  body_template TEXT NOT NULL,              -- Main template content with {{placeholders}}
+  
+  -- Variable definitions
+  variables TEXT NOT NULL,                  -- JSON array of required variable names
+  default_values TEXT,                      -- JSON object with default values for optional variables
+  
+  -- Metadata
+  is_active BOOLEAN NOT NULL DEFAULT 1,
+  version INTEGER NOT NULL DEFAULT 1,       -- Template versioning for A/B testing
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  created_by VARCHAR(100),                  -- User/system that created template
+  
+  -- Validation
+  last_validated_at DATETIME,
+  validation_status VARCHAR(20) DEFAULT 'PENDING' -- VALID, INVALID, PENDING
+);
+
+-- Indexes for template lookups
+CREATE INDEX IF NOT EXISTS idx_templates_unique_key 
+  ON notification_templates(unique_key);
+
+CREATE INDEX IF NOT EXISTS idx_templates_channel_type 
+  ON notification_templates(channel_type, is_active) 
+  WHERE is_active = 1;
+
+CREATE INDEX IF NOT EXISTS idx_templates_active 
+  ON notification_templates(is_active, created_at);
+
+-- Template usage tracking for analytics
+CREATE TABLE IF NOT EXISTS template_usage_log (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  template_id INTEGER NOT NULL,
+  rendered_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  context_hash VARCHAR(64),                 -- Hash of the context data for deduplication
+  success BOOLEAN NOT NULL DEFAULT 1,
+  error_message TEXT,
+  render_duration_ms INTEGER,
+  
+  FOREIGN KEY (template_id) REFERENCES notification_templates(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_template_usage_template_id 
+  ON template_usage_log(template_id, rendered_at);
+
+CREATE INDEX IF NOT EXISTS idx_template_usage_rendered_at 
+  ON template_usage_log(rendered_at);
+
+-- Trigger to update template updated_at timestamp
+CREATE TRIGGER IF NOT EXISTS update_notification_templates_timestamp 
+AFTER UPDATE ON notification_templates
+FOR EACH ROW
+BEGIN
+  UPDATE notification_templates 
+  SET updated_at = CURRENT_TIMESTAMP 
+  WHERE id = NEW.id;
+END;
 -- Rate limit events table for auditing
 CREATE TABLE IF NOT EXISTS rate_limit_events (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -238,6 +312,76 @@ CREATE TABLE IF NOT EXISTS polling_cursors (
 CREATE INDEX IF NOT EXISTS idx_polling_cursors_contract 
   ON polling_cursors(contract_address);
 
-CREATE INDEX IF NOT EXISTS idx_polling_cursors_updated_at 
+CREATE INDEX IF NOT EXISTS idx_polling_cursors_updated_at
   ON polling_cursors(updated_at);
+
+-- Idempotency keys table for request deduplication
+CREATE TABLE IF NOT EXISTS idempotency_keys (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+  -- Key identification
+  idempotency_key TEXT NOT NULL UNIQUE,      -- Client-provided idempotency key
+
+  -- Request and response tracking
+  request_hash TEXT NOT NULL,                -- Hash of request body for validation
+  response_notification_id INTEGER NOT NULL, -- ID of the created notification
+  response_data TEXT NOT NULL,               -- JSON response to return on duplicate
+
+  -- Lifecycle management
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  expires_at DATETIME NOT NULL,              -- When this key should be purged
+
+  -- Status tracking
+  status VARCHAR(20) NOT NULL DEFAULT 'PROCESSED', -- PROCESSED, EXPIRED
+
+  FOREIGN KEY (response_notification_id) REFERENCES scheduled_notifications(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_idempotency_keys_key
+  ON idempotency_keys(idempotency_key);
+
+CREATE INDEX IF NOT EXISTS idx_idempotency_keys_expires_at
+  ON idempotency_keys(expires_at);
+
+CREATE INDEX IF NOT EXISTS idx_idempotency_keys_created_at
+  ON idempotency_keys(created_at);
+
+-- Backpressure events table for tracking queue saturation and recovery
+CREATE TABLE IF NOT EXISTS backpressure_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+  -- Event tracking
+  event_type VARCHAR(20) NOT NULL,            -- ACTIVATED or DEACTIVATED
+  queue_size INTEGER NOT NULL,                -- Queue size when event occurred
+  target_throughput_per_sec INTEGER NOT NULL, -- Target throughput limit during this event
+
+  -- Duration tracking (for deactivation events)
+  duration_ms INTEGER,                        -- How long backpressure was active
+
+  -- Additional metadata
+  reason TEXT,                                -- Optional reason/context for the event
+  timestamp DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_backpressure_events_type
+  ON backpressure_events(event_type);
+
+CREATE INDEX IF NOT EXISTS idx_backpressure_events_timestamp
+  ON backpressure_events(timestamp);
+
+CREATE INDEX IF NOT EXISTS idx_backpressure_events_type_timestamp
+  ON backpressure_events(event_type, timestamp);
+
+-- Persisted notification delivery metrics snapshots for historical analytics
+CREATE TABLE IF NOT EXISTS notification_metrics_snapshots (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  captured_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  window_start INTEGER NOT NULL,
+  window_end INTEGER NOT NULL,
+  total_recorded INTEGER NOT NULL,
+  snapshot_json TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_metrics_snapshots_captured_at
+  ON notification_metrics_snapshots(captured_at);
 

@@ -1,4 +1,5 @@
 import { ScheduledNotificationRepository } from './scheduled-notification-repository';
+import { IdempotencyKeyService } from './idempotency-key-service';
 import { CreateScheduledNotificationInput, NotificationType } from '../types/scheduled-notification';
 import {
   validatePayloadSize,
@@ -7,33 +8,24 @@ import {
 import logger from '../utils/logger';
 
 /**
- * High-level API for scheduling notifications.
- * This is the main interface that application code should use.
+ * High-level API for scheduling notifications
+ * This is the main interface that application code should use
+ * Includes support for idempotent request handling
  */
 export class NotificationAPI {
-  /**
-   * Maximum allowed byte size for a notification payload (serialised JSON).
-   * Defaults to 64 KB (65 536 bytes).
-   */
-  public readonly maxPayloadSizeBytes: number;
-
   constructor(
     private repository: ScheduledNotificationRepository,
-    maxPayloadSizeBytes: number = DEFAULT_MAX_PAYLOAD_SIZE_BYTES
-  ) {
-    this.maxPayloadSizeBytes = maxPayloadSizeBytes;
-  }
+    private idempotencyService?: IdempotencyKeyService
+  ) {}
 
   /**
-   * Schedule a notification for future delivery.
-   *
-   * @throws {Error} when required fields are missing or invalid.
-   * @throws {PayloadTooLargeError} when the payload serialises to more than
-   *   `maxPayloadSizeBytes` bytes.
+   * Schedule a notification for future delivery
+   * Supports idempotent request handling via idempotency keys
    */
   async scheduleNotification(
     input: CreateScheduledNotificationInput,
-    requestId?: string
+    requestId?: string,
+    idempotencyKey?: string
   ): Promise<number> {
     // Validate input
     if (!input.executeAt || !(input.executeAt instanceof Date) || isNaN(input.executeAt.getTime())) {
@@ -57,10 +49,33 @@ export class NotificationAPI {
 
     logger.info('Scheduling new notification', {
       requestId,
+      idempotencyKey,
       type: input.notificationType,
       executeAt: input.executeAt,
       recipient: input.targetRecipient,
     });
+
+    // If idempotency service is available, use it for deduplication
+    if (this.idempotencyService && idempotencyKey) {
+      const { result, isDuplicate, notificationId } =
+        await this.idempotencyService.processWithIdempotency(
+          idempotencyKey,
+          input,
+          async () => {
+            return await this.repository.create(input, requestId);
+          }
+        );
+
+      if (isDuplicate) {
+        logger.info('Returned duplicate notification response', {
+          requestId,
+          idempotencyKey,
+          notificationId,
+        });
+      }
+
+      return typeof result === 'number' ? result : (result as { id: number }).id;
+    }
 
     return await this.repository.create(input, requestId);
   }
@@ -109,5 +124,20 @@ export class NotificationAPI {
    */
   async getStatistics() {
     return await this.repository.getStats();
+  }
+
+  /**
+   * Get execution metrics with deduplication
+   * Use this for dashboard metrics to prevent double-counting retried notifications
+   */
+  async getExecutionMetrics() {
+    return await this.repository.getExecutionMetrics();
+  }
+
+  /**
+   * Get retry distribution breakdown
+   */
+  async getRetryDistribution() {
+    return await this.repository.getRetryDistribution();
   }
 }

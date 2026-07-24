@@ -18,7 +18,7 @@ This document defines the structure, required fields, validation rules, and exam
 
 When scheduling a notification via the REST API, the caller provides a `CreateScheduledNotificationInput` object. The listener stores this, then delivers it at the specified time through the chosen channel (Discord, email, webhook, or SMS).
 
-**Endpoint:** `POST /api/notifications/schedule`
+**Endpoint:** `POST /api/schedule`
 
 ---
 

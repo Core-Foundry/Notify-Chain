@@ -1,6 +1,6 @@
 import { getDatabase } from '../database/database';
 import logger from '../utils/logger';
-import { buildPaginationMetadata, normalizePaginationParams } from '../utils/pagination';
+import { buildPaginationMetadata, normalizePaginationParams, encodeCursor, decodeCursor } from '../utils/pagination';
 
 export interface NotificationHistoryRecord {
   id: number;
@@ -15,6 +15,7 @@ export interface NotificationHistoryRecord {
 export interface HistoryQueryOptions {
   limit?: number;
   offset?: number;
+  cursor?: string;
   status?: 'SUCCESS' | 'FAILED' | 'RETRY';
   startDate?: string;
   endDate?: string;
@@ -27,6 +28,7 @@ export interface PaginatedHistoryResponse {
   offset: number;
   itemCount: number;
   totalPages: number;
+  nextCursor?: string | null;
 }
 
 export class NotificationHistoryService {
@@ -55,15 +57,25 @@ export class NotificationHistoryService {
         params.push(options.endDate);
       }
 
+      const baseConditions = [...conditions];
+      const baseParams = [...params];
+
+      const decodedCursor = options.cursor ? decodeCursor(options.cursor) : null;
+      if (decodedCursor) {
+        conditions.push('(execution_time < ? OR (execution_time = ? AND id < ?))');
+        params.push(decodedCursor.executionTime, decodedCursor.executionTime, decodedCursor.id);
+      }
+
+      const countWhereClause = baseConditions.length > 0 ? `WHERE ${baseConditions.join(' AND ')}` : '';
       const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
 
       // Get total count
-      const countSql = `SELECT COUNT(*) as count FROM notification_execution_log ${whereClause}`;
-      const countResult = await this.db.get<{ count: number }>(countSql, params);
+      const countSql = `SELECT COUNT(*) as count FROM notification_execution_log ${countWhereClause}`;
+      const countResult = await this.db.get<{ count: number }>(countSql, baseParams);
       const total = countResult?.count || 0;
 
       // Get paginated records
-      const sql = `
+      let sql = `
         SELECT 
           id,
           scheduled_notification_id as scheduledNotificationId,
@@ -74,13 +86,20 @@ export class NotificationHistoryService {
           duration_ms as responseDuration
         FROM notification_execution_log
         ${whereClause}
-        ORDER BY execution_time DESC
-        LIMIT ? OFFSET ?
+        ORDER BY execution_time DESC, id DESC
+        LIMIT ?
       `;
+      
+      const queryParams = [...params, limit];
+      
+      if (!decodedCursor) {
+        sql += ` OFFSET ?`;
+        queryParams.push(offset);
+      }
 
       const records = await this.db.all<NotificationHistoryRecord>(
         sql,
-        [...params, limit, offset]
+        queryParams
       );
 
       logger.info('Notification history retrieved', {
@@ -92,6 +111,10 @@ export class NotificationHistoryService {
 
       const pagination = buildPaginationMetadata(total, limit, offset);
 
+      const nextCursor = records.length > 0 
+        ? encodeCursor(records[records.length - 1].executionTime, records[records.length - 1].id)
+        : null;
+
       return {
         records,
         total,
@@ -99,6 +122,7 @@ export class NotificationHistoryService {
         offset: pagination.offset,
         itemCount: pagination.itemCount,
         totalPages: pagination.totalPages,
+        nextCursor,
       };
     } catch (error) {
       logger.error('Failed to retrieve notification history', { error });

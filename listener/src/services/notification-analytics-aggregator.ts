@@ -1,5 +1,6 @@
 import logger from '../utils/logger';
 import { NotificationType } from '../types/scheduled-notification';
+import { AnalyticsConfig } from '../types';
 
 export type AnalyticsDeliveryOutcome = 'success' | 'failure' | 'retry' | 'skipped';
 
@@ -86,7 +87,7 @@ const DEFAULTS = {
  * memory-bounded (rolling window) and allocation-light: a single sorted array
  * of records and a sparse array of hourly buckets. No external storage is
  * required, which makes it suitable for in-process observability and the
- * `/api/analytics/notifications` HTTP endpoint.
+ * `/api/analytics` HTTP endpoint.
  *
  * Thread-safety: the aggregator is single-threaded by design. Callers must
  * invoke `record()` synchronously from a single event loop tick. Concurrent
@@ -161,6 +162,28 @@ export class NotificationAnalyticsAggregator {
 
     if (this.records.length > this.maxRecords) {
       const evicted = this.records.length - this.maxRecords;
+      // adjust counters based on evicted records to avoid drift
+      for (let i = 0; i < evicted; i++) {
+        const r = this.records[i];
+        switch (r.outcome) {
+          case 'success':
+            this.successCount = Math.max(0, this.successCount - 1);
+            break;
+          case 'failure':
+            this.failureCount = Math.max(0, this.failureCount - 1);
+            break;
+          case 'retry':
+            this.retryCount = Math.max(0, this.retryCount - 1);
+            break;
+          case 'skipped':
+            this.skippedCount = Math.max(0, this.skippedCount - 1);
+            break;
+        }
+        if (r.durationMs > 0) {
+          this.totalDurationMs = Math.max(0, this.totalDurationMs - r.durationMs);
+          this.durationSamples = Math.max(0, this.durationSamples - 1);
+        }
+      }
       this.records.splice(0, evicted);
     }
   }
@@ -416,12 +439,26 @@ export class NotificationAnalyticsAggregator {
  */
 let defaultInstance: NotificationAnalyticsAggregator | null = null;
 
+export function initNotificationAnalyticsAggregator(
+  config: AnalyticsConfig,
+): NotificationAnalyticsAggregator {
+  defaultInstance = new NotificationAnalyticsAggregator({
+    maxRecords: config.maxRecords,
+    maxBuckets: config.maxBuckets,
+    bucketSizeMs: config.bucketSizeMs,
+  });
+  logger.info('Notification analytics aggregator initialized', {
+    maxRecords: config.maxRecords,
+    maxBuckets: config.maxBuckets,
+    bucketSizeMs: config.bucketSizeMs,
+  });
+  return defaultInstance;
+}
+
 export function getNotificationAnalyticsAggregator(): NotificationAnalyticsAggregator {
   if (!defaultInstance) {
     defaultInstance = new NotificationAnalyticsAggregator();
-    logger.info('Notification analytics aggregator initialized', {
-      maxRecords: defaultInstance.size,
-    });
+    logger.info('Notification analytics aggregator initialized with defaults');
   }
   return defaultInstance;
 }

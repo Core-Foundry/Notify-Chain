@@ -449,6 +449,8 @@ describe('Events Server Rate Limiting Integration', () => {
     server = createEventsServer({
       port,
       stellarRpcUrl: 'https://soroban-testnet.stellar.org:443',
+      stellarNetworkPassphrase: 'Test SDF Network ; September 2015',
+      contractAddresses: [],
       rateLimit: {
         enabled: true,
         windowMs: 60000,
@@ -477,6 +479,8 @@ describe('Events Server Rate Limiting Integration', () => {
     server = createEventsServer({
       port,
       stellarRpcUrl: 'https://soroban-testnet.stellar.org:443',
+      stellarNetworkPassphrase: 'Test SDF Network ; September 2015',
+      contractAddresses: [],
       rateLimit: {
         enabled: true,
         windowMs: 60000,

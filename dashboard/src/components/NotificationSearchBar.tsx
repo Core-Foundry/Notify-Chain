@@ -28,8 +28,6 @@ export const NotificationSearchBar = memo(function NotificationSearchBar() {
   // Keep local value in sync if store is cleared externally
   useEffect(() => {
     if (filters.search === '' && inputValue !== '') setInputValue('');
-    // intentionally only react to store reset, not every keystroke
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filters.search]);
 
   return (

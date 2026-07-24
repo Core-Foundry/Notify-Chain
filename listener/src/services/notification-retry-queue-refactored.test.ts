@@ -173,6 +173,7 @@ describe('NotificationRetryQueue (Refactored)', () => {
         baseDelayMs: 1000,
         maxRetries: 3,
         processIntervalMs: 100,
+        jitter: false,
       });
       queue.start();
 
