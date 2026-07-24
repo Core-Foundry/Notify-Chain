@@ -9,14 +9,14 @@
  *
  * Non-notification events (group lifecycle, admin, financial) carry `undefined`.
  */
-export type NotificationStatus = 'active' | 'expired' | 'revoked';
+export type NotificationLifecycleStatus = 'active' | 'expired' | 'revoked';
 
 /**
  * The set of event names that represent a notification status transition.
  * Receiving one of these events means the notification identified by
  * `relatedNotificationId` has moved to the corresponding `notificationStatus`.
  */
-export const NOTIFICATION_STATUS_EVENTS: Record<string, NotificationStatus> = {
+export const NOTIFICATION_STATUS_EVENTS: Record<string, NotificationLifecycleStatus> = {
   notification_scheduled: 'active',
   notification_expired: 'expired',
   notification_revoked: 'revoked',
@@ -37,7 +37,7 @@ export interface BlockchainEvent {
    * events (`notification_scheduled`, `notification_expired`,
    * `notification_revoked`). Undefined for all other event types.
    */
-  notificationStatus?: NotificationStatus;
+  notificationStatus?: NotificationLifecycleStatus;
   /**
    * For status-transition events (`notification_expired`, `notification_revoked`),
    * the `eventId` of the originating `notification_scheduled` event whose status
@@ -49,6 +49,13 @@ export interface BlockchainEvent {
   read?: boolean;
 }
 
+/**
+ * UI filter status for the notification search bar.
+ *
+ * - `all`    – show all notifications regardless of read state.
+ * - `read`   – show only notifications the user has already seen.
+ * - `unread` – show only notifications the user has not yet seen.
+ */
 export type NotificationStatus = 'all' | 'read' | 'unread';
 
 export interface EventFilters {

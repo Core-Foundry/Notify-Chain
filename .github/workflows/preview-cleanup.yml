@@ -21,6 +21,7 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          wranglerVersion: "3"
           command: pages deployment delete --project-name=notify-chain-dashboard --branch=pr-${{ github.event.pull_request.number }} --yes
 
       - name: Update PR comment to mark preview removed

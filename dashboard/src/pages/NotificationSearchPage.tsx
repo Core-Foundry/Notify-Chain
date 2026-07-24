@@ -83,8 +83,7 @@ export function NotificationSearchPage() {
 
   useEffect(() => {
     runSearch();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filtersKey, page]);
+  }, [filtersKey, page, runSearch]);
 
   function clearAll() {
     setQuery('');
