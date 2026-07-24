@@ -13,6 +13,15 @@ import http from 'http';
 import { ArchiveStore } from '../services/archive-store';
 import { ArchiveService } from '../services/archive-service';
 import logger from '../utils/logger';
+import { NotificationStatus } from '../types/scheduled-notification';
+import {
+  InputValidator,
+  ValidationError,
+  isOneOf,
+  parseOptionalDateParam,
+  parseOptionalIntParam,
+  validationErrorBody,
+} from '../utils/validation';
 
 export interface ArchiveApiHandlerDeps {
   store: ArchiveStore;
@@ -54,9 +63,14 @@ export async function handleArchiveRequest(
   }
 
   // GET /api/archive/:id
-  const singleMatch = pathname.match(/^\/api\/archive\/(\d+)$/);
+  const singleMatch = pathname.match(/^\/api\/archive\/([^/]+)$/);
   if (req.method === 'GET' && singleMatch) {
     const id = parseInt(singleMatch[1], 10);
+    if (!Number.isInteger(id) || id <= 0) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'id must be a positive integer' }));
+      return true;
+    }
     logger.info('Handling GET /api/archive/:id', { requestId, id });
     try {
       const record = await deps.store.getById(id);
@@ -79,18 +93,40 @@ export async function handleArchiveRequest(
   if (req.method === 'GET' && pathname === '/api/archive') {
     logger.info('Handling GET /api/archive', { requestId });
     try {
+      const limit = parseOptionalIntParam(url.searchParams.get('limit'), 'limit', { min: 1, max: 100 });
+      const offset = parseOptionalIntParam(url.searchParams.get('offset'), 'offset', { min: 0 });
+      const status = url.searchParams.get('status') ?? undefined;
+      const startDate = parseOptionalDateParam(url.searchParams.get('startDate'), 'startDate');
+      const endDate = parseOptionalDateParam(url.searchParams.get('endDate'), 'endDate');
+
+      const v = new InputValidator();
+      if (status !== undefined) {
+        v.check(
+          isOneOf(status, Object.values(NotificationStatus)),
+          'status',
+          `must be one of: ${Object.values(NotificationStatus).join(', ')}`,
+        );
+      }
+      v.throwIfInvalid();
+
       const options = {
-        limit: url.searchParams.get('limit') ? parseInt(url.searchParams.get('limit')!, 10) : undefined,
-        offset: url.searchParams.get('offset') ? parseInt(url.searchParams.get('offset')!, 10) : undefined,
-        status: url.searchParams.get('status') ?? undefined,
+        limit,
+        offset,
+        status,
         contractAddress: url.searchParams.get('contractAddress') ?? undefined,
-        startDate: url.searchParams.get('startDate') ?? undefined,
-        endDate: url.searchParams.get('endDate') ?? undefined,
+        startDate,
+        endDate,
       };
       const result = await deps.store.query(options);
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(result));
     } catch (err) {
+      if (err instanceof ValidationError) {
+        logger.warn('Archive query rejected', { requestId, error: err.message });
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(validationErrorBody(err)));
+        return true;
+      }
       logger.error('Failed to query archive', { error: err, requestId });
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: (err as Error).message }));

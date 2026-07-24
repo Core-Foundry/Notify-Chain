@@ -2,6 +2,18 @@ import { ScheduledNotificationRepository } from './scheduled-notification-reposi
 import { IdempotencyKeyService } from './idempotency-key-service';
 import { CreateScheduledNotificationInput, NotificationType } from '../types/scheduled-notification';
 import logger from '../utils/logger';
+import {
+  InputValidator,
+  isNonEmptyString,
+  isNonNegativeInteger,
+  isOneOf,
+  isPlainObject,
+  isInRange,
+  isInteger,
+} from '../utils/validation';
+
+const PRIORITY_MIN = 1;
+const PRIORITY_MAX = 10;
 
 /**
  * High-level API for scheduling notifications
@@ -32,13 +44,40 @@ export class NotificationAPI {
       throw new Error('executeAt must be a future timestamp — the provided date has already expired');
     }
 
-    if (!input.payload || typeof input.payload !== 'object') {
+    if (!isPlainObject(input.payload)) {
       throw new Error('payload must be a valid object');
     }
 
-    if (!input.targetRecipient) {
-      throw new Error('targetRecipient is required');
+    if (!isNonEmptyString(input.targetRecipient)) {
+      throw new Error('targetRecipient is required and must be a non-empty string');
     }
+
+    const v = new InputValidator();
+    v.check(
+      isOneOf(input.notificationType, Object.values(NotificationType)),
+      'notificationType',
+      `must be one of: ${Object.values(NotificationType).join(', ')}`,
+    );
+    if (input.maxRetries !== undefined) {
+      v.check(isNonNegativeInteger(input.maxRetries), 'maxRetries', 'must be a non-negative integer');
+    }
+    if (input.priority !== undefined) {
+      v.check(
+        isInteger(input.priority) && isInRange(input.priority, PRIORITY_MIN, PRIORITY_MAX),
+        'priority',
+        `must be an integer between ${PRIORITY_MIN} and ${PRIORITY_MAX}`,
+      );
+    }
+    if (input.eventId !== undefined) {
+      v.check(isNonEmptyString(input.eventId), 'eventId', 'must be a non-empty string');
+    }
+    if (input.contractAddress !== undefined) {
+      v.check(isNonEmptyString(input.contractAddress), 'contractAddress', 'must be a non-empty string');
+    }
+    if (input.metadata !== undefined) {
+      v.check(isPlainObject(input.metadata), 'metadata', 'must be an object');
+    }
+    v.throwIfInvalid();
 
     logger.info('Scheduling new notification', {
       requestId,

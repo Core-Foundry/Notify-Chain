@@ -18,6 +18,61 @@ import {
   NotificationTemplate,
   TemplateChannelType,
 } from '../types/notification-template';
+import { InputValidator, isNonEmptyString, isOneOf, isPlainObject } from '../utils/validation';
+
+const MAX_NAME_LENGTH = 255;
+const MAX_DESCRIPTION_LENGTH = 1000;
+
+/** Validates the request-shaped fields of a template (name/channelType/description/variables/defaultValues). Content validation stays in TemplateValidator. */
+function validateTemplateFields(input: {
+  name?: string;
+  channelType?: TemplateChannelType;
+  description?: string;
+  variables?: string[];
+  defaultValues?: Record<string, any>;
+}, requireRequiredFields: boolean): void {
+  const v = new InputValidator();
+
+  if (requireRequiredFields || input.name !== undefined) {
+    v.check(isNonEmptyString(input.name), 'name', 'is required and must be a non-empty string');
+    if (typeof input.name === 'string') {
+      v.check(input.name.length <= MAX_NAME_LENGTH, 'name', `must not exceed ${MAX_NAME_LENGTH} characters`);
+    }
+  }
+
+  if (requireRequiredFields || input.channelType !== undefined) {
+    v.check(
+      isOneOf(input.channelType, Object.values(TemplateChannelType)),
+      'channelType',
+      `must be one of: ${Object.values(TemplateChannelType).join(', ')}`,
+    );
+  }
+
+  if (input.description !== undefined && input.description !== null) {
+    v.check(typeof input.description === 'string', 'description', 'must be a string');
+    if (typeof input.description === 'string') {
+      v.check(
+        input.description.length <= MAX_DESCRIPTION_LENGTH,
+        'description',
+        `must not exceed ${MAX_DESCRIPTION_LENGTH} characters`,
+      );
+    }
+  }
+
+  if (input.variables !== undefined) {
+    v.check(
+      Array.isArray(input.variables) && input.variables.every((item) => typeof item === 'string'),
+      'variables',
+      'must be an array of strings',
+    );
+  }
+
+  if (input.defaultValues !== undefined) {
+    v.check(isPlainObject(input.defaultValues), 'defaultValues', 'must be an object');
+  }
+
+  v.throwIfInvalid();
+}
 
 export class TemplateService {
   constructor(private repository: TemplateRepository) {}
@@ -32,6 +87,9 @@ export class TemplateService {
     error?: string;
   }> {
     try {
+      // Validate request-shaped fields before touching content validation or the repository
+      validateTemplateFields(input, true);
+
       // Validate unique key format
       const keyValidation = TemplateValidator.validateUniqueKey(input.uniqueKey);
       if (!keyValidation.valid) {
@@ -104,6 +162,9 @@ export class TemplateService {
     error?: string;
   }> {
     try {
+      // Validate request-shaped fields before touching the repository
+      validateTemplateFields(input, false);
+
       // Get existing template
       const existing = await this.repository.getById(id);
       if (!existing) {
