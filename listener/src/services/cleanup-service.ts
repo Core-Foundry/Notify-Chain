@@ -9,12 +9,15 @@ export interface CleanupConfig {
   notificationRetentionMs: number;
   /** Retain rate-limit audit events for this long (ms). Default: 24 hours. */
   rateLimitEventRetentionMs: number;
+  /** Retain notification execution log rows for this long (ms). Default: 90 days. */
+  executionLogRetentionMs: number;
 }
 
 const DEFAULTS: CleanupConfig = {
   intervalMs: 60 * 60 * 1000,
   notificationRetentionMs: 7 * 24 * 60 * 60 * 1000,
   rateLimitEventRetentionMs: 24 * 60 * 60 * 1000,
+  executionLogRetentionMs: 90 * 24 * 60 * 60 * 1000,
 };
 
 export class CleanupService {
@@ -48,8 +51,9 @@ export class CleanupService {
   async runDbCleanup(): Promise<{ notifications: number; executionLogs: number; rateLimitEvents: number }> {
     const notificationCutoff = new Date(Date.now() - this.config.notificationRetentionMs).toISOString();
     const rateLimitCutoff = new Date(Date.now() - this.config.rateLimitEventRetentionMs).toISOString();
+    const executionLogCutoff = new Date(Date.now() - this.config.executionLogRetentionMs).toISOString();
 
-    const [notifResult, rateLimitResult] = await Promise.all([
+    const [notifResult, rateLimitResult, executionLogResult] = await Promise.all([
       this.db.run(
         `DELETE FROM scheduled_notifications
          WHERE status IN ('COMPLETED','FAILED','CANCELLED')
@@ -60,16 +64,15 @@ export class CleanupService {
         `DELETE FROM rate_limit_events WHERE timestamp < ?`,
         [rateLimitCutoff],
       ),
+      this.db.run(
+        `DELETE FROM notification_execution_log WHERE execution_time < ?`,
+        [executionLogCutoff],
+      ),
     ]);
-
-    // execution_log rows are cascade-deleted with their parent; count separately for metrics
-    const logResult = await this.db.get<{ count: number }>(
-      `SELECT changes() as count`,
-    );
 
     const result = {
       notifications: notifResult.changes,
-      executionLogs: 0, // removed via ON DELETE CASCADE
+      executionLogs: executionLogResult.changes,
       rateLimitEvents: rateLimitResult.changes,
     };
 

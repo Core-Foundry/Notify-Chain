@@ -2,6 +2,8 @@
 
 Base URL: `http://localhost:8787` (configured via `EVENTS_API_PORT`)
 
+For a centralized list of API errors, causes, examples, and troubleshooting steps, see [API_ERROR_REFERENCE.md](./API_ERROR_REFERENCE.md).
+
 ---
 
 ## Events
@@ -303,7 +305,8 @@ Returns paginated delivery execution records from `notification_execution_log`.
 | Name      | Type   | Required | Description                                                       |
 |-----------|--------|----------|-------------------------------------------------------------------|
 | limit     | number | No       | Maximum records per page (default `20`, max `100`)                |
-| offset    | number | No       | Number of records to skip (default `0`)                           |
+| offset    | number | No       | Number of records to skip (default `0`). Prefer `cursor`.         |
+| cursor    | string | No       | Opaque token for cursor-based pagination                          |
 | status    | string | No       | Filter by execution status: `SUCCESS`, `FAILED`, or `RETRY`       |
 | startDate | string | No       | ISO 8601 lower bound on `execution_time` (inclusive)              |
 | endDate   | string | No       | ISO 8601 upper bound on `execution_time` (inclusive)              |
@@ -327,7 +330,8 @@ Returns paginated delivery execution records from `notification_execution_log`.
   "itemCount": 5,
   "totalPages": 3,
   "limit": 2,
-  "offset": 0
+  "offset": 0,
+  "nextCursor": "MjAyNC0wNi0yMFQxNTowMDowMC4wMDBaLDQy"
 }
 ```
 
@@ -339,6 +343,7 @@ Returns paginated delivery execution records from `notification_execution_log`.
 | totalPages  | number | Total pages available at the requested `limit` (`0` when `itemCount` is `0`) |
 | limit       | number | Effective page size applied to the query                                    |
 | offset      | number | Number of records skipped before this page                                  |
+| nextCursor  | string | Opaque token to fetch the next page of results                              |
 
 Existing clients that read `total`, `limit`, `offset`, and `records` continue to work unchanged. New clients should prefer `itemCount` and `totalPages` for pagination UI.
 
@@ -567,6 +572,47 @@ Returns the operational status of all service dependencies.
 ```
 
 A service entry's `status` field can be `"ok"`, `"error"`, or `"not_configured"`. `"not_configured"` means the service URL was not provided at startup and is not checked.
+
+---
+
+## Contract Status
+
+### GET /api/status
+
+Returns the pause status of all configured smart contracts.
+
+**Response `200`**
+
+```json
+{
+  "timestamp": "2024-06-20T14:00:00.000Z",
+  "contracts": [
+    {
+      "address": "CCEMX6...",
+      "paused": false
+    },
+    {
+      "address": "CCEMX7...",
+      "paused": true,
+      "error": "Failed to simulate contract call"
+    }
+  ]
+}
+```
+
+| Field       | Type     | Description                                                                 |
+|-------------|----------|-----------------------------------------------------------------------------|
+| timestamp   | string   | ISO 8601 timestamp of when the status was fetched                          |
+| contracts   | array    | List of contracts and their statuses                                             |
+| address     | string   | Contract address                                                            |
+| paused      | boolean  | Whether the contract is currently paused                                   |
+| error       | string   | Optional. Error message if we could not fetch the status for this contract   |
+
+**Response `500`** — internal error fetching status
+
+```json
+{ "status": "error", "detail": "Internal status check failure" }
+```
 
 ---
 

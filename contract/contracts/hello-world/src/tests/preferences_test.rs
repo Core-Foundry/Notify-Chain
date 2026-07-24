@@ -6,7 +6,7 @@ mod preferences_tests {
     };
     use crate::test_utils::setup_test_env;
     use crate::{AutoShareContract, AutoShareContractClient};
-    use soroban_sdk::{testutils::Address as _, Address, Env, Vec};
+    use soroban_sdk::{testutils::Address as _, Address, Env, IntoVal, Vec};
 
     // ============================================================================
     // Default preferences
@@ -23,13 +23,21 @@ mod preferences_tests {
         // All three channels enabled by default
         assert_eq!(prefs.channels.len(), 3);
         for ch in prefs.channels.iter() {
-            assert!(ch.enabled, "Channel {:?} should be enabled by default", ch.channel);
+            assert!(
+                ch.enabled,
+                "Channel {:?} should be enabled by default",
+                ch.channel
+            );
         }
 
         // All five categories enabled by default
         assert_eq!(prefs.categories.len(), 5);
         for cat in prefs.categories.iter() {
-            assert!(cat.enabled, "Category {:?} should be enabled by default", cat.category);
+            assert!(
+                cat.enabled,
+                "Category {:?} should be enabled by default",
+                cat.category
+            );
         }
 
         assert_eq!(prefs.recipient, recipient);
@@ -113,8 +121,7 @@ mod preferences_tests {
         let recipient = test_env.users.get(0).unwrap();
 
         {
-            let client =
-                AutoShareContractClient::new(&test_env.env, &test_env.autoshare_contract);
+            let client = AutoShareContractClient::new(&test_env.env, &test_env.autoshare_contract);
             let mut channels = Vec::new(&test_env.env);
             channels.push_back(ChannelPreference {
                 channel: DeliveryChannel::Wallet,
@@ -155,8 +162,7 @@ mod preferences_tests {
         }
 
         // New client instance ("page refresh")
-        let client2 =
-            AutoShareContractClient::new(&test_env.env, &test_env.autoshare_contract);
+        let client2 = AutoShareContractClient::new(&test_env.env, &test_env.autoshare_contract);
         let prefs = client2.get_preferences(&recipient);
 
         // Wallet should be disabled
@@ -334,12 +340,7 @@ mod preferences_tests {
             invoke: &soroban_sdk::testutils::MockAuthInvoke {
                 contract: &contract_id,
                 fn_name: "set_channel_preference",
-                args: (
-                    victim.clone(),
-                    DeliveryChannel::Wallet,
-                    false,
-                )
-                    .into_val(&env),
+                args: (victim.clone(), DeliveryChannel::Wallet, false).into_val(&env),
                 sub_invokes: &[],
             },
         }]);
