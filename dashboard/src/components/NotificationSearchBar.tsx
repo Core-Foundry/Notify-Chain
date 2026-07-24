@@ -2,9 +2,9 @@ import { useState, useEffect, memo } from 'react';
 import { useEventStore } from '../store/eventStore';
 import { useEventFilters } from '../hooks/useEventSelectors';
 import { useDebounce } from '../hooks/useDebounce';
-import type { NotificationStatus } from '../types/event';
+import type { NotificationReadFilter } from '../types/event';
 
-const STATUS_OPTIONS: { value: NotificationStatus; label: string }[] = [
+const STATUS_OPTIONS: { value: NotificationReadFilter; label: string }[] = [
   { value: 'all', label: 'All' },
   { value: 'unread', label: 'Unread' },
   { value: 'read', label: 'Read' },
