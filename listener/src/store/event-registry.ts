@@ -25,15 +25,6 @@ export class EventRegistry {
   }
 
   startCleanup(intervalMs = 60_000): void {
-    if (this.cleanupTimer) return;
-    this.cleanupTimer = setInterval(() => this.pruneExpired(), intervalMs);
-  }
-
-  setTtlMs(ms: number): void {
-    this.ttlMs = ms;
-  }
-
-  stopCleanup(): void {
     if (this.cleanupTimer) {
       clearInterval(this.cleanupTimer);
       this.cleanupTimer = null;
