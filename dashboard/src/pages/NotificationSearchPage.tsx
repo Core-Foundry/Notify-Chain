@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { useDebounce } from '../hooks/useDebounce';
+import { getEventsApiBaseUrl } from '../config/eventsApiUrl';
 import {
   searchNotifications,
   type NotificationSearchResult,
@@ -7,12 +8,27 @@ import {
 } from '../services/eventsApi';
 
 const PAGE_SIZE = 20;
-const API_BASE = (import.meta.env.VITE_EVENTS_API_URL ?? 'http://localhost:8787/api/events').replace(
-  '/api/events',
-  ''
-);
+const API_BASE = getEventsApiBaseUrl().replace(/\/api\/events\/?$/, '');
 
-const STATUS_OPTIONS = ['', 'PENDING', 'PROCESSING', 'COMPLETED', 'FAILED', 'CANCELLED', 'PROCESSED'];
+/** Delivery / processing status values used by scheduled + processed notifications. */
+export const NOTIFICATION_DELIVERY_STATUS_OPTIONS = [
+  { value: '', label: 'All statuses' },
+  { value: 'PENDING', label: 'Pending' },
+  { value: 'PROCESSING', label: 'Processing' },
+  { value: 'COMPLETED', label: 'Completed' },
+  { value: 'FAILED', label: 'Failed' },
+  { value: 'CANCELLED', label: 'Cancelled' },
+  { value: 'PROCESSED', label: 'Processed' },
+];
+
+/** Known notification channel types (listener NotificationType). */
+export const NOTIFICATION_TYPE_OPTIONS = [
+  { value: '', label: 'All types' },
+  { value: 'discord', label: 'Discord' },
+  { value: 'email', label: 'Email' },
+  { value: 'webhook', label: 'Webhook' },
+  { value: 'sms', label: 'SMS' },
+];
 
 export function NotificationSearchPage() {
   const [query, setQuery] = useState('');
@@ -21,6 +37,8 @@ export function NotificationSearchPage() {
   const [eventId, setEventId] = useState('');
   const [status, setStatus] = useState('');
   const [type, setType] = useState('');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
   const [page, setPage] = useState(1);
 
   const [response, setResponse] = useState<NotificationSearchResponse | null>(null);
@@ -34,7 +52,14 @@ export function NotificationSearchPage() {
 
   // Track whether any search param is active
   const hasParams =
-    debouncedQuery || debouncedSender || debouncedTxHash || debouncedEventId || status || type;
+    debouncedQuery ||
+    debouncedSender ||
+    debouncedTxHash ||
+    debouncedEventId ||
+    status ||
+    type ||
+    dateFrom ||
+    dateTo;
 
   const abortRef = useRef<AbortController | null>(null);
 
@@ -59,6 +84,8 @@ export function NotificationSearchPage() {
         eventId: debouncedEventId || undefined,
         status: status || undefined,
         type: type || undefined,
+        startDate: dateFrom || undefined,
+        endDate: dateTo || undefined,
         limit: PAGE_SIZE,
         offset: (page - 1) * PAGE_SIZE,
       });
@@ -69,22 +96,32 @@ export function NotificationSearchPage() {
     } finally {
       setLoading(false);
     }
-  }, [debouncedQuery, debouncedSender, debouncedTxHash, debouncedEventId, status, type, page, hasParams]);
+  }, [
+    debouncedQuery,
+    debouncedSender,
+    debouncedTxHash,
+    debouncedEventId,
+    status,
+    type,
+    dateFrom,
+    dateTo,
+    page,
+    hasParams,
+  ]);
 
   // Re-run search whenever debounced params change; reset page when filters change
-  const filtersKey = `${debouncedQuery}|${debouncedSender}|${debouncedTxHash}|${debouncedEventId}|${status}|${type}`;
+  const filtersKey = `${debouncedQuery}|${debouncedSender}|${debouncedTxHash}|${debouncedEventId}|${status}|${type}|${dateFrom}|${dateTo}`;
   const prevFiltersRef = useRef(filtersKey);
   useEffect(() => {
     if (filtersKey !== prevFiltersRef.current) {
       setPage(1);
-      prevFiltersRef.current = filtersKey;
     }
+    prevFiltersRef.current = filtersKey;
   }, [filtersKey]);
 
   useEffect(() => {
     runSearch();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filtersKey, page]);
+  }, [filtersKey, page, runSearch]);
 
   function clearAll() {
     setQuery('');
@@ -93,6 +130,8 @@ export function NotificationSearchPage() {
     setEventId('');
     setStatus('');
     setType('');
+    setDateFrom('');
+    setDateTo('');
     setPage(1);
     setResponse(null);
     setError(null);
@@ -106,7 +145,7 @@ export function NotificationSearchPage() {
         <p className="event-explorer__eyebrow">Notifications</p>
         <h1>Notification Search</h1>
         <p className="event-explorer__lead">
-          Search scheduled and processed notifications by sender, transaction hash, event ID, type, or free-text.
+          Filter scheduled and processed notifications by type, delivery status, date range, sender, or free-text.
         </p>
       </header>
 
@@ -163,28 +202,58 @@ export function NotificationSearchPage() {
           </div>
 
           <div className="notif-search-form__group">
-            <label htmlFor="nsf-status" className="notif-search-form__label">Status</label>
+            <label htmlFor="nsf-status" className="notif-search-form__label">Delivery status</label>
             <select
               id="nsf-status"
               className="notif-search-form__input"
               value={status}
               onChange={(e) => setStatus(e.target.value)}
+              aria-label="Filter by delivery status"
             >
-              {STATUS_OPTIONS.map((s) => (
-                <option key={s} value={s}>{s || 'All statuses'}</option>
+              {NOTIFICATION_DELIVERY_STATUS_OPTIONS.map(({ value, label }) => (
+                <option key={value || 'all'} value={value}>{label}</option>
               ))}
             </select>
           </div>
 
           <div className="notif-search-form__group">
-            <label htmlFor="nsf-type" className="notif-search-form__label">Type</label>
-            <input
+            <label htmlFor="nsf-type" className="notif-search-form__label">Notification type</label>
+            <select
               id="nsf-type"
-              type="text"
               className="notif-search-form__input"
-              placeholder="discord, email…"
               value={type}
               onChange={(e) => setType(e.target.value)}
+              aria-label="Filter by notification type"
+            >
+              {NOTIFICATION_TYPE_OPTIONS.map(({ value, label }) => (
+                <option key={value || 'all'} value={value}>{label}</option>
+              ))}
+            </select>
+          </div>
+
+          <div className="notif-search-form__group">
+            <label htmlFor="nsf-date-from" className="notif-search-form__label">From</label>
+            <input
+              id="nsf-date-from"
+              type="date"
+              className="notif-search-form__input notif-search-form__input--date"
+              value={dateFrom}
+              max={dateTo || undefined}
+              onChange={(e) => setDateFrom(e.target.value)}
+              aria-label="Filter from date"
+            />
+          </div>
+
+          <div className="notif-search-form__group">
+            <label htmlFor="nsf-date-to" className="notif-search-form__label">To</label>
+            <input
+              id="nsf-date-to"
+              type="date"
+              className="notif-search-form__input notif-search-form__input--date"
+              value={dateTo}
+              min={dateFrom || undefined}
+              onChange={(e) => setDateTo(e.target.value)}
+              aria-label="Filter to date"
             />
           </div>
         </div>
@@ -211,7 +280,7 @@ export function NotificationSearchPage() {
         {!loading && !error && !hasParams && (
           <div className="notif-search-page__empty" role="status">
             <h2>Start searching</h2>
-            <p>Enter a query above to find notifications by sender, transaction hash, event ID, or type.</p>
+            <p>Choose a type, delivery status, date range, or enter a query to find notifications.</p>
           </div>
         )}
 

@@ -49,13 +49,14 @@ export interface BlockchainEvent {
   read?: boolean;
 }
 
-export type NotificationStatus = 'all' | 'read' | 'unread';
+/** Read/unread filter for Event Explorer notification lists (not delivery status). */
+export type NotificationReadFilter = 'all' | 'read' | 'unread';
 
 export interface EventFilters {
   search: string;
   contractAddress: string;
   eventType: string;
-  status: NotificationStatus;
+  status: NotificationReadFilter;
   dateFrom: string; // ISO date string "YYYY-MM-DD" or ""
   dateTo: string;   // ISO date string "YYYY-MM-DD" or ""
 }
