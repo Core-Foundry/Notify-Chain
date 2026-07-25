@@ -2,7 +2,10 @@
 
 Thank you for your interest in contributing to NotifyChain! This document provides guidelines and instructions for contributing to the project.
 
-**Start here instead (recommended):** [`CONTRIBUTOR_DEVELOPMENT_WORKFLOW_GUIDE.md`](CONTRIBUTOR_DEVELOPMENT_WORKFLOW_GUIDE.md)
+**Start here instead (recommended):**
+
+- Environment setup (tools, clone, verify): [`docs/ENVIRONMENT_SETUP.md`](docs/ENVIRONMENT_SETUP.md)
+- Development workflow (fork, branch, PR): [`CONTRIBUTOR_DEVELOPMENT_WORKFLOW_GUIDE.md`](CONTRIBUTOR_DEVELOPMENT_WORKFLOW_GUIDE.md)
 
 ## Code of Conduct
 
@@ -15,11 +18,12 @@ Thank you for your interest in contributing to NotifyChain! This document provid
 
 ### Prerequisites
 
-To contribute to NotifyChain, make sure you have:
-- [Rust](https://www.rust-lang.org/tools/install) installed with WebAssembly target (`rustup target add wasm32-unknown-unknown`)
-- [Stellar CLI](https://developers.stellar.org/docs/build/sdks-and-libraries/cli/) installed
-- [Node.js](https://nodejs.org/) (for listener and dashboard components)
-- Basic understanding of Soroban smart contracts, Git, and GitHub
+To contribute to NotifyChain, install the tools listed in
+[`docs/ENVIRONMENT_SETUP.md`](docs/ENVIRONMENT_SETUP.md) (Rust, WebAssembly
+target, Stellar CLI, Node.js 22, Git). The guide includes verification steps
+to confirm your machine is ready.
+
+You should also have a basic understanding of Soroban smart contracts, Git, and GitHub.
 
 ### Setup (Fork Workflow)
 
