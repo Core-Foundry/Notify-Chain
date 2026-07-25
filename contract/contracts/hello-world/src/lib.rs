@@ -234,6 +234,16 @@ impl AutoShareContract {
             .unwrap();
     }
 
+    /// Cancels an active notification subscription for a group.
+    ///
+    /// The `subscriber` must be the group's creator or a current member. On
+    /// success the group is deactivated, its remaining usage count is zeroed, and
+    /// a `SubscriptionCancelled` event is emitted so off-chain consumers can
+    /// track the full subscription lifecycle.
+    pub fn cancel_subscription(env: Env, id: BytesN<32>, subscriber: Address) {
+        autoshare_logic::cancel_subscription(env, id, subscriber).unwrap();
+    }
+
     // ============================================================================
     // Payment History
     // ============================================================================
@@ -659,4 +669,7 @@ mod tests {
 
     #[path = "../tests/access_log_test.rs"]
     mod access_log_test;
+
+    #[path = "../tests/subscription_cancellation_test.rs"]
+    mod subscription_cancellation_test;
 }

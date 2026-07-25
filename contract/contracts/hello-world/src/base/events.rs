@@ -468,3 +468,26 @@ pub struct NotificationAcknowledged {
     pub priority: NotificationPriority,
     pub timestamp: u64,
 }
+
+/// Emitted when a subscriber cancels an active notification subscription.
+///
+/// Off-chain consumers can key off `(group_id, subscriber)` to track the full
+/// subscription lifecycle. The `group_id` identifies the AutoShare group whose
+/// subscription was cancelled; `subscriber` is the address that initiated the
+/// cancellation.
+#[contractevent(data_format = "single-value")]
+#[derive(Clone)]
+pub struct SubscriptionCancelled {
+    /// The group whose subscription was cancelled.
+    #[topic]
+    pub group_id: BytesN<32>,
+    /// The address that cancelled the subscription.
+    #[topic]
+    pub subscriber: Address,
+    #[topic]
+    pub category: NotificationCategory,
+    #[topic]
+    pub priority: NotificationPriority,
+    /// Ledger timestamp (seconds) when the cancellation occurred.
+    pub cancelled_at: u64,
+}
