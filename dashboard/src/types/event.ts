@@ -58,4 +58,5 @@ export interface EventFilters {
   status: NotificationStatus;
   dateFrom: string; // ISO date string "YYYY-MM-DD" or ""
   dateTo: string;   // ISO date string "YYYY-MM-DD" or ""
+  txHash?: string;
 }
