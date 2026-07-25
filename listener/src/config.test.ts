@@ -107,6 +107,83 @@ describe('Config validation', () => {
     });
   });
 
+  describe('EXPIRATION_CONFIG', () => {
+    it('loads default expiration settings when not specified', () => {
+      delete process.env.EXPIRATION_ENABLED;
+      delete process.env.EXPIRATION_DEFAULT_MS;
+      delete process.env.EXPIRATION_PER_EVENT_TYPE;
+
+      const config = loadConfig();
+
+      expect(config.expiration).toMatchObject({
+        enabled: true,
+        defaultExpirationMs: 86400000, // 24 hours
+        perEventTypeExpiration: undefined,
+      });
+    });
+
+    it('loads custom default expiration time', () => {
+      process.env.EXPIRATION_DEFAULT_MS = '3600000'; // 1 hour
+      delete process.env.EXPIRATION_PER_EVENT_TYPE;
+
+      const config = loadConfig();
+
+      expect(config.expiration).toMatchObject({
+        enabled: true,
+        defaultExpirationMs: 3600000,
+      });
+    });
+
+    it('loads per-event-type expiration settings', () => {
+      process.env.EXPIRATION_PER_EVENT_TYPE = JSON.stringify({
+        notification_scheduled: 3600000,
+        alert: 604800000,
+      });
+
+      const config = loadConfig();
+
+      expect(config.expiration?.perEventTypeExpiration).toEqual({
+        notification_scheduled: 3600000,
+        alert: 604800000,
+      });
+    });
+
+    it('disables expiration when EXPIRATION_ENABLED is false', () => {
+      process.env.EXPIRATION_ENABLED = 'false';
+
+      const config = loadConfig();
+
+      expect(config.expiration?.enabled).toBe(false);
+    });
+
+    it('throws ConfigError for invalid EXPIRATION_DEFAULT_MS', () => {
+      process.env.EXPIRATION_DEFAULT_MS = 'not-a-number';
+
+      expect(() => loadConfig()).toThrow(ConfigError);
+      expect(() => loadConfig()).toThrow(
+        'EXPIRATION_DEFAULT_MS must be a valid integer, got "not-a-number"'
+      );
+    });
+
+    it('throws ConfigError for invalid EXPIRATION_PER_EVENT_TYPE JSON', () => {
+      process.env.EXPIRATION_PER_EVENT_TYPE = 'not-json';
+
+      expect(() => loadConfig()).toThrow(ConfigError);
+      expect(() => loadConfig()).toThrow(
+        'EXPIRATION_PER_EVENT_TYPE must be valid JSON. Received: not-json'
+      );
+    });
+
+    it('throws ConfigError when EXPIRATION_PER_EVENT_TYPE is not an object', () => {
+      process.env.EXPIRATION_PER_EVENT_TYPE = '["array", "value"]';
+
+      expect(() => loadConfig()).toThrow(ConfigError);
+      expect(() => loadConfig()).toThrow(
+        'EXPIRATION_PER_EVENT_TYPE must be a valid JSON object'
+      );
+    });
+  });
+
   describe('WEBHOOK_SECRETS', () => {
     it('defaults to an empty array when not set', () => {
       delete process.env.WEBHOOK_SECRETS;
