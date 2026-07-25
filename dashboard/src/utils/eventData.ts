@@ -39,9 +39,11 @@ export function filterEvents(
   eventType: string,
   status: import('../types/event').NotificationStatus = 'all',
   dateFrom = '',
-  dateTo = ''
+  dateTo = '',
+  txHash = ''
 ): BlockchainEvent[] {
   const normalizedSearch = search.trim().toLowerCase();
+  const normalizedTxHash = txHash.trim().toLowerCase();
   const fromMs = dateFrom ? new Date(dateFrom).getTime() : 0;
   // dateTo is inclusive: include the entire day
   const toMs = dateTo ? new Date(dateTo).getTime() + 86_399_999 : Infinity;
@@ -54,6 +56,8 @@ export function filterEvents(
     if (status === 'unread' && event.read) return false;
 
     if (event.receivedAt < fromMs || event.receivedAt > toMs) return false;
+
+    if (normalizedTxHash && !event.txHash?.toLowerCase().includes(normalizedTxHash)) return false;
 
     if (!normalizedSearch) return true;
 

@@ -25,6 +25,7 @@ interface EventStoreState {
   setStatusFilter: (status: NotificationStatus) => void;
   setDateFrom: (dateFrom: string) => void;
   setDateTo: (dateTo: string) => void;
+  setTxHashFilter: (txHash: string) => void;
   setLoading: (isLoading: boolean) => void;
   setError: (error: string | null) => void;
   /**
@@ -67,6 +68,7 @@ export const useEventStore = create<EventStoreState>((set) => ({
     status: 'all',
     dateFrom: '',
     dateTo: '',
+    txHash: '',
   },
   isLoading: false,
   error: null,
@@ -89,6 +91,8 @@ export const useEventStore = create<EventStoreState>((set) => ({
     set((state) => ({ filters: { ...state.filters, dateFrom } })),
   setDateTo: (dateTo) =>
     set((state) => ({ filters: { ...state.filters, dateTo } })),
+  setTxHashFilter: (txHash) =>
+    set((state) => ({ filters: { ...state.filters, txHash } })),
   setLoading: (isLoading) => set({ isLoading }),
   setError: (error) => set({ error }),
   updateEventStatus: (targetEventId, status) =>
@@ -111,7 +115,8 @@ export function selectFilteredEvents(state: EventStoreState): BlockchainEvent[] 
     filters.eventType,
     filters.status,
     filters.dateFrom,
-    filters.dateTo
+    filters.dateTo,
+    filters.txHash
   );
 }
 
