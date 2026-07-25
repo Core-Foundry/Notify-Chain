@@ -200,6 +200,62 @@ Follow the existing style in `listener/` and `dashboard/`:
 3. Provide constructive feedback
 4. Approve when ready
 
+## Release Process
+
+NotifyChain uses **fully automated releases** powered by
+[semantic-release](https://semantic-release.gitbook.io/). You never need to
+bump version numbers or write changelog entries manually — the tooling derives
+everything from commit messages.
+
+### How it works
+
+1. Every commit merged to `main` is analysed by the release workflow
+   (`.github/workflows/release.yml`).
+2. If any releasable commits exist (see table below), `semantic-release`:
+   - Determines the next [semver](https://semver.org/) version.
+   - Updates `CHANGELOG.md` with structured release notes.
+   - Bumps `version` in `dashboard/package.json`, `listener/package.json`,
+     and `contract/contracts/hello-world/Cargo.toml` via
+     `scripts/bump-versions.js`.
+   - Creates a Git tag `vX.Y.Z` and pushes it.
+   - Publishes a GitHub Release with auto-generated release notes.
+   - Posts a comment on any PR/issue included in the release.
+
+### Commit types → release impact
+
+| Commit prefix | Example | Release bump |
+|---------------|---------|-------------|
+| `feat:` | `feat: add webhook delivery channel` | **minor** (1.x.0) |
+| `fix:` | `fix: retry logic on timeout` | **patch** (1.0.x) |
+| `perf:` | `perf: reduce event polling interval` | **patch** (1.0.x) |
+| `refactor:` | `refactor: extract notification builder` | **patch** (1.0.x) |
+| `BREAKING CHANGE:` footer or `feat!:`/`fix!:` | `feat!: rename schedule_notification params` | **major** (x.0.0) |
+| `docs:`, `test:`, `chore:`, `ci:`, `style:` | any | _no release_ |
+
+> This is why following [Conventional Commits](https://www.conventionalcommits.org/)
+> matters — your commit message directly controls whether a release happens and
+> what kind it is.
+
+### Manual / dry-run trigger
+
+You can trigger the workflow manually from the **Actions** tab:
+
+1. Select **Release** workflow → **Run workflow**.
+2. Set `dry_run` to `true` to preview what *would* be released without
+   creating a tag or GitHub Release.
+3. Leave `dry_run` as `false` (default) to cut a real release on demand
+   (e.g. for hotfixes that need to ship before the next batch of `main` merges).
+
+### Required secrets
+
+The workflow uses the default `GITHUB_TOKEN` — no extra secrets are required
+for tagging and publishing GitHub Releases.
+
+### Viewing releases
+
+- **GitHub Releases**: `https://github.com/Core-Foundry/Notify-Chain/releases`
+- **CHANGELOG**: [`CHANGELOG.md`](CHANGELOG.md) in the repo root.
+
 ## Questions?
 
 - Open an issue for bugs or feature requests
