@@ -186,6 +186,12 @@ Follow the existing style in `listener/` and `dashboard/`:
 - Write unit tests for all new logic
 - Follow existing naming conventions
 
+## Releasing NotifyChain
+
+Maintainers preparing a tagged release should follow the steps in
+[`docs/RELEASE_CHECKLIST.md`](docs/RELEASE_CHECKLIST.md), including CI-parity
+testing, documentation review, and release validation.
+
 ## Review Process
 
 ### For Contributors
