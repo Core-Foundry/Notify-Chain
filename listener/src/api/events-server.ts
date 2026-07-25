@@ -15,7 +15,8 @@ import {
   extractKeyId,
   getSecretForKey,
   collectRawBody,
-  isTimestampValid,
+  extractTimestamp,
+  verifyWebhookRequest,
 } from '../services/webhook-verifier';
 import { WebhookSecret, RateLimitConfig, ContractConfig } from '../types';
 import { RateLimiter } from './rate-limiter';
@@ -40,6 +41,10 @@ import { handleArchiveRequest } from './archive-api';
 import { ArchiveStore } from '../services/archive-store';
 import { ArchiveService } from '../services/archive-service';
 import { NotificationMetricsStore } from '../services/notification-metrics-store';
+import {
+  IdempotencyKeyService,
+  IdempotencyKeyReuseError,
+} from '../services/idempotency-key-service';
 
 export interface EventsServerOptions {
   port: number;
@@ -66,6 +71,8 @@ export interface EventsServerOptions {
   metricsStore?: NotificationMetricsStore | null;
   /** Maximum age of signed requests in seconds (default: 300 = 5 minutes). */
   signatureExpirationSeconds?: number;
+  /** Optional idempotency-key service for replay attack protection (Layer 1). */
+  idempotencyService?: IdempotencyKeyService | null;
 }
 
 type ServiceStatus = 'ok' | 'error' | 'not_configured';
@@ -566,62 +573,86 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
 
     // POST /api/webhooks
     if (req.method === 'POST' && url.pathname === '/api/webhooks') {
-      collectRawBody(req).then((rawBody) => {
-        const signatureHeader = extractSignature(req.headers);
-        const keyId = extractKeyId(req.headers);
-
-        if (!signatureHeader) {
-          logger.warn('Webhook missing signature header', { requestId, correlationId });
-          res.writeHead(401, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: 'Missing signature header' }));
-          return;
-        }
-
-        if (!keyId) {
-          logger.warn('Webhook missing key-id header', { requestId, correlationId });
-          res.writeHead(401, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: 'Missing key-id header' }));
-          return;
-        }
+      const idempotencyKey = IdempotencyKeyService.extractKey(req.headers) ?? undefined;
+      collectRawBody(req).then(async (rawBody) => {
+        const sourceIp =
+          (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ||
+          (req.socket?.remoteAddress as string | undefined);
 
         const secrets = options.webhookSecrets ?? [];
-        const secret = getSecretForKey(secrets, keyId);
+        const maxAgeSeconds = options.signatureExpirationSeconds ?? 300;
 
-        if (!secret) {
-          logger.warn('Webhook unknown key-id', { requestId, correlationId, keyId });
-          res.writeHead(401, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: 'Unknown key-id' }));
+        const auth = verifyWebhookRequest({
+          headers: req.headers as Record<string, string | string[] | undefined>,
+          rawBody,
+          secrets,
+          sourceIp,
+          requestId,
+          correlationId,
+          maxAgeSeconds,
+        });
+
+        if (!auth.authenticated) {
+          res.writeHead(auth.statusCode, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: auth.message, code: auth.errorCode }));
           return;
         }
 
-        // Validate request timestamp to prevent replay attacks
-        const timestampHeader = req.headers['x-webhook-timestamp'] ?? req.headers['X-Webhook-Timestamp'];
-        const maxAgeSeconds = options.signatureExpirationSeconds ?? 300; // Default: 5 minutes
+        try {
+          const acceptWebhook = async (): Promise<{ status: string; verified: boolean }> => {
+            logger.info('Webhook received and signature verified', {
+              requestId,
+              correlationId,
+              keyId: auth.keyId,
+              timestampVerified: auth.timestampVerified,
+              sourceIp,
+              contentLength: rawBody.length,
+              idempotencyKey,
+            });
+            return { status: 'accepted', verified: true };
+          };
 
-        if (timestampHeader) {
-          const timestamp = Array.isArray(timestampHeader) ? timestampHeader[0] : timestampHeader;
-          if (!isTimestampValid(timestamp, maxAgeSeconds)) {
-            logger.warn('Webhook request signature expired', { requestId, correlationId, keyId, timestamp });
-            res.writeHead(401, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ error: 'Request signature expired' }));
+          if (options.idempotencyService && idempotencyKey) {
+            const outcome = await options.idempotencyService.processWithIdempotency(
+              idempotencyKey,
+              rawBody,
+              acceptWebhook,
+              { requestId, correlationId }
+            );
+            const statusCode = outcome.isDuplicate ? 200 : 202;
+            res.writeHead(statusCode, {
+              'Content-Type': 'application/json',
+              'X-Idempotent-Replay': outcome.isDuplicate ? 'true' : 'false',
+            });
+            res.end(JSON.stringify({
+              ...(outcome.result as object),
+              replay: outcome.isDuplicate,
+            }));
+          } else {
+            const result = await acceptWebhook();
+            res.writeHead(202, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify(result));
+          }
+        } catch (err) {
+          if (err instanceof IdempotencyKeyReuseError) {
+            logger.warn('Webhook rejected: idempotency key reused with different body', {
+              requestId, correlationId, idempotencyKey,
+            });
+            res.writeHead(err.statusCode, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: err.message, code: err.code }));
             return;
           }
+          throw err;
         }
-
-        if (!verifySignature(rawBody, signatureHeader, secret)) {
-          logger.warn('Webhook invalid signature', { requestId, correlationId, keyId });
-          res.writeHead(401, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: 'Invalid signature' }));
+      }).catch((err) => {
+        if (err instanceof IdempotencyKeyReuseError) {
+          res.writeHead(err.statusCode, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: err.message, code: err.code }));
           return;
         }
-
-        logger.info('Webhook received and verified', { requestId, correlationId, keyId });
-        res.writeHead(202, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ status: 'accepted' }));
-      }).catch((err) => {
-        logger.error('Failed to read webhook body', { requestId, correlationId, error: err });
+        logger.error('Failed to read webhook body', { requestId, correlationId, error: err instanceof Error ? err.message : String(err) });
         res.writeHead(400, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'Failed to read request body' }));
+        res.end(JSON.stringify({ error: 'Failed to read request body', code: 'BODY_READ_FAILED' }));
       });
       return;
     }
@@ -664,6 +695,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
         return;
       }
 
+      const idempotencyKey = IdempotencyKeyService.extractKey(req.headers) ?? undefined;
       let body = '';
       req.on('data', (chunk) => { body += chunk.toString(); });
       req.on('end', async () => {
@@ -672,37 +704,72 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
 
           if (!data.executeAt || !data.payload || !data.targetRecipient) {
             res.writeHead(400, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ error: 'Missing required fields: executeAt, payload, targetRecipient' }));
+            res.end(JSON.stringify({ error: 'Missing required fields: executeAt, payload, targetRecipient', code: 'MISSING_FIELDS' }));
             return;
           }
 
           const executeAt = new Date(data.executeAt);
           if (isNaN(executeAt.getTime())) {
             res.writeHead(400, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ error: 'executeAt is not a valid date' }));
+            res.end(JSON.stringify({ error: 'executeAt is not a valid date', code: 'INVALID_DATE' }));
             return;
           }
 
-          const notificationId = await options.notificationAPI!.scheduleNotification({
-            payload: data.payload,
-            notificationType: data.notificationType || NotificationType.DISCORD,
-            targetRecipient: data.targetRecipient,
-            executeAt,
-            maxRetries: data.maxRetries,
-            priority: data.priority,
-            eventId: data.eventId,
-            contractAddress: data.contractAddress,
-            metadata: data.metadata,
-          });
+          const schedule = async (): Promise<{ id: number }> => {
+            const notificationId = await options.notificationAPI!.scheduleNotification({
+              payload: data.payload,
+              notificationType: data.notificationType || NotificationType.DISCORD,
+              targetRecipient: data.targetRecipient,
+              executeAt,
+              maxRetries: data.maxRetries,
+              priority: data.priority,
+              eventId: data.eventId,
+              contractAddress: data.contractAddress,
+              metadata: data.metadata,
+            });
+            logger.info('Notification scheduled via API', {
+              requestId, correlationId, notificationId, executeAt: data.executeAt,
+            });
+            return { id: notificationId };
+          };
 
+          if (options.idempotencyService && idempotencyKey) {
+            const outcome = await options.idempotencyService.processWithIdempotency(
+              idempotencyKey,
+              data,
+              schedule,
+              { requestId, correlationId }
+            );
+            const statusCode = outcome.isDuplicate ? 200 : 201;
+            res.writeHead(statusCode, {
+              'Content-Type': 'application/json',
+              'X-Idempotent-Replay': outcome.isDuplicate ? 'true' : 'false',
+            });
+            res.end(JSON.stringify({
+              id: (outcome.result as { id: number }).id,
+              replay: outcome.isDuplicate,
+            }));
+            return;
+          }
+
+          const { id } = await schedule();
           res.writeHead(201, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ id: notificationId }));
-
-          logger.info('Notification scheduled via API', { requestId, correlationId, notificationId, executeAt: data.executeAt });
+          res.end(JSON.stringify({ id }));
         } catch (error) {
-          logger.error('Failed to schedule notification', { error, requestId, correlationId });
+          if (error instanceof IdempotencyKeyReuseError) {
+            logger.warn('Schedule API rejected request: idempotency key body mismatch', {
+              requestId, correlationId, idempotencyKey,
+            });
+            res.writeHead(error.statusCode, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: error.message, code: error.code }));
+            return;
+          }
+          logger.error('Failed to schedule notification', {
+            error: error instanceof Error ? error.message : String(error),
+            requestId, correlationId,
+          });
           res.writeHead(500, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: (error as Error).message }));
+          res.end(JSON.stringify({ error: (error as Error).message, code: 'SCHEDULE_FAILED' }));
         }
       });
       return;
