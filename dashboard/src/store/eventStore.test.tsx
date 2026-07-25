@@ -70,6 +70,7 @@ describe('pagination + filter interaction', () => {
     const events = generateMockEvents(200);
     useEventStore.setState({
       events,
+      filters: { search: '', contractAddress: 'all', eventType: 'all' },
       filters: { search: '', contractAddress: 'all', eventType: 'all', status: 'all', dateFrom: '', dateTo: '' },
       isLoading: false,
       error: null,
@@ -93,6 +94,7 @@ describe('pagination + filter interaction', () => {
   it('filter change resets scroll position to top', async () => {
     useEventStore.setState({
       events: generateMockEvents(100),
+      filters: { search: '', contractAddress: 'all', eventType: 'all' },
       filters: { search: '', contractAddress: 'all', eventType: 'all', status: 'all', dateFrom: '', dateTo: '' },
       isLoading: false,
       error: null,
@@ -113,5 +115,47 @@ describe('pagination + filter interaction', () => {
     expect(after.length).toBeGreaterThan(0);
     expect(after.length).toBeLessThan(before);
     expect(after[0].textContent).toContain('Withdrawal');
+  });
+});
+
+describe('stale cache regression tests', () => {
+  beforeEach(() => {
+    useEventStore.setState({ events: [], filters: { search: '', contractAddress: 'all', eventType: 'all' }, isLoading: false, error: null });
+  });
+
+  it('setEvents with an updated record replaces the stale copy, not silently dropped', () => {
+    const [event] = generateMockEvents(1);
+    const staleEvent = { ...event, value: 'stale-value' };
+    const freshEvent = { ...event, value: 'fresh-value' };
+
+    useEventStore.getState().setEvents([staleEvent]);
+    // Simulate a poll returning the same eventId with updated data
+    useEventStore.getState().setEvents([freshEvent]);
+
+    const stored = useEventStore.getState().events;
+    expect(stored).toHaveLength(1);
+    expect(stored[0].value).toBe('fresh-value');
+  });
+
+  it('appendEvents with an updated record replaces the stale copy', () => {
+    const [event] = generateMockEvents(1);
+    const staleEvent = { ...event, value: 'stale-value' };
+    const freshEvent = { ...event, value: 'fresh-value' };
+
+    useEventStore.getState().setEvents([staleEvent]);
+    // Poll brings in the updated record
+    useEventStore.getState().appendEvents([freshEvent]);
+
+    const stored = useEventStore.getState().events;
+    expect(stored).toHaveLength(1);
+    expect(stored[0].value).toBe('fresh-value');
+  });
+
+  it('setEvents keeps order stable when no duplicates are present', () => {
+    const [a, b, c] = generateMockEvents(3);
+    useEventStore.getState().setEvents([a, b, c]);
+
+    const stored = useEventStore.getState().events;
+    expect(stored.map((e) => e.eventId)).toEqual([a.eventId, b.eventId, c.eventId]);
   });
 });

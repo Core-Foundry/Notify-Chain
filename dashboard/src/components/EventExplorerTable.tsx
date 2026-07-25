@@ -5,6 +5,10 @@ import { EventExplorerCard } from './EventExplorerCard';
 
 interface EventExplorerTableProps {
   events: BlockchainEvent[];
+  onSelectEvent?: (event: BlockchainEvent) => void;
+}
+
+export function EventExplorerTable({ events, onSelectEvent }: EventExplorerTableProps) {
   contractStatuses: ContractStatus[];
 }
 
@@ -60,6 +64,7 @@ export function EventExplorerTable({ events, contractStatuses }: EventExplorerTa
             event={event}
             onCopyContract={handleCopyContract}
             isCopied={copiedAddress === event.contractAddress}
+            onSelect={onSelectEvent}
             contractStatuses={contractStatuses}
           />
         ))}

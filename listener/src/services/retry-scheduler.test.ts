@@ -148,7 +148,7 @@ describe('RetryScheduler', () => {
     });
 
     it('marks notification as permanently failed when max retries exhausted', async () => {
-      const notification = makeNotification({ retryCount: 3, maxRetries: 3 });
+      const notification = makeNotification({ retryCount: 2, maxRetries: 3 });
       const repo = makeRepo({ fetchDueRetries: jest.fn().mockResolvedValue([notification]) });
       const discordService = { sendEventNotification: jest.fn().mockResolvedValue(false) } as any;
 
@@ -158,7 +158,7 @@ describe('RetryScheduler', () => {
       expect(repo.markAsFailedOrRetry).toHaveBeenCalledWith(
         1,
         expect.any(Error),
-        3,
+        2,
         3,
         undefined // no nextRetryAt when permanently failed
       );

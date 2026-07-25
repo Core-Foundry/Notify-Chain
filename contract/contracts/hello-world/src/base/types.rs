@@ -43,6 +43,14 @@ pub struct ScheduledNotification {
     pub revoked_by: Option<Address>,
     /// Ledger timestamp (seconds) at which the notification was revoked, if revoked.
     pub revoked_at: Option<u64>,
+    /// Whether the notification has been confirmed as delivered.
+    pub delivered: bool,
+    /// Ledger timestamp (seconds) at which delivery was confirmed, if any.
+    pub delivered_at: Option<u64>,
+    /// Address that recalled the notification, or None if not recalled.
+    pub recalled_by: Option<Address>,
+    /// Ledger timestamp (seconds) at which the notification was recalled, if recalled.
+    pub recalled_at: Option<u64>,
     /// Notification title (required metadata for off-chain processing)
     pub title: String,
 }

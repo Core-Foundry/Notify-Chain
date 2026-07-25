@@ -1081,6 +1081,21 @@ fn test_is_group_active_on_nonexistent_group_fails() {
 }
 
 #[test]
+fn test_create_group_with_zero_usages_fails() {
+    let test_env = setup_test_env();
+    let client = AutoShareContractClient::new(&test_env.env, &test_env.autoshare_contract);
+
+    let creator = test_env.users.get(0).unwrap().clone();
+    let token = test_env.mock_tokens.get(0).unwrap().clone();
+    let id = BytesN::from_array(&test_env.env, &[1u8; 32]);
+    let name = String::from_str(&test_env.env, "Zero Usages");
+
+    crate::test_utils::mint_tokens(&test_env.env, &token, &creator, 10_000_000);
+    let result = client.try_create(&id, &name, &creator, &0u32, &token);
+    assert!(result.is_err(), "Creating group with 0 usages should fail");
+}
+
+#[test]
 fn test_get_all_groups_includes_inactive() {
     let test_env = setup_test_env();
     let client = AutoShareContractClient::new(&test_env.env, &test_env.autoshare_contract);

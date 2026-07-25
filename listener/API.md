@@ -2,6 +2,8 @@
 
 Base URL: `http://localhost:8787` (configured via `EVENTS_API_PORT`)
 
+For a centralized list of API errors, causes, examples, and troubleshooting steps, see [API_ERROR_REFERENCE.md](./API_ERROR_REFERENCE.md).
+
 ---
 
 ## Events
@@ -303,7 +305,8 @@ Returns paginated delivery execution records from `notification_execution_log`.
 | Name      | Type   | Required | Description                                                       |
 |-----------|--------|----------|-------------------------------------------------------------------|
 | limit     | number | No       | Maximum records per page (default `20`, max `100`)                |
-| offset    | number | No       | Number of records to skip (default `0`)                           |
+| offset    | number | No       | Number of records to skip (default `0`). Prefer `cursor`.         |
+| cursor    | string | No       | Opaque token for cursor-based pagination                          |
 | status    | string | No       | Filter by execution status: `SUCCESS`, `FAILED`, or `RETRY`       |
 | startDate | string | No       | ISO 8601 lower bound on `execution_time` (inclusive)              |
 | endDate   | string | No       | ISO 8601 upper bound on `execution_time` (inclusive)              |
@@ -327,7 +330,8 @@ Returns paginated delivery execution records from `notification_execution_log`.
   "itemCount": 5,
   "totalPages": 3,
   "limit": 2,
-  "offset": 0
+  "offset": 0,
+  "nextCursor": "MjAyNC0wNi0yMFQxNTowMDowMC4wMDBaLDQy"
 }
 ```
 
@@ -339,6 +343,7 @@ Returns paginated delivery execution records from `notification_execution_log`.
 | totalPages  | number | Total pages available at the requested `limit` (`0` when `itemCount` is `0`) |
 | limit       | number | Effective page size applied to the query                                    |
 | offset      | number | Number of records skipped before this page                                  |
+| nextCursor  | string | Opaque token to fetch the next page of results                              |
 
 Existing clients that read `total`, `limit`, `offset`, and `records` continue to work unchanged. New clients should prefer `itemCount` and `totalPages` for pagination UI.
 

@@ -209,14 +209,15 @@ export class RetryScheduler {
     notification: ScheduledNotification,
     requestId: string
   ): Promise<void> {
-    const attempt = notification.retryCount; // already incremented on prior failure
+    const priorFailures = notification.retryCount;
+    const executionAttempt = priorFailures + 1;
     const startMs = Date.now();
 
     logger.info('Retrying notification', {
       requestId,
       id: notification.id,
       type: notification.notificationType,
-      attempt,
+      attempt: executionAttempt,
       maxRetries: notification.maxRetries,
     });
 
@@ -228,12 +229,12 @@ export class RetryScheduler {
         await this.repository.markAsCompleted(notification.id!, requestId);
         await this.repository.logExecution({
           scheduledNotificationId: notification.id!,
-          executionAttempt: attempt,
+          executionAttempt,
           executionTime: new Date(),
           status: 'SUCCESS',
           durationMs,
         });
-        logger.info('Retry succeeded', { requestId, id: notification.id, attempt });
+        logger.info('Retry succeeded', { requestId, id: notification.id, attempt: executionAttempt });
         return;
       }
 
@@ -241,14 +242,14 @@ export class RetryScheduler {
     } catch (err) {
       const durationMs = Date.now() - startMs;
       const error = err as Error;
-      const isFinalAttempt = attempt >= notification.maxRetries;
+      const isFinalAttempt = priorFailures + 1 >= notification.maxRetries;
 
       const nextRetryAt = isFinalAttempt
         ? undefined
         : new Date(
             Date.now() +
               calculateBackoffDelay(
-                attempt,
+                priorFailures,
                 this.config.baseDelayMs,
                 this.config.multiplier,
                 this.config.maxDelayMs,
@@ -259,14 +260,14 @@ export class RetryScheduler {
       await this.repository.markAsFailedOrRetry(
         notification.id!,
         error,
-        attempt,
+        priorFailures,
         notification.maxRetries,
         nextRetryAt
       );
 
       await this.repository.logExecution({
         scheduledNotificationId: notification.id!,
-        executionAttempt: attempt,
+        executionAttempt,
         executionTime: new Date(),
         status: isFinalAttempt ? 'FAILED' : 'RETRY',
         errorMessage: error.message,
@@ -277,13 +278,13 @@ export class RetryScheduler {
         logger.error('Notification permanently failed after max retries', {
           requestId,
           id: notification.id,
-          totalAttempts: attempt,
+          totalAttempts: executionAttempt,
         });
       } else {
         logger.warn('Retry failed, scheduling next attempt', {
           requestId,
           id: notification.id,
-          attempt,
+          attempt: executionAttempt,
           nextRetryAt: nextRetryAt?.toISOString(),
         });
       }
