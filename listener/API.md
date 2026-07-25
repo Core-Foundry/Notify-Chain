@@ -532,12 +532,13 @@ Returns the operational status of all service dependencies.
   "services": {
     "stellarRpc": { "status": "ok", "latencyMs": 42 },
     "discord": { "status": "ok", "latencyMs": 87 },
+    "database": { "status": "ok", "latencyMs": 3 },
     "eventRegistry": { "status": "ok", "eventCount": 128 }
   }
 }
 ```
 
-`status` is `"degraded"` when Discord is unreachable but Stellar RPC is healthy:
+`status` is `"degraded"` when Discord is unreachable but Stellar RPC and the database are healthy:
 
 ```json
 {
@@ -546,12 +547,13 @@ Returns the operational status of all service dependencies.
   "services": {
     "stellarRpc": { "status": "ok", "latencyMs": 38 },
     "discord": { "status": "error", "latencyMs": 5001, "detail": "HTTP 401" },
+    "database": { "status": "ok", "latencyMs": 2 },
     "eventRegistry": { "status": "ok", "eventCount": 128 }
   }
 }
 ```
 
-**Response `503`** — Stellar RPC is unreachable
+**Response `503`** — Stellar RPC or the SQLite database is unreachable
 
 ```json
 {
@@ -560,6 +562,7 @@ Returns the operational status of all service dependencies.
   "services": {
     "stellarRpc": { "status": "error", "latencyMs": 5001, "detail": "Health check timed out" },
     "discord": { "status": "ok", "latencyMs": 65 },
+    "database": { "status": "ok", "latencyMs": 2 },
     "eventRegistry": { "status": "ok", "eventCount": 128 }
   }
 }
