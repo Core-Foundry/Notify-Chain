@@ -27,10 +27,8 @@ The project enables developers to build reactive decentralized applications with
 > **Listener service docs**:
 > - [API Contract and Event Reference](listener/API_CONTRACT_EVENT_REFERENCE.md)
 > - [API Usage Cookbook](listener/API_USAGE_COOKBOOK.md)
+> - [Notification Lifecycle](NOTIFICATION_LIFECYCLE.md) — end-to-end on-chain/off-chain flow from event detection to delivery, ack, retry, and archival.
 > - [Notification Failure Recovery](NOTIFICATION_FAILURE_RECOVERY.md) — retry lifecycle, configuration, and troubleshooting.
-> [Notification Lifecycle](NOTIFICATION_LIFECYCLE.md) — creation, delivery, acknowledgment semantics, retries, and archival.
-> [Notification Failure Recovery](NOTIFICATION_FAILURE_RECOVERY.md) — retry lifecycle, configuration, and troubleshooting.
-> **Listener service docs**: [Notification Failure Recovery](NOTIFICATION_FAILURE_RECOVERY.md) — retry lifecycle, configuration, and troubleshooting.
 >
 > **Event reference**: [Smart Contract Event Reference Guide](CONTRACT_EVENT_REFERENCE.md) — all emitted events, parameters, data types, and usage recommendations for indexers and listeners.
 
