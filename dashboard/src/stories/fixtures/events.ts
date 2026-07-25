@@ -1,4 +1,4 @@
-import type { BlockchainEvent } from '../types/event';
+import type { BlockchainEvent } from '../../types/event';
 
 export const sampleEvent: BlockchainEvent = {
   eventId: 'evt_notify_001',
