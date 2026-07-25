@@ -5,6 +5,7 @@ import {
   type NotificationSearchResult,
   type NotificationSearchResponse,
 } from '../services/eventsApi';
+import { EmptyState } from '../components/EmptyState';
 
 const PAGE_SIZE = 20;
 const API_BASE = (import.meta.env.VITE_EVENTS_API_URL ?? 'http://localhost:8787/api/events').replace(
@@ -209,17 +210,19 @@ export function NotificationSearchPage() {
         )}
 
         {!loading && !error && !hasParams && (
-          <div className="notif-search-page__empty" role="status">
-            <h2>Start searching</h2>
-            <p>Enter a query above to find notifications by sender, transaction hash, event ID, or type.</p>
-          </div>
+          <EmptyState
+            size="compact"
+            title="Start searching"
+            message="Enter a query above to find notifications by sender, transaction hash, event ID, or type."
+          />
         )}
 
         {!loading && !error && hasParams && response?.results.length === 0 && (
-          <div className="notif-search-page__empty" role="status">
-            <h2>No results found</h2>
-            <p>Try different keywords or clear filters to broaden the search.</p>
-          </div>
+          <EmptyState
+            size="compact"
+            title="No results found"
+            message="Try different keywords or clear filters to broaden the search."
+          />
         )}
 
         {!loading && !error && response && response.results.length > 0 && (

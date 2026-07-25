@@ -2,6 +2,7 @@ import { useState, useCallback } from 'react';
 import type { NotificationTimeline, TimelineEntry, TimelineStatus } from '../types/timeline';
 import { fetchTimeline } from '../services/timelineApi';
 import { formatTimestamp } from '../utils/formatTime';
+import { EmptyState } from './EmptyState';
 
 // ─── status helpers ──────────────────────────────────────────────────────────
 
@@ -147,12 +148,11 @@ export function NotificationTimelineView() {
 
       {/* Empty state — searched but no entries */}
       {!loading && timeline && timeline.entries.length === 0 && (
-        <div className="timeline-view__empty" role="status">
-          <p>No history entries found for notification #{timeline.notificationId}.</p>
-          <p className="timeline-view__empty-sub">
-            Current status: <strong>{STATUS_LABEL[overallStatus!] ?? overallStatus}</strong>
-          </p>
-        </div>
+        <EmptyState
+          size="inline"
+          title={`No history entries found for notification #${timeline.notificationId}`}
+          message={`Current status: ${STATUS_LABEL[overallStatus!] ?? overallStatus}`}
+        />
       )}
 
       {/* Timeline entries */}
@@ -199,9 +199,7 @@ export function NotificationTimelineView() {
 
       {/* Initial empty state — nothing searched yet */}
       {!loading && !timeline && !error && (
-        <div className="timeline-view__empty" role="status">
-          <p>Enter a notification ID above to view its delivery history.</p>
-        </div>
+        <EmptyState size="inline" message="Enter a notification ID above to view its delivery history." />
       )}
     </section>
   );

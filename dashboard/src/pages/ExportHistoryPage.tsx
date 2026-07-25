@@ -3,6 +3,7 @@ import { generateMockExports, type NotificationExport } from '../utils/exportDat
 import { ExportHistoryTable } from '../components/ExportHistoryTable';
 import { PaginationControls } from '../components/PaginationControls';
 import { WalletConnectButton } from '../components/WalletConnectButton';
+import { EmptyState } from '../components/EmptyState';
 
 // ──────────────────────────────────────────────────────────────────
 // Constants
@@ -203,16 +204,10 @@ export function ExportHistoryPage() {
       {displayedExports.length > 0 ? (
         <ExportHistoryTable exports={displayedExports} onDownload={handleDownload} />
       ) : (
-        <section
-          className="event-explorer__empty-state"
-          role="status"
-          aria-live="polite"
-        >
-          <h2>No export records found</h2>
-          <p>
-            Try modifying your search query or status filter to locate matching exports.
-          </p>
-        </section>
+        <EmptyState
+          title="No export records found"
+          message="Try modifying your search query or status filter to locate matching exports."
+        />
       )}
 
       {/* ── Pagination ───────────────────────────────────────────── */}

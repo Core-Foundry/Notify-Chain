@@ -2,6 +2,7 @@ import { memo, useState, useMemo, useCallback } from 'react';
 import type { WebhookDelivery } from '../types/webhook';
 import { formatTimestamp } from '../utils/formatTime';
 import { getErrorCategory } from '../utils/webhookData';
+import { EmptyState } from './EmptyState';
 
 interface WebhookFailedTableProps {
   deliveries: WebhookDelivery[];
@@ -170,8 +171,11 @@ export const WebhookFailedTable = memo(function WebhookFailedTable({
               Array.from({ length: 5 }).map((_, i) => <SkeletonRow key={i} />)
             ) : pageItems.length === 0 ? (
               <tr>
-                <td colSpan={6} className="webhook-failed-table__empty" role="cell">
-                  No failed deliveries for the selected filters
+                <td colSpan={6}>
+                  <EmptyState
+                    size="inline"
+                    message="No failed deliveries for the selected filters. Try widening the date range or clearing filters."
+                  />
                 </td>
               </tr>
             ) : (
