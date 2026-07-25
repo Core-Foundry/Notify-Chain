@@ -12,6 +12,8 @@ repository implement each piece.
 > [`SYSTEM_ARCHITECTURE.md`](SYSTEM_ARCHITECTURE.md) for a visual overview
 > with Mermaid architecture diagrams, then return here for the detailed
 > walkthrough.
+> For request-level sequence diagrams, see
+> [`docs/api-sequence-diagrams.md`](docs/api-sequence-diagrams.md).
 
 It does **not** replace the deeper subsystem docs linked at the end — read it
 first, then dive into the linked material as needed.
@@ -159,6 +161,11 @@ event stream into three concrete things:
    delivery semantics backed by SQLite locks.
 
 ### 4.1 Internal Pipeline
+
+The sequence-level version of this flow is documented in
+[`docs/api-sequence-diagrams.md`](docs/api-sequence-diagrams.md), including the
+notification request path, event processing lifecycle, and scheduled delivery
+path.
 
 ```
                 Stellar RPC
