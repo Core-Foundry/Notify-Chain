@@ -188,6 +188,9 @@ Follow the existing style in `listener/` and `dashboard/`:
 
 ## Review Process
 
+Review expectations and a per-area checklist live in
+[`docs/CODE_REVIEW_GUIDELINES.md`](docs/CODE_REVIEW_GUIDELINES.md).
+
 ### For Contributors
 1. Ensure all tests pass locally
 2. Address reviewer feedback promptly
