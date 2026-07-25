@@ -35,9 +35,6 @@ interface EventExplorerCardProps {
   onCopyContract: (contractAddress: string) => void;
   isCopied: boolean;
   onSelect?: (event: BlockchainEvent) => void;
-}
-
-export function EventExplorerCard({ event, onCopyContract, isCopied, onSelect }: EventExplorerCardProps) {
   contractStatuses: ContractStatus[];
 }
 
@@ -45,6 +42,7 @@ export function EventExplorerCard({
   event,
   onCopyContract,
   isCopied,
+  onSelect,
   contractStatuses,
 }: EventExplorerCardProps) {
   const contractStatus = contractStatuses.find((c) => c.address === event.contractAddress);
@@ -77,22 +75,14 @@ export function EventExplorerCard({
           <p className="event-explorer__contract" title={event.contractAddress}>
             {shortenAddress(event.contractAddress)}
           </p>
-          <button
-            type="button"
-            className="event-explorer__copy-button"
-            onClick={(e) => {
-              e.stopPropagation();
-              onCopyContract(event.contractAddress);
-            }}
-            aria-label={`Copy contract address ${event.contractAddress}`}
-          >
-            {isCopied ? 'Copied' : 'Copy'}
-          </button>
           <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
             <button
               type="button"
               className="event-explorer__copy-button"
-              onClick={() => onCopyContract(event.contractAddress)}
+              onClick={(e) => {
+                e.stopPropagation();
+                onCopyContract(event.contractAddress);
+              }}
               aria-label={`Copy contract address ${event.contractAddress}`}
             >
               {isCopied ? 'Copied' : 'Copy'}
