@@ -385,3 +385,52 @@ CREATE TABLE IF NOT EXISTS notification_metrics_snapshots (
 CREATE INDEX IF NOT EXISTS idx_metrics_snapshots_captured_at
   ON notification_metrics_snapshots(captured_at);
 
+-- ===============================================
+-- QUERY PERFORMANCE INDEXES (migration 002)
+-- See docs/DATABASE_QUERY_PERFORMANCE.md
+-- ===============================================
+
+-- Scheduler claim: status + priority + execute_at for pending jobs
+CREATE INDEX IF NOT EXISTS idx_scheduled_notifications_claim
+  ON scheduled_notifications(status, priority, execute_at)
+  WHERE status = 'PENDING';
+
+-- Post-claim fetch by processor lock
+CREATE INDEX IF NOT EXISTS idx_scheduled_notifications_processor_lock
+  ON scheduled_notifications(processor_id, status, lock_expires_at);
+
+-- Search: status filter + created_at sort
+CREATE INDEX IF NOT EXISTS idx_scheduled_notifications_status_created
+  ON scheduled_notifications(status, created_at);
+
+-- Search: notification type / channel filter
+CREATE INDEX IF NOT EXISTS idx_scheduled_notifications_type_status
+  ON scheduled_notifications(notification_type, status);
+
+-- Contract address lookups
+CREATE INDEX IF NOT EXISTS idx_scheduled_notifications_contract
+  ON scheduled_notifications(contract_address)
+  WHERE contract_address IS NOT NULL;
+
+-- Processed events: status + time range
+CREATE INDEX IF NOT EXISTS idx_processed_events_status_processed
+  ON processed_events(status, processed_at);
+
+-- Processed events: type filter
+CREATE INDEX IF NOT EXISTS idx_processed_events_event_type_status
+  ON processed_events(event_type, status);
+
+-- Processed events: tx hash search
+CREATE INDEX IF NOT EXISTS idx_processed_events_tx_hash
+  ON processed_events(tx_hash)
+  WHERE tx_hash IS NOT NULL;
+
+-- Execution log join for metrics (latest attempt per notification)
+CREATE INDEX IF NOT EXISTS idx_execution_log_notification_attempt
+  ON notification_execution_log(scheduled_notification_id, execution_attempt);
+
+-- Rate-limit audit by client + time
+CREATE INDEX IF NOT EXISTS idx_rate_limit_events_client_timestamp
+  ON rate_limit_events(client_id, timestamp);
+
+
