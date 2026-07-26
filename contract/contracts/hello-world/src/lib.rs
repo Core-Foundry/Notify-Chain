@@ -166,8 +166,49 @@ impl AutoShareContract {
     }
 
     /// Transfers admin rights to a new address. Only current admin can call.
+    /// Rejects transfers where new_admin == current_admin.
     pub fn transfer_admin(env: Env, current_admin: Address, new_admin: Address) {
         autoshare_logic::transfer_admin(env, current_admin, new_admin).unwrap();
+    }
+
+    // ============================================================================
+    // Two-Step Ownership Transfer (Issue #367)
+    // ============================================================================
+
+    /// Returns the address currently nominated as the pending owner, or `None`
+    /// if no two-step ownership transfer is currently in progress.
+    pub fn get_pending_owner(env: Env) -> Option<Address> {
+        autoshare_logic::get_pending_owner(env)
+    }
+
+    /// Initiates a two-step ownership transfer.
+    ///
+    /// The current owner nominates `new_owner` as the pending owner. The transfer
+    /// is NOT final until `new_owner` calls `accept_ownership`. Until then the
+    /// current owner retains all privileges.
+    ///
+    /// Rejects:
+    /// - Callers that are not the current owner (panics with `Unauthorized`).
+    /// - A `new_owner` equal to the current owner (`ZeroAddressTransfer`).
+    ///
+    /// Emits: `OwnershipTransferInitiated { previous_owner, pending_owner }`.
+    pub fn initiate_ownership_transfer(env: Env, current_owner: Address, new_owner: Address) {
+        autoshare_logic::initiate_ownership_transfer(env, current_owner, new_owner).unwrap();
+    }
+
+    /// Completes a two-step ownership transfer.
+    ///
+    /// Must be called by the address previously nominated via
+    /// `initiate_ownership_transfer`. On success the caller becomes the new
+    /// owner and the pending-owner slot is cleared.
+    ///
+    /// Rejects:
+    /// - No pending transfer in progress (`NoPendingOwnershipTransfer`).
+    /// - Caller is not the pending owner (`NotPendingOwner`).
+    ///
+    /// Emits: `OwnershipTransferred { previous_owner, new_owner }`.
+    pub fn accept_ownership(env: Env, new_owner: Address) {
+        autoshare_logic::accept_ownership(env, new_owner).unwrap();
     }
 
     /// Withdraws tokens from the contract. Only admin can call.
@@ -608,6 +649,10 @@ mod tests {
     #[path = "tests/storage_optimization_test.rs"]
     mod storage_optimization_test;
 
+    #[path = "tests/preferences_test.rs"]
+    mod preferences_test;
+
+    #[path = "tests/autoshare_test.rs"]
 #[cfg(test)]
 #[path = "tests/preferences_test.rs"]
 mod preferences_test;
@@ -629,6 +674,14 @@ mod tests {
     #[path = "tests/notification_test.rs"]
     mod notification_test;
 
+    #[path = "tests/expiration_test.rs"]
+    mod expiration_test;
+
+    #[path = "tests/revocation_test.rs"]
+    mod revocation_test;
+
+    #[path = "tests/ownership_transfer_test.rs"]
+    mod ownership_transfer_test;
     #[path = "../tests/notification_validation_test.rs"]
     mod notification_validation_test;
     #[path = "../tests/category_registry_test.rs"]
