@@ -1,4 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
+import { NotificationSearchSkeleton } from '../components/NotificationSearchSkeleton';
+import { getEventsApiBaseUrl } from '../config/eventsApiUrl';
 import { useDebounce } from '../hooks/useDebounce';
 import {
   searchNotifications,
@@ -7,10 +9,7 @@ import {
 } from '../services/eventsApi';
 
 const PAGE_SIZE = 20;
-const API_BASE = (import.meta.env.VITE_EVENTS_API_URL ?? 'http://localhost:8787/api/events').replace(
-  '/api/events',
-  ''
-);
+const API_BASE = getEventsApiBaseUrl();
 
 const STATUS_OPTIONS = ['', 'PENDING', 'PROCESSING', 'COMPLETED', 'FAILED', 'CANCELLED', 'PROCESSED'];
 
@@ -83,8 +82,7 @@ export function NotificationSearchPage() {
 
   useEffect(() => {
     runSearch();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filtersKey, page]);
+  }, [filtersKey, page, runSearch]);
 
   function clearAll() {
     setQuery('');
@@ -198,9 +196,7 @@ export function NotificationSearchPage() {
 
       {/* Results area */}
       <section aria-label="Search results" aria-live="polite">
-        {loading && (
-          <p className="notif-search-page__status">Searching…</p>
-        )}
+        {loading && <NotificationSearchSkeleton />}
 
         {error && !loading && (
           <div className="event-explorer__error-banner" role="alert">

@@ -209,7 +209,22 @@ export function TemplatesPage() {
   }
 
   function renderList() {
-    if (loading) return <div>Loading templates...</div>;
+    if (loading) {
+      return (
+        <div className="templates-list" aria-busy="true" aria-label="Loading templates">
+          <div className="templates-list__header">
+            <h3>Templates</h3>
+          </div>
+          <div className="templates-list__items templates-list__items--skeleton" role="status">
+            {Array.from({ length: 3 }).map((_, index) => (
+              <div key={index} className="templates-list__item templates-list__item--skeleton">
+                <div className="skeleton-block skeleton-block--row" />
+              </div>
+            ))}
+          </div>
+        </div>
+      );
+    }
 
     return (
       <div className="templates-list">
