@@ -633,6 +633,7 @@ See [`frontend/src/components/SubscriptionForm.tsx`](frontend/src/components/Sub
 Contributions are welcome! Please follow these steps (or start with the canonical workflow guide):
 
 - [`CONTRIBUTOR_DEVELOPMENT_WORKFLOW_GUIDE.md`](CONTRIBUTOR_DEVELOPMENT_WORKFLOW_GUIDE.md)
+- [`docs/ROADMAP.md`](docs/ROADMAP.md) — planned features and milestones
 
 1. Fork the repository
 2. Create a feature branch
