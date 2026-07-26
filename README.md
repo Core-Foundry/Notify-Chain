@@ -84,6 +84,11 @@ run and developed independently.
 >
 > A more detailed, contract-level architecture write-up lives in
 > [`Documents/Task Bounty/ARCHITECTURE.md`](Documents/Task%20Bounty/ARCHITECTURE.md).
+>
+> **New to the codebase?** The
+> [API & Notification Sequence Diagrams](API_SEQUENCE_DIAGRAMS.md)
+> visually trace every major data flow — from client request to subscriber
+> delivery and from on-chain event to dashboard render.
 
 ### Contract Responsibilities
 
@@ -202,6 +207,8 @@ Notify-Chain/
 ---
 
 ## Event Flow
+
+> 📊 **See also:** [API & Notification Sequence Diagrams](API_SEQUENCE_DIAGRAMS.md) — Mermaid diagrams that visually trace the complete notification request flow, on-chain event processing lifecycle, scheduled delivery states, retry/failure recovery, and dashboard data fetch.
 
 ### End-to-End Notification Flow
 
