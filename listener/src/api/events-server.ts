@@ -919,12 +919,38 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
       const eventId = url.searchParams.get('eventId') ?? undefined;
       const status = url.searchParams.get('status') ?? undefined;
       const type = url.searchParams.get('type') ?? undefined;
+      const startDate = url.searchParams.get('startDate') ?? undefined;
+      const endDate = url.searchParams.get('endDate') ?? undefined;
       const limit = url.searchParams.get('limit') ? parseInt(url.searchParams.get('limit')!, 10) : undefined;
       const offset = url.searchParams.get('offset') ? parseInt(url.searchParams.get('offset')!, 10) : undefined;
 
-      logger.info('Handling GET /api/notifications/search', { requestId, correlationId, q, sender, txHash, eventId, status, type, limit, offset });
+      logger.info('Handling GET /api/notifications/search', {
+        requestId,
+        correlationId,
+        q,
+        sender,
+        txHash,
+        eventId,
+        status,
+        type,
+        startDate,
+        endDate,
+        limit,
+        offset,
+      });
 
-      notificationSearchService.search({ q, sender, txHash, eventId, status, type, limit, offset })
+      notificationSearchService.search({
+        q,
+        sender,
+        txHash,
+        eventId,
+        status,
+        type,
+        startDate,
+        endDate,
+        limit,
+        offset,
+      })
         .then((result) => {
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify(result));

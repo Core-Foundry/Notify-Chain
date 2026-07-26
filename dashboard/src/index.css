@@ -4741,7 +4741,7 @@ body {
 
 .notif-search-form__row {
   display: grid;
-  grid-template-columns: 2fr repeat(5, 1fr);
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
   gap: 12px;
   align-items: end;
 }
@@ -4760,6 +4760,10 @@ body {
   font-size: 0.82rem;
   color: #9aa0a6;
   font-weight: 500;
+}
+
+.notif-search-form__input--date {
+  min-width: 0;
 }
 
 .notif-search-form__input {
