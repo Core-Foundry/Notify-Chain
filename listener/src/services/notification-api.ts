@@ -5,6 +5,8 @@ import {
   validatePayloadSize,
   DEFAULT_MAX_PAYLOAD_SIZE_BYTES,
 } from '../utils/payload-size-validator';
+import { validateNotificationMetadata } from '../utils/metadata-validator';
+import { ensureNotificationVersion } from '../utils/notification-version';
 import logger from '../utils/logger';
 
 /**
@@ -13,10 +15,15 @@ import logger from '../utils/logger';
  * Includes support for idempotent request handling
  */
 export class NotificationAPI {
+  private readonly maxPayloadSizeBytes: number;
+
   constructor(
     private repository: ScheduledNotificationRepository,
-    private idempotencyService?: IdempotencyKeyService
-  ) {}
+    private idempotencyService?: IdempotencyKeyService,
+    maxPayloadSizeBytes: number = DEFAULT_MAX_PAYLOAD_SIZE_BYTES
+  ) {
+    this.maxPayloadSizeBytes = maxPayloadSizeBytes;
+  }
 
   /**
    * Schedule a notification for future delivery
@@ -44,6 +51,15 @@ export class NotificationAPI {
       throw new Error('targetRecipient is required');
     }
 
+    // Stamp / verify protocol version on the payload.
+    input = {
+      ...input,
+      payload: ensureNotificationVersion(input.payload as Record<string, unknown>),
+    };
+
+    // Validate metadata before any storage write.
+    validateNotificationMetadata(input.metadata ?? null);
+
     // Validate payload size BEFORE any storage or heavy processing operations.
     validatePayloadSize(input.payload, this.maxPayloadSizeBytes);
 
@@ -53,6 +69,7 @@ export class NotificationAPI {
       type: input.notificationType,
       executeAt: input.executeAt,
       recipient: input.targetRecipient,
+      version: (input.payload as Record<string, unknown>).version,
     });
 
     // If idempotency service is available, use it for deduplication
