@@ -484,10 +484,37 @@ pub struct SubscriptionCancelled {
     /// The address that cancelled the subscription.
     #[topic]
     pub subscriber: Address,
+/// Emitted when the current owner initiates a two-step ownership transfer by
+/// nominating a `pending_owner`. The transfer is not final until the pending
+/// owner calls `accept_ownership`.
+///
+/// This mirrors the OpenZeppelin `Ownable2Step` `OwnershipTransferStarted` event
+/// and lets off-chain consumers track in-progress transfers before they settle.
+#[contractevent(data_format = "single-value")]
+#[derive(Clone)]
+pub struct OwnershipTransferInitiated {
+    #[topic]
+    pub previous_owner: Address,
+    #[topic]
+    pub category: NotificationCategory,
+    #[topic]
+    pub priority: NotificationPriority,
+    pub pending_owner: Address,
+}
+
+/// Emitted when a two-step ownership transfer is completed (i.e. the pending
+/// owner accepts). Mirrors the ERC-173 / OpenZeppelin `OwnershipTransferred`
+/// event signature: `OwnershipTransferred(previousOwner, newOwner)`.
+#[contractevent(data_format = "single-value")]
+#[derive(Clone)]
+pub struct OwnershipTransferred {
+    #[topic]
+    pub previous_owner: Address,
     #[topic]
     pub category: NotificationCategory,
     #[topic]
     pub priority: NotificationPriority,
     /// Ledger timestamp (seconds) when the cancellation occurred.
     pub cancelled_at: u64,
+    pub new_owner: Address,
 }

@@ -27,10 +27,8 @@ The project enables developers to build reactive decentralized applications with
 > **Listener service docs**:
 > - [API Contract and Event Reference](listener/API_CONTRACT_EVENT_REFERENCE.md)
 > - [API Usage Cookbook](listener/API_USAGE_COOKBOOK.md)
+> - [Notification Lifecycle](NOTIFICATION_LIFECYCLE.md) — end-to-end on-chain/off-chain flow from event detection to delivery, ack, retry, and archival.
 > - [Notification Failure Recovery](NOTIFICATION_FAILURE_RECOVERY.md) — retry lifecycle, configuration, and troubleshooting.
-> [Notification Lifecycle](NOTIFICATION_LIFECYCLE.md) — creation, delivery, acknowledgment semantics, retries, and archival.
-> [Notification Failure Recovery](NOTIFICATION_FAILURE_RECOVERY.md) — retry lifecycle, configuration, and troubleshooting.
-> **Listener service docs**: [Notification Failure Recovery](NOTIFICATION_FAILURE_RECOVERY.md) — retry lifecycle, configuration, and troubleshooting.
 >
 > **Event reference**: [Smart Contract Event Reference Guide](CONTRACT_EVENT_REFERENCE.md) — all emitted events, parameters, data types, and usage recommendations for indexers and listeners.
 
@@ -86,6 +84,11 @@ run and developed independently.
 >
 > A more detailed, contract-level architecture write-up lives in
 > [`Documents/Task Bounty/ARCHITECTURE.md`](Documents/Task%20Bounty/ARCHITECTURE.md).
+>
+> **New to the codebase?** The
+> [API & Notification Sequence Diagrams](API_SEQUENCE_DIAGRAMS.md)
+> visually trace every major data flow — from client request to subscriber
+> delivery and from on-chain event to dashboard render.
 
 ### Contract Responsibilities
 
@@ -204,6 +207,8 @@ Notify-Chain/
 ---
 
 ## Event Flow
+
+> 📊 **See also:** [API & Notification Sequence Diagrams](API_SEQUENCE_DIAGRAMS.md) — Mermaid diagrams that visually trace the complete notification request flow, on-chain event processing lifecycle, scheduled delivery states, retry/failure recovery, and dashboard data fetch.
 
 ### End-to-End Notification Flow
 
@@ -633,6 +638,7 @@ See [`frontend/src/components/SubscriptionForm.tsx`](frontend/src/components/Sub
 Contributions are welcome! Please follow these steps (or start with the canonical workflow guide):
 
 - [`CONTRIBUTOR_DEVELOPMENT_WORKFLOW_GUIDE.md`](CONTRIBUTOR_DEVELOPMENT_WORKFLOW_GUIDE.md)
+- [`docs/ROADMAP.md`](docs/ROADMAP.md) — planned features and milestones
 
 1. Fork the repository
 2. Create a feature branch
