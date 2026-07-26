@@ -23,6 +23,7 @@ import {
 } from '../services/webhook-verifier';
 import { WebhookSecret, RateLimitConfig, ContractConfig } from '../types';
 import { RateLimiter } from './rate-limiter';
+import { getDatabase } from '../database/database';
 import {
   getNotificationAnalyticsAggregator,
   NotificationAnalyticsAggregator,
@@ -94,6 +95,7 @@ interface HealthResponse {
   services: {
     stellarRpc: ServiceHealth;
     discord: ServiceHealth;
+    database: ServiceHealth;
     eventRegistry: { status: ServiceStatus; eventCount: number };
   };
 }
@@ -161,6 +163,28 @@ export async function checkDiscord(webhookUrl: string): Promise<ServiceHealth> {
       latencyMs: Date.now() - start,
       detail: `HTTP ${response.status}`,
     };
+  } catch (err) {
+    return {
+      status: 'error',
+      latencyMs: Date.now() - start,
+      detail: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
+export async function checkDatabase(): Promise<ServiceHealth> {
+  const start = Date.now();
+  try {
+    const db = getDatabase();
+    if (!db.isConnected()) {
+      return {
+        status: 'error',
+        latencyMs: Date.now() - start,
+        detail: 'Database not initialized',
+      };
+    }
+    await withTimeout(db.get('SELECT 1 AS ok'), HEALTH_TIMEOUT_MS);
+    return { status: 'ok', latencyMs: Date.now() - start };
   } catch (err) {
     return {
       status: 'error',
@@ -332,11 +356,12 @@ function deriveIndexingStatus(args: {
 }
 
 async function buildHealthResponse(options: EventsServerOptions): Promise<HealthResponse> {
-  const [stellarRpc, discord] = await Promise.all([
+  const [stellarRpc, discord, database] = await Promise.all([
     checkStellarRpc(options.stellarRpcUrl),
     options.discordWebhookUrl
       ? checkDiscord(options.discordWebhookUrl)
       : Promise.resolve<ServiceHealth>({ status: 'not_configured' }),
+    checkDatabase(),
   ]);
 
   const eventRegistryHealth = {
@@ -345,7 +370,7 @@ async function buildHealthResponse(options: EventsServerOptions): Promise<Health
   };
 
   let overallStatus: HealthResponse['status'];
-  if (stellarRpc.status === 'error') {
+  if (stellarRpc.status === 'error' || database.status === 'error') {
     overallStatus = 'error';
   } else if (discord.status === 'error') {
     overallStatus = 'degraded';
@@ -359,6 +384,7 @@ async function buildHealthResponse(options: EventsServerOptions): Promise<Health
     services: {
       stellarRpc,
       discord,
+      database,
       eventRegistry: eventRegistryHealth,
     },
   };
@@ -424,7 +450,6 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
       return;
     }
 
-    if (req.method === 'GET' && req.url === '/health') {
     // GET /health
     if (req.method === 'GET' && url.pathname === '/health') {
       buildHealthResponse(options).then((health) => {
