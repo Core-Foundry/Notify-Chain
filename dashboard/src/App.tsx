@@ -7,6 +7,7 @@ import { ExportHistoryPage } from './pages/ExportHistoryPage';
 import { NotificationSearchPage } from './pages/NotificationSearchPage';
 import { NotificationPreferencesPage } from './pages/NotificationPreferencesPage';
 import { TemplatesPage } from './pages/TemplatesPage';
+import { ChannelDetailsPage } from './pages/ChannelDetailsPage';
 import { ThemeToggle } from './components/ThemeToggle';
 import { useTheme } from './hooks/useTheme';
 import { DeliveryHeatmap } from './components/DeliveryHeatmap';
@@ -20,7 +21,8 @@ type Tab =
   | 'export-history'
   | 'search'
   | 'preferences'
-  | 'templates';
+  | 'templates'
+  | 'channels';
 
 export function App() {
   const [tab, setTab] = useState<Tab>('explorer');
@@ -120,6 +122,15 @@ export function App() {
         >
           Templates
         </button>
+        <button
+          role="tab"
+          type="button"
+          aria-selected={tab === 'channels'}
+          className={`app-tabs__btn${tab === 'channels' ? ' app-tabs__btn--active' : ''}`}
+          onClick={() => setTab('channels')}
+        >
+          Channel Details
+        </button>
       </nav>
 
       {tab === 'explorer' && (
@@ -135,6 +146,7 @@ export function App() {
       {tab === 'search' && <NotificationSearchPage />}
       {tab === 'preferences' && <NotificationPreferencesPage />}
       {tab === 'templates' && <TemplatesPage />}
+      {tab === 'channels' && <ChannelDetailsPage />}
     </div>
   );
 }
