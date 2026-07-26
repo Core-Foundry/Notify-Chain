@@ -124,6 +124,7 @@ describe('stale cache regression tests', () => {
       isLoading: false,
       error: null,
     });
+    useEventStore.setState({ events: [], filters: { search: '', contractAddress: 'all', eventType: 'all', status: 'all', dateFrom: '', dateTo: '' }, isLoading: false, error: null });
   });
 
   it('setEvents with an updated record replaces the stale copy, not silently dropped', () => {

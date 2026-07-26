@@ -50,6 +50,7 @@ export interface BlockchainEvent {
 }
 
 /** Read/unread filter used by the notification search UI. */
+/** Read/unread filter for Event Explorer notification lists (not delivery status). */
 export type NotificationReadFilter = 'all' | 'read' | 'unread';
 
 export interface EventFilters {
@@ -59,4 +60,5 @@ export interface EventFilters {
   status: NotificationReadFilter;
   dateFrom: string; // ISO date string "YYYY-MM-DD" or ""
   dateTo: string;   // ISO date string "YYYY-MM-DD" or ""
+  txHash?: string;
 }

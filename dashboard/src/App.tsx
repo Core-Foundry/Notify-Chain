@@ -32,8 +32,16 @@ export function App() {
       <div className="app__theme-bar">
         <ThemeToggle theme={theme} onToggle={toggleTheme} />
       </div>
+  | 'preferences';
+
+export function App() {
+  const [tab, setTab] = useState<Tab>('explorer');
+
+  return (
+    <div className="app">
       <nav className="app-tabs" role="tablist" aria-label="Main navigation">
         <button
+          type="button"
           role="tab"
           type="button"
           aria-selected={tab === 'explorer'}
@@ -43,6 +51,7 @@ export function App() {
           Event Explorer
         </button>
         <button
+          type="button"
           role="tab"
           type="button"
           aria-selected={tab === 'timeline'}
@@ -52,6 +61,7 @@ export function App() {
           Delivery Timeline
         </button>
         <button
+          type="button"
           role="tab"
           type="button"
           aria-selected={tab === 'activity'}
@@ -61,6 +71,7 @@ export function App() {
           Activity Feed
         </button>
         <button
+          type="button"
           role="tab"
           type="button"
           aria-selected={tab === 'webhooks'}
@@ -70,6 +81,7 @@ export function App() {
           Webhook Performance
         </button>
         <button
+          type="button"
           role="tab"
           type="button"
           aria-selected={tab === 'export-history'}
@@ -79,6 +91,7 @@ export function App() {
           Export History
         </button>
         <button
+          type="button"
           role="tab"
           type="button"
           aria-selected={tab === 'search'}
@@ -90,6 +103,8 @@ export function App() {
         <button
           role="tab"
           type="button"
+          type="button"
+          role="tab"
           aria-selected={tab === 'preferences'}
           className={`app-tabs__btn${tab === 'preferences' ? ' app-tabs__btn--active' : ''}`}
           onClick={() => setTab('preferences')}

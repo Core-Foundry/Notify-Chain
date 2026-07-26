@@ -7,10 +7,18 @@ export interface NotificationSearchParams {
   sender?: string;    // target_recipient exact/partial match
   txHash?: string;    // tx_hash exact/partial match
   eventId?: string;   // event_id exact/partial match
-  status?: string;    // scheduled_notifications.status
-  type?: string;      // notification_type
+  status?: string;    // scheduled_notifications.status / processed_events.status
+  type?: string;      // notification_type (discord|email|webhook|sms)
+  startDate?: string; // inclusive lower bound on created_at / processed_at (YYYY-MM-DD or ISO)
+  endDate?: string;   // inclusive upper bound on created_at / processed_at (YYYY-MM-DD or ISO)
   limit?: number;
   offset?: number;
+}
+
+/** Normalize a date filter so YYYY-MM-DD covers the full UTC day. */
+export function normalizeSearchDateBound(value: string, bound: 'start' | 'end'): string {
+  if (value.includes('T')) return value;
+  return bound === 'start' ? `${value}T00:00:00.000Z` : `${value}T23:59:59.999Z`;
 }
 
 export interface NotificationSearchResult {
@@ -100,8 +108,16 @@ export class NotificationSearchService {
       queryParams.push(params.status.toUpperCase());
     }
     if (params.type) {
-      conditions.push('notification_type LIKE ?');
-      queryParams.push(`%${params.type}%`);
+      conditions.push('LOWER(notification_type) = ?');
+      queryParams.push(params.type.toLowerCase());
+    }
+    if (params.startDate) {
+      conditions.push('created_at >= ?');
+      queryParams.push(normalizeSearchDateBound(params.startDate, 'start'));
+    }
+    if (params.endDate) {
+      conditions.push('created_at <= ?');
+      queryParams.push(normalizeSearchDateBound(params.endDate, 'end'));
     }
 
     const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
@@ -173,8 +189,21 @@ export class NotificationSearchService {
       conditions.push('status = ?');
       queryParams.push(params.status.toUpperCase());
     }
+    if (params.type) {
+      // processed_events store channel/event type in event_type
+      conditions.push('LOWER(event_type) = ?');
+      queryParams.push(params.type.toLowerCase());
+    }
+    if (params.startDate) {
+      conditions.push('processed_at >= ?');
+      queryParams.push(normalizeSearchDateBound(params.startDate, 'start'));
+    }
+    if (params.endDate) {
+      conditions.push('processed_at <= ?');
+      queryParams.push(normalizeSearchDateBound(params.endDate, 'end'));
+    }
 
-    // sender / type don't apply to processed_events, skip those params
+    // sender does not apply to processed_events
 
     const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
 
