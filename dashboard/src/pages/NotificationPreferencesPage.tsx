@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useState, useRef } from 'react';
 
 type ChannelKey = 'inApp' | 'email' | 'discord' | 'telegram';
 type CategoryKey = 'security' | 'governance' | 'system' | 'custom';
@@ -45,6 +45,17 @@ export function NotificationPreferencesPage() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [simulateFailure, setSimulateFailure] = useState(false);
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved'>('idle');
+
+  // ── Issue #497: Channel search ────────────────────────────────────────────
+  const [channelSearch, setChannelSearch] = useState('');
+  const channelSearchRef = useRef<HTMLInputElement>(null);
+
+  /** Channels filtered by the keyword search (case-insensitive). */
+  const filteredChannels = useMemo(() => {
+    const q = channelSearch.trim().toLowerCase();
+    if (!q) return channelDefinitions;
+    return channelDefinitions.filter((ch) => ch.label.toLowerCase().includes(q));
+  }, [channelSearch]);
 
   const errorCategories = useMemo(
     () =>
@@ -210,21 +221,75 @@ export function NotificationPreferencesPage() {
               </p>
             </div>
 
-            <div className="notification-preferences__matrix" role="table" aria-label="Notification preference matrix">
+            {/* Issue #497: Channel keyword search */}
+            <div className="channel-search">
+              <label htmlFor="channel-search-input" className="channel-search__label">
+                Search channels
+              </label>
+              <input
+                id="channel-search-input"
+                ref={channelSearchRef}
+                type="search"
+                className="channel-search__input"
+                placeholder="e.g. email, discord…"
+                value={channelSearch}
+                onChange={(e) => setChannelSearch(e.target.value)}
+                aria-label="Search available channels"
+                aria-controls="notification-matrix"
+              />
+              {channelSearch && (
+                <button
+                  type="button"
+                  className="channel-search__clear"
+                  onClick={() => {
+                    setChannelSearch('');
+                    channelSearchRef.current?.focus();
+                  }}
+                  aria-label="Clear channel search"
+                >
+                  ✕
+                </button>
+              )}
+            </div>
+
+            <div
+              id="notification-matrix"
+              className="notification-preferences__matrix"
+              role="table"
+              aria-label="Notification preference matrix"
+              style={{ gridTemplateColumns: `minmax(180px, 1fr) repeat(${filteredChannels.length}, 88px)` }}
+            >
               <div className="matrix-cell matrix-cell--corner">Categories / Channels</div>
-              {channelDefinitions.map((channel) => (
+              {filteredChannels.map((channel) => (
                 <div key={channel.key} className="matrix-cell matrix-cell--header">
                   {channel.label}
                 </div>
               ))}
 
-              {categoryDefinitions.map((category) => (
+              {filteredChannels.length === 0 && (
+                <div
+                  className="notification-preferences__no-results"
+                  role="status"
+                  aria-live="polite"
+                >
+                  <p>No channels match <strong>&ldquo;{channelSearch}&rdquo;</strong>.</p>
+                  <button
+                    type="button"
+                    className="channel-search__clear-inline"
+                    onClick={() => setChannelSearch('')}
+                  >
+                    Clear search
+                  </button>
+                </div>
+              )}
+
+              {filteredChannels.length > 0 && categoryDefinitions.map((category) => (
               <Fragment key={category.key}>
                 <div className="matrix-cell matrix-cell--category">
                   <div>{category.label}</div>
                   <p>{category.description}</p>
                 </div>
-                {channelDefinitions.map((channel) => {
+                {filteredChannels.map((channel) => {
                   const fieldId = `pref-${category.key}-${channel.key}`;
                   return (
                     <label key={fieldId} className="matrix-cell matrix-cell--toggle" htmlFor={fieldId}>
