@@ -1,15 +1,12 @@
 use crate::base::errors::Error;
 use crate::base::events::{
-    AdminTransferred, AuthorizationFailure, AutoshareCreated, AutoshareUpdated, CategoryRegistered,
-    ContractPaused, ContractUnpaused, GroupActivated, GroupDeactivated, NotificationCategory,
-    NotificationDelivered, NotificationExpired, NotificationExtended, NotificationLimitsConfigured,
-    NotificationPriority, NotificationRecalled, NotificationRevoked, NotificationScheduled,
-    ScheduledNotificationCancelled, Withdrawal,
-    AdminTransferred, AuthorizationFailure, AutoshareCreated, AutoshareUpdated, ContractPaused,
-    ContractUnpaused, GroupActivated, GroupDeactivated, NotificationAcknowledged,
-    NotificationCategory, NotificationExpired, NotificationPriority, NotificationRevoked,
-    NotificationScheduled, ScheduledNotificationCancelled, Withdrawal,
     AdminTransferred, AuditAction, AuditRecordAppended, AuthorizationFailure, AutoshareCreated,
+    AutoshareUpdated, BatchNotificationsCreated, BatchProcessingCompleted, CategoryRegistered,
+    ContractPaused, ContractUnpaused, GroupActivated, GroupDeactivated, NotificationAccessed,
+    NotificationAcknowledged, NotificationCategory, NotificationDelivered, NotificationExpired,
+    NotificationExtended, NotificationLimitsConfigured, NotificationPriority, NotificationRecalled,
+    NotificationRevoked, NotificationScheduled, ScheduledNotificationCancelled,
+    SchemaVersionSet, SubscriptionCancelled, Withdrawal,
     AutoshareUpdated, BatchNotificationsCreated, CategoryRegistered, ContractPaused,
     ContractUnpaused, GroupActivated, GroupDeactivated, NotificationCategory, NotificationExpired,
     NotificationPriority, NotificationRevoked, NotificationScheduled, OwnershipTransferInitiated,
@@ -747,6 +744,72 @@ pub fn topup_subscription(
 
     // Record payment history
     record_payment(env, payer, id, additional_usages, total_cost);
+
+    Ok(())
+}
+
+/// Cancels an active notification subscription for a group and emits a
+/// [`SubscriptionCancelled`] event so off-chain consumers can track the full
+/// subscription lifecycle.
+///
+/// The subscriber must be the group's creator or an authorised member of the
+/// group. Cancellation marks the group as inactive (deactivates it) and zeroes
+/// out the remaining usage count so no further notifications can be dispatched
+/// against the subscription.
+///
+/// # Errors
+/// - [`Error::ContractPaused`]   – the contract is currently paused.
+/// - [`Error::NotFound`]         – `id` does not correspond to a known group.
+/// - [`Error::Unauthorized`]     – `subscriber` is neither the creator nor a
+///                                 member of the group.
+/// - [`Error::GroupInactive`]    – the group is already inactive (subscription
+///                                 already cancelled or never active).
+pub fn cancel_subscription(
+    env: Env,
+    id: BytesN<32>,
+    subscriber: Address,
+) -> Result<(), Error> {
+    subscriber.require_auth();
+
+    if get_paused_status(&env) {
+        return Err(Error::ContractPaused);
+    }
+
+    let key = DataKey::AutoShare(id.clone());
+    let mut details: AutoShareDetails = env
+        .storage()
+        .persistent()
+        .get(&key)
+        .ok_or(Error::NotFound)?;
+
+    // Only the creator or a current member may cancel the subscription.
+    let is_creator = details.creator == subscriber;
+    let is_member = details.members.iter().any(|m| m.address == subscriber);
+
+    if !is_creator && !is_member {
+        publish_authorization_failure(&env, &subscriber, "cancel_subscription");
+        return Err(Error::Unauthorized);
+    }
+
+    if !details.is_active {
+        return Err(Error::GroupInactive);
+    }
+
+    // Deactivate the group and clear remaining usages.
+    details.is_active = false;
+    details.usage_count = 0;
+    env.storage().persistent().set(&key, &details);
+
+    let cancelled_at = env.ledger().timestamp();
+
+    SubscriptionCancelled {
+        group_id: id,
+        subscriber,
+        category: NotificationCategory::Group,
+        priority: NotificationPriority::Medium,
+        cancelled_at,
+    }
+    .publish(&env);
 
     Ok(())
 }
