@@ -647,6 +647,111 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
       return;
     }
 
+    // GET /api/metrics/delivery — Issue #482
+    // Returns a focused delivery-statistics report derived from the in-process
+    // analytics aggregator. Supports an optional ?window query parameter to
+    // restrict the report to a recent time slice (1h | 6h | 24h | 7d).
+    if (req.method === 'GET' && url.pathname === '/api/metrics/delivery') {
+      const aggregator =
+        options.analyticsAggregator !== undefined
+          ? options.analyticsAggregator
+          : getNotificationAnalyticsAggregator();
+
+      if (!aggregator) {
+        res.writeHead(503, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Analytics aggregator unavailable' }));
+        return;
+      }
+
+      // Optional time-window filter (defaults to the aggregator's full window)
+      const windowParam = url.searchParams.get('window');
+      const WINDOW_MS: Record<string, number> = {
+        '1h':  1 * 60 * 60 * 1000,
+        '6h':  6 * 60 * 60 * 1000,
+        '24h': 24 * 60 * 60 * 1000,
+        '7d':  7 * 24 * 60 * 60 * 1000,
+      };
+      const windowMs = windowParam ? WINDOW_MS[windowParam] ?? null : null;
+      if (windowParam && windowMs === null) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(
+          JSON.stringify({ error: `Invalid window parameter. Allowed values: ${Object.keys(WINDOW_MS).join(', ')}` }),
+        );
+        return;
+      }
+
+      const snapshot = aggregator.snapshot();
+      const now = Date.now();
+      const since = windowMs !== null ? now - windowMs : snapshot.windowStart;
+
+      // Re-slice byType and errorBreakdown to the requested window when a
+      // tighter window is requested. Overall counts already come from snapshot()
+      // which operates on the full rolling window, so we compute a filtered
+      // view on top.
+      const overall = snapshot.overall;
+
+      // Derive per-channel delivery stats from hourlyBuckets for the window
+      const bucketsInWindow = snapshot.hourlyBuckets.filter((b) => b.bucketStart >= since);
+      const windowTotals = bucketsInWindow.reduce(
+        (acc, b) => ({
+          total:     acc.total     + b.total,
+          success:   acc.success   + b.success,
+          failure:   acc.failure   + b.failure,
+          retry:     acc.retry     + b.retry,
+          skipped:   acc.skipped   + b.skipped,
+          avgDurSum: acc.avgDurSum + b.averageDurationMs * b.total,
+        }),
+        { total: 0, success: 0, failure: 0, retry: 0, skipped: 0, avgDurSum: 0 },
+      );
+      const windowTerminal = windowTotals.success + windowTotals.failure;
+
+      const deliveryStats = windowMs !== null
+        ? {
+            total:              windowTotals.total,
+            success:            windowTotals.success,
+            failure:            windowTotals.failure,
+            retry:              windowTotals.retry,
+            skipped:            windowTotals.skipped,
+            successRate:        windowTerminal > 0 ? windowTotals.success / windowTerminal : 0,
+            averageDurationMs:  windowTotals.total > 0 ? windowTotals.avgDurSum / windowTotals.total : 0,
+          }
+        : {
+            total:             overall.total,
+            success:           overall.success,
+            failure:           overall.failure,
+            retry:             overall.retry,
+            skipped:           overall.skipped,
+            successRate:       overall.successRate,
+            averageDurationMs: overall.averageDurationMs,
+          };
+
+      const response = {
+        meta: {
+          generatedAt:    new Date(now).toISOString(),
+          windowStart:    new Date(since).toISOString(),
+          windowEnd:      new Date(now).toISOString(),
+          windowParam:    windowParam ?? 'full',
+          totalRecorded:  snapshot.totalRecorded,
+        },
+        delivery: deliveryStats,
+        byType:          snapshot.byType,
+        errorBreakdown:  snapshot.errorBreakdown,
+        hourlyBuckets:   bucketsInWindow.length > 0 ? bucketsInWindow : snapshot.hourlyBuckets,
+      };
+
+      logger.info('Handling GET /api/metrics/delivery', {
+        requestId,
+        correlationId,
+        window: windowParam ?? 'full',
+        total:  deliveryStats.total,
+        durationMs: Date.now() - startTime,
+      });
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(response));
+      return;
+    }
+
     // POST /api/webhooks
     if (req.method === 'POST' && url.pathname === '/api/webhooks') {
       collectRawBody(req).then((rawBody) => {
