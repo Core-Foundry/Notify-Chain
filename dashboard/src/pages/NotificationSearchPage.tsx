@@ -2,14 +2,20 @@ import { useState, useCallback, useEffect, useRef } from 'react';
 import { NotificationSearchSkeleton } from '../components/NotificationSearchSkeleton';
 import { getEventsApiBaseUrl } from '../config/eventsApiUrl';
 import { useDebounce } from '../hooks/useDebounce';
-import { getEventsApiBaseUrl } from '../config/eventsApiUrl';
 import {
   searchNotifications,
   type NotificationSearchResult,
   type NotificationSearchResponse,
+  type NotificationSearchParams,
 } from '../services/eventsApi';
+import {
+  buildNotificationExportBlob,
+  downloadBlob,
+  type NotificationExportFormat,
+} from '../utils/notificationExport';
 
 const PAGE_SIZE = 20;
+const EXPORT_PAGE_SIZE = 100;
 const API_BASE = getEventsApiBaseUrl().replace(/\/api\/events\/?$/, '');
 
 /** Delivery / processing status values used by scheduled + processed notifications. */
@@ -31,9 +37,6 @@ export const NOTIFICATION_TYPE_OPTIONS = [
   { value: 'webhook', label: 'Webhook' },
   { value: 'sms', label: 'SMS' },
 ];
-const API_BASE = getEventsApiBaseUrl();
-
-const STATUS_OPTIONS = ['', 'PENDING', 'PROCESSING', 'COMPLETED', 'FAILED', 'CANCELLED', 'PROCESSED'];
 
 export function NotificationSearchPage() {
   const [query, setQuery] = useState('');
@@ -49,6 +52,9 @@ export function NotificationSearchPage() {
   const [response, setResponse] = useState<NotificationSearchResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [exporting, setExporting] = useState(false);
+  const [exportFormat, setExportFormat] = useState<NotificationExportFormat>('json');
+  const [exportMessage, setExportMessage] = useState<string | null>(null);
 
   const debouncedQuery = useDebounce(query, 300);
   const debouncedSender = useDebounce(sender, 300);
@@ -68,6 +74,28 @@ export function NotificationSearchPage() {
 
   const abortRef = useRef<AbortController | null>(null);
 
+  const currentFilters = useCallback((): NotificationSearchParams => {
+    return {
+      q: debouncedQuery || undefined,
+      sender: debouncedSender || undefined,
+      txHash: debouncedTxHash || undefined,
+      eventId: debouncedEventId || undefined,
+      status: status || undefined,
+      type: type || undefined,
+      startDate: dateFrom || undefined,
+      endDate: dateTo || undefined,
+    };
+  }, [
+    debouncedQuery,
+    debouncedSender,
+    debouncedTxHash,
+    debouncedEventId,
+    status,
+    type,
+    dateFrom,
+    dateTo,
+  ]);
+
   const runSearch = useCallback(async () => {
     if (!hasParams) {
       setResponse(null);
@@ -83,14 +111,7 @@ export function NotificationSearchPage() {
 
     try {
       const result = await searchNotifications(API_BASE, {
-        q: debouncedQuery || undefined,
-        sender: debouncedSender || undefined,
-        txHash: debouncedTxHash || undefined,
-        eventId: debouncedEventId || undefined,
-        status: status || undefined,
-        type: type || undefined,
-        startDate: dateFrom || undefined,
-        endDate: dateTo || undefined,
+        ...currentFilters(),
         limit: PAGE_SIZE,
         offset: (page - 1) * PAGE_SIZE,
       });
@@ -101,18 +122,7 @@ export function NotificationSearchPage() {
     } finally {
       setLoading(false);
     }
-  }, [
-    debouncedQuery,
-    debouncedSender,
-    debouncedTxHash,
-    debouncedEventId,
-    status,
-    type,
-    dateFrom,
-    dateTo,
-    page,
-    hasParams,
-  ]);
+  }, [currentFilters, page, hasParams]);
 
   // Re-run search whenever debounced params change; reset page when filters change
   const filtersKey = `${debouncedQuery}|${debouncedSender}|${debouncedTxHash}|${debouncedEventId}|${status}|${type}|${dateFrom}|${dateTo}`;
@@ -140,6 +150,46 @@ export function NotificationSearchPage() {
     setPage(1);
     setResponse(null);
     setError(null);
+    setExportMessage(null);
+  }
+
+  async function handleExport() {
+    if (!hasParams) {
+      setExportMessage('Apply at least one filter before exporting.');
+      return;
+    }
+
+    setExporting(true);
+    setExportMessage(null);
+
+    try {
+      const filters = currentFilters();
+      const all: NotificationSearchResult[] = [];
+      let offset = 0;
+      let total = Infinity;
+
+      while (offset < total) {
+        const pageResult = await searchNotifications(API_BASE, {
+          ...filters,
+          limit: EXPORT_PAGE_SIZE,
+          offset,
+        });
+        all.push(...pageResult.results);
+        total = pageResult.total;
+        offset += pageResult.results.length;
+        if (pageResult.results.length === 0) break;
+      }
+
+      const { blob, filename } = buildNotificationExportBlob(all, exportFormat, filters);
+      downloadBlob(blob, filename);
+      setExportMessage(
+        `Exported ${all.length} notification${all.length === 1 ? '' : 's'} as ${exportFormat.toUpperCase()}.`
+      );
+    } catch (err: unknown) {
+      setExportMessage(err instanceof Error ? err.message : 'Export failed');
+    } finally {
+      setExporting(false);
+    }
   }
 
   const totalPages = response ? response.totalPages : 0;
@@ -151,6 +201,7 @@ export function NotificationSearchPage() {
         <h1>Notification Search</h1>
         <p className="event-explorer__lead">
           Filter scheduled and processed notifications by type, delivery status, date range, sender, or free-text.
+          Export respects the filters you apply (JSON or CSV).
         </p>
       </header>
 
@@ -263,10 +314,52 @@ export function NotificationSearchPage() {
           </div>
         </div>
 
-        {hasParams && (
-          <button type="button" className="notif-search__clear" onClick={clearAll} aria-label="Clear all filters">
-            Clear filters
+        <div
+          className="notif-search-form__actions"
+          style={{
+            display: 'flex',
+            gap: '0.75rem',
+            flexWrap: 'wrap',
+            alignItems: 'center',
+            marginTop: '0.75rem',
+          }}
+        >
+          {hasParams && (
+            <button type="button" className="notif-search__clear" onClick={clearAll} aria-label="Clear all filters">
+              Clear filters
+            </button>
+          )}
+
+          <label htmlFor="nsf-export-format" className="notif-search-form__label" style={{ margin: 0 }}>
+            Export format
+          </label>
+          <select
+            id="nsf-export-format"
+            className="notif-search-form__input"
+            value={exportFormat}
+            onChange={(e) => setExportFormat(e.target.value as NotificationExportFormat)}
+            aria-label="Export format"
+            style={{ width: 'auto' }}
+          >
+            <option value="json">JSON</option>
+            <option value="csv">CSV</option>
+          </select>
+
+          <button
+            type="button"
+            className="notif-search__export"
+            onClick={handleExport}
+            disabled={exporting || !hasParams}
+            aria-label="Export filtered notifications"
+          >
+            {exporting ? 'Exporting…' : 'Export'}
           </button>
+        </div>
+
+        {exportMessage && (
+          <p className="notif-search-page__export-status" role="status" style={{ marginTop: '0.5rem' }}>
+            {exportMessage}
+          </p>
         )}
       </section>
 
@@ -359,19 +452,13 @@ function NotificationResultCard({ result }: { result: NotificationSearchResult }
         {result.eventId && (
           <>
             <dt>Event ID</dt>
-            <dd><code>{result.eventId}</code></dd>
+            <dd>{result.eventId}</dd>
           </>
         )}
         {result.txHash && (
           <>
             <dt>Tx Hash</dt>
-            <dd><code>{result.txHash}</code></dd>
-          </>
-        )}
-        {result.contractAddress && (
-          <>
-            <dt>Contract</dt>
-            <dd><code>{result.contractAddress}</code></dd>
+            <dd>{result.txHash}</dd>
           </>
         )}
         {result.targetRecipient && (
