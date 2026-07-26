@@ -594,16 +594,19 @@ impl AutoShareContract {
 }
 
 #[cfg(test)]
-#[path = "tests/test_utils.rs"]
-pub mod test_utils;
+pub mod test_utils {
+    #[path = "tests/test_utils.rs"]
+    mod inner;
+    pub use inner::*;
+}
 
 #[cfg(test)]
-#[path = "tests/test_utils_test.rs"]
-mod test_utils_test;
+mod tests {
+    #[path = "tests/test_utils_test.rs"]
+    mod test_utils_test;
 
-#[cfg(test)]
-#[path = "tests/storage_optimization_test.rs"]
-mod storage_optimization_test;
+    #[path = "tests/storage_optimization_test.rs"]
+    mod storage_optimization_test;
 
 #[cfg(test)]
 #[path = "tests/preferences_test.rs"]
@@ -614,19 +617,16 @@ mod tests {
     #[path = "../tests/autoshare_test.rs"]
     mod autoshare_test;
 
-    #[path = "../tests/pause_test.rs"]
+    #[path = "tests/pause_test.rs"]
     mod pause_test;
 
-    #[path = "../tests/mock_token_test.rs"]
+    #[path = "tests/mock_token_test.rs"]
     mod mock_token_test;
 
-    #[path = "../tests/version_test.rs"]
+    #[path = "tests/version_test.rs"]
     mod version_test;
 
-    #[path = "../tests/test_utils_test.rs"]
-    mod test_utils_test;
-
-    #[path = "../tests/notification_test.rs"]
+    #[path = "tests/notification_test.rs"]
     mod notification_test;
 
     #[path = "../tests/notification_validation_test.rs"]
