@@ -783,6 +783,18 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
 
           logger.info('Notification scheduled via API', { requestId, correlationId, notificationId, executeAt: data.executeAt });
         } catch (error) {
+          if (error instanceof PayloadTooLargeError) {
+            logger.warn('Payload too large', {
+              error,
+              requestId,
+              correlationId,
+              payloadSizeBytes: error.payloadSizeBytes,
+              maxSizeBytes: error.maxSizeBytes,
+            });
+            res.writeHead(413, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: error.message }));
+            return;
+          }
           logger.error('Failed to schedule notification', { error, requestId, correlationId });
           res.writeHead(500, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ error: (error as Error).message }));
