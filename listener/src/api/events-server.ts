@@ -201,7 +201,7 @@ async function getContractPauseStatus(
   try {
     const server = new StellarSDK.rpc.Server(stellarRpcUrl);
     const contract = new StellarSDK.Contract(contractAddress);
-    
+
     // Create a dummy account for simulation (we don't need to actually sign anything)
     const dummyKeypair = StellarSDK.Keypair.random();
     const sourceAccount = await server.getAccount(dummyKeypair.publicKey()).catch(() => {
@@ -235,9 +235,9 @@ async function getContractPauseStatus(
     const value = StellarSDK.scValToNative(simResult.retval);
     return { paused: !!value };
   } catch (err) {
-    return { 
-      paused: false, 
-      error: err instanceof Error ? err.message : String(err) 
+    return {
+      paused: false,
+      error: err instanceof Error ? err.message : String(err)
     };
   }
 }
@@ -250,17 +250,6 @@ async function buildStatusResponse(options: EventsServerOptions): Promise<{
   }>;
   timestamp: string;
 }> {
-  const contractStatuses = options.contractAddresses 
-    ? await Promise.all(
-        options.contractAddresses.map(async (contractConfig) => {
-          const status = await getContractPauseStatus(contractConfig.address, options.stellarRpcUrl);
-          return {
-            address: contractConfig.address,
-            ...status
-          };
-        })
-      )
-    : [];
   const contractStatuses = await Promise.all(
     (options.contractAddresses ?? []).map(async (contractConfig) => {
       const status = await getContractPauseStatus(contractConfig.address, options.stellarRpcUrl);
@@ -415,12 +404,13 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
     res.setHeader('X-Correlation-Id', correlationId);
 
     const url = new URL(req.url ?? '/', 'http://localhost');
+    const pathname = url.pathname;
 
-    // The rate-limit metrics endpoint is an observability route and must stay
+    // The rate-limit metrics and health endpoints are observability routes and must stay
     // reachable even after a client exhausts its quota — otherwise callers
     // can't read the very metrics that explain why they are being throttled.
     const isRateLimitExempt =
-      req.method === 'GET' && url.pathname === '/api/rate-limit/metrics';
+      req.method === 'GET' && (pathname === '/api/rate-limit/metrics' || pathname === '/health');
 
     if (rateLimiter && !isRateLimitExempt) {
       const allowed = await rateLimiter.handle(req, res as any);
