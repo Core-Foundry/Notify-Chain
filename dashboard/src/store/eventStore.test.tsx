@@ -118,6 +118,12 @@ describe('pagination + filter interaction', () => {
 
 describe('stale cache regression tests', () => {
   beforeEach(() => {
+    useEventStore.setState({
+      events: [],
+      filters: { search: '', contractAddress: 'all', eventType: 'all', status: 'all', dateFrom: '', dateTo: '' },
+      isLoading: false,
+      error: null,
+    });
     useEventStore.setState({ events: [], filters: { search: '', contractAddress: 'all', eventType: 'all', status: 'all', dateFrom: '', dateTo: '' }, isLoading: false, error: null });
   });
 

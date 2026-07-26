@@ -49,6 +49,7 @@ export interface BlockchainEvent {
   read?: boolean;
 }
 
+/** Read/unread filter used by the notification search UI. */
 /** Read/unread filter for Event Explorer notification lists (not delivery status). */
 export type NotificationReadFilter = 'all' | 'read' | 'unread';
 

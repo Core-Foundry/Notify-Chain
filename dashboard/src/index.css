@@ -4640,6 +4640,8 @@ body {
 .templates-preview__body pre {
   margin: 8px 0 0;
   white-space: pre-wrap;
+}
+
 .theme-toggle:focus-visible {
   outline: 2px solid var(--hm-accent);
   outline-offset: 2px;
