@@ -13,6 +13,7 @@ import http from 'http';
 import { ArchiveStore } from '../services/archive-store';
 import { ArchiveService } from '../services/archive-service';
 import logger from '../utils/logger';
+import { sendError } from '../utils/api-error';
 
 export interface ArchiveApiHandlerDeps {
   store: ArchiveStore;
@@ -36,8 +37,7 @@ export async function handleArchiveRequest(
   // POST /api/archive/run  – trigger on-demand cycle
   if (req.method === 'POST' && pathname === '/api/archive/run') {
     if (!deps.service) {
-      res.writeHead(503, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: 'Archive service not enabled' }));
+      sendError(res, 503, 'Archive service not enabled');
       return true;
     }
     logger.info('Handling POST /api/archive/run', { requestId });
@@ -47,8 +47,7 @@ export async function handleArchiveRequest(
       res.end(JSON.stringify(result));
     } catch (err) {
       logger.error('Archive run failed', { error: err, requestId });
-      res.writeHead(500, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: (err as Error).message }));
+      sendError(res, 500, (err as Error).message);
     }
     return true;
   }
@@ -61,16 +60,14 @@ export async function handleArchiveRequest(
     try {
       const record = await deps.store.getById(id);
       if (!record) {
-        res.writeHead(404, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'Archived record not found' }));
+        sendError(res, 404, 'Archived record not found');
         return true;
       }
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(record));
     } catch (err) {
       logger.error('Failed to fetch archive record', { error: err, requestId, id });
-      res.writeHead(500, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: (err as Error).message }));
+      sendError(res, 500, (err as Error).message);
     }
     return true;
   }
@@ -92,8 +89,7 @@ export async function handleArchiveRequest(
       res.end(JSON.stringify(result));
     } catch (err) {
       logger.error('Failed to query archive', { error: err, requestId });
-      res.writeHead(500, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: (err as Error).message }));
+      sendError(res, 500, (err as Error).message);
     }
     return true;
   }

@@ -49,6 +49,7 @@ import { ArchiveStore } from '../services/archive-store';
 import { ArchiveService } from '../services/archive-service';
 import { NotificationMetricsStore } from '../services/notification-metrics-store';
 import { NotificationHealthMonitor } from '../services/notification-health-monitor';
+import { sendError } from '../utils/api-error';
 
 export interface EventsServerOptions {
   port: number;
@@ -438,14 +439,12 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
       handleTemplateRoutes(req, res, requestId, options.templateService)
         .then((handled) => {
           if (!handled) {
-            res.writeHead(404, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ error: 'Not found' }));
+                        sendError(res, 404, 'Not found');
           }
         })
         .catch((error) => {
           logger.error('Template route handler error', { error, requestId });
-          res.writeHead(500, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: 'Internal server error' }));
+                    sendError(res, 500, 'Internal server error');
         });
       return;
     }
@@ -538,8 +537,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
     if (req.method === 'GET' && url.pathname === '/api/notifications/health') {
       const report = options.healthMonitor?.getLastReport() ?? null;
       if (!report) {
-        res.writeHead(503, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'Health monitor not configured or no report yet' }));
+                sendError(res, 503, 'Health monitor not configured or no report yet');
         return;
       }
       const httpStatus = report.status === 'unhealthy' ? 503 : report.status === 'degraded' ? 200 : 200;
@@ -551,8 +549,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
     // GET /api/rate-limit/metrics
     if (req.method === 'GET' && url.pathname === '/api/rate-limit/metrics') {
       if (!rateLimiter) {
-        res.writeHead(503, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'Rate limiting not enabled' }));
+                sendError(res, 503, 'Rate limiting not enabled');
         return;
       }
 
@@ -582,8 +579,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
     if (req.method === 'GET' && url.pathname === '/api/analytics/history') {
       const metricsStore = options.metricsStore;
       if (!metricsStore) {
-        res.writeHead(503, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'Metrics history store unavailable' }));
+                sendError(res, 503, 'Metrics history store unavailable');
         return;
       }
 
@@ -616,8 +612,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
           : getNotificationAnalyticsAggregator();
 
       if (!aggregator) {
-        res.writeHead(503, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'Analytics aggregator unavailable' }));
+                sendError(res, 503, 'Analytics aggregator unavailable');
         return;
       }
 
@@ -655,15 +650,13 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
 
         if (!signatureHeader) {
           logger.warn('Webhook missing signature header', { requestId, correlationId });
-          res.writeHead(401, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: 'Missing signature header' }));
+                    sendError(res, 401, 'Missing signature header');
           return;
         }
 
         if (!keyId) {
           logger.warn('Webhook missing key-id header', { requestId, correlationId });
-          res.writeHead(401, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: 'Missing key-id header' }));
+                    sendError(res, 401, 'Missing key-id header');
           return;
         }
 
@@ -672,8 +665,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
 
         if (!secret) {
           logger.warn('Webhook unknown key-id', { requestId, correlationId, keyId });
-          res.writeHead(401, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: 'Unknown key-id' }));
+                    sendError(res, 401, 'Unknown key-id');
           return;
         }
 
@@ -685,16 +677,14 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
           const timestamp = Array.isArray(timestampHeader) ? timestampHeader[0] : timestampHeader;
           if (!isTimestampValid(timestamp, maxAgeSeconds)) {
             logger.warn('Webhook request signature expired', { requestId, correlationId, keyId, timestamp });
-            res.writeHead(401, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ error: 'Request signature expired' }));
+                        sendError(res, 401, 'Request signature expired');
             return;
           }
         }
 
         if (!verifySignature(rawBody, signatureHeader, secret)) {
           logger.warn('Webhook invalid signature', { requestId, correlationId, keyId });
-          res.writeHead(401, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: 'Invalid signature' }));
+                    sendError(res, 401, 'Invalid signature');
           return;
         }
 
@@ -703,8 +693,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
         res.end(JSON.stringify({ status: 'accepted' }));
       }).catch((err) => {
         logger.error('Failed to read webhook body', { requestId, correlationId, error: err });
-        res.writeHead(400, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'Failed to read request body' }));
+                sendError(res, 400, 'Failed to read request body');
       });
       return;
     }
@@ -742,8 +731,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
     // POST /api/schedule
     if (req.method === 'POST' && url.pathname === '/api/schedule') {
       if (!options.notificationAPI) {
-        res.writeHead(503, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'Scheduler not enabled' }));
+                sendError(res, 503, 'Scheduler not enabled');
         return;
       }
 
@@ -754,15 +742,13 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
           const data = JSON.parse(body);
 
           if (!data.executeAt || !data.payload || !data.targetRecipient) {
-            res.writeHead(400, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ error: 'Missing required fields: executeAt, payload, targetRecipient' }));
+                        sendError(res, 400, 'Missing required fields: executeAt, payload, targetRecipient');
             return;
           }
 
           const executeAt = new Date(data.executeAt);
           if (isNaN(executeAt.getTime())) {
-            res.writeHead(400, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ error: 'executeAt is not a valid date' }));
+                        sendError(res, 400, 'executeAt is not a valid date');
             return;
           }
 
@@ -791,13 +777,11 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
               payloadSizeBytes: error.payloadSizeBytes,
               maxSizeBytes: error.maxSizeBytes,
             });
-            res.writeHead(413, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ error: error.message }));
+                        sendError(res, 413, error.message);
             return;
           }
           logger.error('Failed to schedule notification', { error, requestId, correlationId });
-          res.writeHead(500, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: (error as Error).message }));
+                    sendError(res, 500, (error as Error).message);
         }
       });
       return;
@@ -806,8 +790,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
     // GET /api/schedule/stats
     if (req.method === 'GET' && url.pathname === '/api/schedule/stats') {
       if (!options.notificationAPI) {
-        res.writeHead(503, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'Scheduler not enabled' }));
+                sendError(res, 503, 'Scheduler not enabled');
         return;
       }
 
@@ -818,8 +801,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
         })
         .catch((error) => {
           logger.error('Failed to get scheduler stats', { error, requestId, correlationId });
-          res.writeHead(500, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: (error as Error).message }));
+                    sendError(res, 500, (error as Error).message);
         });
       return;
     }
@@ -827,23 +809,20 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
     // GET /api/schedule/:id
     if (req.method === 'GET' && url.pathname.startsWith('/api/schedule/')) {
       if (!options.notificationAPI) {
-        res.writeHead(503, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'Scheduler not enabled' }));
+                sendError(res, 503, 'Scheduler not enabled');
         return;
       }
 
       const id = parseInt(url.pathname.split('/').pop() || '', 10);
       if (isNaN(id)) {
-        res.writeHead(400, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'Invalid notification ID' }));
+                sendError(res, 400, 'Invalid notification ID');
         return;
       }
 
       options.notificationAPI.getNotification(id)
         .then((notification) => {
           if (!notification) {
-            res.writeHead(404, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ error: 'Notification not found' }));
+                        sendError(res, 404, 'Notification not found');
             return;
           }
           res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -851,8 +830,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
         })
         .catch((error) => {
           logger.error('Failed to get notification', { error, requestId, correlationId, id });
-          res.writeHead(500, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: (error as Error).message }));
+                    sendError(res, 500, (error as Error).message);
         });
       return;
     }
@@ -873,8 +851,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
       // Check API key first
       const apiKey = req.headers['x-api-key'] as string | undefined;
       if (!isValidApiKey(apiKey, options.apiKeys)) {
-        res.writeHead(401, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'Unauthorized: Invalid or missing API key' }));
+                sendError(res, 401, 'Unauthorized: Invalid or missing API key');
         return;
       }
 
@@ -917,8 +894,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
         })
         .catch((error) => {
           logger.error('Failed to retrieve notification history', { error, requestId, correlationId });
-          res.writeHead(500, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: (error as Error).message }));
+                    sendError(res, 500, (error as Error).message);
         });
       return;
     }
@@ -970,8 +946,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
         })
         .catch((error) => {
           logger.error('Failed to search notifications', { error, requestId, correlationId });
-          res.writeHead(500, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: (error as Error).message }));
+                    sendError(res, 500, (error as Error).message);
         });
       return;
     }
@@ -995,8 +970,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
         })
         .catch((error) => {
           logger.error('Failed to retrieve search suggestions', { error, requestId, correlationId });
-          res.writeHead(500, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: (error as Error).message }));
+                    sendError(res, 500, (error as Error).message);
         });
       return;
     }
@@ -1004,8 +978,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
     // GET /api/templates
     if (req.method === 'GET' && url.pathname === '/api/templates') {
       if (!options.templateService) {
-        res.writeHead(503, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'Template service not enabled' }));
+                sendError(res, 503, 'Template service not enabled');
         return;
       }
       options.templateService.listAll()
@@ -1015,8 +988,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
         })
         .catch((error) => {
           logger.error('Failed to list templates', { error, requestId, correlationId });
-          res.writeHead(500, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: (error as Error).message }));
+                    sendError(res, 500, (error as Error).message);
         });
       return;
     }
@@ -1025,8 +997,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
     const templateAuditMatch = url.pathname.match(/^\/api\/templates\/([^/]+)\/audit$/);
     if (req.method === 'GET' && templateAuditMatch) {
       if (!options.templateService) {
-        res.writeHead(503, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'Template service not enabled' }));
+                sendError(res, 503, 'Template service not enabled');
         return;
       }
 
@@ -1037,8 +1008,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
         .then(async (records) => {
           const template = await options.templateService!.getById(templateId);
           if (!template && records.length === 0) {
-            res.writeHead(404, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ error: 'Template not found' }));
+                        sendError(res, 404, 'Template not found');
             return;
           }
 
@@ -1050,8 +1020,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
         })
         .catch((error) => {
           logger.error('Failed to load template audit history', { error, requestId, correlationId, templateId });
-          res.writeHead(500, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: (error as Error).message }));
+                    sendError(res, 500, (error as Error).message);
         });
       return;
     }
@@ -1060,8 +1029,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
     const getTemplateMatch = url.pathname.match(/^\/api\/templates\/([^/]+)$/);
     if (req.method === 'GET' && getTemplateMatch) {
       if (!options.templateService) {
-        res.writeHead(503, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'Template service not enabled' }));
+                sendError(res, 503, 'Template service not enabled');
         return;
       }
 
@@ -1071,8 +1039,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
       options.templateService.getById(templateId)
         .then((template) => {
           if (!template) {
-            res.writeHead(404, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ error: 'Template not found' }));
+                        sendError(res, 404, 'Template not found');
             return;
           }
           res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -1080,8 +1047,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
         })
         .catch((error) => {
           logger.error('Failed to load template', { error, requestId, correlationId, templateId });
-          res.writeHead(500, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: (error as Error).message }));
+                    sendError(res, 500, (error as Error).message);
         });
       return;
     }
@@ -1089,8 +1055,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
     // PUT /api/templates/:id
     if (req.method === 'PUT' && getTemplateMatch) {
       if (!options.templateService) {
-        res.writeHead(503, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'Template service not enabled' }));
+                sendError(res, 503, 'Template service not enabled');
         return;
       }
 
@@ -1117,23 +1082,19 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
             res.end(JSON.stringify(serializeTemplate(updated)));
           } catch (error) {
             if (error instanceof SyntaxError) {
-              res.writeHead(400, { 'Content-Type': 'application/json' });
-              res.end(JSON.stringify({ error: 'Invalid JSON' }));
+                            sendError(res, 400, 'Invalid JSON');
               return;
             }
             if (error instanceof TemplateNotFoundError) {
-              res.writeHead(404, { 'Content-Type': 'application/json' });
-              res.end(JSON.stringify({ error: error.message }));
+                            sendError(res, 404, error.message);
               return;
             }
             if (error instanceof TemplateValidationError || (error instanceof Error && error.message.startsWith('Invalid body'))) {
-              res.writeHead(400, { 'Content-Type': 'application/json' });
-              res.end(JSON.stringify({ error: (error as Error).message }));
+                            sendError(res, 400, (error as Error).message);
               return;
             }
             logger.error('Failed to update template', { error, requestId, correlationId, templateId, actor });
-            res.writeHead(500, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ error: (error as Error).message }));
+                        sendError(res, 500, (error as Error).message);
           }
         })();
       });
@@ -1143,8 +1104,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
     // GET /api/templates
     if (req.method === 'GET' && url.pathname === '/api/templates') {
       if (!options.templateService) {
-        res.writeHead(503, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'Template service not enabled' }));
+                sendError(res, 503, 'Template service not enabled');
         return;
       }
 
@@ -1156,8 +1116,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
         })
         .catch((error) => {
           logger.error('Failed to load templates', { error, requestId, correlationId });
-          res.writeHead(500, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: (error as Error).message }));
+                    sendError(res, 500, (error as Error).message);
         });
       return;
     }
@@ -1166,8 +1125,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
     const deleteTemplateMatch = url.pathname.match(/^\/api\/templates\/([^/]+)$/);
     if (req.method === 'DELETE' && deleteTemplateMatch) {
       if (!options.templateService) {
-        res.writeHead(503, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'Template service not enabled' }));
+                sendError(res, 503, 'Template service not enabled');
         return;
       }
 
@@ -1181,13 +1139,11 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
         })
         .catch((error) => {
           if (error instanceof TemplateNotFoundError) {
-            res.writeHead(404, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ error: error.message }));
+                        sendError(res, 404, error.message);
             return;
           }
           logger.error('Failed to delete template', { error, requestId, correlationId, templateId });
-          res.writeHead(500, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: (error as Error).message }));
+                    sendError(res, 500, (error as Error).message);
         });
       return;
     }
@@ -1195,8 +1151,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
     // POST /api/templates
     if (req.method === 'POST' && url.pathname === '/api/templates') {
       if (!options.templateService) {
-        res.writeHead(503, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'Template service not enabled' }));
+                sendError(res, 503, 'Template service not enabled');
         return;
       }
 
@@ -1208,10 +1163,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
           try {
             const parsed = JSON.parse(body) as CreateNotificationTemplateInput;
             if (!parsed?.id || !parsed?.name || !parsed?.type || !parsed?.body) {
-              res.writeHead(400, { 'Content-Type': 'application/json' });
-              res.end(JSON.stringify({
-                error: 'Invalid body: id, name, type, and body are required',
-              }));
+                            sendError(res, 400, 'Invalid body: id, name, type, and body are required',);
               return;
             }
 
@@ -1220,18 +1172,15 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
             res.end(JSON.stringify(serializeTemplate(created)));
           } catch (error) {
             if (error instanceof SyntaxError) {
-              res.writeHead(400, { 'Content-Type': 'application/json' });
-              res.end(JSON.stringify({ error: 'Invalid JSON' }));
+                            sendError(res, 400, 'Invalid JSON');
               return;
             }
             if (error instanceof TemplateValidationError) {
-              res.writeHead(400, { 'Content-Type': 'application/json' });
-              res.end(JSON.stringify({ error: error.message }));
+                            sendError(res, 400, error.message);
               return;
             }
             logger.error('Failed to create template', { error, requestId, correlationId });
-            res.writeHead(500, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ error: (error as Error).message }));
+                        sendError(res, 500, (error as Error).message);
           }
         })();
       });
@@ -1242,8 +1191,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
     const templateRenderMatch = url.pathname.match(/^\/api\/templates\/([^/]+)\/render$/);
     if (req.method === 'POST' && templateRenderMatch) {
       if (!options.templateService) {
-        res.writeHead(503, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'Template service not enabled' }));
+                sendError(res, 503, 'Template service not enabled');
         return;
       }
 
@@ -1258,8 +1206,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
             const parsed = body ? JSON.parse(body) as Record<string, string> : {};
             const template = await options.templateService!.getById(templateId);
             if (!template) {
-              res.writeHead(404, { 'Content-Type': 'application/json' });
-              res.end(JSON.stringify({ error: `Template not found: ${templateId}` }));
+                            sendError(res, 404, `Template not found: ${templateId}`);
               return;
             }
             const rendered = options.templateService!.renderTemplate(template, parsed);
@@ -1267,18 +1214,15 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
             res.end(JSON.stringify(rendered));
           } catch (error) {
             if (error instanceof SyntaxError) {
-              res.writeHead(400, { 'Content-Type': 'application/json' });
-              res.end(JSON.stringify({ error: 'Invalid JSON' }));
+                            sendError(res, 400, 'Invalid JSON');
               return;
             }
             if (error instanceof TemplateRenderError) {
-              res.writeHead(422, { 'Content-Type': 'application/json' });
-              res.end(JSON.stringify({ error: error.message }));
+                            sendError(res, 422, error.message);
               return;
             }
             logger.error('Failed to render template', { error, requestId, correlationId, templateId });
-            res.writeHead(500, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ error: (error as Error).message }));
+                        sendError(res, 500, (error as Error).message);
           }
         })();
       });
@@ -1289,8 +1233,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
     const deleteTemplateMatch = url.pathname.match(/^\/api\/templates\/([^/]+)$/);
     if (req.method === 'DELETE' && deleteTemplateMatch) {
       if (!options.templateService) {
-        res.writeHead(503, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'Template service not enabled' }));
+                sendError(res, 503, 'Template service not enabled');
         return;
       }
 
@@ -1304,13 +1247,11 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
         })
         .catch((error) => {
           if (error instanceof TemplateNotFoundError) {
-            res.writeHead(404, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ error: error.message }));
+                        sendError(res, 404, error.message);
             return;
           }
           logger.error('Failed to delete template', { error, requestId, correlationId, templateId });
-          res.writeHead(500, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: (error as Error).message }));
+                    sendError(res, 500, (error as Error).message);
         });
       return;
     }
@@ -1338,8 +1279,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
           const input: PreferencesUpdateInput = JSON.parse(body);
           if (!input || typeof input.categories !== 'object') {
             logger.warn('PUT /api/preferences/:userId invalid body', { requestId, correlationId, userId });
-            res.writeHead(400, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ error: 'Invalid body: expected { categories: { [key]: boolean } }' }));
+                        sendError(res, 400, 'Invalid body: expected { categories: { [key]: boolean } }');
             return;
           }
           const updated = preferenceStore.update(userId, input);
@@ -1348,8 +1288,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
           res.end(JSON.stringify(updated));
         } catch {
           logger.error('PUT /api/preferences/:userId invalid JSON', { requestId, correlationId, userId });
-          res.writeHead(400, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: 'Invalid JSON' }));
+                    sendError(res, 400, 'Invalid JSON');
         }
       });
       return;
@@ -1369,8 +1308,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
       method: req.method,
       url: req.url,
     });
-    res.writeHead(404, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ error: 'Not found' }));
+        sendError(res, 404, 'Not found');
   });
 
   if (rateLimiter) {
