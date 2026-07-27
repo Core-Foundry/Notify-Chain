@@ -262,6 +262,8 @@ export class NotificationScheduler {
           now,
           missedByMs: timeDiff,
         });
+      }
+
       // Verify payload integrity before executing
       const secret = process.env.PAYLOAD_INTEGRITY_SECRET;
       if (secret) {

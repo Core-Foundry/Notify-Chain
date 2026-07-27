@@ -129,6 +129,9 @@ export class Database {
     }
     
     return statements.filter(s => s.length > 0 && !s.startsWith('--'));
+  }
+
+  /**
    * Apply migrations for databases created before schema.sql was updated in-place.
    */
   private async applyIncrementalMigrations(): Promise<void> {
