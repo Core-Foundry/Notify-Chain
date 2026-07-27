@@ -349,6 +349,13 @@ pub struct NotificationRevoked {
 pub struct BatchProcessingCompleted {
     #[topic]
     pub batch_id: BytesN<32>,
+    #[topic]
+    pub category: NotificationCategory,
+    #[topic]
+    pub priority: NotificationPriority,
+    pub processed_count: u32,
+}
+
 /// Emitted when a scheduled notification's expiry period is extended by an authorized sender.
 #[contractevent(data_format = "single-value")]
 #[derive(Clone)]
@@ -366,11 +373,20 @@ pub struct NotificationExtended {
 
 /// Emitted when a sender's reputation score is updated.
 /// Triggered by successful or failed notification delivery.
-#[contractevent(data_format = "single-value")]
+#[contractevent]
 #[derive(Clone)]
 pub struct ReputationUpdated {
     #[topic]
     pub sender: Address,
+    #[topic]
+    pub category: NotificationCategory,
+    #[topic]
+    pub priority: NotificationPriority,
+    pub new_score: i64,
+    pub successful_count: u32,
+    pub failed_count: u32,
+}
+
 /// Emitted when protocol-level notification limits are configured or updated.
 #[contractevent]
 #[derive(Clone)]
@@ -381,13 +397,14 @@ pub struct NotificationLimitsConfigured {
     pub category: NotificationCategory,
     #[topic]
     pub priority: NotificationPriority,
-    pub new_score: i64,
-    pub successful_count: u32,
-    pub failed_count: u32,
+    pub max_payload_size: u32,
+    pub max_expiration_seconds: u64,
+    pub min_expiration_seconds: u64,
+    pub max_batch_size: u32,
 }
 
 /// Emitted when a sender's reputation tier changes (e.g., from Bronze to Silver).
-#[contractevent(data_format = "single-value")]
+#[contractevent]
 #[derive(Clone)]
 pub struct ReputationTierChanged {
     #[topic]
@@ -399,13 +416,6 @@ pub struct ReputationTierChanged {
     pub old_tier: u32,
     pub new_tier: u32,
     pub reputation_score: i64,
-}
-
-    pub processed_count: u32,
-    pub max_payload_size: u32,
-    pub max_expiration_seconds: u64,
-    pub min_expiration_seconds: u64,
-    pub max_batch_size: u32,
 }
 
 // ============================================================================

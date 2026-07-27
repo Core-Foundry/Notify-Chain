@@ -403,6 +403,8 @@ impl AutoShareContract {
     /// The notification must exist, not already be revoked or expired, and not yet be delivered.
     pub fn recall_notification(env: Env, notification_id: BytesN<32>, caller: Address) {
         autoshare_logic::recall_notification(env, notification_id, caller).unwrap();
+    }
+
     /// Emits a `BatchProcessingCompleted` event for off-chain listeners.
     pub fn emit_batch_completed(env: Env, batch_id: BytesN<32>, processed_count: u32) {
         autoshare_logic::emit_batch_completed(env, batch_id, processed_count).unwrap();
@@ -476,6 +478,8 @@ impl AutoShareContract {
     /// Acknowledges multiple scheduled notifications in a single batch.
     pub fn acknowledge_notifications(env: Env, caller: Address, notification_ids: Vec<BytesN<32>>) {
         autoshare_logic::acknowledge_notifications(env, caller, notification_ids).unwrap();
+    }
+
     /// Extends the expiration period of a scheduled notification by `extension_seconds`.
     ///
     /// Only the notification creator or the contract admin can extend it.
@@ -533,13 +537,13 @@ impl AutoShareContract {
 
     /// Record a successful notification delivery for a sender.
     /// Updates the sender's reputation score based on delivery history.
-    pub fn record_delivery_success(env: Env, sender: Address) {
+    pub fn record_sender_delivery_success(env: Env, sender: Address) {
         reputation_logic::record_successful_delivery(&env, &sender).unwrap();
     }
 
     /// Record a failed notification delivery for a sender.
     /// Decreases the sender's reputation score based on delivery history.
-    pub fn record_delivery_failure(env: Env, sender: Address) {
+    pub fn record_sender_delivery_failure(env: Env, sender: Address) {
         reputation_logic::record_failed_delivery(&env, &sender).unwrap();
     }
 
@@ -659,4 +663,10 @@ mod tests {
 
     #[path = "../tests/access_log_test.rs"]
     mod access_log_test;
+
+    #[path = "../tests/reputation_test.rs"]
+    mod reputation_test;
+
+    #[path = "../tests/batch_event_test.rs"]
+    mod batch_event_test;
 }

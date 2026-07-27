@@ -19,10 +19,16 @@ use soroban_sdk::{Address, BytesN, String, TryFromVal, Vec};
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 
+/// Every event publishes its topics as `[name, ..., category, priority]` (see
+/// `base::events`), so the category is the *second-to-last* topic, not the
+/// last one (that's priority).
 fn last_category(env: &soroban_sdk::Env) -> Option<NotificationCategory> {
     let (_addr, topics, _data) = env.events().all().last()?;
-    let last = topics.last()?;
-    NotificationCategory::try_from_val(env, &last).ok()
+    if topics.len() < 2 {
+        return None;
+    }
+    let category_topic = topics.get(topics.len() - 2)?;
+    NotificationCategory::try_from_val(env, &category_topic).ok()
 }
 
 // ── create: invalid payload — zero usage count ───────────────────────────────
@@ -803,8 +809,8 @@ fn test_reduce_usage_below_zero_is_rejected() {
         &token,
     );
 
-    client.reduce_usage(&id); // consumes the last usage
-    client.reduce_usage(&id); // must panic: NoUsagesRemaining
+    client.reduce_usage(&id, &creator); // consumes the last usage
+    client.reduce_usage(&id, &creator); // must panic: NoUsagesRemaining
 }
 
 /// Reducing usage on a non-existent group must be rejected.
@@ -815,7 +821,7 @@ fn test_reduce_usage_nonexistent_group_is_rejected() {
     let client = AutoShareContractClient::new(&test_env.env, &test_env.autoshare_contract);
 
     let ghost_id = BytesN::from_array(&test_env.env, &[0xBBu8; 32]);
-    client.reduce_usage(&ghost_id);
+    client.reduce_usage(&ghost_id, &test_env.admin);
 }
 
 // ── set_usage_fee: invalid payloads ──────────────────────────────────────────

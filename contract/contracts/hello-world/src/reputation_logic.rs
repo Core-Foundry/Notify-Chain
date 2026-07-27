@@ -1,18 +1,15 @@
 use crate::base::events::{NotificationCategory, NotificationPriority, ReputationUpdated, ReputationTierChanged};
-use crate::base::reputation::{SenderReputation, INITIAL_REPUTATION_SCORE};
-use soroban_sdk::{Address, Env, Symbol, storage::Persistent, String as SorobanString, Error};
+use crate::base::reputation::SenderReputation;
+use soroban_sdk::{Address, Env, Symbol, Error};
 
-const REPUTATION_KEY_PREFIX: &str = "reputation_";
-
-/// Get the storage key for a sender's reputation.
-fn reputation_key(sender: &Address) -> SorobanString {
-    let key_str = format!("{}{}", REPUTATION_KEY_PREFIX, sender);
-    SorobanString::from_small_str(&key_str)
+/// Build the persistent storage key for a sender's reputation record.
+fn reputation_key(env: &Env, sender: &Address) -> (Symbol, Address) {
+    (Symbol::new(env, "reputation"), sender.clone())
 }
 
 /// Initialize or get a sender's reputation record.
 pub fn get_or_create_reputation(env: &Env, sender: &Address) -> Result<SenderReputation, Error> {
-    let key = reputation_key(sender);
+    let key = reputation_key(env, sender);
 
     match env.storage().persistent().get::<_, SenderReputation>(&key) {
         Some(rep) => Ok(rep),
@@ -37,35 +34,31 @@ pub fn record_successful_delivery(
     let new_tier = reputation.get_tier();
 
     // Save updated reputation
-    let key = reputation_key(sender);
+    let key = reputation_key(env, sender);
     env.storage().persistent().set(&key, &reputation);
 
     // Emit reputation update event
-    env.events().publish(
-        ("rep_update",),
-        ReputationUpdated {
-            sender: sender.clone(),
-            category: NotificationCategory::Notification,
-            priority: NotificationPriority::Medium,
-            new_score: reputation.reputation_score,
-            successful_count: reputation.successful_deliveries,
-            failed_count: reputation.failed_deliveries,
-        },
-    );
+    ReputationUpdated {
+        sender: sender.clone(),
+        category: NotificationCategory::Notification,
+        priority: NotificationPriority::Medium,
+        new_score: reputation.reputation_score,
+        successful_count: reputation.successful_deliveries,
+        failed_count: reputation.failed_deliveries,
+    }
+    .publish(env);
 
     // Emit tier change event if tier changed
     if old_tier != new_tier {
-        env.events().publish(
-            ("rep_tier_change",),
-            ReputationTierChanged {
-                sender: sender.clone(),
-                category: NotificationCategory::Notification,
-                priority: NotificationPriority::High,
-                old_tier: old_tier as u32,
-                new_tier: new_tier as u32,
-                reputation_score: reputation.reputation_score,
-            },
-        );
+        ReputationTierChanged {
+            sender: sender.clone(),
+            category: NotificationCategory::Notification,
+            priority: NotificationPriority::High,
+            old_tier: old_tier as u32,
+            new_tier: new_tier as u32,
+            reputation_score: reputation.reputation_score,
+        }
+        .publish(env);
     }
 
     Ok(())
@@ -84,35 +77,31 @@ pub fn record_failed_delivery(
     let new_tier = reputation.get_tier();
 
     // Save updated reputation
-    let key = reputation_key(sender);
+    let key = reputation_key(env, sender);
     env.storage().persistent().set(&key, &reputation);
 
     // Emit reputation update event
-    env.events().publish(
-        ("rep_update",),
-        ReputationUpdated {
-            sender: sender.clone(),
-            category: NotificationCategory::Notification,
-            priority: NotificationPriority::Medium,
-            new_score: reputation.reputation_score,
-            successful_count: reputation.successful_deliveries,
-            failed_count: reputation.failed_deliveries,
-        },
-    );
+    ReputationUpdated {
+        sender: sender.clone(),
+        category: NotificationCategory::Notification,
+        priority: NotificationPriority::Medium,
+        new_score: reputation.reputation_score,
+        successful_count: reputation.successful_deliveries,
+        failed_count: reputation.failed_deliveries,
+    }
+    .publish(env);
 
     // Emit tier change event if tier changed
     if old_tier != new_tier {
-        env.events().publish(
-            ("rep_tier_change",),
-            ReputationTierChanged {
-                sender: sender.clone(),
-                category: NotificationCategory::Notification,
-                priority: NotificationPriority::High,
-                old_tier: old_tier as u32,
-                new_tier: new_tier as u32,
-                reputation_score: reputation.reputation_score,
-            },
-        );
+        ReputationTierChanged {
+            sender: sender.clone(),
+            category: NotificationCategory::Notification,
+            priority: NotificationPriority::High,
+            old_tier: old_tier as u32,
+            new_tier: new_tier as u32,
+            reputation_score: reputation.reputation_score,
+        }
+        .publish(env);
     }
 
     Ok(())
@@ -137,14 +126,23 @@ pub fn get_reputation_tier(env: &Env, sender: &Address) -> Result<u32, Error> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::reputation_key;
+    use soroban_sdk::{testutils::Address as _, Address, Env};
 
-    // Note: Full contract testing requires soroban testing framework
-    // These are placeholder tests for documentation
     #[test]
-    fn test_reputation_key_generation() {
-        // Test that reputation keys are generated consistently
-        let addr_str = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF";
-        // Key should be formatted as "reputation_<address>"
+    fn test_reputation_key_is_stable_per_sender() {
+        let env = Env::default();
+        let sender = Address::generate(&env);
+
+        assert_eq!(reputation_key(&env, &sender), reputation_key(&env, &sender));
+    }
+
+    #[test]
+    fn test_reputation_key_differs_across_senders() {
+        let env = Env::default();
+        let sender_a = Address::generate(&env);
+        let sender_b = Address::generate(&env);
+
+        assert_ne!(reputation_key(&env, &sender_a), reputation_key(&env, &sender_b));
     }
 }

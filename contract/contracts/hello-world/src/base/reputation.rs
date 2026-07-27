@@ -1,4 +1,4 @@
-use soroban_sdk::{contracttype, Address, Env};
+use soroban_sdk::{contracttype, Address};
 
 /// Sender reputation score and metrics.
 ///
@@ -59,7 +59,11 @@ pub fn calculate_reputation_score(successful: u32, failed: u32) -> i64 {
     }
 
     let success_rate = (successful as f64 / total as f64) * 100.0;
-    let score = (success_rate / 2.0) as i64 + 25;
+    // Quadratic curve: a sender's score is disproportionately punished for a
+    // low success rate (e.g. 50% success only yields a score of 25, not 50),
+    // so the tier system rewards consistent reliability rather than a merely
+    // average delivery record.
+    let score = ((success_rate * success_rate) / 100.0) as i64;
 
     // Clamp score to valid range
     if score > MAX_REPUTATION_SCORE {
@@ -126,6 +130,7 @@ impl SenderReputation {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use soroban_sdk::{testutils::Address as _, Env};
 
     #[test]
     fn test_reputation_tier_classification() {
@@ -156,7 +161,8 @@ mod tests {
 
     #[test]
     fn test_sender_reputation_tracking() {
-        let sender = Address::random(&Default::default());
+        let env = Env::default();
+        let sender = Address::generate(&env);
         let mut rep = SenderReputation::new(sender.clone(), 1000);
 
         assert_eq!(rep.reputation_score, INITIAL_REPUTATION_SCORE);

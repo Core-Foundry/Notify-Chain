@@ -1,25 +1,12 @@
 use crate::base::errors::Error;
 use crate::base::events::{
-    AdminTransferred, AuthorizationFailure, AutoshareCreated, AutoshareUpdated, CategoryRegistered,
-    ContractPaused, ContractUnpaused, GroupActivated, GroupDeactivated, NotificationCategory,
-    NotificationDelivered, NotificationExpired, NotificationExtended, NotificationLimitsConfigured,
-    NotificationPriority, NotificationRecalled, NotificationRevoked, NotificationScheduled,
-    ScheduledNotificationCancelled, Withdrawal,
-    AdminTransferred, AuthorizationFailure, AutoshareCreated, AutoshareUpdated, ContractPaused,
-    ContractUnpaused, GroupActivated, GroupDeactivated, NotificationAcknowledged,
-    NotificationCategory, NotificationExpired, NotificationPriority, NotificationRevoked,
-    NotificationScheduled, ScheduledNotificationCancelled, Withdrawal,
     AdminTransferred, AuditAction, AuditRecordAppended, AuthorizationFailure, AutoshareCreated,
-    AutoshareUpdated, BatchNotificationsCreated, CategoryRegistered, ContractPaused,
-    ContractUnpaused, GroupActivated, GroupDeactivated, NotificationCategory, NotificationExpired,
-    NotificationPriority, NotificationRevoked, NotificationScheduled,
-    NotificationExtended, NotificationPriority, NotificationRevoked, NotificationScheduled,
-    ScheduledNotificationCancelled, Withdrawal,
-    NotificationPriority, NotificationRevoked, NotificationScheduled, ScheduledNotificationCancelled,
-    Withdrawal, BatchProcessingCompleted,
-    NotificationExtended, NotificationLimitsConfigured, NotificationPriority, NotificationRevoked,
-    NotificationScheduled, ScheduledNotificationCancelled, Withdrawal,
-    SchemaVersionSet, NotificationAccessed,
+    AutoshareUpdated, BatchNotificationsCreated, BatchProcessingCompleted, CategoryRegistered,
+    ContractPaused, ContractUnpaused, GroupActivated, GroupDeactivated, NotificationAccessed,
+    NotificationAcknowledged, NotificationCategory, NotificationDelivered, NotificationExpired,
+    NotificationExtended, NotificationLimitsConfigured, NotificationPriority, NotificationRecalled,
+    NotificationRevoked, NotificationScheduled, SchemaVersionSet, ScheduledNotificationCancelled,
+    Withdrawal,
 };
 use crate::base::types::{
     AuditRecord, AutoShareDetails, GroupMember, NotificationLimits, PaymentHistory,
@@ -264,7 +251,7 @@ pub fn add_group_member(
 
     // Add new member
     details.members.push_back(GroupMember {
-        address: member_address.clone(),
+        address: address.clone(),
         percentage,
     });
 
@@ -281,7 +268,7 @@ pub fn add_group_member(
         .get(&members_key)
         .unwrap_or(Vec::new(&env));
     stored_members.push_back(GroupMember {
-        address: member_address,
+        address,
         percentage,
     });
     env.storage()
@@ -1271,6 +1258,10 @@ pub fn batch_schedule_notifications(
             expires_at,
             revoked_by: None,
             revoked_at: None,
+            delivered: false,
+            delivered_at: None,
+            recalled_by: None,
+            recalled_at: None,
             title,
         };
         let key = DataKey::ScheduledNotification(id.clone());
@@ -1611,27 +1602,6 @@ pub fn acknowledge_notifications(
     env: Env,
     caller: Address,
     notification_ids: Vec<BytesN<32>>,
-/// Emits a `BatchProcessingCompleted` event for off-chain consumers.
-pub fn emit_batch_completed(env: Env, batch_id: BytesN<32>, processed_count: u32) -> Result<(), Error> {
-    BatchProcessingCompleted {
-        batch_id,
-        category: NotificationCategory::Notification,
-        priority: NotificationPriority::Medium,
-        processed_count,
-    }
-    .publish(&env);
-    Ok(())
-}
-/// Extends the expiration period of a scheduled notification by `extension_seconds`.
-///
-/// Only authorized callers (the notification creator or the contract admin) can
-/// extend a notification. The notification must exist, not already be revoked,
-/// and not have expired. Emits a [`NotificationExtended`] event.
-pub fn extend_notification_expiry(
-    env: Env,
-    notification_id: BytesN<32>,
-    caller: Address,
-    extension_seconds: u64,
 ) -> Result<(), Error> {
     caller.require_auth();
 
@@ -1665,6 +1635,39 @@ pub fn extend_notification_expiry(
         }
         .publish(&env);
     }
+
+    Ok(())
+}
+
+/// Emits a `BatchProcessingCompleted` event for off-chain consumers.
+pub fn emit_batch_completed(env: Env, batch_id: BytesN<32>, processed_count: u32) -> Result<(), Error> {
+    BatchProcessingCompleted {
+        batch_id,
+        category: NotificationCategory::Notification,
+        priority: NotificationPriority::Medium,
+        processed_count,
+    }
+    .publish(&env);
+    Ok(())
+}
+
+/// Extends the expiration period of a scheduled notification by `extension_seconds`.
+///
+/// Only authorized callers (the notification creator or the contract admin) can
+/// extend a notification. The notification must exist, not already be revoked,
+/// and not have expired. Emits a [`NotificationExtended`] event.
+pub fn extend_notification_expiry(
+    env: Env,
+    notification_id: BytesN<32>,
+    caller: Address,
+    extension_seconds: u64,
+) -> Result<(), Error> {
+    caller.require_auth();
+
+    if get_paused_status(&env) {
+        return Err(Error::ContractPaused);
+    }
+
     if extension_seconds == 0 {
         return Err(Error::InvalidExpirationDuration);
     }
