@@ -1,4 +1,4 @@
-import { BatchValidator } from './batch-validator';
+import { BatchValidator, validateChannelName } from './batch-validator';
 import { BatchValidationService } from '../services/batch-validation-service';
 
 describe('BatchValidator', () => {
@@ -46,9 +46,19 @@ describe('BatchValidator', () => {
   });
 
   it('rejects unsupported channels', () => {
-    const result = BatchValidator.validateBatch([{ ...validItem, channel: 'telegram' }]);
+    const result = BatchValidator.validateBatch([{ ...validItem, channel: 'telegram' as any }]);
     expect(result.isValid).toBe(false);
     expect(result.errors[0].code).toBe('INVALID_CHANNEL');
+  });
+
+  it('rejects empty and whitespace-only channel names', () => {
+    const resultEmpty = BatchValidator.validateBatch([{ ...validItem, channel: '' as any }]);
+    expect(resultEmpty.isValid).toBe(false);
+    expect(resultEmpty.errors.some((e) => e.field === 'channel' && e.code === 'EMPTY_CHANNEL_NAME')).toBe(true);
+
+    const resultWhitespace = BatchValidator.validateBatch([{ ...validItem, channel: '   ' as any }]);
+    expect(resultWhitespace.isValid).toBe(false);
+    expect(resultWhitespace.errors.some((e) => e.field === 'channel' && e.code === 'EMPTY_CHANNEL_NAME')).toBe(true);
   });
 
   it('rejects empty string fields', () => {
@@ -77,3 +87,52 @@ describe('BatchValidationService', () => {
     });
   });
 });
+
+describe('validateChannelName', () => {
+  it('accepts valid channels', () => {
+    expect(validateChannelName('discord')).toEqual({ valid: true });
+    expect(validateChannelName('webhook')).toEqual({ valid: true });
+    expect(validateChannelName('email')).toEqual({ valid: true });
+    expect(validateChannelName('sms')).toEqual({ valid: true });
+  });
+
+  it('rejects undefined, null, or empty channel name', () => {
+    expect(validateChannelName(undefined)).toEqual({
+      valid: false,
+      code: 'EMPTY_CHANNEL_NAME',
+      message: expect.stringContaining('must not be empty'),
+    });
+    expect(validateChannelName(null)).toEqual({
+      valid: false,
+      code: 'EMPTY_CHANNEL_NAME',
+      message: expect.stringContaining('must not be empty'),
+    });
+    expect(validateChannelName('')).toEqual({
+      valid: false,
+      code: 'EMPTY_CHANNEL_NAME',
+      message: expect.stringContaining('must not be empty'),
+    });
+  });
+
+  it('rejects whitespace-only channel name', () => {
+    expect(validateChannelName('   ')).toEqual({
+      valid: false,
+      code: 'EMPTY_CHANNEL_NAME',
+      message: expect.stringContaining('whitespace-only'),
+    });
+  });
+
+  it('rejects unsupported channel types', () => {
+    expect(validateChannelName('telegram')).toEqual({
+      valid: false,
+      code: 'INVALID_CHANNEL',
+      message: expect.stringContaining('not supported'),
+    });
+    expect(validateChannelName(123)).toEqual({
+      valid: false,
+      code: 'INVALID_CHANNEL',
+      message: expect.stringContaining('must be a string'),
+    });
+  });
+});
+
