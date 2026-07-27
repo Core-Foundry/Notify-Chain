@@ -10,7 +10,6 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 const WALLET_ID_KEY = 'notify-chain:wallet-id';
-const WALLET_ADDRESS_KEY = 'notify-chain:wallet-address';
 const REPORT_PATH = path.join(process.cwd(), 'reports', 'wallet-integration.json');
 
 type KitMock = typeof import('../test/stellarWalletsKitMock');

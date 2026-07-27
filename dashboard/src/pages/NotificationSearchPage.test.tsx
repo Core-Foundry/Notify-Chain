@@ -1,35 +1,3 @@
-import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
-import { NotificationSearchPage } from './NotificationSearchPage';
-import * as eventsApi from '../services/eventsApi';
-
-jest.mock('../services/eventsApi', () => {
-  const actual = jest.requireActual('../services/eventsApi') as typeof import('../services/eventsApi');
-  return {
-    ...actual,
-    searchNotifications: jest.fn(),
-  };
-});
-
-const searchNotifications = eventsApi.searchNotifications as jest.MockedFunction<
-  typeof eventsApi.searchNotifications
->;
-
-function emptyResponse(): eventsApi.NotificationSearchResponse {
-  return {
-    results: [],
-    total: 0,
-    limit: 20,
-    offset: 0,
-    itemCount: 0,
-    totalPages: 0,
-  };
-}
-
-describe('NotificationSearchPage filters', () => {
-  beforeEach(() => {
-    jest.useFakeTimers();
-    searchNotifications.mockReset();
-    searchNotifications.mockResolvedValue(emptyResponse());
 import '@testing-library/jest-dom';
 import { render, screen, waitFor, fireEvent, act } from '@testing-library/react';
 import { NotificationSearchPage } from './NotificationSearchPage';
@@ -63,6 +31,17 @@ const mockResult: NotificationSearchResponse = {
   itemCount: 1,
   totalPages: 1,
 };
+
+function emptyResponse(): NotificationSearchResponse {
+  return {
+    results: [],
+    total: 0,
+    limit: 20,
+    offset: 0,
+    itemCount: 0,
+    totalPages: 0,
+  };
+}
 
 describe('NotificationSearchPage loading skeletons', () => {
   beforeEach(() => {
@@ -121,7 +100,7 @@ describe('NotificationSearchPage loading skeletons', () => {
   });
 
   it('updates results when filters change', async () => {
-    searchNotifications.mockResolvedValue({
+    mockedSearch.mockResolvedValue({
       results: [
         {
           id: 1,
@@ -182,42 +161,7 @@ describe('NotificationSearchPage loading skeletons', () => {
     expect(screen.getByLabelText(/filter from date/i)).toHaveValue('');
     expect(screen.queryByRole('button', { name: /clear all filters/i })).not.toBeInTheDocument();
   });
-});
 
-describe('searchNotifications query params', () => {
-  const originalFetch = global.fetch;
-
-  beforeEach(() => {
-    global.fetch = jest.fn().mockResolvedValue({
-      ok: true,
-      json: async () => emptyResponse(),
-    });
-  });
-
-  afterEach(() => {
-    global.fetch = originalFetch;
-  });
-
-  it('appends type, status, startDate, and endDate to the URL', async () => {
-    // Use the real implementation (not the page mock)
-    const { searchNotifications: realSearch } = jest.requireActual(
-      '../services/eventsApi'
-    ) as typeof import('../services/eventsApi');
-
-    await realSearch('http://localhost:8787', {
-      type: 'webhook',
-      status: 'COMPLETED',
-      startDate: '2026-01-01',
-      endDate: '2026-01-31',
-    });
-
-    expect(global.fetch).toHaveBeenCalledWith(
-      expect.stringContaining('type=webhook')
-    );
-    const calledUrl = (global.fetch as jest.Mock).mock.calls[0][0] as string;
-    expect(calledUrl).toContain('status=COMPLETED');
-    expect(calledUrl).toContain('startDate=2026-01-01');
-    expect(calledUrl).toContain('endDate=2026-01-31');
   it('shows result-card skeletons while searching and hides Searching text', async () => {
     mockedSearch.mockReturnValue(new Promise(() => {}));
 
@@ -272,5 +216,41 @@ describe('searchNotifications query params', () => {
     expect(screen.getByText(/1 result/i)).toBeInTheDocument();
     expect(screen.getByText('evt-abc')).toBeInTheDocument();
     expect(document.querySelector('.notif-result-card__status')).toHaveTextContent('PENDING');
+  });
+});
+
+describe('searchNotifications query params', () => {
+  const originalFetch = global.fetch;
+
+  beforeEach(() => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      json: async () => emptyResponse(),
+    });
+  });
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+  });
+
+  it('appends type, status, startDate, and endDate to the URL', async () => {
+    const { searchNotifications: realSearch } = jest.requireActual(
+      '../services/eventsApi'
+    ) as typeof import('../services/eventsApi');
+
+    await realSearch('http://localhost:8787', {
+      type: 'webhook',
+      status: 'COMPLETED',
+      startDate: '2026-01-01',
+      endDate: '2026-01-31',
+    });
+
+    expect(global.fetch).toHaveBeenCalledWith(
+      expect.stringContaining('type=webhook')
+    );
+    const calledUrl = (global.fetch as jest.Mock).mock.calls[0][0] as string;
+    expect(calledUrl).toContain('status=COMPLETED');
+    expect(calledUrl).toContain('startDate=2026-01-01');
+    expect(calledUrl).toContain('endDate=2026-01-31');
   });
 });

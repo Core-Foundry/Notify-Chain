@@ -2,7 +2,6 @@ import { useState, useCallback, useEffect, useRef } from 'react';
 import { NotificationSearchSkeleton } from '../components/NotificationSearchSkeleton';
 import { getEventsApiBaseUrl } from '../config/eventsApiUrl';
 import { useDebounce } from '../hooks/useDebounce';
-import { getEventsApiBaseUrl } from '../config/eventsApiUrl';
 import {
   searchNotifications,
   type NotificationSearchResult,
@@ -31,9 +30,6 @@ export const NOTIFICATION_TYPE_OPTIONS = [
   { value: 'webhook', label: 'Webhook' },
   { value: 'sms', label: 'SMS' },
 ];
-const API_BASE = getEventsApiBaseUrl();
-
-const STATUS_OPTIONS = ['', 'PENDING', 'PROCESSING', 'COMPLETED', 'FAILED', 'CANCELLED', 'PROCESSED'];
 
 export function NotificationSearchPage() {
   const [query, setQuery] = useState('');
