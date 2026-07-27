@@ -2,6 +2,8 @@
 
 Base URL: `http://localhost:8787` (configured via `EVENTS_API_PORT`)
 
+For a centralized list of API errors, causes, examples, and troubleshooting steps, see [API_ERROR_REFERENCE.md](./API_ERROR_REFERENCE.md).
+
 ---
 
 ## Events
@@ -147,6 +149,8 @@ If `userId` is omitted, the `"global"` user's preferences are applied.
 
 Schedules a notification for future delivery.
 
+> **Payload size limit**: The `payload` object is serialised to JSON before storage. The resulting byte length must not exceed the configured maximum (default **64 KB / 65 536 bytes**). Oversized payloads are rejected with HTTP `413`. Override the limit at runtime with the `MAX_PAYLOAD_SIZE_BYTES` environment variable.
+
 **Request Body**
 
 ```json
@@ -166,7 +170,7 @@ Schedules a notification for future delivery.
 | Field             | Type     | Required | Description                                              |
 |-------------------|----------|----------|----------------------------------------------------------|
 | executeAt         | string   | Yes      | ISO 8601 datetime — when to deliver the notification     |
-| payload           | object   | Yes      | Arbitrary data forwarded to the notification handler     |
+| payload           | object   | Yes      | Arbitrary data forwarded to the notification handler. Serialised JSON must not exceed `MAX_PAYLOAD_SIZE_BYTES` (default 64 KB). |
 | targetRecipient   | string   | Yes      | Delivery target (e.g. Discord webhook URL)               |
 | notificationType  | string   | No       | `"discord"` (default)                                    |
 | maxRetries        | number   | No       | Override max retry count                                 |
@@ -191,6 +195,12 @@ Schedules a notification for future delivery.
 
 ```json
 { "error": "executeAt is not a valid date" }
+```
+
+**Response `413`** — payload exceeds the maximum allowed size
+
+```json
+{ "error": "Notification payload is too large: 70000 bytes exceeds the 65536-byte limit. Reduce the payload size and retry." }
 ```
 
 **Response `500`** — internal scheduling failure
@@ -303,7 +313,8 @@ Returns paginated delivery execution records from `notification_execution_log`.
 | Name      | Type   | Required | Description                                                       |
 |-----------|--------|----------|-------------------------------------------------------------------|
 | limit     | number | No       | Maximum records per page (default `20`, max `100`)                |
-| offset    | number | No       | Number of records to skip (default `0`)                           |
+| offset    | number | No       | Number of records to skip (default `0`). Prefer `cursor`.         |
+| cursor    | string | No       | Opaque token for cursor-based pagination                          |
 | status    | string | No       | Filter by execution status: `SUCCESS`, `FAILED`, or `RETRY`       |
 | startDate | string | No       | ISO 8601 lower bound on `execution_time` (inclusive)              |
 | endDate   | string | No       | ISO 8601 upper bound on `execution_time` (inclusive)              |
@@ -327,7 +338,8 @@ Returns paginated delivery execution records from `notification_execution_log`.
   "itemCount": 5,
   "totalPages": 3,
   "limit": 2,
-  "offset": 0
+  "offset": 0,
+  "nextCursor": "MjAyNC0wNi0yMFQxNTowMDowMC4wMDBaLDQy"
 }
 ```
 
@@ -339,6 +351,7 @@ Returns paginated delivery execution records from `notification_execution_log`.
 | totalPages  | number | Total pages available at the requested `limit` (`0` when `itemCount` is `0`) |
 | limit       | number | Effective page size applied to the query                                    |
 | offset      | number | Number of records skipped before this page                                  |
+| nextCursor  | string | Opaque token to fetch the next page of results                              |
 
 Existing clients that read `total`, `limit`, `offset`, and `records` continue to work unchanged. New clients should prefer `itemCount` and `totalPages` for pagination UI.
 
@@ -527,12 +540,13 @@ Returns the operational status of all service dependencies.
   "services": {
     "stellarRpc": { "status": "ok", "latencyMs": 42 },
     "discord": { "status": "ok", "latencyMs": 87 },
+    "database": { "status": "ok", "latencyMs": 3 },
     "eventRegistry": { "status": "ok", "eventCount": 128 }
   }
 }
 ```
 
-`status` is `"degraded"` when Discord is unreachable but Stellar RPC is healthy:
+`status` is `"degraded"` when Discord is unreachable but Stellar RPC and the database are healthy:
 
 ```json
 {
@@ -541,12 +555,13 @@ Returns the operational status of all service dependencies.
   "services": {
     "stellarRpc": { "status": "ok", "latencyMs": 38 },
     "discord": { "status": "error", "latencyMs": 5001, "detail": "HTTP 401" },
+    "database": { "status": "ok", "latencyMs": 2 },
     "eventRegistry": { "status": "ok", "eventCount": 128 }
   }
 }
 ```
 
-**Response `503`** — Stellar RPC is unreachable
+**Response `503`** — Stellar RPC or the SQLite database is unreachable
 
 ```json
 {
@@ -555,6 +570,7 @@ Returns the operational status of all service dependencies.
   "services": {
     "stellarRpc": { "status": "error", "latencyMs": 5001, "detail": "Health check timed out" },
     "discord": { "status": "ok", "latencyMs": 65 },
+    "database": { "status": "ok", "latencyMs": 2 },
     "eventRegistry": { "status": "ok", "eventCount": 128 }
   }
 }

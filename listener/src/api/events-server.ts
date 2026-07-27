@@ -6,9 +6,13 @@ import { PreferencesUpdateInput } from '../types/preferences';
 import { NotificationAPI } from '../services/notification-api';
 import { NotificationType } from '../types/scheduled-notification';
 import logger from '../utils/logger';
+import { generateRequestId } from '../utils/request-id';
+import { TemplateService } from '../services/template-service';
+import { handleTemplateRoutes } from './template-routes';
 import { generateRequestId, resolveCorrelationId } from '../utils/request-id';
 import { NotificationHistoryService } from '../services/notification-history';
 import { SearchSuggestionService } from '../services/search-suggestion';
+import { NotificationSearchService } from '../services/notification-search-service';
 import {
   verifySignature,
   extractSignature,
@@ -19,6 +23,7 @@ import {
 } from '../services/webhook-verifier';
 import { WebhookSecret, RateLimitConfig, ContractConfig } from '../types';
 import { RateLimiter } from './rate-limiter';
+import { getDatabase } from '../database/database';
 import {
   getNotificationAnalyticsAggregator,
   NotificationAnalyticsAggregator,
@@ -28,6 +33,9 @@ import {
   TemplateNotFoundError,
   TemplateValidationError,
 } from '../services/notification-template-repository';
+import {
+  TemplateRenderError,
+} from '../services/notification-template-service';
 import {
   parseTemplateUpdateBody,
   resolveRequestActor,
@@ -40,16 +48,19 @@ import { handleArchiveRequest } from './archive-api';
 import { ArchiveStore } from '../services/archive-store';
 import { ArchiveService } from '../services/archive-service';
 import { NotificationMetricsStore } from '../services/notification-metrics-store';
+import { NotificationHealthMonitor } from '../services/notification-health-monitor';
 
 export interface EventsServerOptions {
   port: number;
   corsOrigin?: string;
   stellarRpcUrl: string;
-  stellarNetworkPassphrase: string;
-  contractAddresses: ContractConfig[];
+  stellarNetworkPassphrase?: string;
+  contractAddresses?: ContractConfig[];
   discordWebhookUrl?: string;
   webhookSecrets?: WebhookSecret[];
+  apiKeys?: Array<{ key: string; name?: string }>;
   notificationAPI?: NotificationAPI | null;
+  templateService?: TemplateService | null;
   rateLimit?: RateLimitConfig;
   /**
    * Optional override for the analytics aggregator. Tests use this to inject
@@ -66,6 +77,8 @@ export interface EventsServerOptions {
   metricsStore?: NotificationMetricsStore | null;
   /** Maximum age of signed requests in seconds (default: 300 = 5 minutes). */
   signatureExpirationSeconds?: number;
+  /** Optional health monitor — exposes its last report at GET /api/notifications/health. */
+  healthMonitor?: NotificationHealthMonitor | null;
 }
 
 type ServiceStatus = 'ok' | 'error' | 'not_configured';
@@ -82,6 +95,7 @@ interface HealthResponse {
   services: {
     stellarRpc: ServiceHealth;
     discord: ServiceHealth;
+    database: ServiceHealth;
     eventRegistry: { status: ServiceStatus; eventCount: number };
   };
 }
@@ -158,6 +172,28 @@ export async function checkDiscord(webhookUrl: string): Promise<ServiceHealth> {
   }
 }
 
+export async function checkDatabase(): Promise<ServiceHealth> {
+  const start = Date.now();
+  try {
+    const db = getDatabase();
+    if (!db.isConnected()) {
+      return {
+        status: 'error',
+        latencyMs: Date.now() - start,
+        detail: 'Database not initialized',
+      };
+    }
+    await withTimeout(db.get('SELECT 1 AS ok'), HEALTH_TIMEOUT_MS);
+    return { status: 'ok', latencyMs: Date.now() - start };
+  } catch (err) {
+    return {
+      status: 'error',
+      latencyMs: Date.now() - start,
+      detail: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
 async function getContractPauseStatus(
   contractAddress: string,
   stellarRpcUrl: string
@@ -214,8 +250,19 @@ async function buildStatusResponse(options: EventsServerOptions): Promise<{
   }>;
   timestamp: string;
 }> {
+  const contractStatuses = options.contractAddresses 
+    ? await Promise.all(
+        options.contractAddresses.map(async (contractConfig) => {
+          const status = await getContractPauseStatus(contractConfig.address, options.stellarRpcUrl);
+          return {
+            address: contractConfig.address,
+            ...status
+          };
+        })
+      )
+    : [];
   const contractStatuses = await Promise.all(
-    options.contractAddresses.map(async (contractConfig) => {
+    (options.contractAddresses ?? []).map(async (contractConfig) => {
       const status = await getContractPauseStatus(contractConfig.address, options.stellarRpcUrl);
       return {
         address: contractConfig.address,
@@ -309,11 +356,12 @@ function deriveIndexingStatus(args: {
 }
 
 async function buildHealthResponse(options: EventsServerOptions): Promise<HealthResponse> {
-  const [stellarRpc, discord] = await Promise.all([
+  const [stellarRpc, discord, database] = await Promise.all([
     checkStellarRpc(options.stellarRpcUrl),
     options.discordWebhookUrl
       ? checkDiscord(options.discordWebhookUrl)
       : Promise.resolve<ServiceHealth>({ status: 'not_configured' }),
+    checkDatabase(),
   ]);
 
   const eventRegistryHealth = {
@@ -322,7 +370,7 @@ async function buildHealthResponse(options: EventsServerOptions): Promise<Health
   };
 
   let overallStatus: HealthResponse['status'];
-  if (stellarRpc.status === 'error') {
+  if (stellarRpc.status === 'error' || database.status === 'error') {
     overallStatus = 'error';
   } else if (discord.status === 'error') {
     overallStatus = 'degraded';
@@ -336,6 +384,7 @@ async function buildHealthResponse(options: EventsServerOptions): Promise<Health
     services: {
       stellarRpc,
       discord,
+      database,
       eventRegistry: eventRegistryHealth,
     },
   };
@@ -349,6 +398,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
   const corsOrigin = options.corsOrigin ?? 'http://localhost:5173';
   const historyService = new NotificationHistoryService();
   const suggestionService = new SearchSuggestionService();
+  const notificationSearchService = new NotificationSearchService();
   const rateLimiter = options.rateLimit ? new RateLimiter(options.rateLimit) : undefined;
 
   const server = http.createServer(async (req, res) => {
@@ -357,6 +407,8 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
     const startTime = Date.now();
 
     res.setHeader('Access-Control-Allow-Origin', corsOrigin);
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-API-Key, Authorization, X-Correlation-Id');
     res.setHeader('X-Request-Id', requestId);
@@ -378,6 +430,23 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
     if (req.method === 'OPTIONS') {
       res.writeHead(204);
       res.end();
+      return;
+    }
+
+    // Template API routes (handled first for priority)
+    if (options.templateService && req.url?.startsWith('/api/templates')) {
+      handleTemplateRoutes(req, res, requestId, options.templateService)
+        .then((handled) => {
+          if (!handled) {
+            res.writeHead(404, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Not found' }));
+          }
+        })
+        .catch((error) => {
+          logger.error('Template route handler error', { error, requestId });
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Internal server error' }));
+        });
       return;
     }
 
@@ -462,6 +531,20 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
 
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(response));
+      return;
+    }
+
+    // GET /api/notifications/health
+    if (req.method === 'GET' && url.pathname === '/api/notifications/health') {
+      const report = options.healthMonitor?.getLastReport() ?? null;
+      if (!report) {
+        res.writeHead(503, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Health monitor not configured or no report yet' }));
+        return;
+      }
+      const httpStatus = report.status === 'unhealthy' ? 503 : report.status === 'degraded' ? 200 : 200;
+      res.writeHead(httpStatus, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(report));
       return;
     }
 
@@ -700,6 +783,18 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
 
           logger.info('Notification scheduled via API', { requestId, correlationId, notificationId, executeAt: data.executeAt });
         } catch (error) {
+          if (error instanceof PayloadTooLargeError) {
+            logger.warn('Payload too large', {
+              error,
+              requestId,
+              correlationId,
+              payloadSizeBytes: error.payloadSizeBytes,
+              maxSizeBytes: error.maxSizeBytes,
+            });
+            res.writeHead(413, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: error.message }));
+            return;
+          }
           logger.error('Failed to schedule notification', { error, requestId, correlationId });
           res.writeHead(500, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ error: (error as Error).message }));
@@ -762,11 +857,31 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
       return;
     }
 
+    function isValidApiKey(apiKey: string | undefined, allowedKeys: Array<{ key: string; name?: string }> | undefined): boolean {
+      if (!allowedKeys || allowedKeys.length === 0) {
+        // If no API keys are configured, allow unauthenticated access is allowed (for backward compatibility)
+        return true;
+      }
+      if (!apiKey) {
+        return false;
+      }
+      return allowedKeys.some(k => k.key === apiKey);
+    }
+
     // Get notification delivery history endpoint
     if (req.method === 'GET' && req.url?.startsWith('/api/notifications/history')) {
+      // Check API key first
+      const apiKey = req.headers['x-api-key'] as string | undefined;
+      if (!isValidApiKey(apiKey, options.apiKeys)) {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Unauthorized: Invalid or missing API key' }));
+        return;
+      }
+
       const url = new URL(req.url, 'http://localhost');
       const limit = url.searchParams.get('limit') ? parseInt(url.searchParams.get('limit')!, 10) : undefined;
       const offset = url.searchParams.get('offset') ? parseInt(url.searchParams.get('offset')!, 10) : undefined;
+      const cursor = url.searchParams.get('cursor') || undefined;
       const status = url.searchParams.get('status') as 'SUCCESS' | 'FAILED' | 'RETRY' | null;
       const startDate = url.searchParams.get('startDate');
       const endDate = url.searchParams.get('endDate');
@@ -776,6 +891,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
         correlationId,
         limit,
         offset,
+        cursor,
         status,
         startDate,
         endDate,
@@ -784,6 +900,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
       historyService.getHistory({
         limit,
         offset,
+        cursor,
         status: status || undefined,
         startDate: startDate || undefined,
         endDate: endDate || undefined,
@@ -800,6 +917,59 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
         })
         .catch((error) => {
           logger.error('Failed to retrieve notification history', { error, requestId, correlationId });
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: (error as Error).message }));
+        });
+      return;
+    }
+
+    // GET /api/notifications/search
+    if (req.method === 'GET' && url.pathname === '/api/notifications/search') {
+      const q = url.searchParams.get('q') ?? undefined;
+      const sender = url.searchParams.get('sender') ?? undefined;
+      const txHash = url.searchParams.get('txHash') ?? undefined;
+      const eventId = url.searchParams.get('eventId') ?? undefined;
+      const status = url.searchParams.get('status') ?? undefined;
+      const type = url.searchParams.get('type') ?? undefined;
+      const startDate = url.searchParams.get('startDate') ?? undefined;
+      const endDate = url.searchParams.get('endDate') ?? undefined;
+      const limit = url.searchParams.get('limit') ? parseInt(url.searchParams.get('limit')!, 10) : undefined;
+      const offset = url.searchParams.get('offset') ? parseInt(url.searchParams.get('offset')!, 10) : undefined;
+
+      logger.info('Handling GET /api/notifications/search', {
+        requestId,
+        correlationId,
+        q,
+        sender,
+        txHash,
+        eventId,
+        status,
+        type,
+        startDate,
+        endDate,
+        limit,
+        offset,
+      });
+
+      notificationSearchService.search({
+        q,
+        sender,
+        txHash,
+        eventId,
+        status,
+        type,
+        startDate,
+        endDate,
+        limit,
+        offset,
+      })
+        .then((result) => {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(result));
+          logger.info('GET /api/notifications/search complete', { requestId, total: result.total, durationMs: Date.now() - startTime });
+        })
+        .catch((error) => {
+          logger.error('Failed to search notifications', { error, requestId, correlationId });
           res.writeHead(500, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ error: (error as Error).message }));
         });
@@ -825,6 +995,26 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
         })
         .catch((error) => {
           logger.error('Failed to retrieve search suggestions', { error, requestId, correlationId });
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: (error as Error).message }));
+        });
+      return;
+    }
+
+    // GET /api/templates
+    if (req.method === 'GET' && url.pathname === '/api/templates') {
+      if (!options.templateService) {
+        res.writeHead(503, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Template service not enabled' }));
+        return;
+      }
+      options.templateService.listAll()
+        .then((templates) => {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(templates.map(serializeTemplate)));
+        })
+        .catch((error) => {
+          logger.error('Failed to list templates', { error, requestId, correlationId });
           res.writeHead(500, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ error: (error as Error).message }));
         });
@@ -950,6 +1140,58 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
       return;
     }
 
+    // GET /api/templates
+    if (req.method === 'GET' && url.pathname === '/api/templates') {
+      if (!options.templateService) {
+        res.writeHead(503, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Template service not enabled' }));
+        return;
+      }
+
+      logger.info('Handling GET /api/templates', { requestId, correlationId });
+      options.templateService.getAll()
+        .then((templates) => {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(templates.map(serializeTemplate)));
+        })
+        .catch((error) => {
+          logger.error('Failed to load templates', { error, requestId, correlationId });
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: (error as Error).message }));
+        });
+      return;
+    }
+
+    // DELETE /api/templates/:id
+    const deleteTemplateMatch = url.pathname.match(/^\/api\/templates\/([^/]+)$/);
+    if (req.method === 'DELETE' && deleteTemplateMatch) {
+      if (!options.templateService) {
+        res.writeHead(503, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Template service not enabled' }));
+        return;
+      }
+
+      const templateId = decodeURIComponent(deleteTemplateMatch[1]);
+      logger.info('Handling DELETE /api/templates/:id', { requestId, correlationId, templateId });
+
+      options.templateService.delete(templateId)
+        .then(() => {
+          res.writeHead(204);
+          res.end();
+        })
+        .catch((error) => {
+          if (error instanceof TemplateNotFoundError) {
+            res.writeHead(404, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: error.message }));
+            return;
+          }
+          logger.error('Failed to delete template', { error, requestId, correlationId, templateId });
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: (error as Error).message }));
+        });
+      return;
+    }
+
     // POST /api/templates
     if (req.method === 'POST' && url.pathname === '/api/templates') {
       if (!options.templateService) {
@@ -993,6 +1235,83 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
           }
         })();
       });
+      return;
+    }
+
+    // POST /api/templates/:id/render
+    const templateRenderMatch = url.pathname.match(/^\/api\/templates\/([^/]+)\/render$/);
+    if (req.method === 'POST' && templateRenderMatch) {
+      if (!options.templateService) {
+        res.writeHead(503, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Template service not enabled' }));
+        return;
+      }
+
+      const templateId = decodeURIComponent(templateRenderMatch[1]);
+      logger.info('Handling POST /api/templates/:id/render', { requestId, correlationId, templateId });
+
+      let body = '';
+      req.on('data', (chunk) => { body += chunk; });
+      req.on('end', () => {
+        void (async () => {
+          try {
+            const parsed = body ? JSON.parse(body) as Record<string, string> : {};
+            const template = await options.templateService!.getById(templateId);
+            if (!template) {
+              res.writeHead(404, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ error: `Template not found: ${templateId}` }));
+              return;
+            }
+            const rendered = options.templateService!.renderTemplate(template, parsed);
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify(rendered));
+          } catch (error) {
+            if (error instanceof SyntaxError) {
+              res.writeHead(400, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ error: 'Invalid JSON' }));
+              return;
+            }
+            if (error instanceof TemplateRenderError) {
+              res.writeHead(422, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ error: error.message }));
+              return;
+            }
+            logger.error('Failed to render template', { error, requestId, correlationId, templateId });
+            res.writeHead(500, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: (error as Error).message }));
+          }
+        })();
+      });
+      return;
+    }
+
+    // DELETE /api/templates/:id
+    const deleteTemplateMatch = url.pathname.match(/^\/api\/templates\/([^/]+)$/);
+    if (req.method === 'DELETE' && deleteTemplateMatch) {
+      if (!options.templateService) {
+        res.writeHead(503, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Template service not enabled' }));
+        return;
+      }
+
+      const templateId = decodeURIComponent(deleteTemplateMatch[1]);
+      logger.info('Handling DELETE /api/templates/:id', { requestId, correlationId, templateId });
+
+      options.templateService.delete(templateId)
+        .then(() => {
+          res.writeHead(204);
+          res.end();
+        })
+        .catch((error) => {
+          if (error instanceof TemplateNotFoundError) {
+            res.writeHead(404, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: error.message }));
+            return;
+          }
+          logger.error('Failed to delete template', { error, requestId, correlationId, templateId });
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: (error as Error).message }));
+        });
       return;
     }
 

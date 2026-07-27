@@ -1,6 +1,6 @@
 # NotifyChain Listener — API Usage Cookbook
 
-> **Companion to [`listener/API.md`](listener/API.md).** The reference
+> **Companion to [`API.md`](API.md).** The reference
 > document lists every endpoint, header, and response shape. This cookbook
 > shows how to combine those endpoints to ship common workflows. Every
 > example is a real `curl` invocation you can paste into a terminal once
@@ -330,7 +330,7 @@ curl -sS -X PUT http://localhost:8787/api/preferences/alice \
 
 > **Note:** this PUT is a *patch*, not a *replace*. Unspecified
 > categories keep their current value. If you need to wipe a user back
-> to defaults, see the [preferences API reference](listener/API.md#put-apipreferencesuserid).
+> to defaults, see the [preferences API reference](API.md#put-apipreferencesuserid).
 
 ---
 
@@ -423,7 +423,7 @@ grep "requestId=$REQ_ID" listener.log
 |------|-------------------------------------------------|-------------------------------------------------|
 | 400  | Missing required field or invalid date format   | Re-read [Workflow 2](#workflow-2--schedule-a-future-notification) request body shape |
 | 401  | Bad HMAC signature or missing X-API-Key         | [Workflow 3 — verify signature](#workflow-3--accept-signed-webhooks) |
-| 404  | Unknown endpoint or notification ID             | Confirm the URL matches [`listener/API.md`](listener/API.md) |
+| 404  | Unknown endpoint or notification ID             | Confirm the URL matches [`API.md`](API.md) |
 | 429  | Rate limit exceeded                             | Back off and retry after `Retry-After` seconds  |
 | 500  | Internal exception (DB lock, panic, etc.)       | Capture `X-Request-Id` and grep listener logs   |
 | 503  | Scheduler disabled, or upstream RPC unreachable | Check `notificationAPI` config / `STELLAR_RPC_URL` |
@@ -507,7 +507,7 @@ curl -sS -X POST http://localhost:8787/api/schedule \
 | Listener logs spam `Webhook missing signature header` | An external system is hitting `/api/webhooks` unsigned | Either configure that system to sign, or block it upstream |
 
 For full schema details and the complete error reference, see
-[`listener/API.md`](listener/API.md).
+[`API.md`](API.md).
 
 ---
 
@@ -551,8 +551,8 @@ For full schema details and the complete error reference, see
 
 ## See also
 
-- [`listener/API.md`](listener/API.md) — full request/response reference for every endpoint
-- [`NOTIFICATION_FAILURE_RECOVERY.md`](NOTIFICATION_FAILURE_RECOVERY.md) — retry lifecycle, configuration, and recovery
-- [`NOTIFICATION_PAYLOAD_SCHEMA.md`](NOTIFICATION_PAYLOAD_SCHEMA.md) — contract event payload shape and interpretation
-- [`SCHEDULED-NOTIFICATIONS-DELIVERY.md`](SCHEDULED-NOTIFICATIONS-DELIVERY.md) — scheduler internals and tuning
-- [`TROUBLESHOOTING.md`](TROUBLESHOOTING.md) — general listener troubleshooting
+- [`API.md`](API.md) — full request/response reference for every endpoint
+- [`../NOTIFICATION_FAILURE_RECOVERY.md`](../NOTIFICATION_FAILURE_RECOVERY.md) — retry lifecycle, configuration, and recovery
+- [`../NOTIFICATION_PAYLOAD_SCHEMA.md`](../NOTIFICATION_PAYLOAD_SCHEMA.md) — notification payload schema and interpretation
+- [`../SCHEDULED-NOTIFICATIONS-DELIVERY.md`](../SCHEDULED-NOTIFICATIONS-DELIVERY.md) — scheduler internals and tuning
+- [`../TROUBLESHOOTING.md`](../TROUBLESHOOTING.md) — general listener troubleshooting

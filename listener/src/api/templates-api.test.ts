@@ -189,6 +189,54 @@ describe('Template API endpoints', () => {
     expect(res.status).toBe(503);
     await new Promise<void>((resolve, reject) => disabledServer.close((err) => (err ? reject(err) : resolve())));
   });
+
+  it('GET /api/templates returns all templates', async () => {
+    await service.create({ id: 'tmpl-2', name: 'Second', type: 'sms', body: 'Hi {{name}}' });
+    const res = await request(server, 'GET', '/api/templates');
+    expect(res.status).toBe(200);
+    const body = res.body as Array<{ id: string }>;
+    expect(body.length).toBeGreaterThanOrEqual(2);
+    expect(body.some((t) => t.id === 'welcome-email')).toBe(true);
+    expect(body.some((t) => t.id === 'tmpl-2')).toBe(true);
+  });
+
+  it('DELETE /api/templates/:id removes the template', async () => {
+    const del = await request(server, 'DELETE', '/api/templates/welcome-email');
+    expect(del.status).toBe(204);
+
+    const get = await request(server, 'GET', '/api/templates/welcome-email');
+    expect(get.status).toBe(404);
+  });
+
+  it('DELETE /api/templates/:id returns 404 for missing template', async () => {
+    const res = await request(server, 'DELETE', '/api/templates/missing');
+    expect(res.status).toBe(404);
+  });
+
+  it('POST /api/templates/:id/render substitutes variables', async () => {
+    const res = await request(server, 'POST', '/api/templates/welcome-email/render', {
+      body: { name: 'Alice' },
+    });
+    expect(res.status).toBe(200);
+    const body = res.body as { body: string; subject: string };
+    expect(body.body).toBe('Hello Alice');
+    expect(body.subject).toBe('Welcome');
+  });
+
+  it('POST /api/templates/:id/render returns 422 for missing variables', async () => {
+    const res = await request(server, 'POST', '/api/templates/welcome-email/render', {
+      body: {},
+    });
+    expect(res.status).toBe(422);
+    expect((res.body as { error: string }).error).toMatch(/missing required variables/i);
+  });
+
+  it('POST /api/templates/:id/render returns 404 for missing template', async () => {
+    const res = await request(server, 'POST', '/api/templates/missing/render', {
+      body: { name: 'Bob' },
+    });
+    expect(res.status).toBe(404);
+  });
 });
 
 describe('template-api helpers', () => {

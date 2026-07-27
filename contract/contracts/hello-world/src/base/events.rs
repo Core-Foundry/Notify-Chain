@@ -1,4 +1,4 @@
-use soroban_sdk::{contractevent, contracttype, Address, BytesN, String};
+use soroban_sdk::{contractevent, contracttype, Address, BytesN, String, Vec};
 
 /// High-level notification category attached to every emitted event.
 ///
@@ -201,6 +201,36 @@ pub struct ScheduledNotificationCancelled {
     pub notification_id: BytesN<32>,
 }
 
+/// Emitted when a notification is confirmed as delivered to its intended recipient.
+#[contractevent(data_format = "single-value")]
+#[derive(Clone)]
+pub struct NotificationDelivered {
+    #[topic]
+    pub notification_id: BytesN<32>,
+    #[topic]
+    pub delivered_by: Address,
+    #[topic]
+    pub category: NotificationCategory,
+    #[topic]
+    pub priority: NotificationPriority,
+    pub delivered_at: u64,
+}
+
+/// Emitted when a sender recalls a scheduled notification before delivery confirmation.
+#[contractevent(data_format = "single-value")]
+#[derive(Clone)]
+pub struct NotificationRecalled {
+    #[topic]
+    pub notification_id: BytesN<32>,
+    #[topic]
+    pub recalled_by: Address,
+    #[topic]
+    pub category: NotificationCategory,
+    #[topic]
+    pub priority: NotificationPriority,
+    pub recalled_at: u64,
+}
+
 /// Emitted when a notification is scheduled on-chain with a bounded lifetime.
 ///
 /// Off-chain consumers can use this to track the notification's existence and
@@ -234,12 +264,71 @@ pub struct NotificationExpired {
     pub expires_at: u64,
 }
 
+// ============================================================================
+// Audit Logging
+// ============================================================================
+
+/// Discriminator for each stage in the notification lifecycle that the audit
+/// log tracks.  Values are fixed-width integers so they serialise compactly on
+/// chain and can be matched exactly by off-chain indexers.
+#[contracttype]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum AuditAction {
+    /// A notification was created (scheduled on-chain).
+    Created = 0,
+    /// A delivery attempt was made for a notification.
+    DeliveryAttempt = 1,
+    /// A delivery attempt failed.
+    DeliveryFailed = 2,
+    /// The recipient acknowledged the notification.
+    Acknowledged = 3,
+    /// The notification was cancelled before expiry.
+    Cancelled = 4,
+    /// The notification expired naturally.
+    Expired = 5,
+}
+
+/// Emitted when a new audit record is appended to the on-chain log.
+///
+/// Off-chain indexers should key off `(notification_id, action)` to track the
+/// full lifecycle of each notification.
+#[contractevent]
+#[derive(Clone)]
+pub struct AuditRecordAppended {
+    #[topic]
+    pub notification_id: BytesN<32>,
+    #[topic]
+    pub action: AuditAction,
+    #[topic]
+    pub category: NotificationCategory,
+    pub seq: u64,
+    pub actor: Address,
+    // GAS: Removed `timestamp` — derivable from ledger metadata
+}
+
+/// Emitted when a batch of notifications is created in a single transaction.
+///
+/// Each per-notification event is still emitted individually; this summary
+/// event additionally carries the count so consumers can verify completeness.
+#[contractevent]
+#[derive(Clone)]
+pub struct BatchNotificationsCreated {
+    #[topic]
+    pub creator: Address,
+    #[topic]
+    pub category: NotificationCategory,
+    #[topic]
+    pub priority: NotificationPriority,
+    pub count: u32,
+    pub ids: Vec<BytesN<32>>,
+}
+
 /// Emitted when a scheduled notification is revoked by an authorized sender.
 ///
 /// The `notification_id` is published as an indexed topic so consumers can
 /// subscribe to the revocation of a specific notification; the `revoked_by`
-/// address indicates who initiated the revocation, and `revoked_at` records
-/// the ledger timestamp when the revocation occurred.
+/// address indicates who initiated the revocation. The timestamp when the
+/// revocation occurred is derivable from ledger metadata.
 #[contractevent(data_format = "single-value")]
 #[derive(Clone)]
 pub struct NotificationRevoked {
@@ -251,9 +340,15 @@ pub struct NotificationRevoked {
     pub category: NotificationCategory,
     #[topic]
     pub priority: NotificationPriority,
-    pub revoked_at: u64,
+    // GAS: Removed `revoked_at` — derivable from ledger metadata
 }
 
+/// Emitted when an off-chain batch of notifications finishes processing.
+#[contractevent(data_format = "single-value")]
+#[derive(Clone)]
+pub struct BatchProcessingCompleted {
+    #[topic]
+    pub batch_id: BytesN<32>,
 /// Emitted when a scheduled notification's expiry period is extended by an authorized sender.
 #[contractevent(data_format = "single-value")]
 #[derive(Clone)]
@@ -269,6 +364,13 @@ pub struct NotificationExtended {
     pub new_expires_at: u64,
 }
 
+/// Emitted when a sender's reputation score is updated.
+/// Triggered by successful or failed notification delivery.
+#[contractevent(data_format = "single-value")]
+#[derive(Clone)]
+pub struct ReputationUpdated {
+    #[topic]
+    pub sender: Address,
 /// Emitted when protocol-level notification limits are configured or updated.
 #[contractevent]
 #[derive(Clone)]
@@ -279,8 +381,140 @@ pub struct NotificationLimitsConfigured {
     pub category: NotificationCategory,
     #[topic]
     pub priority: NotificationPriority,
+    pub new_score: i64,
+    pub successful_count: u32,
+    pub failed_count: u32,
+}
+
+/// Emitted when a sender's reputation tier changes (e.g., from Bronze to Silver).
+#[contractevent(data_format = "single-value")]
+#[derive(Clone)]
+pub struct ReputationTierChanged {
+    #[topic]
+    pub sender: Address,
+    #[topic]
+    pub category: NotificationCategory,
+    #[topic]
+    pub priority: NotificationPriority,
+    pub old_tier: u32,
+    pub new_tier: u32,
+    pub reputation_score: i64,
+}
+
+    pub processed_count: u32,
     pub max_payload_size: u32,
     pub max_expiration_seconds: u64,
     pub min_expiration_seconds: u64,
     pub max_batch_size: u32,
+}
+
+// ============================================================================
+// Schema Version Tracking  (Issue #309)
+// ============================================================================
+
+/// Emitted when the on-chain notification schema version is set or upgraded.
+///
+/// Off-chain consumers should read `schema_version` from every event to gate
+/// their parsing logic. Unsupported versions must be rejected at the listener
+/// layer so incompatible payloads never reach downstream consumers.
+#[contractevent]
+#[derive(Clone)]
+pub struct SchemaVersionSet {
+    #[topic]
+    pub admin: Address,
+    #[topic]
+    pub category: NotificationCategory,
+    #[topic]
+    pub priority: NotificationPriority,
+    /// New schema version number.
+    pub schema_version: u32,
+    /// Previous schema version (0 when first set).
+    pub previous_version: u32,
+}
+
+// ============================================================================
+// Access Logging  (Issue #312)
+// ============================================================================
+
+/// Emitted whenever a protected notification record is accessed.
+///
+/// Off-chain indexers should key off `(notification_id, accessor)` to build an
+/// immutable access trail. The `accessed_at` timestamp is provided for ordering
+/// and compliance reporting.
+#[contractevent]
+#[derive(Clone)]
+pub struct NotificationAccessed {
+    #[topic]
+    pub notification_id: BytesN<32>,
+    #[topic]
+    pub accessor: Address,
+    #[topic]
+    pub category: NotificationCategory,
+    /// Ledger timestamp (seconds) when the access occurred.
+    pub accessed_at: u64,
+}
+
+/// Emitted when a notification is acknowledged by an authorized user.
+#[contractevent(data_format = "single-value")]
+#[derive(Clone)]
+pub struct NotificationAcknowledged {
+    #[topic]
+    pub notification_id: BytesN<32>,
+    #[topic]
+    pub acknowledger: Address,
+    #[topic]
+    pub category: NotificationCategory,
+    #[topic]
+    pub priority: NotificationPriority,
+    pub timestamp: u64,
+}
+
+/// Emitted when a subscriber cancels an active notification subscription.
+///
+/// Off-chain consumers can key off `(group_id, subscriber)` to track the full
+/// subscription lifecycle. The `group_id` identifies the AutoShare group whose
+/// subscription was cancelled; `subscriber` is the address that initiated the
+/// cancellation.
+#[contractevent(data_format = "single-value")]
+#[derive(Clone)]
+pub struct SubscriptionCancelled {
+    /// The group whose subscription was cancelled.
+    #[topic]
+    pub group_id: BytesN<32>,
+    /// The address that cancelled the subscription.
+    #[topic]
+    pub subscriber: Address,
+/// Emitted when the current owner initiates a two-step ownership transfer by
+/// nominating a `pending_owner`. The transfer is not final until the pending
+/// owner calls `accept_ownership`.
+///
+/// This mirrors the OpenZeppelin `Ownable2Step` `OwnershipTransferStarted` event
+/// and lets off-chain consumers track in-progress transfers before they settle.
+#[contractevent(data_format = "single-value")]
+#[derive(Clone)]
+pub struct OwnershipTransferInitiated {
+    #[topic]
+    pub previous_owner: Address,
+    #[topic]
+    pub category: NotificationCategory,
+    #[topic]
+    pub priority: NotificationPriority,
+    pub pending_owner: Address,
+}
+
+/// Emitted when a two-step ownership transfer is completed (i.e. the pending
+/// owner accepts). Mirrors the ERC-173 / OpenZeppelin `OwnershipTransferred`
+/// event signature: `OwnershipTransferred(previousOwner, newOwner)`.
+#[contractevent(data_format = "single-value")]
+#[derive(Clone)]
+pub struct OwnershipTransferred {
+    #[topic]
+    pub previous_owner: Address,
+    #[topic]
+    pub category: NotificationCategory,
+    #[topic]
+    pub priority: NotificationPriority,
+    /// Ledger timestamp (seconds) when the cancellation occurred.
+    pub cancelled_at: u64,
+    pub new_owner: Address,
 }

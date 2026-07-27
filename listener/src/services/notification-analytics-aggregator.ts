@@ -162,6 +162,28 @@ export class NotificationAnalyticsAggregator {
 
     if (this.records.length > this.maxRecords) {
       const evicted = this.records.length - this.maxRecords;
+      // adjust counters based on evicted records to avoid drift
+      for (let i = 0; i < evicted; i++) {
+        const r = this.records[i];
+        switch (r.outcome) {
+          case 'success':
+            this.successCount = Math.max(0, this.successCount - 1);
+            break;
+          case 'failure':
+            this.failureCount = Math.max(0, this.failureCount - 1);
+            break;
+          case 'retry':
+            this.retryCount = Math.max(0, this.retryCount - 1);
+            break;
+          case 'skipped':
+            this.skippedCount = Math.max(0, this.skippedCount - 1);
+            break;
+        }
+        if (r.durationMs > 0) {
+          this.totalDurationMs = Math.max(0, this.totalDurationMs - r.durationMs);
+          this.durationSamples = Math.max(0, this.durationSamples - 1);
+        }
+      }
       this.records.splice(0, evicted);
     }
   }

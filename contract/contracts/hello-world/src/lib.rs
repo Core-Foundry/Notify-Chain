@@ -7,6 +7,7 @@ pub mod base {
     pub mod events;
     pub mod metadata_validation;
     pub mod preferences;
+    pub mod reputation;
     pub mod types;
 }
 
@@ -17,6 +18,7 @@ pub mod interfaces {
 // 2. Declare the main logic files where the functions are implemented
 mod autoshare_logic;
 mod preferences_logic;
+mod reputation_logic;
 
 #[cfg(test)]
 pub mod mock_token;
@@ -164,8 +166,49 @@ impl AutoShareContract {
     }
 
     /// Transfers admin rights to a new address. Only current admin can call.
+    /// Rejects transfers where new_admin == current_admin.
     pub fn transfer_admin(env: Env, current_admin: Address, new_admin: Address) {
         autoshare_logic::transfer_admin(env, current_admin, new_admin).unwrap();
+    }
+
+    // ============================================================================
+    // Two-Step Ownership Transfer (Issue #367)
+    // ============================================================================
+
+    /// Returns the address currently nominated as the pending owner, or `None`
+    /// if no two-step ownership transfer is currently in progress.
+    pub fn get_pending_owner(env: Env) -> Option<Address> {
+        autoshare_logic::get_pending_owner(env)
+    }
+
+    /// Initiates a two-step ownership transfer.
+    ///
+    /// The current owner nominates `new_owner` as the pending owner. The transfer
+    /// is NOT final until `new_owner` calls `accept_ownership`. Until then the
+    /// current owner retains all privileges.
+    ///
+    /// Rejects:
+    /// - Callers that are not the current owner (panics with `Unauthorized`).
+    /// - A `new_owner` equal to the current owner (`ZeroAddressTransfer`).
+    ///
+    /// Emits: `OwnershipTransferInitiated { previous_owner, pending_owner }`.
+    pub fn initiate_ownership_transfer(env: Env, current_owner: Address, new_owner: Address) {
+        autoshare_logic::initiate_ownership_transfer(env, current_owner, new_owner).unwrap();
+    }
+
+    /// Completes a two-step ownership transfer.
+    ///
+    /// Must be called by the address previously nominated via
+    /// `initiate_ownership_transfer`. On success the caller becomes the new
+    /// owner and the pending-owner slot is cleared.
+    ///
+    /// Rejects:
+    /// - No pending transfer in progress (`NoPendingOwnershipTransfer`).
+    /// - Caller is not the pending owner (`NotPendingOwner`).
+    ///
+    /// Emits: `OwnershipTransferred { previous_owner, new_owner }`.
+    pub fn accept_ownership(env: Env, new_owner: Address) {
+        autoshare_logic::accept_ownership(env, new_owner).unwrap();
     }
 
     /// Withdraws tokens from the contract. Only admin can call.
@@ -232,6 +275,16 @@ impl AutoShareContract {
             .unwrap();
     }
 
+    /// Cancels an active notification subscription for a group.
+    ///
+    /// The `subscriber` must be the group's creator or a current member. On
+    /// success the group is deactivated, its remaining usage count is zeroed, and
+    /// a `SubscriptionCancelled` event is emitted so off-chain consumers can
+    /// track the full subscription lifecycle.
+    pub fn cancel_subscription(env: Env, id: BytesN<32>, subscriber: Address) {
+        autoshare_logic::cancel_subscription(env, id, subscriber).unwrap();
+    }
+
     // ============================================================================
     // Payment History
     // ============================================================================
@@ -260,9 +313,9 @@ impl AutoShareContract {
         autoshare_logic::get_total_usages_paid(env, id).unwrap()
     }
 
-    /// Reduces the usage count by 1 (dummy function for testing).
-    pub fn reduce_usage(env: Env, id: BytesN<32>) {
-        autoshare_logic::reduce_usage(env, id).unwrap();
+    /// Reduces the usage count by 1.
+    pub fn reduce_usage(env: Env, id: BytesN<32>, caller: Address) {
+        autoshare_logic::reduce_usage(env, id, caller).unwrap();
     }
 
     // ============================================================================
@@ -387,6 +440,77 @@ impl AutoShareContract {
         autoshare_logic::expire_notification(env, notification_id).unwrap();
     }
 
+    /// Confirms delivery of a scheduled notification.
+    ///
+    /// Only the notification creator or the contract admin can confirm delivery.
+    /// The notification must exist, not already be revoked or expired, and not yet be marked delivered.
+    pub fn confirm_notification_delivery(env: Env, notification_id: BytesN<32>, caller: Address) {
+        autoshare_logic::confirm_notification_delivery(env, notification_id, caller).unwrap();
+    }
+
+    /// Recalls a scheduled notification before delivery confirmation.
+    ///
+    /// Only the notification creator or the contract admin can recall a notification.
+    /// The notification must exist, not already be revoked or expired, and not yet be delivered.
+    pub fn recall_notification(env: Env, notification_id: BytesN<32>, caller: Address) {
+        autoshare_logic::recall_notification(env, notification_id, caller).unwrap();
+    /// Emits a `BatchProcessingCompleted` event for off-chain listeners.
+    pub fn emit_batch_completed(env: Env, batch_id: BytesN<32>, processed_count: u32) {
+        autoshare_logic::emit_batch_completed(env, batch_id, processed_count).unwrap();
+    }
+
+    // ============================================================================
+    // Batch Notification Creation
+    // ============================================================================
+
+    /// Creates multiple scheduled notifications in a single transaction.
+    ///
+    /// `ids` and `ttl_seconds` must have the same length, must not be empty, and
+    /// must not exceed 50 entries. Emits one `NotificationScheduled` event per
+    /// notification plus a single `BatchNotificationsCreated` summary event.
+    pub fn batch_schedule_notifications(
+        env: Env,
+        ids: Vec<BytesN<32>>,
+        creator: Address,
+        ttl_seconds: Vec<u64>,
+        titles: Vec<String>,
+    ) {
+        autoshare_logic::batch_schedule_notifications(env, ids, creator, ttl_seconds, titles)
+            .unwrap();
+    }
+
+    // ============================================================================
+    // Audit Logging
+    // ============================================================================
+
+    /// Returns the full, immutable audit log in append order.
+    pub fn get_audit_log(env: Env) -> Vec<base::types::AuditRecord> {
+        autoshare_logic::get_audit_log(env)
+    }
+
+    /// Returns all audit records for a specific notification identifier.
+    pub fn get_notification_audit(
+        env: Env,
+        notification_id: BytesN<32>,
+    ) -> Vec<base::types::AuditRecord> {
+        autoshare_logic::get_audit_records_for_notification(env, notification_id)
+    }
+
+    /// Records a delivery attempt for a notification in the audit log.
+    pub fn record_delivery_attempt(env: Env, notification_id: BytesN<32>, actor: Address) {
+        autoshare_logic::record_delivery_attempt(env, notification_id, actor).unwrap();
+    }
+
+    /// Records a delivery failure for a notification in the audit log.
+    pub fn record_delivery_failure(env: Env, notification_id: BytesN<32>, actor: Address) {
+        autoshare_logic::record_delivery_failure(env, notification_id, actor).unwrap();
+    }
+
+    /// Records that the recipient acknowledged a notification.
+    pub fn record_acknowledgment(env: Env, notification_id: BytesN<32>, actor: Address) {
+        autoshare_logic::record_acknowledgment(env, notification_id, actor).unwrap();
+    }
+
     /// Revokes a scheduled notification, preventing any further interaction with it.
     ///
     /// Only the notification creator or the contract admin can revoke a notification.
@@ -400,6 +524,9 @@ impl AutoShareContract {
         autoshare_logic::is_notification_revoked(env, notification_id).unwrap()
     }
 
+    /// Acknowledges multiple scheduled notifications in a single batch.
+    pub fn acknowledge_notifications(env: Env, caller: Address, notification_ids: Vec<BytesN<32>>) {
+        autoshare_logic::acknowledge_notifications(env, caller, notification_ids).unwrap();
     /// Extends the expiration period of a scheduled notification by `extension_seconds`.
     ///
     /// Only the notification creator or the contract admin can extend it.
@@ -450,51 +577,152 @@ impl AutoShareContract {
     pub fn get_notification_limits(env: Env) -> base::types::NotificationLimits {
         autoshare_logic::get_notification_limits(env)
     }
+
+    // ============================================================================
+    // Sender Reputation Tracking
+    // ============================================================================
+
+    /// Record a successful notification delivery for a sender.
+    /// Updates the sender's reputation score based on delivery history.
+    pub fn record_delivery_success(env: Env, sender: Address) {
+        reputation_logic::record_successful_delivery(&env, &sender).unwrap();
+    }
+
+    /// Record a failed notification delivery for a sender.
+    /// Decreases the sender's reputation score based on delivery history.
+    pub fn record_delivery_failure(env: Env, sender: Address) {
+        reputation_logic::record_failed_delivery(&env, &sender).unwrap();
+    }
+
+    /// Get the current reputation score for a sender.
+    /// Score ranges from 0 (lowest) to 100 (highest).
+    pub fn get_sender_reputation_score(env: Env, sender: Address) -> i64 {
+        reputation_logic::get_reputation_score(&env, &sender).unwrap_or(50)
+    }
+
+    /// Get the complete reputation record for a sender.
+    /// Includes successful deliveries, failed deliveries, and current score.
+    pub fn get_sender_reputation(env: Env, sender: Address) -> base::reputation::SenderReputation {
+        reputation_logic::get_reputation(&env, &sender)
+            .unwrap_or_else(|_| base::reputation::SenderReputation::new(sender, env.ledger().timestamp()))
+    }
+
+    /// Get the reputation tier for a sender.
+    /// Tier levels: 0=Unverified, 1=Bronze, 2=Silver, 3=Gold, 4=Platinum
+    pub fn get_sender_reputation_tier(env: Env, sender: Address) -> u32 {
+        reputation_logic::get_reputation_tier(&env, &sender).unwrap_or(0)
+    }
+
+    // ============================================================================
+    // Schema Version Tracking  (Issue #309)
+    // ============================================================================
+
+    /// Sets the on-chain notification schema version. Only the admin can call.
+    /// Emits a SchemaVersionSet event. Rejects versions outside the supported range.
+    pub fn set_schema_version(env: Env, admin: Address, schema_version: u32) {
+        autoshare_logic::set_schema_version(env, admin, schema_version).unwrap();
+    }
+
+    /// Returns the current on-chain schema version (0 if never set).
+    pub fn get_schema_version(env: Env) -> u32 {
+        autoshare_logic::get_schema_version(env)
+    }
+
+    /// Returns true if the given schema version is within the supported range.
+    pub fn is_version_supported(env: Env, version: u32) -> bool {
+        autoshare_logic::is_version_supported(env, version)
+    }
+
+    // ============================================================================
+    // Access Logging  (Issue #312)
+    // ============================================================================
+
+    /// Emits a NotificationAccessed event for the specified notification.
+    /// Call whenever a protected notification record is read to build an immutable access trail.
+    pub fn record_notification_access(env: Env, notification_id: BytesN<32>, accessor: Address) {
+        autoshare_logic::record_notification_access(env, notification_id, accessor).unwrap();
+    }
 }
 
 #[cfg(test)]
-#[path = "tests/test_utils.rs"]
-pub mod test_utils;
+pub mod test_utils {
+    #[path = "tests/test_utils.rs"]
+    mod inner;
+    pub use inner::*;
+}
 
 #[cfg(test)]
-#[path = "tests/test_utils_test.rs"]
-mod test_utils_test;
+mod tests {
+    #[path = "tests/test_utils_test.rs"]
+    mod test_utils_test;
 
-#[cfg(test)]
-#[path = "tests/storage_optimization_test.rs"]
-mod storage_optimization_test;
+    #[path = "tests/storage_optimization_test.rs"]
+    mod storage_optimization_test;
 
+    #[path = "tests/preferences_test.rs"]
+    mod preferences_test;
+
+    #[path = "tests/autoshare_test.rs"]
 #[cfg(test)]
 #[path = "tests/preferences_test.rs"]
 mod preferences_test;
+
+#[cfg(test)]
 mod tests {
     #[path = "../tests/autoshare_test.rs"]
     mod autoshare_test;
 
-    #[path = "../tests/pause_test.rs"]
+    #[path = "tests/pause_test.rs"]
     mod pause_test;
 
-    #[path = "../tests/mock_token_test.rs"]
+    #[path = "tests/mock_token_test.rs"]
     mod mock_token_test;
 
-    #[path = "../tests/version_test.rs"]
+    #[path = "tests/version_test.rs"]
     mod version_test;
 
-    #[path = "../tests/test_utils_test.rs"]
-    mod test_utils_test;
-
-    #[path = "../tests/notification_test.rs"]
+    #[path = "tests/notification_test.rs"]
     mod notification_test;
 
+    #[path = "tests/expiration_test.rs"]
+    mod expiration_test;
+
+    #[path = "tests/revocation_test.rs"]
+    mod revocation_test;
+
+    #[path = "tests/ownership_transfer_test.rs"]
+    mod ownership_transfer_test;
+    #[path = "../tests/notification_validation_test.rs"]
+    mod notification_validation_test;
     #[path = "../tests/category_registry_test.rs"]
     mod category_registry_test;
 
     #[path = "../tests/expiration_test.rs"]
     mod expiration_test;
 
+    #[path = "../tests/batch_notification_test.rs"]
+    mod batch_notification_test;
+
+    #[path = "../tests/audit_log_test.rs"]
+    mod audit_log_test;
+
+    #[path = "../tests/payload_validation_test.rs"]
+    mod payload_validation_test;
+
     #[path = "../tests/revocation_test.rs"]
     mod revocation_test;
 
+    #[path = "../tests/batch_ack_test.rs"]
+    mod batch_ack_test;
     #[path = "../tests/fuzz_test.rs"]
     mod fuzz_test;
+
+    #[path = "../tests/schema_version_test.rs"]
+    mod schema_version_test;
+
+    #[path = "../tests/access_log_test.rs"]
+    mod access_log_test;
+
+    #[path = "../tests/subscription_cancellation_test.rs"]
+    mod subscription_cancellation_test;
 }

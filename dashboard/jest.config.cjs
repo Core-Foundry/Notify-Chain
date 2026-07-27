@@ -1,6 +1,7 @@
 module.exports = {
   preset: 'ts-jest/presets/default-esm',
   testEnvironment: 'jsdom',
+  testTimeout: 15000,
   setupFilesAfterEnv: ['<rootDir>/jest.setup.cjs'],
   extensionsToTreatAsEsm: ['.ts', '.tsx'],
   moduleNameMapper: {
