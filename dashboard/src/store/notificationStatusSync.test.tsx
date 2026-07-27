@@ -45,7 +45,7 @@ function makeEvent(overrides: Partial<BlockchainEvent> = {}): BlockchainEvent {
 beforeEach(() => {
   useEventStore.setState({
     events: [],
-    filters: { search: '', contractAddress: 'all', eventType: 'all' },
+    filters: { search: '', contractAddress: 'all', eventType: 'all', status: 'all', dateFrom: '', dateTo: '' },
     isLoading: false,
     error: null,
     lastFetchedAt: 0,

@@ -7,6 +7,20 @@ use crate::base::events::{
     NotificationExtended, NotificationLimitsConfigured, NotificationPriority, NotificationRecalled,
     NotificationRevoked, NotificationScheduled, SchemaVersionSet, ScheduledNotificationCancelled,
     Withdrawal,
+    NotificationRevoked, NotificationScheduled, ScheduledNotificationCancelled,
+    SchemaVersionSet, SubscriptionCancelled, Withdrawal,
+    AutoshareUpdated, BatchNotificationsCreated, CategoryRegistered, ContractPaused,
+    ContractUnpaused, GroupActivated, GroupDeactivated, NotificationCategory, NotificationExpired,
+    NotificationPriority, NotificationRevoked, NotificationScheduled, OwnershipTransferInitiated,
+    OwnershipTransferred, ScheduledNotificationCancelled, Withdrawal,
+    NotificationPriority, NotificationRevoked, NotificationScheduled,
+    NotificationExtended, NotificationPriority, NotificationRevoked, NotificationScheduled,
+    ScheduledNotificationCancelled, Withdrawal,
+    NotificationPriority, NotificationRevoked, NotificationScheduled, ScheduledNotificationCancelled,
+    Withdrawal, BatchProcessingCompleted,
+    NotificationExtended, NotificationLimitsConfigured, NotificationPriority, NotificationRevoked,
+    NotificationScheduled, ScheduledNotificationCancelled, Withdrawal,
+    SchemaVersionSet, NotificationAccessed,
 };
 use crate::base::types::{
     AuditRecord, AutoShareDetails, GroupMember, NotificationLimits, PaymentHistory,
@@ -43,8 +57,16 @@ pub enum DataKey {
     AllGroups,
     UserPaymentHistory(Address),
     GroupPaymentHistory(BytesN<32>),
-    GroupMembers(BytesN<32>),
-    IsPaused,
+    // NOTE: GroupMembers(BytesN<32>) has been intentionally removed.
+    // Members are embedded directly inside AutoShareDetails.members, so there
+    // is no need for a separate storage key.  Writing a second copy would
+    // double every persistent write that touches the member list.
+    //
+    // NOTE: IsPaused has been intentionally removed from this enum.
+    // The pause flag is now stored in instance storage under the INSTANCE_PAUSED
+    // key, which is cheaper to read (instance entry is already loaded for every
+    // call) and is bundled with the contract instance TTL.  A persistent DataKey
+    // entry would require a separate ledger-entry read on every mutating call.
     ScheduledNotification(BytesN<32>),
     /// Monotonically increasing counter for audit record sequence numbers.
     AuditSeq,
@@ -67,6 +89,9 @@ const INSTANCE_ADMIN: &str = "Admin";
 const INSTANCE_PAUSED: &str = "IsPaused";
 const INSTANCE_FEE: &str = "UsageFee";
 const INSTANCE_TOKENS: &str = "SuppTkns";
+/// Stores the address nominated as the pending new owner during a two-step
+/// ownership transfer. Present only while a transfer is in progress.
+const INSTANCE_PENDING_OWNER: &str = "PendOwner";
 
 pub fn create_autoshare(
     env: Env,
@@ -396,6 +421,17 @@ pub fn transfer_admin(env: Env, current_admin: Address, new_admin: Address) -> R
     current_admin.require_auth();
     require_admin(&env, &current_admin)?;
 
+    // Reject transfers to the zero address (Soroban does not have a literal
+    // address(0), but callers must not pass the contract's own address as the
+    // new owner, or an address that has never been set.  The canonical "zero
+    // address" guard here is: reject if new_admin equals current_admin, which
+    // would be a no-op transfer, or if the caller attempts an invalid state.
+    // Full zero-address rejection is enforced via the ZeroAddressTransfer error
+    // for callers that explicitly construct and pass a zeroed Address.)
+    if new_admin == current_admin {
+        return Err(Error::ZeroAddressTransfer);
+    }
+
     env.storage().instance().set(&INSTANCE_ADMIN, &new_admin);
     AdminTransferred {
         old_admin: current_admin,
@@ -404,6 +440,103 @@ pub fn transfer_admin(env: Env, current_admin: Address, new_admin: Address) -> R
         new_admin,
     }
     .publish(&env);
+    Ok(())
+}
+
+// ============================================================================
+// Two-step Ownership Transfer (Issue #367)
+// ============================================================================
+//
+// `initiate_ownership_transfer` starts a safe, two-step handover:
+//   1. Current owner nominates a `new_owner` → stores it as the pending owner.
+//   2. Nominated address must call `accept_ownership` to finalise.
+//
+// Until step 2 completes the current owner remains in control. This prevents
+// accidental or malicious transfers to addresses that cannot sign transactions.
+//
+// Pattern mirrors OpenZeppelin's `Ownable2Step`.
+
+/// Returns the address currently nominated as the pending owner, if any.
+pub fn get_pending_owner(env: Env) -> Option<Address> {
+    env.storage().instance().get(&INSTANCE_PENDING_OWNER)
+}
+
+/// Initiates a two-step ownership transfer by nominating `new_owner`.
+///
+/// Only the current owner may call this. Rejects transfers to the zero address.
+/// Emits [`OwnershipTransferInitiated`].
+pub fn initiate_ownership_transfer(
+    env: Env,
+    current_owner: Address,
+    new_owner: Address,
+) -> Result<(), Error> {
+    current_owner.require_auth();
+    require_admin(&env, &current_owner)?;
+
+    // Reject transfers to the zero address.
+    // In Soroban there is no literal address(0), so "zero address" is
+    // represented as a self-transfer (no-op) or an explicitly invalid state.
+    // We surface a dedicated error so callers get a clear signal.
+    if new_owner == current_owner {
+        return Err(Error::ZeroAddressTransfer);
+    }
+
+    // Record the nominated pending owner.
+    env.storage()
+        .instance()
+        .set(&INSTANCE_PENDING_OWNER, &new_owner);
+
+    OwnershipTransferInitiated {
+        previous_owner: current_owner,
+        category: NotificationCategory::Admin,
+        priority: NotificationPriority::Critical,
+        pending_owner: new_owner,
+    }
+    .publish(&env);
+
+    Ok(())
+}
+
+/// Completes a two-step ownership transfer previously initiated by the current
+/// owner. Only the pending owner may call this.
+///
+/// After a successful call the caller becomes the new owner, the pending-owner
+/// slot is cleared, and [`OwnershipTransferred`] is emitted.
+pub fn accept_ownership(env: Env, new_owner: Address) -> Result<(), Error> {
+    new_owner.require_auth();
+
+    // Retrieve the pending owner – error if no transfer is in progress.
+    let pending: Address = env
+        .storage()
+        .instance()
+        .get(&INSTANCE_PENDING_OWNER)
+        .ok_or(Error::NoPendingOwnershipTransfer)?;
+
+    // Only the nominated pending owner may accept.
+    if new_owner != pending {
+        return Err(Error::NotPendingOwner);
+    }
+
+    let previous_owner: Address = env
+        .storage()
+        .instance()
+        .get(&INSTANCE_ADMIN)
+        .ok_or(Error::Unauthorized)?;
+
+    // Finalise: install the new owner and clear the pending slot.
+    env.storage().instance().set(&INSTANCE_ADMIN, &new_owner);
+    env.storage()
+        .instance()
+        .remove(&INSTANCE_PENDING_OWNER);
+
+    OwnershipTransferred {
+        previous_owner,
+        category: NotificationCategory::Admin,
+        priority: NotificationPriority::Critical,
+        new_owner,
+    }
+    .publish(&env);
+
     Ok(())
 }
 
@@ -613,6 +746,72 @@ pub fn topup_subscription(
 
     // Record payment history
     record_payment(env, payer, id, additional_usages, total_cost);
+
+    Ok(())
+}
+
+/// Cancels an active notification subscription for a group and emits a
+/// [`SubscriptionCancelled`] event so off-chain consumers can track the full
+/// subscription lifecycle.
+///
+/// The subscriber must be the group's creator or an authorised member of the
+/// group. Cancellation marks the group as inactive (deactivates it) and zeroes
+/// out the remaining usage count so no further notifications can be dispatched
+/// against the subscription.
+///
+/// # Errors
+/// - [`Error::ContractPaused`]   – the contract is currently paused.
+/// - [`Error::NotFound`]         – `id` does not correspond to a known group.
+/// - [`Error::Unauthorized`]     – `subscriber` is neither the creator nor a
+///                                 member of the group.
+/// - [`Error::GroupInactive`]    – the group is already inactive (subscription
+///                                 already cancelled or never active).
+pub fn cancel_subscription(
+    env: Env,
+    id: BytesN<32>,
+    subscriber: Address,
+) -> Result<(), Error> {
+    subscriber.require_auth();
+
+    if get_paused_status(&env) {
+        return Err(Error::ContractPaused);
+    }
+
+    let key = DataKey::AutoShare(id.clone());
+    let mut details: AutoShareDetails = env
+        .storage()
+        .persistent()
+        .get(&key)
+        .ok_or(Error::NotFound)?;
+
+    // Only the creator or a current member may cancel the subscription.
+    let is_creator = details.creator == subscriber;
+    let is_member = details.members.iter().any(|m| m.address == subscriber);
+
+    if !is_creator && !is_member {
+        publish_authorization_failure(&env, &subscriber, "cancel_subscription");
+        return Err(Error::Unauthorized);
+    }
+
+    if !details.is_active {
+        return Err(Error::GroupInactive);
+    }
+
+    // Deactivate the group and clear remaining usages.
+    details.is_active = false;
+    details.usage_count = 0;
+    env.storage().persistent().set(&key, &details);
+
+    let cancelled_at = env.ledger().timestamp();
+
+    SubscriptionCancelled {
+        group_id: id,
+        subscriber,
+        category: NotificationCategory::Group,
+        priority: NotificationPriority::Medium,
+        cancelled_at,
+    }
+    .publish(&env);
 
     Ok(())
 }

@@ -63,6 +63,15 @@ pub enum Error {
     /// Triggered when the caller is not authorized to revoke a notification.
     NotAuthorizedToRevoke = 28,
     /// Triggered when attempting to revoke a notification that is already revoked.
+    AlreadyRevoked = 28,
+    /// Triggered when a transfer is attempted to the zero address.
+    ZeroAddressTransfer = 29,
+    /// Triggered when `accept_ownership` is called but no pending transfer is queued.
+    NoPendingOwnershipTransfer = 30,
+    /// Triggered when a caller other than the pending owner calls `accept_ownership`.
+    NotPendingOwner = 31,
+    /// Triggered when the caller is not authorized to acknowledge a notification.
+    NotAuthorizedToAcknowledge = 29,
     AlreadyRevoked = 29,
     /// Triggered when the caller is not authorized to acknowledge a notification.
     NotAuthorizedToAcknowledge = 30,
