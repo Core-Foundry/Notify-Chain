@@ -13,6 +13,8 @@ import logger from '../utils/logger';
  * Includes support for idempotent request handling
  */
 export class NotificationAPI {
+  private readonly maxPayloadSizeBytes: number = DEFAULT_MAX_PAYLOAD_SIZE_BYTES;
+
   constructor(
     private repository: ScheduledNotificationRepository,
     private idempotencyService?: IdempotencyKeyService

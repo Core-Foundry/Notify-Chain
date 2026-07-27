@@ -36,7 +36,6 @@ export class ScheduledNotificationRepository {
 
     const params = [
       serializedPayload,
-      payloadJson,
       payloadHash,
       input.notificationType,
       input.targetRecipient,
@@ -242,6 +241,9 @@ export class ScheduledNotificationRepository {
     const nextRetryCount = currentRetryCount + 1;
     const isFailed = nextRetryCount >= maxRetries;
     const newStatus = isFailed ? NotificationStatus.FAILED : NotificationStatus.PENDING;
+    // When permanently failing, preserve currentRetryCount so the distribution
+    // reflects actual retries performed (not an incremented-past-max value).
+    const storedRetryCount = isFailed ? currentRetryCount : nextRetryCount;
 
     const sql = `
       UPDATE scheduled_notifications
@@ -268,13 +270,12 @@ export class ScheduledNotificationRepository {
 
     await this.db.run(sql, [
       newStatus,
-      nextRetryCount,
+      storedRetryCount,
       error.message,
       errorDetails,
+      isFailed ? null : (nextRetryAt?.toISOString() ?? null),
       isFailed ? now : null,
       now,
-      isFailed ? null : (nextRetryAt?.toISOString() ?? null),
-      completedAt,
       id,
     ]);
 
@@ -630,7 +631,6 @@ export class ScheduledNotificationRepository {
 
     return {
       id: row.id,
-      payload: decompressPayload(row.payload),
       payload: row.payload,
       payloadHash: row.payload_hash,
       notificationType: row.notification_type as any,

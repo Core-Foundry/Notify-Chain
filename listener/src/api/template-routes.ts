@@ -6,12 +6,13 @@
 import http from 'http';
 import { TemplateService } from '../services/template-service';
 import logger from '../utils/logger';
+import { sendOk, sendErr, ErrorCode } from '../utils/response';
 
 interface TemplateRouteContext {
   req: http.IncomingMessage;
   res: http.ServerResponse;
   requestId: string;
-  templateService: TemplateService;
+  templateService: any;
 }
 
 /**
@@ -35,14 +36,6 @@ async function parseBody(req: http.IncomingMessage): Promise<any> {
 }
 
 /**
- * Send JSON response
- */
-function sendJson(res: http.ServerResponse, statusCode: number, data: any): void {
-  res.writeHead(statusCode, { 'Content-Type': 'application/json' });
-  res.end(JSON.stringify(data));
-}
-
-/**
  * Handle POST /api/templates - Create template
  */
 export async function handleCreateTemplate(ctx: TemplateRouteContext): Promise<void> {
@@ -53,10 +46,7 @@ export async function handleCreateTemplate(ctx: TemplateRouteContext): Promise<v
 
     // Validate required fields
     if (!body.uniqueKey || !body.name || !body.channelType || !body.bodyTemplate) {
-      sendJson(res, 400, {
-        error: 'Missing required fields',
-        required: ['uniqueKey', 'name', 'channelType', 'bodyTemplate'],
-      });
+      sendErr(res, 400, 'Missing required fields: uniqueKey, name, channelType, bodyTemplate', ErrorCode.BAD_REQUEST);
       return;
     }
 
@@ -72,23 +62,19 @@ export async function handleCreateTemplate(ctx: TemplateRouteContext): Promise<v
       createdBy: body.createdBy,
     });
 
-    sendJson(res, 201, { id: templateId, uniqueKey: body.uniqueKey });
+    sendOk(res, 201, { id: templateId, uniqueKey: body.uniqueKey });
 
-    logger.info('Template created via API', {
-      requestId,
-      templateId,
-      uniqueKey: body.uniqueKey,
-    });
+    logger.info('Template created via API', { requestId, templateId, uniqueKey: body.uniqueKey });
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     logger.error('Failed to create template', { error, requestId });
 
     if (errorMessage.includes('validation') || errorMessage.includes('invalid')) {
-      sendJson(res, 400, { error: errorMessage });
+      sendErr(res, 400, errorMessage, ErrorCode.BAD_REQUEST);
     } else if (errorMessage.includes('UNIQUE constraint')) {
-      sendJson(res, 409, { error: 'Template with this unique key already exists' });
+      sendErr(res, 409, 'Template with this unique key already exists', ErrorCode.CONFLICT);
     } else {
-      sendJson(res, 500, { error: 'Internal server error' });
+      sendErr(res, 500, 'Internal server error', ErrorCode.INTERNAL_ERROR);
     }
   }
 }
@@ -106,20 +92,11 @@ export async function handleListTemplates(ctx: TemplateRouteContext): Promise<vo
 
     const templates = await templateService.listTemplates({ channelType, activeOnly });
 
-    sendJson(res, 200, {
-      count: templates.length,
-      templates,
-    });
-
-    logger.info('Listed templates via API', {
-      requestId,
-      count: templates.length,
-      channelType,
-      activeOnly,
-    });
+    sendOk(res, 200, { count: templates.length, templates });
+    logger.info('Listed templates via API', { requestId, count: templates.length, channelType, activeOnly });
   } catch (error) {
     logger.error('Failed to list templates', { error, requestId });
-    sendJson(res, 500, { error: 'Internal server error' });
+    sendErr(res, 500, 'Internal server error', ErrorCode.INTERNAL_ERROR);
   }
 }
 
@@ -132,22 +109,21 @@ export async function handleGetTemplate(ctx: TemplateRouteContext): Promise<void
   try {
     const id = parseInt(req.url!.split('/').pop() || '', 10);
     if (isNaN(id)) {
-      sendJson(res, 400, { error: 'Invalid template ID' });
+      sendErr(res, 400, 'Invalid template ID', ErrorCode.BAD_REQUEST);
       return;
     }
 
     const template = await templateService.getTemplateById(id);
     if (!template) {
-      sendJson(res, 404, { error: 'Template not found' });
+      sendErr(res, 404, 'Template not found', ErrorCode.NOT_FOUND);
       return;
     }
 
-    sendJson(res, 200, template);
-
+    sendOk(res, 200, template);
     logger.info('Retrieved template via API', { requestId, templateId: id });
   } catch (error) {
     logger.error('Failed to get template', { error, requestId });
-    sendJson(res, 500, { error: 'Internal server error' });
+    sendErr(res, 500, 'Internal server error', ErrorCode.INTERNAL_ERROR);
   }
 }
 
@@ -160,22 +136,21 @@ export async function handleGetTemplateByKey(ctx: TemplateRouteContext): Promise
   try {
     const uniqueKey = req.url!.split('/').pop();
     if (!uniqueKey) {
-      sendJson(res, 400, { error: 'Missing unique key' });
+      sendErr(res, 400, 'Missing unique key', ErrorCode.BAD_REQUEST);
       return;
     }
 
     const template = await templateService.getTemplateByKey(uniqueKey);
     if (!template) {
-      sendJson(res, 404, { error: 'Template not found' });
+      sendErr(res, 404, 'Template not found', ErrorCode.NOT_FOUND);
       return;
     }
 
-    sendJson(res, 200, template);
-
+    sendOk(res, 200, template);
     logger.info('Retrieved template by key via API', { requestId, uniqueKey });
   } catch (error) {
     logger.error('Failed to get template by key', { error, requestId });
-    sendJson(res, 500, { error: 'Internal server error' });
+    sendErr(res, 500, 'Internal server error', ErrorCode.INTERNAL_ERROR);
   }
 }
 
@@ -188,27 +163,25 @@ export async function handleUpdateTemplate(ctx: TemplateRouteContext): Promise<v
   try {
     const id = parseInt(req.url!.split('/').pop() || '', 10);
     if (isNaN(id)) {
-      sendJson(res, 400, { error: 'Invalid template ID' });
+      sendErr(res, 400, 'Invalid template ID', ErrorCode.BAD_REQUEST);
       return;
     }
 
     const body = await parseBody(req);
-
     await templateService.updateTemplate(id, body);
 
-    sendJson(res, 200, { id, message: 'Template updated successfully' });
-
+    sendOk(res, 200, { id, message: 'Template updated successfully' });
     logger.info('Updated template via API', { requestId, templateId: id });
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     logger.error('Failed to update template', { error, requestId });
 
     if (errorMessage.includes('not found')) {
-      sendJson(res, 404, { error: 'Template not found' });
+      sendErr(res, 404, 'Template not found', ErrorCode.NOT_FOUND);
     } else if (errorMessage.includes('validation') || errorMessage.includes('invalid')) {
-      sendJson(res, 400, { error: errorMessage });
+      sendErr(res, 400, errorMessage, ErrorCode.BAD_REQUEST);
     } else {
-      sendJson(res, 500, { error: 'Internal server error' });
+      sendErr(res, 500, 'Internal server error', ErrorCode.INTERNAL_ERROR);
     }
   }
 }
@@ -223,7 +196,7 @@ export async function handleDeleteTemplate(ctx: TemplateRouteContext): Promise<v
     const url = new URL(req.url!, 'http://localhost');
     const id = parseInt(url.pathname.split('/').pop() || '', 10);
     if (isNaN(id)) {
-      sendJson(res, 400, { error: 'Invalid template ID' });
+      sendErr(res, 400, 'Invalid template ID', ErrorCode.BAD_REQUEST);
       return;
     }
 
@@ -235,24 +208,19 @@ export async function handleDeleteTemplate(ctx: TemplateRouteContext): Promise<v
       await templateService.deactivateTemplate(id);
     }
 
-    sendJson(res, 200, {
+    sendOk(res, 200, {
       id,
       message: hardDelete ? 'Template deleted permanently' : 'Template deactivated',
     });
-
-    logger.info('Deleted/deactivated template via API', {
-      requestId,
-      templateId: id,
-      hardDelete,
-    });
+    logger.info('Deleted/deactivated template via API', { requestId, templateId: id, hardDelete });
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     logger.error('Failed to delete template', { error, requestId });
 
     if (errorMessage.includes('not found')) {
-      sendJson(res, 404, { error: 'Template not found' });
+      sendErr(res, 404, 'Template not found', ErrorCode.NOT_FOUND);
     } else {
-      sendJson(res, 500, { error: 'Internal server error' });
+      sendErr(res, 500, 'Internal server error', ErrorCode.INTERNAL_ERROR);
     }
   }
 }
@@ -266,12 +234,8 @@ export async function handleRenderTemplate(ctx: TemplateRouteContext): Promise<v
   try {
     const body = await parseBody(req);
 
-    // Validate required fields
     if ((!body.templateId && !body.uniqueKey) || !body.context) {
-      sendJson(res, 400, {
-        error: 'Missing required fields',
-        required: ['templateId OR uniqueKey', 'context'],
-      });
+      sendErr(res, 400, 'Missing required fields: templateId OR uniqueKey, context', ErrorCode.BAD_REQUEST);
       return;
     }
 
@@ -282,27 +246,18 @@ export async function handleRenderTemplate(ctx: TemplateRouteContext): Promise<v
       result = await templateService.renderTemplateByKey(body.uniqueKey, body.context);
     }
 
-    sendJson(res, 200, result);
-
-    logger.info('Rendered template via API', {
-      requestId,
-      templateId: body.templateId,
-      uniqueKey: body.uniqueKey,
-    });
+    sendOk(res, 200, result);
+    logger.info('Rendered template via API', { requestId, templateId: body.templateId, uniqueKey: body.uniqueKey });
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     logger.error('Failed to render template', { error, requestId });
 
     if (errorMessage.includes('not found')) {
-      sendJson(res, 404, { error: 'Template not found' });
-    } else if (
-      errorMessage.includes('validation') ||
-      errorMessage.includes('invalid') ||
-      errorMessage.includes('required')
-    ) {
-      sendJson(res, 400, { error: errorMessage });
+      sendErr(res, 404, 'Template not found', ErrorCode.NOT_FOUND);
+    } else if (errorMessage.includes('validation') || errorMessage.includes('invalid') || errorMessage.includes('required')) {
+      sendErr(res, 400, errorMessage, ErrorCode.BAD_REQUEST);
     } else {
-      sendJson(res, 500, { error: 'Internal server error' });
+      sendErr(res, 500, 'Internal server error', ErrorCode.INTERNAL_ERROR);
     }
   }
 }
@@ -319,13 +274,11 @@ export async function handleGetTemplateStats(ctx: TemplateRouteContext): Promise
     const templateId = idParam ? parseInt(idParam, 10) : undefined;
 
     const stats = await templateService.getTemplateStats(templateId);
-
-    sendJson(res, 200, stats);
-
+    sendOk(res, 200, stats);
     logger.info('Retrieved template stats via API', { requestId, templateId });
   } catch (error) {
     logger.error('Failed to get template stats', { error, requestId });
-    sendJson(res, 500, { error: 'Internal server error' });
+    sendErr(res, 500, 'Internal server error', ErrorCode.INTERNAL_ERROR);
   }
 }
 
