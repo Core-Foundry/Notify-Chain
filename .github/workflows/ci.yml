@@ -13,6 +13,33 @@ on:
       - staging
 
 jobs:
+  format:
+    name: Formatting checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dashboard dependencies
+        working-directory: dashboard
+        run: npm ci
+
+      - name: Check dashboard formatting (Prettier)
+        working-directory: dashboard
+        run: npm run format:check
+
+      - name: Install listener dependencies
+        working-directory: listener
+        run: npm ci
+
+      - name: Check listener formatting (Prettier)
+        working-directory: listener
+        run: npm run format:check
+
   frontend:
     name: Frontend (lint, typecheck, test)
     runs-on: ubuntu-latest
