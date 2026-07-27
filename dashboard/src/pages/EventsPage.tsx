@@ -1,7 +1,9 @@
 import { useEffect } from 'react';
 import { EventFiltersBar } from '../components/EventFiltersBar';
 import { EventListPanel } from '../components/EventListPanel';
+import { EventsListSkeleton } from '../components/EventsListSkeleton';
 import { WalletConnectButton } from '../components/WalletConnectButton';
+import { getEventsApiBaseUrl } from '../config/eventsApiUrl';
 import { useEventLoadingState } from '../hooks/useEventSelectors';
 import { useEventStore } from '../store/eventStore';
 import { fetchEvents } from '../services/eventsApi';
@@ -9,8 +11,7 @@ import { generateMockEvents } from '../utils/eventData';
 import { restoreWalletSession } from '../services/wallet';
 
 const DEFAULT_EVENT_COUNT = 5000;
-const API_URL =
-  import.meta.env.VITE_EVENTS_API_URL ?? 'http://localhost:8787/api/events';
+const API_URL = `${getEventsApiBaseUrl()}/api/events`;
 const POLL_INTERVAL_MS = 15_000;
 
 export function EventsPage() {
@@ -91,14 +92,11 @@ export function EventsPage() {
 
       <EventFiltersBar />
 
-      <div aria-live="polite" role="status">
-        {isLoading && <p className="events-page__status">Loading events...</p>}
-      </div>
       <div aria-live="assertive" role="alert">
         {error && <p className="events-page__status events-page__status--warning">{error}</p>}
       </div>
 
-      <EventListPanel />
+      {isLoading ? <EventsListSkeleton /> : <EventListPanel />}
     </main>
   );
 }

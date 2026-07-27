@@ -14,7 +14,8 @@ This guide walks you through setting up every component of NotifyChain on your l
 6. [Running Everything Together](#running-everything-together)
 7. [Environment Variables Reference](#environment-variables-reference)
 8. [Example Configuration](#example-configuration)
-9. [Troubleshooting](#troubleshooting)
+9. [IDE Setup (VS Code)](#ide-setup-vs-code)
+10. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -349,6 +350,48 @@ VITE_STELLAR_NETWORK=TESTNET
 
 ---
 
+## IDE Setup (VS Code)
+
+### Recommended extensions
+
+Install the following extensions for the best development experience across the Rust contracts and TypeScript listener/dashboard:
+
+| Extension | ID | Purpose |
+|-----------|-----|---------|
+| **rust-analyzer** | `rust-lang.rust-analyzer` | Rust language support (autocomplete, inlay hints, go-to-definition) |
+| **CodeLLDB** | `vadimcn.vscode-lldb` | Native debugger for Rust |
+| **Better TOML** | `bungcip.better-toml` | Syntax highlighting for `Cargo.toml` files |
+| **ESLint** | `dbaeumer.vscode-eslint` | TypeScript/JavaScript linting for the listener and dashboard |
+
+Install all at once from the terminal:
+
+```bash
+code --install-extension rust-lang.rust-analyzer
+code --install-extension vadimcn.vscode-lldb
+code --install-extension bungcip.better-toml
+code --install-extension dbaeumer.vscode-eslint
+```
+
+### Recommended `.vscode/settings.json`
+
+The repository already ships with a `.vscode/settings.json`. If you need to create or extend it, the recommended settings are:
+
+```json
+{
+  "rust-analyzer.cargo.target": "wasm32-unknown-unknown",
+  "rust-analyzer.checkOnSave.allTargets": false,
+  "editor.formatOnSave": true
+}
+```
+
+- `rust-analyzer.cargo.target` — tells rust-analyzer to check the code against the `wasm32-unknown-unknown` target, matching how the contracts are built. Without this, rust-analyzer may surface false-positive errors for WASM-only APIs.
+- `rust-analyzer.checkOnSave.allTargets` — disabling prevents rust-analyzer from checking every target on every save, which speeds up feedback in a multi-target workspace.
+- `editor.formatOnSave` — auto-formats Rust files with `rustfmt` and TypeScript files with Prettier (if configured) on each save.
+
+> **Note:** A `.vscode/settings.json` file is already included in the repository root with the `rust-analyzer` target pre-configured. You can edit it directly rather than creating a new one.
+
+---
+
 ## Troubleshooting
 
 ### Listener fails to start: `ConfigError`
@@ -404,3 +447,190 @@ If `sqlite3` fails to build, ensure you have a C++ toolchain installed (`build-e
 ### Port already in use
 
 If port `8787` is taken, change `EVENTS_API_PORT` in `listener/.env` and update `VITE_EVENTS_API_URL` in `dashboard/.env` to match.
+
+### Rust version too old
+
+Soroban contracts require a recent stable Rust toolchain. If you see errors such as `error[E0XXX]: ...` about unstable features or missing trait implementations, your local Rust is likely out of date.
+
+Update to the latest stable release:
+
+```bash
+rustup update stable
+```
+
+After updating, verify the version:
+
+```bash
+rustc --version   # should be 1.78 or later
+```
+
+Then rebuild the contract:
+
+```bash
+cd contract
+stellar contract build
+```
+
+### stellar-cli version mismatch
+
+Running `stellar contract build` with an outdated `stellar-cli` may silently produce a Wasm binary that is incompatible with the current Soroban host environment on testnet, causing invocation errors or unexpected behaviour at runtime.
+
+Reinstall the CLI to the latest pinned version:
+
+```bash
+cargo install --locked stellar-cli --features opt
+```
+
+Verify the installed version:
+
+```bash
+stellar --version
+```
+
+If multiple versions are on your `PATH` (e.g. from a previous global install), check which binary is being used:
+
+```bash
+which stellar
+```
+
+### npm run dev fails with ts-node / ESM errors
+
+The listener uses TypeScript with ES module output. Depending on your Node.js version, `ts-node` may fail to resolve ESM imports, producing errors like:
+
+```
+Error [ERR_UNKNOWN_FILE_EXTENSION]: Unknown file extension ".ts"
+```
+
+or
+
+```
+SyntaxError: Cannot use import statement in a module
+```
+
+**Reliable workaround — compile first, then run:**
+
+```bash
+cd listener
+npm run build
+npm start
+```
+
+**Alternative — check `tsconfig.json`:**
+
+Ensure the `module` and `moduleResolution` settings are consistent. For Node 18+, the recommended combination is:
+
+```json
+{
+  "compilerOptions": {
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext"
+  }
+}
+```
+
+If you need to keep `ts-node` for a faster dev loop, add `"ts-node": { "esm": true }` to `tsconfig.json` and use `node --loader ts-node/esm src/index.ts`.
+
+### Dashboard shows CORS error
+
+The browser blocks requests from the dashboard to the listener when the `Origin` header does not match the value of `EVENTS_API_CORS_ORIGIN` in `listener/.env`. The mismatch must be **exact** — including the protocol, hostname, and port.
+
+**Symptom:**
+
+```
+Access to fetch at 'http://localhost:8787/api/events' from origin 'http://localhost:5173'
+has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present.
+```
+
+**Fix:**
+
+Open `listener/.env` and set `EVENTS_API_CORS_ORIGIN` to exactly the origin shown in the browser's address bar:
+
+```env
+# Default dashboard dev server
+EVENTS_API_CORS_ORIGIN=http://localhost:5173
+
+# If you changed the dashboard port or are using a different host
+EVENTS_API_CORS_ORIGIN=http://localhost:4173
+```
+
+Restart the listener after editing `.env`. The header value must not have a trailing slash.
+
+### SQLite WAL mode contention
+
+The listener opens its SQLite database in WAL (Write-Ahead Logging) mode for better concurrency. However, if two or more listener processes attempt to **write** to the same database file simultaneously, you will see errors such as:
+
+```
+SqliteError: database is locked
+SQLITE_BUSY: database is locked
+```
+
+**Fix 1 — ensure only one listener process runs at a time:**
+
+```bash
+# Check for existing listener processes
+lsof listener/data/notifications.db
+
+# Kill any stale processes before starting a new one
+pkill -f "node.*listener"
+```
+
+**Fix 2 — give each process its own database file:**
+
+If you intentionally run multiple listener instances (e.g. one per contract), point each to a separate file using the `DATABASE_PATH` environment variable:
+
+```env
+# Instance A
+DATABASE_PATH=./data/contract-a.db
+
+# Instance B
+DATABASE_PATH=./data/contract-b.db
+```
+
+### Contract invoke returns "simulation failed"
+
+`stellar contract invoke` runs a local simulation before broadcasting the transaction. A `simulation failed` error usually points to one of three causes:
+
+1. **Contract not initialized** — the contract was deployed but `initialize_admin` (or equivalent) was never called. Re-run the initialization step:
+
+   ```bash
+   stellar contract invoke \
+     --id <CONTRACT_ID> \
+     --source dev-account \
+     --network testnet \
+     -- initialize_admin \
+     --admin <YOUR_PUBLIC_KEY>
+   ```
+
+2. **Wrong network** — the `--network` flag does not match where the contract was deployed. Confirm the contract exists on the target network:
+
+   ```bash
+   stellar contract info --id <CONTRACT_ID> --network testnet
+   ```
+
+3. **Wrong `--id`** — the contract ID was miscopied. The deploy command prints the contract ID on stdout. You can re-check it with:
+
+   ```bash
+   stellar keys list          # list your identities
+   # Re-deploy if needed and note the printed CONTRACT_ID
+   ```
+
+Enable verbose output for more detail:
+
+```bash
+stellar contract invoke --id <CONTRACT_ID> --source dev-account --network testnet --verbose -- <FUNCTION> <ARGS>
+```
+
+### Freighter not detecting local testnet
+
+Freighter does not automatically switch networks. If your contract is deployed on Testnet but Freighter is set to Mainnet (or vice versa), transactions will be rejected or signed for the wrong network.
+
+**Fix:**
+
+1. Click the Freighter browser extension icon.
+2. Open **Settings → Network**.
+3. Select **Testnet** for local development.
+4. Reload your dApp page.
+
+Freighter must be on the **same network** as the `--network` flag you used when deploying the contract and as `VITE_STELLAR_NETWORK` in `dashboard/.env`.
+
+For a full list of Freighter connection issues (extension not detected, popup not appearing, signing timeouts, wrong network errors), see the [Freighter Troubleshooting](README.md#freighter-troubleshooting) section in `README.md`.

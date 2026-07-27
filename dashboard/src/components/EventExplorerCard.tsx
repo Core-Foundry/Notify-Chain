@@ -75,7 +75,7 @@ export function EventExplorerCard({
           <p className="event-explorer__contract" title={event.contractAddress}>
             {shortenAddress(event.contractAddress)}
           </p>
-          <div className="event-explorer__contract-actions">
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
             <button
               type="button"
               className="event-explorer__copy-button"
