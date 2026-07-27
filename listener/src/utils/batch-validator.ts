@@ -4,6 +4,56 @@ import * as path from 'path';
 export const VALID_CHANNELS = ['discord', 'webhook', 'email', 'sms'] as const;
 export type NotificationChannel = (typeof VALID_CHANNELS)[number];
 
+/**
+ * Issue #479: Validates a channel name, rejecting empty or whitespace-only values.
+ *
+ * Returns an object describing the validation result:
+ * - `valid: true`  when the name is a non-empty, non-whitespace string that
+ *   maps to a known channel.
+ * - `valid: false` with a `code` and `message` when it does not.
+ *
+ * Error codes:
+ * - `EMPTY_CHANNEL_NAME`  – name is missing, empty, or whitespace-only.
+ * - `INVALID_CHANNEL`     – name is present but not in VALID_CHANNELS.
+ */
+export function validateChannelName(
+  name: unknown,
+): { valid: true } | { valid: false; code: string; message: string } {
+  if (name === undefined || name === null || name === '') {
+    return {
+      valid: false,
+      code: 'EMPTY_CHANNEL_NAME',
+      message: `Channel name must not be empty. Allowed values: ${VALID_CHANNELS.join(', ')}.`,
+    };
+  }
+
+  if (typeof name !== 'string') {
+    return {
+      valid: false,
+      code: 'INVALID_CHANNEL',
+      message: `Channel must be a string. Allowed values: ${VALID_CHANNELS.join(', ')}.`,
+    };
+  }
+
+  if (name.trim() === '') {
+    return {
+      valid: false,
+      code: 'EMPTY_CHANNEL_NAME',
+      message: `Channel name must not be empty or whitespace-only. Allowed values: ${VALID_CHANNELS.join(', ')}.`,
+    };
+  }
+
+  if (!VALID_CHANNELS.includes(name as NotificationChannel)) {
+    return {
+      valid: false,
+      code: 'INVALID_CHANNEL',
+      message: `Channel '${name}' is not supported. Allowed values: ${VALID_CHANNELS.join(', ')}.`,
+    };
+  }
+
+  return { valid: true };
+}
+
 export interface NotificationPayload {
   id: string;
   recipient: string;
@@ -106,13 +156,17 @@ export class BatchValidator {
         result.isValid = false;
       }
 
+      // Issue #479: reject empty/whitespace-only channel names explicitly before
+      // checking against VALID_CHANNELS so callers get a clear EMPTY_CHANNEL_NAME
+      // error rather than a misleading INVALID_CHANNEL error.
       if (item.channel !== undefined) {
-        if (!VALID_CHANNELS.includes(item.channel as NotificationChannel)) {
+        const channelResult = validateChannelName(item.channel);
+        if (!channelResult.valid) {
           result.errors.push({
             index,
             field: 'channel',
-            code: 'INVALID_CHANNEL',
-            message: `Item at index [${index}]: Channel '${item.channel}' is not supported. Allowed: ${VALID_CHANNELS.join(', ')}.`,
+            code: channelResult.code,
+            message: `Item at index [${index}]: ${channelResult.message}`,
           });
           result.isValid = false;
         }
