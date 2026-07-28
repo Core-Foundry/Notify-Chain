@@ -416,6 +416,19 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
 
     const url = new URL(req.url ?? '/', 'http://localhost');
 
+    // ── API Route Versioning (#386) ─────────────────────────────────────────
+    // Accept requests to /api/v1/* and silently rewrite the pathname to the
+    // canonical /api/* form so the rest of the handler needs no changes.
+    // The original `req.url` is preserved; only the parsed `url.pathname` is
+    // modified. Unversioned /api/* routes continue to work unchanged.
+    if (url.pathname.startsWith('/api/v1/')) {
+      url.pathname = url.pathname.replace('/api/v1/', '/api/');
+    } else if (url.pathname === '/api/v1') {
+      url.pathname = '/api';
+    }
+    // Add X-API-Version response header so callers can inspect active version
+    res.setHeader('X-API-Version', 'v1');
+
     // The rate-limit metrics endpoint is an observability route and must stay
     // reachable even after a client exhausts its quota — otherwise callers
     // can't read the very metrics that explain why they are being throttled.
@@ -434,7 +447,8 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
     }
 
     // Template API routes (handled first for priority)
-    if (options.templateService && req.url?.startsWith('/api/templates')) {
+    // url.pathname is already rewritten from /api/v1/* → /api/* above
+    if (options.templateService && url.pathname.startsWith('/api/templates')) {
       handleTemplateRoutes(req, res, requestId, options.templateService)
         .then((handled) => {
           if (!handled) {

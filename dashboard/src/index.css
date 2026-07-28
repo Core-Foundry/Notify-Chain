@@ -5158,3 +5158,463 @@ body.event-explorer--resizing {
   color: #9aa0a6;
   font-size: 0.92rem;
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   #394 Accessibility — focus rings, skip link
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Visible focus ring for keyboard navigation */
+:focus-visible {
+  outline: 3px solid #1a73e8;
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+
+/* Remove outline for mouse clicks only */
+:focus:not(:focus-visible) {
+  outline: none;
+}
+
+/* Skip-to-content link */
+.skip-link {
+  position: absolute;
+  top: -100%;
+  left: 8px;
+  z-index: 10000;
+  padding: 8px 16px;
+  background: #1a73e8;
+  color: #fff;
+  border-radius: 0 0 4px 4px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  text-decoration: none;
+  transition: top 0.15s ease;
+}
+
+.skip-link:focus {
+  top: 0;
+  outline: 3px solid #fff;
+  outline-offset: 2px;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   #396 Navigation Redesign — app header, tab list, mobile support
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.app__header {
+  position: sticky;
+  top: 0;
+  z-index: 200;
+  background: var(--color-surface, #1e2124);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.app__header-inner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 16px;
+  max-width: 1600px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+.app__brand {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: #e8eaed;
+  flex: 1;
+}
+
+/* Hamburger button — hidden on desktop */
+.app__hamburger {
+  display: none;
+  flex-direction: column;
+  justify-content: center;
+  gap: 5px;
+  width: 40px;
+  height: 40px;
+  padding: 8px;
+  background: none;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 6px;
+  cursor: pointer;
+  color: #e8eaed;
+}
+
+.app__hamburger:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.app__hamburger-bar {
+  display: block;
+  width: 100%;
+  height: 2px;
+  background: currentColor;
+  border-radius: 2px;
+}
+
+/* Tabs */
+.app-tabs__list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.app-tabs__list::-webkit-scrollbar {
+  display: none;
+}
+
+/* Enhanced active tab styles */
+.app-tabs__btn {
+  padding: 10px 18px;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: #9aa0a6;
+  font-size: 0.9rem;
+  cursor: pointer;
+  margin-bottom: -1px;
+  white-space: nowrap;
+  transition: color 0.15s, border-bottom-color 0.15s;
+  border-radius: 4px 4px 0 0;
+}
+
+.app-tabs__btn:hover {
+  color: #e8eaed;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.app-tabs__btn--active,
+.app-tabs__btn[aria-selected="true"] {
+  color: #e8eaed;
+  border-bottom-color: #1a73e8;
+  font-weight: 600;
+}
+
+/* tabpanel content area */
+.app__content {
+  min-height: 0;
+  padding: 0;
+  outline: none; /* focusable via tabIndex=-1 but no ring when programmatically focused */
+}
+
+.app__panel {
+  display: contents;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   #396 Mobile Navigation Drawer
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+@media (max-width: 768px) {
+  .app__hamburger {
+    display: flex;
+  }
+
+  .app-tabs {
+    display: none;
+  }
+}
+
+/* Backdrop */
+.mobile-drawer__backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 400;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(2px);
+}
+
+/* Drawer panel */
+.mobile-drawer {
+  position: fixed;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  z-index: 500;
+  width: min(320px, 85vw);
+  background: var(--color-surface, #1e2124);
+  border-right: 1px solid rgba(255, 255, 255, 0.1);
+  display: flex;
+  flex-direction: column;
+  transform: translateX(-100%);
+  transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  overflow-y: auto;
+}
+
+.mobile-drawer--open {
+  transform: translateX(0);
+}
+
+.mobile-drawer__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.mobile-drawer__title {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: #e8eaed;
+}
+
+.mobile-drawer__close {
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 50%;
+  color: #e8eaed;
+  font-size: 1.2rem;
+  cursor: pointer;
+  line-height: 1;
+}
+
+.mobile-drawer__close:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.mobile-drawer__nav {
+  padding: 8px 0;
+  flex: 1;
+}
+
+.mobile-drawer__group {
+  margin-bottom: 8px;
+}
+
+.mobile-drawer__group-label {
+  padding: 8px 16px 4px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #5f6368;
+}
+
+.mobile-drawer__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.mobile-drawer__item {
+  display: block;
+  width: 100%;
+  padding: 12px 24px;
+  background: none;
+  border: none;
+  text-align: left;
+  font-size: 0.95rem;
+  color: #9aa0a6;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+  border-left: 3px solid transparent;
+}
+
+.mobile-drawer__item:hover {
+  background: rgba(255, 255, 255, 0.05);
+  color: #e8eaed;
+}
+
+.mobile-drawer__item--active,
+.mobile-drawer__item[aria-current="page"] {
+  color: #8ab4f8;
+  border-left-color: #1a73e8;
+  background: rgba(26, 115, 232, 0.1);
+  font-weight: 600;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   #397 Toast Notification System
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.toast-viewport {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  z-index: 9000;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  pointer-events: none;
+  max-width: min(400px, calc(100vw - 48px));
+}
+
+.toast-live-region {
+  display: contents;
+}
+
+.toast {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  pointer-events: all;
+  animation: toast-in 0.2s cubic-bezier(0.4, 0, 0.2, 1) both;
+  min-width: 280px;
+  border-left: 4px solid transparent;
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateX(24px) scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+}
+
+.toast--success {
+  background: #1e3a2a;
+  border-left-color: #34a853;
+  color: #81c995;
+}
+
+.toast--error {
+  background: #3a1e1e;
+  border-left-color: #ea4335;
+  color: #f28b82;
+}
+
+.toast--info {
+  background: #1a2740;
+  border-left-color: #1a73e8;
+  color: #8ab4f8;
+}
+
+.toast--warning {
+  background: #3a2e1a;
+  border-left-color: #fbbc04;
+  color: #fdd663;
+}
+
+.toast__icon {
+  font-size: 1rem;
+  line-height: 1.4;
+  flex-shrink: 0;
+}
+
+.toast__message {
+  flex: 1;
+  font-size: 0.9rem;
+  line-height: 1.45;
+}
+
+.toast__close {
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  color: inherit;
+  font-size: 1.1rem;
+  cursor: pointer;
+  opacity: 0.7;
+  border-radius: 4px;
+  line-height: 1;
+}
+
+.toast__close:hover {
+  opacity: 1;
+  background: rgba(255, 255, 255, 0.12);
+}
+
+@media (max-width: 480px) {
+  .toast-viewport {
+    bottom: 16px;
+    right: 16px;
+    left: 16px;
+    max-width: none;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Light theme overrides (#394 / #396 / #397)
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+[data-theme="light"] .app__header {
+  background: #ffffff;
+  border-bottom-color: #e0e0e0;
+}
+
+[data-theme="light"] .app__brand {
+  color: #202124;
+}
+
+[data-theme="light"] .app__hamburger {
+  border-color: rgba(0, 0, 0, 0.15);
+  color: #202124;
+}
+
+[data-theme="light"] .app-tabs__btn {
+  color: #5f6368;
+}
+
+[data-theme="light"] .app-tabs__btn:hover,
+[data-theme="light"] .app-tabs__btn--active,
+[data-theme="light"] .app-tabs__btn[aria-selected="true"] {
+  color: #202124;
+}
+
+[data-theme="light"] .mobile-drawer {
+  background: #ffffff;
+  border-right-color: #e0e0e0;
+}
+
+[data-theme="light"] .mobile-drawer__title {
+  color: #202124;
+}
+
+[data-theme="light"] .mobile-drawer__item {
+  color: #5f6368;
+}
+
+[data-theme="light"] .mobile-drawer__item:hover {
+  background: rgba(0, 0, 0, 0.04);
+  color: #202124;
+}
+
+[data-theme="light"] .mobile-drawer__item--active {
+  color: #1a73e8;
+  background: rgba(26, 115, 232, 0.08);
+}
+
+[data-theme="light"] .toast--success {
+  background: #e6f4ea;
+  color: #137333;
+  border-left-color: #34a853;
+}
+
+[data-theme="light"] .toast--error {
+  background: #fce8e6;
+  color: #c5221f;
+  border-left-color: #ea4335;
+}
+
+[data-theme="light"] .toast--info {
+  background: #e8f0fe;
+  color: #1558d6;
+  border-left-color: #1a73e8;
+}
+
+[data-theme="light"] .toast--warning {
+  background: #fef9e7;
+  color: #a16f00;
+  border-left-color: #fbbc04;
+}
