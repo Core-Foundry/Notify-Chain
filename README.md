@@ -30,6 +30,8 @@ The project enables developers to build reactive decentralized applications with
 > - [Notification Lifecycle](NOTIFICATION_LIFECYCLE.md) — end-to-end on-chain/off-chain flow from event detection to delivery, ack, retry, and archival.
 > - [Notification Failure Recovery](NOTIFICATION_FAILURE_RECOVERY.md) — retry lifecycle, configuration, and troubleshooting.
 >
+> **Repository map**: [Project Structure Guide](docs/PROJECT-STRUCTURE.md) — major directories, modules, and where code belongs.
+>
 > **Event reference**: [Smart Contract Event Reference Guide](CONTRACT_EVENT_REFERENCE.md) — all emitted events, parameters, data types, and usage recommendations for indexers and listeners.
 
 ---
@@ -135,6 +137,10 @@ Key Modules:
 ---
 
 ## Project Structure
+
+> **Full directory guide:** [docs/PROJECT-STRUCTURE.md](docs/PROJECT-STRUCTURE.md) —
+> purpose and responsibilities of every major directory and module, plus where
+> new code should live.
 
 ```
 Notify-Chain/
