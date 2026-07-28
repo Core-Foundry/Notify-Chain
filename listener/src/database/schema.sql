@@ -65,6 +65,27 @@ CREATE INDEX IF NOT EXISTS idx_scheduled_notifications_event_id
 CREATE INDEX IF NOT EXISTS idx_scheduled_notifications_target 
   ON scheduled_notifications(target_recipient, status);
 
+-- Dead-letter queue for permanently failed notifications
+CREATE TABLE IF NOT EXISTS dead_letter_queue (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  scheduled_notification_id INTEGER NOT NULL UNIQUE,
+  notification_type VARCHAR(50) NOT NULL,
+  target_recipient TEXT NOT NULL,
+  payload TEXT NOT NULL,
+  failure_reason TEXT NOT NULL,
+  error_details TEXT,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  last_retried_at DATETIME,
+  retry_count INTEGER NOT NULL DEFAULT 0,
+  FOREIGN KEY (scheduled_notification_id) REFERENCES scheduled_notifications(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_dead_letter_queue_created_at
+  ON dead_letter_queue(created_at);
+
+CREATE INDEX IF NOT EXISTS idx_dead_letter_queue_notification_type
+  ON dead_letter_queue(notification_type);
+
 -- Notification execution history for auditing
 CREATE TABLE IF NOT EXISTS notification_execution_log (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
