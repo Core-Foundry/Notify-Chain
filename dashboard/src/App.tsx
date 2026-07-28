@@ -2,6 +2,8 @@ import { useState } from 'react';
 import { EventExplorerPage } from './pages/EventExplorerPage';
 import { NotificationTimelineView } from './components/NotificationTimelineView';
 import { ActivityFeed } from './components/ActivityFeed';
+import { UserActivityTimeline } from './components/UserActivityTimeline';
+import { RetryStatisticsPanel } from './components/RetryStatisticsPanel';
 import { WebhookDashboardPage } from './pages/WebhookDashboardPage';
 import { ExportHistoryPage } from './pages/ExportHistoryPage';
 import { NotificationSearchPage } from './pages/NotificationSearchPage';
@@ -16,6 +18,8 @@ type Tab =
   | 'explorer'
   | 'timeline'
   | 'activity'
+  | 'user-activity'
+  | 'retry-stats'
   | 'webhooks'
   | 'export-history'
   | 'search'
@@ -32,18 +36,10 @@ export function App() {
       <div className="app__theme-bar">
         <ThemeToggle theme={theme} onToggle={toggleTheme} />
       </div>
-  | 'preferences';
-
-export function App() {
-  const [tab, setTab] = useState<Tab>('explorer');
-
-  return (
-    <div className="app">
       <nav className="app-tabs" role="tablist" aria-label="Main navigation">
         <button
           type="button"
           role="tab"
-          type="button"
           aria-selected={tab === 'explorer'}
           className={`app-tabs__btn${tab === 'explorer' ? ' app-tabs__btn--active' : ''}`}
           onClick={() => setTab('explorer')}
@@ -53,7 +49,6 @@ export function App() {
         <button
           type="button"
           role="tab"
-          type="button"
           aria-selected={tab === 'timeline'}
           className={`app-tabs__btn${tab === 'timeline' ? ' app-tabs__btn--active' : ''}`}
           onClick={() => setTab('timeline')}
@@ -63,7 +58,6 @@ export function App() {
         <button
           type="button"
           role="tab"
-          type="button"
           aria-selected={tab === 'activity'}
           className={`app-tabs__btn${tab === 'activity' ? ' app-tabs__btn--active' : ''}`}
           onClick={() => setTab('activity')}
@@ -73,7 +67,24 @@ export function App() {
         <button
           type="button"
           role="tab"
+          aria-selected={tab === 'user-activity'}
+          className={`app-tabs__btn${tab === 'user-activity' ? ' app-tabs__btn--active' : ''}`}
+          onClick={() => setTab('user-activity')}
+        >
+          User Activity
+        </button>
+        <button
           type="button"
+          role="tab"
+          aria-selected={tab === 'retry-stats'}
+          className={`app-tabs__btn${tab === 'retry-stats' ? ' app-tabs__btn--active' : ''}`}
+          onClick={() => setTab('retry-stats')}
+        >
+          Retry Stats
+        </button>
+        <button
+          type="button"
+          role="tab"
           aria-selected={tab === 'webhooks'}
           className={`app-tabs__btn${tab === 'webhooks' ? ' app-tabs__btn--active' : ''}`}
           onClick={() => setTab('webhooks')}
@@ -83,7 +94,6 @@ export function App() {
         <button
           type="button"
           role="tab"
-          type="button"
           aria-selected={tab === 'export-history'}
           className={`app-tabs__btn${tab === 'export-history' ? ' app-tabs__btn--active' : ''}`}
           onClick={() => setTab('export-history')}
@@ -93,7 +103,6 @@ export function App() {
         <button
           type="button"
           role="tab"
-          type="button"
           aria-selected={tab === 'search'}
           className={`app-tabs__btn${tab === 'search' ? ' app-tabs__btn--active' : ''}`}
           onClick={() => setTab('search')}
@@ -101,8 +110,6 @@ export function App() {
           Notification Search
         </button>
         <button
-          role="tab"
-          type="button"
           type="button"
           role="tab"
           aria-selected={tab === 'preferences'}
@@ -112,8 +119,8 @@ export function App() {
           Preferences
         </button>
         <button
-          role="tab"
           type="button"
+          role="tab"
           aria-selected={tab === 'templates'}
           className={`app-tabs__btn${tab === 'templates' ? ' app-tabs__btn--active' : ''}`}
           onClick={() => setTab('templates')}
@@ -130,6 +137,8 @@ export function App() {
       )}
       {tab === 'timeline' && <NotificationTimelineView />}
       {tab === 'activity' && <ActivityFeed />}
+      {tab === 'user-activity' && <UserActivityTimeline />}
+      {tab === 'retry-stats' && <RetryStatisticsPanel />}
       {tab === 'webhooks' && <WebhookDashboardPage />}
       {tab === 'export-history' && <ExportHistoryPage />}
       {tab === 'search' && <NotificationSearchPage />}
