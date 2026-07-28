@@ -321,6 +321,9 @@ Returns a single scheduled notification by its numeric ID.
 | id   | Notification ID (integer) |
 
 **Response `200`**
+> **Payload size limit**: The `payload` object is serialised to JSON before storage. The resulting byte length must not exceed the configured maximum (default **64 KB / 65 536 bytes**). Oversized payloads are rejected with HTTP `413`. Override the limit at runtime with the `MAX_PAYLOAD_SIZE_BYTES` environment variable.
+
+**Request Body**
 
 ```json
 {
@@ -341,6 +344,25 @@ Returns a single scheduled notification by its numeric ID.
 ```
 
 **Response `400`** — non-numeric `:id`
+| Field             | Type     | Required | Description                                              |
+|-------------------|----------|----------|----------------------------------------------------------|
+| executeAt         | string   | Yes      | ISO 8601 datetime — when to deliver the notification     |
+| payload           | object   | Yes      | Arbitrary data forwarded to the notification handler. Serialised JSON must not exceed `MAX_PAYLOAD_SIZE_BYTES` (default 64 KB). |
+| targetRecipient   | string   | Yes      | Delivery target (e.g. Discord webhook URL)               |
+| notificationType  | string   | No       | `"discord"` (default)                                    |
+| maxRetries        | number   | No       | Override max retry count                                 |
+| priority          | number   | No       | Lower numbers run first                                  |
+| eventId           | string   | No       | Correlation ID linking this to a contract event          |
+| contractAddress   | string   | No       | Contract that triggered the notification                 |
+| metadata          | object   | No       | Arbitrary key/value metadata                             |
+
+**Response `201`**
+
+```json
+{ "id": 42 }
+```
+
+**Response `400`** — missing required fields
 
 ```json
 { "error": "Invalid notification ID" }
@@ -353,6 +375,13 @@ Returns a single scheduled notification by its numeric ID.
 ```
 
 **Response `500`** — database read failure
+**Response `413`** — payload exceeds the maximum allowed size
+
+```json
+{ "error": "Notification payload is too large: 70000 bytes exceeds the 65536-byte limit. Reduce the payload size and retry." }
+```
+
+**Response `500`** — internal scheduling failure
 
 ```json
 { "error": "SQLITE_ERROR: ..." }
@@ -1270,6 +1299,109 @@ Content-Type: application/json
 ---
 
 ## Webhooks
+## Health
+
+### GET /health
+
+Returns the operational status of all service dependencies.
+
+**Response `200`** — all systems operational or non-critical services degraded
+
+```json
+{
+  "status": "ok",
+  "timestamp": "2024-06-20T14:00:00.000Z",
+  "services": {
+    "stellarRpc": { "status": "ok", "latencyMs": 42 },
+    "discord": { "status": "ok", "latencyMs": 87 },
+    "database": { "status": "ok", "latencyMs": 3 },
+    "eventRegistry": { "status": "ok", "eventCount": 128 }
+  }
+}
+```
+
+`status` is `"degraded"` when Discord is unreachable but Stellar RPC and the database are healthy:
+
+```json
+{
+  "status": "degraded",
+  "timestamp": "2024-06-20T14:00:00.000Z",
+  "services": {
+    "stellarRpc": { "status": "ok", "latencyMs": 38 },
+    "discord": { "status": "error", "latencyMs": 5001, "detail": "HTTP 401" },
+    "database": { "status": "ok", "latencyMs": 2 },
+    "eventRegistry": { "status": "ok", "eventCount": 128 }
+  }
+}
+```
+
+**Response `503`** — Stellar RPC or the SQLite database is unreachable
+
+```json
+{
+  "status": "error",
+  "timestamp": "2024-06-20T14:00:00.000Z",
+  "services": {
+    "stellarRpc": { "status": "error", "latencyMs": 5001, "detail": "Health check timed out" },
+    "discord": { "status": "ok", "latencyMs": 65 },
+    "database": { "status": "ok", "latencyMs": 2 },
+    "eventRegistry": { "status": "ok", "eventCount": 128 }
+  }
+}
+```
+
+**Response `500`** — health check itself threw an unexpected error
+
+```json
+{ "status": "error", "detail": "Internal health check failure" }
+```
+
+A service entry's `status` field can be `"ok"`, `"error"`, or `"not_configured"`. `"not_configured"` means the service URL was not provided at startup and is not checked.
+
+---
+
+## Contract Status
+
+### GET /api/status
+
+Returns the pause status of all configured smart contracts.
+
+**Response `200`**
+
+```json
+{
+  "timestamp": "2024-06-20T14:00:00.000Z",
+  "contracts": [
+    {
+      "address": "CCEMX6...",
+      "paused": false
+    },
+    {
+      "address": "CCEMX7...",
+      "paused": true,
+      "error": "Failed to simulate contract call"
+    }
+  ]
+}
+```
+
+| Field       | Type     | Description                                                                 |
+|-------------|----------|-----------------------------------------------------------------------------|
+| timestamp   | string   | ISO 8601 timestamp of when the status was fetched                          |
+| contracts   | array    | List of contracts and their statuses                                             |
+| address     | string   | Contract address                                                            |
+| paused      | boolean  | Whether the contract is currently paused                                   |
+| error       | string   | Optional. Error message if we could not fetch the status for this contract   |
+
+**Response `500`** — internal error fetching status
+
+```json
+{ "status": "error", "detail": "Internal status check failure" }
+```
+
+---
+
+## Error Codes Reference
 
 Every error response is a JSON object. All errors carry an `error` string. Rate-limit responses also include a `message` field; health-check failures use `detail` instead.
 

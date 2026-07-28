@@ -1,6 +1,10 @@
 import { create } from 'zustand';
-import type { BlockchainEvent, EventFilters, NotificationStatus } from '../types/event';
-import { NOTIFICATION_STATUS_EVENTS } from '../types/event';
+import type {
+  BlockchainEvent,
+  EventFilters,
+  NotificationReadFilter,
+  NotificationStatus,
+} from '../types/event';
 import { filterEvents } from '../utils/eventData';
 
 interface EventStoreState {
@@ -22,7 +26,7 @@ interface EventStoreState {
   setSearch: (search: string) => void;
   setContractFilter: (contractAddress: string) => void;
   setEventTypeFilter: (eventType: string) => void;
-  setStatusFilter: (status: NotificationStatus) => void;
+  setStatusFilter: (status: NotificationReadFilter) => void;
   setDateFrom: (dateFrom: string) => void;
   setDateTo: (dateTo: string) => void;
   setTxHashFilter: (txHash: string) => void;

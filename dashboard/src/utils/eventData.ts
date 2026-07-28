@@ -37,7 +37,7 @@ export function filterEvents(
   search: string,
   contractAddress: string,
   eventType: string,
-  status: import('../types/event').NotificationStatus = 'all',
+  status: import('../types/event').NotificationReadFilter = 'all',
   dateFrom = '',
   dateTo = '',
   txHash = ''
