@@ -274,3 +274,95 @@ describe('searchNotifications query params', () => {
     expect(document.querySelector('.notif-result-card__status')).toHaveTextContent('PENDING');
   });
 });
+
+describe('NotificationResultCard copy notification ID', () => {
+  beforeEach(() => {
+    mockedSearch.mockReset();
+    jest.useFakeTimers();
+    Object.assign(navigator, {
+      clipboard: {
+        writeText: jest.fn().mockResolvedValue(undefined),
+      },
+    });
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  it('renders the notification ID with a copy button in result cards', async () => {
+    mockedSearch.mockResolvedValue(mockResult);
+    render(<NotificationSearchPage />);
+
+    // Trigger a search
+    fireEvent.change(screen.getByLabelText(/free-text search/i), {
+      target: { value: 'test' },
+    });
+
+    await act(async () => {
+      jest.advanceTimersByTime(300);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText('1')).toBeInTheDocument();
+    });
+
+    // Verify the notification ID label and value are present
+    expect(screen.getByText('Notification ID')).toBeInTheDocument();
+
+    // Verify a CopyButton with the correct aria-label is present
+    const copyBtn = screen.getByRole('button', { name: /copy notification id/i });
+    expect(copyBtn).toBeInTheDocument();
+  });
+
+  it('copies notification ID to clipboard when copy button is clicked', async () => {
+    mockedSearch.mockResolvedValue(mockResult);
+    render(<NotificationSearchPage />);
+
+    fireEvent.change(screen.getByLabelText(/free-text search/i), {
+      target: { value: 'test' },
+    });
+
+    await act(async () => {
+      jest.advanceTimersByTime(300);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText('Notification ID')).toBeInTheDocument();
+    });
+
+    const copyBtn = screen.getByRole('button', { name: /copy notification id/i });
+    await act(async () => {
+      fireEvent.click(copyBtn);
+    });
+
+    expect(navigator.clipboard.writeText).toHaveBeenCalledWith('1');
+  });
+
+  it('shows success feedback after copying notification ID', async () => {
+    mockedSearch.mockResolvedValue(mockResult);
+    render(<NotificationSearchPage />);
+
+    fireEvent.change(screen.getByLabelText(/free-text search/i), {
+      target: { value: 'test' },
+    });
+
+    await act(async () => {
+      jest.advanceTimersByTime(300);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText('Notification ID')).toBeInTheDocument();
+    });
+
+    const copyBtn = screen.getByRole('button', { name: /copy notification id/i });
+    await act(async () => {
+      fireEvent.click(copyBtn);
+    });
+
+    // After clicking, the CopyButton should show "Copied" feedback
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /notification id copied/i })).toBeInTheDocument();
+    });
+  });
+});
