@@ -527,6 +527,7 @@ impl AutoShareContract {
     /// Acknowledges multiple scheduled notifications in a single batch.
     pub fn acknowledge_notifications(env: Env, caller: Address, notification_ids: Vec<BytesN<32>>) {
         autoshare_logic::acknowledge_notifications(env, caller, notification_ids).unwrap();
+    }
     /// Extends the expiration period of a scheduled notification by `extension_seconds`.
     ///
     /// Only the notification creator or the contract admin can extend it.

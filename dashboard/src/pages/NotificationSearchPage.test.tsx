@@ -181,8 +181,6 @@ describe('NotificationSearchPage loading skeletons', () => {
     expect(screen.getByLabelText(/filter by delivery status/i)).toHaveValue('');
     expect(screen.getByLabelText(/filter from date/i)).toHaveValue('');
     expect(screen.queryByRole('button', { name: /clear all filters/i })).not.toBeInTheDocument();
-  });
-});
 
 describe('searchNotifications query params', () => {
   const originalFetch = global.fetch;

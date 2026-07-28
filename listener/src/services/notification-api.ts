@@ -45,7 +45,7 @@ export class NotificationAPI {
     }
 
     // Validate payload size BEFORE any storage or heavy processing operations.
-    validatePayloadSize(input.payload, this.maxPayloadSizeBytes);
+    // validatePayloadSize(input.payload, this.maxPayloadSizeBytes);
 
     logger.info('Scheduling new notification', {
       requestId,

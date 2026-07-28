@@ -95,7 +95,9 @@ export interface NotificationTemplateRow {
   updated_at: string;
   created_by: string | null;
   updated_by: string | null;
-export interface NotificationTemplate {
+}
+
+export interface NotificationTemplateOld {
   id: string;
   name: string;
   type: string;

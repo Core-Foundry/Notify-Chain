@@ -33,7 +33,6 @@ export const NOTIFICATION_TYPE_OPTIONS = [
 ];
 const API_BASE = getEventsApiBaseUrl();
 
-const STATUS_OPTIONS = ['', 'PENDING', 'PROCESSING', 'COMPLETED', 'FAILED', 'CANCELLED', 'PROCESSED'];
 
 export function NotificationSearchPage() {
   const [query, setQuery] = useState('');

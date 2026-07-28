@@ -32,13 +32,7 @@ export function App() {
       <div className="app__theme-bar">
         <ThemeToggle theme={theme} onToggle={toggleTheme} />
       </div>
-  | 'preferences';
 
-export function App() {
-  const [tab, setTab] = useState<Tab>('explorer');
-
-  return (
-    <div className="app">
       <nav className="app-tabs" role="tablist" aria-label="Main navigation">
         <button
           type="button"
