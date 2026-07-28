@@ -637,6 +637,11 @@ body {
     padding: 16px;
   }
 
+  .app-tabs__btn {
+    padding: 8px 12px;
+    font-size: 0.88rem;
+  }
+
   .app__topbar {
     flex-direction: column;
     align-items: stretch;
@@ -2450,6 +2455,21 @@ body.event-explorer--resizing {
   min-width: 0;
 }
 
+/* Row inside a cell that pairs a value with a copy button */
+.event-explorer__id-cell {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.event-explorer__id-cell span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
 .event-explorer__contract {
   margin: 0;
   font-family: 'Courier New', Courier, monospace;
@@ -2517,18 +2537,189 @@ body.event-explorer--resizing {
   outline: none;
 }
 
-.event-explorer__empty-state {
-  text-align: center;
-  padding: 48px 24px;
-  border: 1px dashed rgba(255, 255, 255, 0.16);
-  border-radius: 16px;
-  background: rgba(255, 255, 255, 0.02);
-  color: #cbd5e1;
+/* ── Shared CopyButton component ────────────────────────────────────────── */
+
+.copy-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.04);
+  color: #9aa0a6;
+  font-size: 0.78rem;
+  font-family: inherit;
+  padding: 3px 8px;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+  white-space: nowrap;
+  flex-shrink: 0;
+  vertical-align: middle;
 }
 
-.event-explorer__empty-state h2 {
-  margin: 0 0 10px;
-  font-size: 1.4rem;
+.copy-btn:hover,
+.copy-btn:focus-visible {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.22);
+  color: #e8eaed;
+  outline: none;
+}
+
+.copy-btn--copied {
+  border-color: rgba(52, 211, 153, 0.4);
+  background: rgba(52, 211, 153, 0.08);
+  color: #34d399;
+}
+
+.copy-btn--xs {
+  font-size: 0.72rem;
+  padding: 2px 6px;
+  border-radius: 4px;
+  gap: 3px;
+}
+
+.copy-btn__icon {
+  font-size: 0.85em;
+  line-height: 1;
+}
+
+/* In xs variant hide the text label to save space */
+.copy-btn--xs .copy-btn__label {
+  display: none;
+}
+
+/* Light theme */
+[data-theme="light"] .copy-btn {
+  border-color: rgba(0, 0, 0, 0.14);
+  background: rgba(0, 0, 0, 0.03);
+  color: #6b7280;
+}
+
+[data-theme="light"] .copy-btn:hover {
+  background: rgba(0, 0, 0, 0.06);
+  color: #1f2937;
+}
+
+[data-theme="light"] .copy-btn--copied {
+  border-color: rgba(16, 185, 129, 0.4);
+  background: rgba(16, 185, 129, 0.08);
+  color: #059669;
+}
+
+/* ── Shared empty state component ──────────────────────────────────────── */
+
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 56px 32px;
+  border: 1px dashed rgba(255, 255, 255, 0.14);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.02);
+  color: #9aa0a6;
+  gap: 4px;
+}
+
+.empty-state__icon {
+  font-size: 2.5rem;
+  line-height: 1;
+  margin-bottom: 12px;
+  display: block;
+  /* Subtle lift so the icon doesn't compete with text */
+  filter: drop-shadow(0 2px 8px rgba(0, 0, 0, 0.3));
+}
+
+.empty-state__title {
+  margin: 0 0 8px;
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: #e8eaed;
+  letter-spacing: -0.01em;
+}
+
+.empty-state__description {
+  margin: 0 0 20px;
+  font-size: 0.92rem;
+  line-height: 1.55;
+  max-width: 380px;
+  color: #9aa0a6;
+}
+
+.empty-state__action {
+  padding: 9px 22px;
+  border-radius: 8px;
+  border: 1px solid rgba(26, 115, 232, 0.5);
+  background: rgba(26, 115, 232, 0.12);
+  color: #60a5fa;
+  font-size: 0.9rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+  font-family: inherit;
+}
+
+.empty-state__action:hover,
+.empty-state__action:focus-visible {
+  background: rgba(26, 115, 232, 0.22);
+  border-color: rgba(26, 115, 232, 0.8);
+  color: #93c5fd;
+  outline: none;
+}
+
+/* Compact variant — less padding, used inside panels/tables */
+.empty-state--compact {
+  padding: 36px 24px;
+  border-radius: 12px;
+}
+
+/* Inline variant — no border, minimal chrome, used inside chart areas */
+.empty-state--inline {
+  padding: 24px 16px;
+  border: none;
+  background: transparent;
+  gap: 2px;
+}
+
+.empty-state--inline .empty-state__icon {
+  font-size: 1.75rem;
+  margin-bottom: 8px;
+}
+
+.empty-state--inline .empty-state__title {
+  font-size: 1rem;
+}
+
+/* Light theme overrides */
+[data-theme="light"] .empty-state {
+  border-color: rgba(0, 0, 0, 0.14);
+  background: rgba(0, 0, 0, 0.02);
+  color: #6b7280;
+}
+
+[data-theme="light"] .empty-state__title {
+  color: #1f2937;
+}
+
+[data-theme="light"] .empty-state__description {
+  color: #6b7280;
+}
+
+[data-theme="light"] .empty-state__action {
+  border-color: rgba(26, 115, 232, 0.4);
+  background: rgba(26, 115, 232, 0.08);
+  color: #1a73e8;
+}
+
+[data-theme="light"] .empty-state__action:hover {
+  background: rgba(26, 115, 232, 0.16);
+  color: #1558b0;
+}
+
+/* Keep the old class as an alias so any remaining direct usages don't break */
+.event-explorer__empty-state {
+  /* delegated to .empty-state — kept for backward compat */
 }
 
 /* ─── Contract Status ────────────────────────────────────────── */
@@ -3006,14 +3197,13 @@ body.event-explorer--resizing {
 }
 
 .timeline-view__empty {
-  text-align: center;
-  padding: 32px 0;
-  color: #9aa0a6;
+  /* uses .empty-state--compact */
 }
 
 .timeline-view__empty-sub {
-  margin-top: 8px;
-  font-size: 0.9rem;
+  margin-top: 4px;
+  font-size: 0.88rem;
+  color: #9aa0a6;
 }
 
 .timeline-view__summary {
@@ -3149,14 +3339,17 @@ body.event-explorer--resizing {
 /* ── App tab navigation ─────────────────────────────────────────────────── */
 .app-tabs {
   display: flex;
+  flex-wrap: wrap;
   gap: 4px;
-  padding: 0 0 0 0;
+  padding: 0;
   border-bottom: 1px solid rgba(255,255,255,0.08);
   margin-bottom: 8px;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 .app-tabs__btn {
-  padding: 10px 20px;
+  padding: 10px 16px;
   background: none;
   border: none;
   border-bottom: 2px solid transparent;
@@ -3164,6 +3357,8 @@ body.event-explorer--resizing {
   font-size: 0.95rem;
   cursor: pointer;
   margin-bottom: -1px;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .app-tabs__btn--active,
@@ -3372,12 +3567,7 @@ body.event-explorer--resizing {
 }
 
 .activity-feed__empty {
-  text-align: center;
-  padding: 48px 24px;
-  color: #9aa0a6;
-  border: 1px dashed rgba(255, 255, 255, 0.16);
-  border-radius: 12px;
-  background: rgba(255, 255, 255, 0.02);
+  /* uses .empty-state--compact */
 }
 
 .activity-feed__load-more {
@@ -3884,14 +4074,8 @@ body.event-explorer--resizing {
 }
 
 .webhook-delivery-chart__empty {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  height: 120px;
-  color: #9aa0a6;
-  font-size: 0.9rem;
-  border: 1px dashed rgba(255, 255, 255, 0.1);
-  border-radius: 10px;
+  /* uses .empty-state--inline */
+  min-height: 120px;
 }
 
 /* ── Failed deliveries table ─────────────────────────────────────── */
@@ -4118,10 +4302,7 @@ body.event-explorer--resizing {
 
 /* Empty state */
 .webhook-failed-table__empty {
-  text-align: center;
-  padding: 40px 24px;
-  color: #9aa0a6;
-  font-size: 0.9rem;
+  /* delegated to .empty-state */
 }
 
 /* Skeleton rows */
@@ -4240,12 +4421,55 @@ body.event-explorer--resizing {
   .webhook-failed-table__pagination {
     flex-direction: column;
     align-items: flex-start;
+    gap: 8px;
+  }
+
+  /* Stack table rows as labeled definition list on mobile */
+  .webhook-failed-table thead {
+    display: none;
+  }
+
+  .webhook-failed-table,
+  .webhook-failed-table tbody,
+  .webhook-failed-table__row,
+  .webhook-failed-table__detail-row {
+    display: block;
+    width: 100%;
+  }
+
+  .webhook-failed-table__row {
+    padding: 14px 16px;
+    border-top: 1px solid rgba(255, 255, 255, 0.06);
+    border-bottom: none;
+  }
+
+  .webhook-failed-table__cell {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 4px 0;
+  }
+
+  .webhook-failed-table__cell[data-label]::before {
+    content: attr(data-label);
+    color: #9aa0a6;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    flex-shrink: 0;
+  }
+
+  .webhook-failed-table__cell--url {
+    max-width: 100%;
+    word-break: break-all;
   }
 }
 
 @media (max-width: 420px) {
   .webhook-summary-cards {
     grid-template-columns: 1fr;
+  }
 }
 
 /* ── Export table: action cell ──────────────────────────────────────────── */
@@ -4841,19 +5065,15 @@ body.event-explorer--resizing {
 }
 
 .notif-search-page__empty {
-  text-align: center;
-  padding: 64px 24px;
-  color: #9aa0a6;
+  /* delegated to .empty-state */
 }
 
 .notif-search-page__empty h2 {
-  margin: 0 0 8px;
-  font-size: 1.25rem;
-  color: #e8eaed;
+  /* delegated to .empty-state__title */
 }
 
 .notif-search-page__empty p {
-  margin: 0;
+  /* delegated to .empty-state__description */
 }
 
 .notif-search-results {

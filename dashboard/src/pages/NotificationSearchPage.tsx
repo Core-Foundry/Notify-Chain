@@ -2,7 +2,8 @@ import { useState, useCallback, useEffect, useRef } from 'react';
 import { NotificationSearchSkeleton } from '../components/NotificationSearchSkeleton';
 import { getEventsApiBaseUrl } from '../config/eventsApiUrl';
 import { useDebounce } from '../hooks/useDebounce';
-import { getEventsApiBaseUrl } from '../config/eventsApiUrl';
+import { EmptyState } from '../components/EmptyState';
+import { CopyButton } from '../components/CopyButton';
 import {
   searchNotifications,
   type NotificationSearchResult,
@@ -281,17 +282,20 @@ export function NotificationSearchPage() {
         )}
 
         {!loading && !error && !hasParams && (
-          <div className="notif-search-page__empty" role="status">
-            <h2>Start searching</h2>
-            <p>Choose a type, delivery status, date range, or enter a query to find notifications.</p>
-          </div>
+          <EmptyState
+            icon="🔔"
+            title="Search notifications"
+            description="Choose a type, delivery status, date range, or enter a query to find notifications."
+          />
         )}
 
         {!loading && !error && hasParams && response?.results.length === 0 && (
-          <div className="notif-search-page__empty" role="status">
-            <h2>No results found</h2>
-            <p>Try different keywords or clear filters to broaden the search.</p>
-          </div>
+          <EmptyState
+            icon="🕵️"
+            title="No results found"
+            description="No notifications match your current filters. Try different keywords or broaden the search."
+            action={{ label: 'Clear filters', onClick: clearAll }}
+          />
         )}
 
         {!loading && !error && response && response.results.length > 0 && (
@@ -356,28 +360,45 @@ function NotificationResultCard({ result }: { result: NotificationSearchResult }
       </div>
 
       <dl className="notif-result-card__fields">
+        <dt>Notification ID</dt>
+        <dd>
+          <code>{result.id}</code>
+          <CopyButton value={String(result.id)} label="notification ID" size="xs" />
+        </dd>
         {result.eventId && (
           <>
             <dt>Event ID</dt>
-            <dd><code>{result.eventId}</code></dd>
+            <dd>
+              <code>{result.eventId}</code>
+              <CopyButton value={result.eventId} label="event ID" size="xs" />
+            </dd>
           </>
         )}
         {result.txHash && (
           <>
             <dt>Tx Hash</dt>
-            <dd><code>{result.txHash}</code></dd>
+            <dd>
+              <code>{result.txHash}</code>
+              <CopyButton value={result.txHash} label="tx hash" size="xs" />
+            </dd>
           </>
         )}
         {result.contractAddress && (
           <>
             <dt>Contract</dt>
-            <dd><code>{result.contractAddress}</code></dd>
+            <dd>
+              <code>{result.contractAddress}</code>
+              <CopyButton value={result.contractAddress} label="contract address" size="xs" />
+            </dd>
           </>
         )}
         {result.targetRecipient && (
           <>
             <dt>Recipient</dt>
-            <dd>{result.targetRecipient}</dd>
+            <dd>
+              {result.targetRecipient}
+              <CopyButton value={result.targetRecipient} label="recipient" size="xs" />
+            </dd>
           </>
         )}
         <dt>Created</dt>
