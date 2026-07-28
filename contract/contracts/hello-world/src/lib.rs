@@ -655,74 +655,46 @@ pub mod test_utils {
 mod tests {
     #[path = "tests/test_utils_test.rs"]
     mod test_utils_test;
-
     #[path = "tests/storage_optimization_test.rs"]
     mod storage_optimization_test;
-
     #[path = "tests/preferences_test.rs"]
     mod preferences_test;
-
     #[path = "tests/autoshare_test.rs"]
-#[cfg(test)]
-#[path = "tests/preferences_test.rs"]
-mod preferences_test;
-
-#[cfg(test)]
-mod tests {
-    #[path = "../tests/autoshare_test.rs"]
     mod autoshare_test;
-
     #[path = "tests/pause_test.rs"]
     mod pause_test;
-
     #[path = "tests/mock_token_test.rs"]
     mod mock_token_test;
-
     #[path = "tests/version_test.rs"]
     mod version_test;
-
     #[path = "tests/notification_test.rs"]
     mod notification_test;
-
     #[path = "tests/expiration_test.rs"]
     mod expiration_test;
-
     #[path = "tests/revocation_test.rs"]
     mod revocation_test;
-
     #[path = "tests/ownership_transfer_test.rs"]
     mod ownership_transfer_test;
-    #[path = "../tests/notification_validation_test.rs"]
+    #[path = "tests/notification_validation_test.rs"]
     mod notification_validation_test;
-    #[path = "../tests/category_registry_test.rs"]
+    #[path = "tests/category_registry_test.rs"]
     mod category_registry_test;
-
-    #[path = "../tests/expiration_test.rs"]
-    mod expiration_test;
-
-    #[path = "../tests/batch_notification_test.rs"]
+    #[path = "tests/batch_notification_test.rs"]
     mod batch_notification_test;
-
-    #[path = "../tests/audit_log_test.rs"]
+    #[path = "tests/audit_log_test.rs"]
     mod audit_log_test;
-
-    #[path = "../tests/payload_validation_test.rs"]
+    #[path = "tests/payload_validation_test.rs"]
     mod payload_validation_test;
-
-    #[path = "../tests/revocation_test.rs"]
-    mod revocation_test;
-
-    #[path = "../tests/batch_ack_test.rs"]
+    #[path = "tests/batch_ack_test.rs"]
     mod batch_ack_test;
-    #[path = "../tests/fuzz_test.rs"]
+    #[path = "tests/fuzz_test.rs"]
     mod fuzz_test;
-
-    #[path = "../tests/schema_version_test.rs"]
+    #[path = "tests/schema_version_test.rs"]
     mod schema_version_test;
-
-    #[path = "../tests/access_log_test.rs"]
+    #[path = "tests/access_log_test.rs"]
     mod access_log_test;
-
-    #[path = "../tests/subscription_cancellation_test.rs"]
+    #[path = "tests/subscription_cancellation_test.rs"]
     mod subscription_cancellation_test;
+    #[path = "tests/extended_coverage_test.rs"]
+    mod extended_coverage_test;
 }
