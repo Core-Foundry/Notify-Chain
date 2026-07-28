@@ -1,7 +1,12 @@
 import { ScheduledNotificationRepository } from './scheduled-notification-repository';
 import { IdempotencyKeyService } from './idempotency-key-service';
 import { CreateScheduledNotificationInput, NotificationType } from '../types/scheduled-notification';
+import {
+  validatePayloadSize,
+  DEFAULT_MAX_PAYLOAD_SIZE_BYTES,
+} from '../utils/payload-size-validator';
 import logger from '../utils/logger';
+import { buildRetryStatisticsPayload } from './retry-statistics';
 
 /**
  * High-level API for scheduling notifications
@@ -40,6 +45,9 @@ export class NotificationAPI {
       throw new Error('targetRecipient is required');
     }
 
+    // Validate payload size BEFORE any storage or heavy processing operations.
+    validatePayloadSize(input.payload, this.maxPayloadSizeBytes);
+
     logger.info('Scheduling new notification', {
       requestId,
       idempotencyKey,
@@ -74,7 +82,7 @@ export class NotificationAPI {
   }
 
   /**
-   * Schedule a Discord notification
+   * Schedule a Discord notification.
    */
   async scheduleDiscordNotification(
     webhookUrl: string,
@@ -98,7 +106,7 @@ export class NotificationAPI {
   }
 
   /**
-   * Cancel a scheduled notification
+   * Cancel a scheduled notification.
    */
   async cancelNotification(id: number, requestId?: string): Promise<boolean> {
     logger.info('Cancelling scheduled notification', { requestId, id });
@@ -106,14 +114,14 @@ export class NotificationAPI {
   }
 
   /**
-   * Get notification by ID
+   * Get notification by ID.
    */
   async getNotification(id: number) {
     return await this.repository.getById(id);
   }
 
   /**
-   * Get scheduler statistics
+   * Get scheduler statistics.
    */
   async getStatistics() {
     return await this.repository.getStats();
@@ -146,5 +154,22 @@ export class NotificationAPI {
    */
   async retryDeadLetterNotification(id: number, requestId?: string): Promise<boolean> {
     return await this.repository.retryDeadLetterNotification(id, requestId);
+   * Aggregated retry statistics for delivery monitoring dashboards.
+   */
+  async getRetryStatistics() {
+    const [metrics, distribution] = await Promise.all([
+      this.getExecutionMetrics(),
+      this.getRetryDistribution(),
+    ]);
+
+    return buildRetryStatisticsPayload({
+      totalNotifications: metrics.totalNotifications,
+      successfulFirstAttempt: metrics.successfulFirstAttempt,
+      successfulAfterRetry: metrics.successfulAfterRetry,
+      permanentFailures: metrics.permanentFailures,
+      totalRetryAttempts: metrics.totalRetryAttempts,
+      averageRetriesPerNotification: metrics.averageRetriesPerNotification,
+      distribution,
+    });
   }
 }

@@ -89,6 +89,40 @@ describe('NotificationSearchBar', () => {
     expect(f.dateFrom).toBe('');
     expect(f.search).toBe('');
   });
+
+  it('renders transaction hash input', () => {
+    render(<NotificationSearchBar />);
+    expect(screen.getByLabelText(/filter by transaction hash/i)).toBeInTheDocument();
+  });
+
+  it('debounces txHash input — store not updated immediately', () => {
+    render(<NotificationSearchBar />);
+    fireEvent.change(screen.getByLabelText(/filter by transaction hash/i), {
+      target: { value: 'abc123' },
+    });
+    expect(getStore().filters.txHash).toBe('');
+  });
+
+  it('updates store txHash after debounce delay', () => {
+    render(<NotificationSearchBar />);
+    fireEvent.change(screen.getByLabelText(/filter by transaction hash/i), {
+      target: { value: 'abc123' },
+    });
+    act(() => jest.advanceTimersByTime(300));
+    expect(getStore().filters.txHash).toBe('abc123');
+  });
+
+  it('shows clear button when txHash is set and clears it', () => {
+    render(<NotificationSearchBar />);
+    fireEvent.change(screen.getByLabelText(/filter by transaction hash/i), {
+      target: { value: 'deadbeef' },
+    });
+    expect(screen.getByRole('button', { name: /clear/i })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /clear/i }));
+    act(() => jest.advanceTimersByTime(300));
+    expect(getStore().filters.txHash).toBe('');
+  });
 });
 
 describe('filterEvents with new filter fields', () => {
@@ -100,6 +134,26 @@ describe('filterEvents with new filter fields', () => {
     const result = filterEvents(events, '', 'all', 'all', 'unread', '', '');
     expect(result).toHaveLength(1);
     expect(result[0].eventId).toBe('1');
+  });
+
+  it('filters by txHash — only matching events returned', () => {
+    const events = [
+      { eventId: '1', contractAddress: 'A', eventName: 'X', receivedAt: Date.now(), ledger: 1, type: 'c', topic: [], value: '', txHash: 'aabbccdd' },
+      { eventId: '2', contractAddress: 'A', eventName: 'X', receivedAt: Date.now(), ledger: 2, type: 'c', topic: [], value: '', txHash: '11223344' },
+      { eventId: '3', contractAddress: 'A', eventName: 'X', receivedAt: Date.now(), ledger: 3, type: 'c', topic: [], value: '' },
+    ];
+    const result = filterEvents(events, '', 'all', 'all', 'all', '', '', 'aabb');
+    expect(result).toHaveLength(1);
+    expect(result[0].eventId).toBe('1');
+  });
+
+  it('filters by txHash — empty txHash returns all events', () => {
+    const events = [
+      { eventId: '1', contractAddress: 'A', eventName: 'X', receivedAt: Date.now(), ledger: 1, type: 'c', topic: [], value: '', txHash: 'aabbccdd' },
+      { eventId: '2', contractAddress: 'A', eventName: 'X', receivedAt: Date.now(), ledger: 2, type: 'c', topic: [], value: '' },
+    ];
+    const result = filterEvents(events, '', 'all', 'all', 'all', '', '', '');
+    expect(result).toHaveLength(2);
   });
 
   it('filters by date range', () => {
