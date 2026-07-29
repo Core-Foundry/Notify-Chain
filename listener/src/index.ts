@@ -185,7 +185,7 @@ async function main() {
     healthMonitor.start();
   }
 
-  const subscriber = new EventSubscriber(config);
+  const subscriber = new EventSubscriber(config, deduplicationService);
   await subscriber.start();
 
   const shutdown = async () => {
