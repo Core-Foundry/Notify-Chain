@@ -2,7 +2,176 @@
 
 Base URL: `http://localhost:8787` (configured via `EVENTS_API_PORT`)
 
+Every response carries `X-Request-Id` (a UUID unique to the request) and `X-Correlation-Id` (echo of the caller-supplied `X-Correlation-Id` header, or a server-generated UUID if omitted). Include both when reporting issues.
+
 For a centralized list of API errors, causes, examples, and troubleshooting steps, see [API_ERROR_REFERENCE.md](./API_ERROR_REFERENCE.md).
+
+---
+
+## Table of Contents
+
+1. [Health & Status](#health--status)
+2. [Events](#events)
+3. [Scheduled Notifications](#scheduled-notifications)
+4. [Notification Delivery History](#notification-delivery-history)
+5. [Notification Search](#notification-search)
+6. [Batch Validation](#batch-validation)
+7. [Notification Templates](#notification-templates)
+8. [Analytics](#analytics)
+9. [User Notification Preferences](#user-notification-preferences)
+10. [Webhooks](#webhooks)
+11. [Rate Limiting](#rate-limiting)
+12. [Error Codes Reference](#error-codes-reference)
+
+---
+
+## Health & Status
+
+### GET /health
+
+Returns the operational status of all service dependencies.
+
+**Response `200`** — all systems operational (or Discord degraded but Stellar RPC healthy)
+
+```json
+{
+  "status": "ok",
+  "timestamp": "2024-06-20T14:00:00.000Z",
+  "services": {
+    "stellarRpc": { "status": "ok", "latencyMs": 42 },
+    "discord": { "status": "ok", "latencyMs": 87 },
+    "eventRegistry": { "status": "ok", "eventCount": 128 }
+  }
+}
+```
+
+`status` is `"degraded"` when Discord is unreachable but Stellar RPC is healthy:
+
+```json
+{
+  "status": "degraded",
+  "timestamp": "2024-06-20T14:00:00.000Z",
+  "services": {
+    "stellarRpc": { "status": "ok", "latencyMs": 38 },
+    "discord": { "status": "error", "latencyMs": 5001, "detail": "HTTP 401" },
+    "eventRegistry": { "status": "ok", "eventCount": 128 }
+  }
+}
+```
+
+**Response `503`** — Stellar RPC is unreachable
+
+```json
+{
+  "status": "error",
+  "timestamp": "2024-06-20T14:00:00.000Z",
+  "services": {
+    "stellarRpc": { "status": "error", "latencyMs": 5001, "detail": "Health check timed out" },
+    "discord": { "status": "ok", "latencyMs": 65 },
+    "eventRegistry": { "status": "ok", "eventCount": 128 }
+  }
+}
+```
+
+**Response `500`** — health check itself threw an unexpected error
+
+```json
+{ "status": "error", "detail": "Internal health check failure" }
+```
+
+A service entry's `status` can be `"ok"`, `"error"`, or `"not_configured"`. `"not_configured"` means the service URL was not provided at startup and is not checked.
+
+---
+
+### GET /api/status
+
+Returns the pause status of all configured smart contracts.
+
+**Response `200`**
+
+```json
+{
+  "timestamp": "2024-06-20T14:00:00.000Z",
+  "contracts": [
+    { "address": "CCEMX6...", "paused": false },
+    { "address": "CCEMX7...", "paused": true, "error": "Failed to simulate contract call" }
+  ]
+}
+```
+
+| Field     | Type    | Description                                                        |
+|-----------|---------|--------------------------------------------------------------------|
+| timestamp | string  | ISO 8601 timestamp of when the status was fetched                  |
+| contracts | array   | One entry per configured contract                                  |
+| address   | string  | Contract address                                                   |
+| paused    | boolean | Whether the contract is currently paused                           |
+| error     | string  | Present only when the contract status could not be fetched         |
+
+**Response `500`**
+
+```json
+{ "status": "error", "detail": "Internal status check failure" }
+```
+
+---
+
+### GET /api/indexing/health
+
+Reports the current indexing lag between the local event registry and the Stellar network tip.
+
+**Response `200`**
+
+```json
+{
+  "status": "synced",
+  "timestamp": "2024-06-20T14:00:00.000Z",
+  "indexedLedger": 54321,
+  "networkTipLedger": 54321,
+  "ledgerLag": 0,
+  "processingDelayMs": 850,
+  "lastIngestedAt": "2024-06-20T13:59:59.000Z",
+  "detail": null
+}
+```
+
+| Field             | Type          | Description                                                               |
+|-------------------|---------------|---------------------------------------------------------------------------|
+| status            | string        | `"synced"`, `"syncing"`, or `"degraded"`                                  |
+| indexedLedger     | number\|null  | Ledger sequence of the last ingested event                                |
+| networkTipLedger  | number\|null  | Latest ledger on the Stellar network                                      |
+| ledgerLag         | number\|null  | `networkTipLedger - indexedLedger` (0 = in sync)                         |
+| processingDelayMs | number\|null  | Milliseconds since the last event was ingested                            |
+| lastIngestedAt    | string\|null  | ISO 8601 timestamp of the last ingested event                             |
+| detail            | string\|null  | Human-readable explanation when `status` is not `"synced"`                |
+
+**Status thresholds:**
+- `"synced"` — `ledgerLag == 0` and `processingDelayMs <= 60 000`
+- `"syncing"` — `ledgerLag <= 5` and `processingDelayMs <= 300 000`
+- `"degraded"` — outside the above bounds, or `networkTipLedger` is unavailable
+
+---
+
+### GET /api/notifications/health
+
+Returns the last report produced by the notification health monitor.
+
+**Response `200`**
+
+```json
+{
+  "status": "healthy",
+  "checkedAt": "2024-06-20T14:00:00.000Z",
+  "pendingCount": 5,
+  "overdueCount": 0,
+  "failureRatePercent": 1.2
+}
+```
+
+**Response `503`** — health monitor not configured or no report produced yet
+
+```json
+{ "error": "Health monitor not configured or no report yet" }
+```
 
 ---
 
@@ -10,13 +179,13 @@ For a centralized list of API errors, causes, examples, and troubleshooting step
 
 ### GET /api/events
 
-Returns all stored contract events.
+Returns all stored contract events, newest first.
 
 **Query Parameters**
 
-| Name  | Type   | Required | Description                        |
-|-------|--------|----------|------------------------------------|
-| limit | number | No       | Maximum number of events to return |
+| Name  | Type   | Required | Description                                          |
+|-------|--------|----------|------------------------------------------------------|
+| limit | number | No       | Maximum number of events to return (default: all)    |
 
 **Response `200`**
 
@@ -25,23 +194,35 @@ Returns all stored contract events.
   "count": 42,
   "events": [
     {
-      "eventId": "string",
-      "contractAddress": "string",
-      "eventName": "string | null",
+      "eventId": "0000000000000000-1",
+      "contractAddress": "CCEMX6JKPEUGYAOU4YZP3WBXGPWK7AEFDEDLRXFIDIJPQFMRXTHUVIO",
+      "eventName": "autoshare_created",
       "ledger": 12345,
       "type": "contract",
-      "topic": ["TaskCreated"],
-      "value": "string",
-      "txHash": "string",
+      "topic": ["autoshare_created", "GABC..."],
+      "value": "AAAAAQ==",
+      "txHash": "abc123...",
       "receivedAt": 1718640000000
     }
   ]
 }
 ```
 
+| Field           | Type          | Description                                              |
+|-----------------|---------------|----------------------------------------------------------|
+| eventId         | string        | Soroban event ID (`ledger-index` format)                 |
+| contractAddress | string        | Contract that emitted the event                          |
+| eventName       | string\|null  | Decoded event name (first topic symbol), if decodeable   |
+| ledger          | number        | Ledger sequence containing the event                     |
+| type            | string        | Always `"contract"` for Soroban events                   |
+| topic           | string[]      | Decoded event topics                                     |
+| value           | string        | Base64-encoded XDR event data                            |
+| txHash          | string        | Transaction hash                                         |
+| receivedAt      | number        | Unix timestamp (ms) when the listener received the event |
+
 ---
 
-## User Notification Preferences
+## Scheduled Notifications
 
 Preferences control which notification categories are delivered per user. Categories default to **enabled** when not explicitly set.
 
@@ -111,91 +292,11 @@ Updates one or more notification category flags for a user. Unspecified categori
 { "error": "Invalid body: expected { categories: { [key]: boolean } }" }
 ```
 
----
+> **Note:** Available notification categories include `discord` and any custom categories defined in your deployment. Categories default to **enabled** when not explicitly set.
 
-## Notification Categories
-
-| Category  | Description                  |
-|-----------|------------------------------|
-| `discord` | Discord webhook notifications |
-
-Additional categories can be added by extending the `categories` map.
+> **Per-contract user binding:** To apply a user's preferences to events from a specific contract, set `userId` in the contract address config: `{ "address": "CCEMX6...", "events": ["*"], "userId": "alice" }`. If `userId` is omitted, the `"global"` user's preferences apply.
 
 ---
-
-## Per-Contract User Binding
-
-To apply user preferences to a specific contract's events, set `userId` in the contract address config:
-
-```json
-{
-  "CONTRACT_ADDRESSES": [
-    {
-      "address": "CCEMX6...",
-      "events": ["*"],
-      "userId": "alice"
-    }
-  ]
-}
-```
-
-If `userId` is omitted, the `"global"` user's preferences are applied.
-
----
-
-## Scheduled Notifications
-
-### POST /api/schedule
-
-Schedules a notification for future delivery.
-
-**Request Body**
-
-```json
-{
-  "executeAt": "2024-06-20T15:00:00.000Z",
-  "payload": { "content": "Your task was completed." },
-  "targetRecipient": "https://discord.com/api/webhooks/...",
-  "notificationType": "discord",
-  "maxRetries": 3,
-  "priority": 1,
-  "eventId": "abc123",
-  "contractAddress": "CCEMX6...",
-  "metadata": {}
-}
-```
-
-| Field             | Type     | Required | Description                                              |
-|-------------------|----------|----------|----------------------------------------------------------|
-| executeAt         | string   | Yes      | ISO 8601 datetime — when to deliver the notification     |
-| payload           | object   | Yes      | Arbitrary data forwarded to the notification handler     |
-| targetRecipient   | string   | Yes      | Delivery target (e.g. Discord webhook URL)               |
-| notificationType  | string   | No       | `"discord"` (default)                                    |
-| maxRetries        | number   | No       | Override max retry count                                 |
-| priority          | number   | No       | Lower numbers run first                                  |
-| eventId           | string   | No       | Correlation ID linking this to a contract event          |
-| contractAddress   | string   | No       | Contract that triggered the notification                 |
-| metadata          | object   | No       | Arbitrary key/value metadata                             |
-
-**Response `201`**
-
-```json
-{ "id": 42 }
-```
-
-**Response `400`** — missing required fields
-
-```json
-{ "error": "Missing required fields: executeAt, payload, targetRecipient" }
-```
-
-**Response `400`** — `executeAt` cannot be parsed as a date
-
-```json
-{ "error": "executeAt is not a valid date" }
-```
-
-**Response `500`** — internal scheduling failure
 
 ```json
 { "error": "Failed to insert notification into database" }
@@ -220,6 +321,9 @@ Returns a single scheduled notification by its numeric ID.
 | id   | Notification ID (integer) |
 
 **Response `200`**
+> **Payload size limit**: The `payload` object is serialised to JSON before storage. The resulting byte length must not exceed the configured maximum (default **64 KB / 65 536 bytes**). Oversized payloads are rejected with HTTP `413`. Override the limit at runtime with the `MAX_PAYLOAD_SIZE_BYTES` environment variable.
+
+**Request Body**
 
 ```json
 {
@@ -240,6 +344,25 @@ Returns a single scheduled notification by its numeric ID.
 ```
 
 **Response `400`** — non-numeric `:id`
+| Field             | Type     | Required | Description                                              |
+|-------------------|----------|----------|----------------------------------------------------------|
+| executeAt         | string   | Yes      | ISO 8601 datetime — when to deliver the notification     |
+| payload           | object   | Yes      | Arbitrary data forwarded to the notification handler. Serialised JSON must not exceed `MAX_PAYLOAD_SIZE_BYTES` (default 64 KB). |
+| targetRecipient   | string   | Yes      | Delivery target (e.g. Discord webhook URL)               |
+| notificationType  | string   | No       | `"discord"` (default)                                    |
+| maxRetries        | number   | No       | Override max retry count                                 |
+| priority          | number   | No       | Lower numbers run first                                  |
+| eventId           | string   | No       | Correlation ID linking this to a contract event          |
+| contractAddress   | string   | No       | Contract that triggered the notification                 |
+| metadata          | object   | No       | Arbitrary key/value metadata                             |
+
+**Response `201`**
+
+```json
+{ "id": 42 }
+```
+
+**Response `400`** — missing required fields
 
 ```json
 { "error": "Invalid notification ID" }
@@ -252,6 +375,13 @@ Returns a single scheduled notification by its numeric ID.
 ```
 
 **Response `500`** — database read failure
+**Response `413`** — payload exceeds the maximum allowed size
+
+```json
+{ "error": "Notification payload is too large: 70000 bytes exceeds the 65536-byte limit. Reduce the payload size and retry." }
+```
+
+**Response `500`** — internal scheduling failure
 
 ```json
 { "error": "SQLITE_ERROR: ..." }
@@ -273,12 +403,108 @@ Returns aggregate statistics about the scheduled-notification queue.
 
 ```json
 {
-  "total": 100,
-  "pending": 20,
-  "delivered": 75,
-  "failed": 5
+  "pending": 15,
+  "processing": 3,
+  "completed": 1234,
+  "failed": 45,
+  "overdue": 2
 }
 ```
+
+| Field      | Type   | Description                                                  |
+|------------|--------|--------------------------------------------------------------|
+| pending    | number | Notifications waiting to be processed                        |
+| processing | number | Notifications currently being processed                      |
+| completed  | number | Successfully delivered notifications                         |
+| failed     | number | Notifications that permanently failed after exhausting retries |
+| overdue    | number | Pending notifications that are past their `executeAt` time   |
+
+**Response `500`** — database read failure
+
+```json
+{ "error": "SQLITE_ERROR: ..." }
+```
+
+**Response `503`** — scheduler feature is disabled
+
+```json
+{ "error": "Scheduler not enabled" }
+```
+
+---
+
+### GET /api/schedule/execution-metrics
+
+Returns deduplicated delivery performance metrics. Each notification is counted exactly once regardless of how many retry attempts it took, preventing double-counting.
+
+**Response `200`**
+
+```json
+{
+  "totalNotifications": 100,
+  "successfulFirstAttempt": 70,
+  "successfulAfterRetry": 20,
+  "permanentFailures": 10,
+  "totalRetryAttempts": 35,
+  "averageRetriesPerNotification": 0.35,
+  "averageSuccessDurationMs": 845.5,
+  "averageFailureDurationMs": 2341.2
+}
+```
+
+| Field                        | Type   | Description                                                                    |
+|------------------------------|--------|--------------------------------------------------------------------------------|
+| totalNotifications           | number | Completed or permanently failed notifications (one count per notification ID)  |
+| successfulFirstAttempt       | number | Delivered successfully on the first attempt (zero retries)                     |
+| successfulAfterRetry         | number | Delivered successfully after one or more retries                               |
+| permanentFailures            | number | Failed permanently after exhausting all retries                                |
+| totalRetryAttempts           | number | Sum of retry counts across all notifications                                   |
+| averageRetriesPerNotification| number | `totalRetryAttempts / totalNotifications`                                      |
+| averageSuccessDurationMs     | number | Average duration (ms) of the final successful delivery attempt                 |
+| averageFailureDurationMs     | number | Average duration (ms) of the final failed delivery attempt                     |
+
+**Computing success rate:**
+```javascript
+const successRate =
+  (metrics.successfulFirstAttempt + metrics.successfulAfterRetry) /
+  metrics.totalNotifications;
+// Example: (70 + 20) / 100 = 0.90
+```
+
+**Response `500`** — database read failure
+
+```json
+{ "error": "SQLITE_ERROR: ..." }
+```
+
+**Response `503`** — scheduler feature is disabled
+
+```json
+{ "error": "Scheduler not enabled" }
+```
+
+---
+
+### GET /api/schedule/retry-distribution
+
+Returns a breakdown of final outcomes grouped by retry count. Useful for tuning retry policies.
+
+**Response `200`**
+
+```json
+[
+  { "retryCount": 0, "successCount": 70, "failureCount": 0 },
+  { "retryCount": 1, "successCount": 15, "failureCount": 2 },
+  { "retryCount": 2, "successCount": 5,  "failureCount": 3 },
+  { "retryCount": 3, "successCount": 0,  "failureCount": 5 }
+]
+```
+
+| Field        | Type   | Description                                                  |
+|--------------|--------|--------------------------------------------------------------|
+| retryCount   | number | Number of retries before the final outcome                   |
+| successCount | number | Notifications that succeeded after exactly `retryCount` retries |
+| failureCount | number | Notifications that failed after exactly `retryCount` retries |
 
 **Response `500`** — database read failure
 
@@ -355,7 +581,562 @@ Existing clients that read `total`, `limit`, `offset`, and `records` continue to
 
 ---
 
-## Webhooks
+## Notification Search
+
+### GET /api/notifications/search
+
+Full-text and field-based search across scheduled notifications.
+
+**Query Parameters**
+
+| Name     | Type   | Required | Description                                                       |
+|----------|--------|----------|-------------------------------------------------------------------|
+| q        | string | No       | Free-text search across payload, metadata, and recipient fields   |
+| sender   | string | No       | Filter by sender address or identifier                            |
+| txHash   | string | No       | Filter by originating transaction hash                            |
+| eventId  | string | No       | Filter by correlated contract event ID                            |
+| status   | string | No       | Filter by status: `PENDING`, `PROCESSING`, `COMPLETED`, `FAILED`, `CANCELLED` |
+| type     | string | No       | Filter by notification type: `discord`, `email`, `webhook`, `sms` |
+| limit    | number | No       | Maximum results to return (default: 20)                           |
+| offset   | number | No       | Number of results to skip (default: 0)                            |
+
+**Response `200`**
+
+```json
+{
+  "results": [
+    {
+      "id": 42,
+      "payload": { "content": "Your task completed." },
+      "notificationType": "discord",
+      "targetRecipient": "https://discord.com/api/webhooks/...",
+      "executeAt": "2024-06-20T15:00:00.000Z",
+      "status": "COMPLETED",
+      "eventId": "abc123",
+      "contractAddress": "CCEMX6...",
+      "createdAt": "2024-06-20T14:00:00.000Z"
+    }
+  ],
+  "total": 150,
+  "limit": 20,
+  "offset": 0
+}
+```
+
+**Response `500`**
+
+```json
+{ "error": "..." }
+```
+
+---
+
+### GET /api/search/suggestions
+
+Returns autocomplete suggestions based on a partial query string. Useful for building search UIs.
+
+**Query Parameters**
+
+| Name  | Type   | Required | Description                                      |
+|-------|--------|----------|--------------------------------------------------|
+| q     | string | Yes      | Partial search string (minimum 1 character)      |
+| limit | number | No       | Maximum suggestions to return (default: 10)      |
+
+**Response `200`**
+
+```json
+{
+  "suggestions": [
+    "task_completed",
+    "task_created",
+    "transfer_complete"
+  ]
+}
+```
+
+**Response `500`**
+
+```json
+{ "error": "..." }
+```
+
+---
+
+## Batch Validation
+
+### POST /api/notifications/validate-batch
+
+Validates a batch of notification objects without persisting them. Useful for pre-flight checks before bulk scheduling.
+
+**Request Body**
+
+Accepts either a JSON array of notification objects directly, or a wrapper object:
+
+```json
+[
+  {
+    "payload": { "content": "Message 1" },
+    "targetRecipient": "https://discord.com/api/webhooks/...",
+    "executeAt": "2024-06-20T15:00:00.000Z",
+    "notificationType": "discord"
+  },
+  {
+    "payload": { "content": "Message 2" },
+    "targetRecipient": "https://discord.com/api/webhooks/...",
+    "executeAt": "invalid-date"
+  }
+]
+```
+
+Or with a wrapper key:
+
+```json
+{
+  "notifications": [ ... ]
+}
+```
+
+**Response `200`** — all items passed validation
+
+```json
+{
+  "valid": true,
+  "processedCount": 2,
+  "errors": []
+}
+```
+
+**Response `400`** — one or more items failed validation
+
+```json
+{
+  "valid": false,
+  "processedCount": 2,
+  "errors": [
+    {
+      "index": 1,
+      "code": "INVALID_DATE",
+      "message": "executeAt is not a valid ISO 8601 date"
+    }
+  ]
+}
+```
+
+| Field          | Type    | Description                                                            |
+|----------------|---------|------------------------------------------------------------------------|
+| valid          | boolean | `true` only when zero validation errors were found                     |
+| processedCount | number  | Total items evaluated                                                  |
+| errors         | array   | One entry per failed item; empty array when `valid` is `true`          |
+| errors[].index | number  | Zero-based position of the failing item in the input array (`-1` for parse errors) |
+| errors[].code  | string  | Machine-readable error code (e.g. `INVALID_DATE`, `MISSING_FIELD`, `PARSE_ERROR`) |
+| errors[].message | string | Human-readable description                                           |
+
+**Response `400`** — request body is not valid JSON
+
+```json
+{
+  "valid": false,
+  "processedCount": 0,
+  "errors": [{ "index": -1, "code": "PARSE_ERROR", "message": "Request body must be valid JSON." }]
+}
+```
+
+---
+
+## Notification Templates
+
+Templates allow reusable message bodies with variable substitution. The template service must be enabled at startup; all template endpoints return `503` when it is not.
+
+### GET /api/templates
+
+Lists all templates, with optional filtering.
+
+**Query Parameters**
+
+| Name        | Type    | Required | Description                                     |
+|-------------|---------|----------|-------------------------------------------------|
+| channelType | string  | No       | Filter by channel type (e.g. `"discord"`, `"email"`) |
+| activeOnly  | boolean | No       | When `true`, return only active templates       |
+
+**Response `200`**
+
+```json
+{
+  "count": 3,
+  "templates": [
+    {
+      "id": 1,
+      "uniqueKey": "task-completed",
+      "name": "Task Completed",
+      "description": "Sent when a task bounty is completed.",
+      "channelType": "discord",
+      "subjectTemplate": null,
+      "bodyTemplate": "Task {{taskId}} has been completed by {{contributor}}.",
+      "variables": ["taskId", "contributor"],
+      "defaultValues": {},
+      "isActive": true,
+      "createdBy": "admin",
+      "createdAt": "2024-06-01T00:00:00.000Z",
+      "updatedAt": "2024-06-01T00:00:00.000Z"
+    }
+  ]
+}
+```
+
+---
+
+### POST /api/templates
+
+Creates a new notification template.
+
+**Request Body**
+
+```json
+{
+  "uniqueKey": "task-completed",
+  "name": "Task Completed",
+  "description": "Sent when a task bounty is completed.",
+  "channelType": "discord",
+  "bodyTemplate": "Task {{taskId}} has been completed by {{contributor}}.",
+  "subjectTemplate": null,
+  "variables": ["taskId", "contributor"],
+  "defaultValues": {},
+  "createdBy": "admin"
+}
+```
+
+| Field           | Type     | Required | Description                                              |
+|-----------------|----------|----------|----------------------------------------------------------|
+| uniqueKey       | string   | Yes      | URL-safe unique identifier for this template             |
+| name            | string   | Yes      | Human-readable display name                              |
+| channelType     | string   | Yes      | Target channel: `"discord"`, `"email"`, `"webhook"`, `"sms"` |
+| bodyTemplate    | string   | Yes      | Handlebars-style template body with `{{variable}}` placeholders |
+| description     | string   | No       | Optional description                                     |
+| subjectTemplate | string   | No       | Subject line template (relevant for email)               |
+| variables       | string[] | No       | List of variable names used in the template              |
+| defaultValues   | object   | No       | Default values for variables                             |
+| createdBy       | string   | No       | Identifier of the user creating the template             |
+
+**Response `201`**
+
+```json
+{ "id": 1, "uniqueKey": "task-completed" }
+```
+
+**Response `400`** — missing required fields
+
+```json
+{ "error": "Missing required fields", "required": ["uniqueKey", "name", "channelType", "bodyTemplate"] }
+```
+
+**Response `409`** — `uniqueKey` already exists
+
+```json
+{ "error": "Template with this unique key already exists" }
+```
+
+---
+
+### GET /api/templates/:id
+
+Returns a template by its numeric ID.
+
+**Path Parameters**
+
+| Name | Description          |
+|------|----------------------|
+| id   | Template ID (integer) |
+
+**Response `200`** — template object (same shape as items in the list response)
+
+**Response `400`** — non-numeric `:id`
+
+```json
+{ "error": "Invalid template ID" }
+```
+
+**Response `404`**
+
+```json
+{ "error": "Template not found" }
+```
+
+---
+
+### GET /api/templates/by-key/:uniqueKey
+
+Returns a template by its `uniqueKey`.
+
+**Path Parameters**
+
+| Name      | Description              |
+|-----------|--------------------------|
+| uniqueKey | The template's unique key |
+
+**Response `200`** — template object
+
+**Response `404`**
+
+```json
+{ "error": "Template not found" }
+```
+
+---
+
+### PUT /api/templates/:id
+
+Updates an existing template. Only the supplied fields are changed.
+
+**Path Parameters**
+
+| Name | Description          |
+|------|----------------------|
+| id   | Template ID (integer) |
+
+**Request Body** — any subset of the template fields:
+
+```json
+{
+  "bodyTemplate": "Task {{taskId}} was completed. Reward: {{reward}} XLM.",
+  "variables": ["taskId", "reward"]
+}
+```
+
+**Response `200`**
+
+```json
+{ "id": 1, "message": "Template updated successfully" }
+```
+
+**Response `404`**
+
+```json
+{ "error": "Template not found" }
+```
+
+---
+
+### DELETE /api/templates/:id
+
+Deactivates a template (soft-delete by default). Pass `?hard=true` to permanently delete.
+
+**Path Parameters**
+
+| Name | Description          |
+|------|----------------------|
+| id   | Template ID (integer) |
+
+**Query Parameters**
+
+| Name | Type    | Required | Description                                            |
+|------|---------|----------|--------------------------------------------------------|
+| hard | boolean | No       | When `true`, permanently deletes the template record   |
+
+**Response `200`**
+
+```json
+{ "id": 1, "message": "Template deactivated" }
+```
+
+Or when `hard=true`:
+
+```json
+{ "id": 1, "message": "Template deleted permanently" }
+```
+
+**Response `404`**
+
+```json
+{ "error": "Template not found" }
+```
+
+---
+
+### POST /api/templates/render
+
+Renders a template by substituting variables with provided context values.
+
+**Request Body**
+
+```json
+{
+  "templateId": 1,
+  "context": {
+    "taskId": "TASK-99",
+    "contributor": "GABC1234...XYZ"
+  }
+}
+```
+
+| Field      | Type   | Required | Description                                                    |
+|------------|--------|----------|----------------------------------------------------------------|
+| templateId | number | No*      | Template ID. Provide either `templateId` or `uniqueKey`.       |
+| uniqueKey  | string | No*      | Template unique key. Provide either `templateId` or `uniqueKey`. |
+| context    | object | Yes      | Key-value map of variable names to substitution values         |
+
+\* One of `templateId` or `uniqueKey` is required.
+
+**Response `200`**
+
+```json
+{
+  "subject": null,
+  "body": "Task TASK-99 has been completed by GABC1234...XYZ."
+}
+```
+
+**Response `400`** — missing required fields
+
+```json
+{ "error": "Missing required fields", "required": ["templateId OR uniqueKey", "context"] }
+```
+
+**Response `404`**
+
+```json
+{ "error": "Template not found" }
+```
+
+---
+
+### GET /api/templates/stats
+
+Returns usage statistics for all templates, or for a specific template.
+
+**Query Parameters**
+
+| Name       | Type   | Required | Description                         |
+|------------|--------|----------|-------------------------------------|
+| templateId | number | No       | Limit stats to a specific template  |
+
+**Response `200`**
+
+```json
+{
+  "totalTemplates": 5,
+  "activeTemplates": 4,
+  "renderCount": 1234,
+  "byTemplate": [
+    { "id": 1, "uniqueKey": "task-completed", "renderCount": 800, "lastRenderedAt": "2024-06-20T14:00:00.000Z" }
+  ]
+}
+```
+
+---
+
+### GET /api/templates/:id/audit
+
+Returns the full audit history for a specific template (create, update, delete events).
+
+**Path Parameters**
+
+| Name | Description          |
+|------|----------------------|
+| id   | Template ID or unique key |
+
+**Response `200`**
+
+```json
+{
+  "templateId": "task-completed",
+  "records": [
+    {
+      "action": "created",
+      "actor": "admin",
+      "timestamp": "2024-06-01T00:00:00.000Z",
+      "changes": {}
+    },
+    {
+      "action": "updated",
+      "actor": "admin",
+      "timestamp": "2024-06-10T12:00:00.000Z",
+      "changes": { "bodyTemplate": "..." }
+    }
+  ]
+}
+```
+
+**Response `404`**
+
+```json
+{ "error": "Template not found" }
+```
+
+---
+
+## Analytics
+
+### GET /api/analytics
+
+Returns a real-time aggregated snapshot of notification delivery metrics. Pass `?reset=true` to atomically read and reset the counters.
+
+**Query Parameters**
+
+| Name  | Type    | Required | Description                                          |
+|-------|---------|----------|------------------------------------------------------|
+| reset | boolean | No       | If `true`, resets the aggregator after reading       |
+
+**Response `200`**
+
+```json
+{
+  "totalRecorded": 1500,
+  "successCount": 1350,
+  "failureCount": 100,
+  "retryCount": 50,
+  "byType": {
+    "discord": { "success": 900, "failure": 60 },
+    "email":   { "success": 450, "failure": 40 }
+  },
+  "buckets": [
+    { "startMs": 1718640000000, "endMs": 1718640060000, "count": 25 }
+  ]
+}
+```
+
+**Response `503`** — analytics aggregator not available
+
+```json
+{ "error": "Analytics aggregator unavailable" }
+```
+
+---
+
+### GET /api/analytics/history
+
+Returns historical analytics snapshots persisted by the metrics store. Supports time-range filtering.
+
+**Query Parameters**
+
+| Name  | Type   | Required | Description                                                   |
+|-------|--------|----------|---------------------------------------------------------------|
+| limit | number | No       | Maximum snapshots to return (default: 50, max: 100)           |
+| since | string | No       | ISO 8601 lower bound — return only snapshots after this time  |
+
+**Response `200`**
+
+```json
+{
+  "snapshots": [
+    {
+      "capturedAt": "2024-06-20T14:00:00.000Z",
+      "totalRecorded": 1500,
+      "successCount": 1350,
+      "failureCount": 100
+    }
+  ]
+}
+```
+
+**Response `503`** — metrics store not configured
+
+```json
+{ "error": "Metrics history store unavailable" }
+```
+
+---
+
+## User Notification Preferences
 
 ### POST /api/webhooks
 
@@ -517,6 +1298,7 @@ Content-Type: application/json
 
 ---
 
+## Webhooks
 ## Health
 
 ### GET /health
@@ -532,12 +1314,13 @@ Returns the operational status of all service dependencies.
   "services": {
     "stellarRpc": { "status": "ok", "latencyMs": 42 },
     "discord": { "status": "ok", "latencyMs": 87 },
+    "database": { "status": "ok", "latencyMs": 3 },
     "eventRegistry": { "status": "ok", "eventCount": 128 }
   }
 }
 ```
 
-`status` is `"degraded"` when Discord is unreachable but Stellar RPC is healthy:
+`status` is `"degraded"` when Discord is unreachable but Stellar RPC and the database are healthy:
 
 ```json
 {
@@ -546,12 +1329,13 @@ Returns the operational status of all service dependencies.
   "services": {
     "stellarRpc": { "status": "ok", "latencyMs": 38 },
     "discord": { "status": "error", "latencyMs": 5001, "detail": "HTTP 401" },
+    "database": { "status": "ok", "latencyMs": 2 },
     "eventRegistry": { "status": "ok", "eventCount": 128 }
   }
 }
 ```
 
-**Response `503`** — Stellar RPC is unreachable
+**Response `503`** — Stellar RPC or the SQLite database is unreachable
 
 ```json
 {
@@ -560,6 +1344,7 @@ Returns the operational status of all service dependencies.
   "services": {
     "stellarRpc": { "status": "error", "latencyMs": 5001, "detail": "Health check timed out" },
     "discord": { "status": "ok", "latencyMs": 65 },
+    "database": { "status": "ok", "latencyMs": 2 },
     "eventRegistry": { "status": "ok", "eventCount": 128 }
   }
 }

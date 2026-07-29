@@ -23,6 +23,7 @@ import {
 } from '../services/webhook-verifier';
 import { WebhookSecret, RateLimitConfig, ContractConfig } from '../types';
 import { RateLimiter } from './rate-limiter';
+import { getDatabase } from '../database/database';
 import {
   getNotificationAnalyticsAggregator,
   NotificationAnalyticsAggregator,
@@ -94,6 +95,7 @@ interface HealthResponse {
   services: {
     stellarRpc: ServiceHealth;
     discord: ServiceHealth;
+    database: ServiceHealth;
     eventRegistry: { status: ServiceStatus; eventCount: number };
   };
 }
@@ -161,6 +163,28 @@ export async function checkDiscord(webhookUrl: string): Promise<ServiceHealth> {
       latencyMs: Date.now() - start,
       detail: `HTTP ${response.status}`,
     };
+  } catch (err) {
+    return {
+      status: 'error',
+      latencyMs: Date.now() - start,
+      detail: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
+export async function checkDatabase(): Promise<ServiceHealth> {
+  const start = Date.now();
+  try {
+    const db = getDatabase();
+    if (!db.isConnected()) {
+      return {
+        status: 'error',
+        latencyMs: Date.now() - start,
+        detail: 'Database not initialized',
+      };
+    }
+    await withTimeout(db.get('SELECT 1 AS ok'), HEALTH_TIMEOUT_MS);
+    return { status: 'ok', latencyMs: Date.now() - start };
   } catch (err) {
     return {
       status: 'error',
@@ -332,11 +356,12 @@ function deriveIndexingStatus(args: {
 }
 
 async function buildHealthResponse(options: EventsServerOptions): Promise<HealthResponse> {
-  const [stellarRpc, discord] = await Promise.all([
+  const [stellarRpc, discord, database] = await Promise.all([
     checkStellarRpc(options.stellarRpcUrl),
     options.discordWebhookUrl
       ? checkDiscord(options.discordWebhookUrl)
       : Promise.resolve<ServiceHealth>({ status: 'not_configured' }),
+    checkDatabase(),
   ]);
 
   const eventRegistryHealth = {
@@ -345,7 +370,7 @@ async function buildHealthResponse(options: EventsServerOptions): Promise<Health
   };
 
   let overallStatus: HealthResponse['status'];
-  if (stellarRpc.status === 'error') {
+  if (stellarRpc.status === 'error' || database.status === 'error') {
     overallStatus = 'error';
   } else if (discord.status === 'error') {
     overallStatus = 'degraded';
@@ -359,6 +384,7 @@ async function buildHealthResponse(options: EventsServerOptions): Promise<Health
     services: {
       stellarRpc,
       discord,
+      database,
       eventRegistry: eventRegistryHealth,
     },
   };
@@ -390,6 +416,19 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
 
     const url = new URL(req.url ?? '/', 'http://localhost');
 
+    // ── API Route Versioning (#386) ─────────────────────────────────────────
+    // Accept requests to /api/v1/* and silently rewrite the pathname to the
+    // canonical /api/* form so the rest of the handler needs no changes.
+    // The original `req.url` is preserved; only the parsed `url.pathname` is
+    // modified. Unversioned /api/* routes continue to work unchanged.
+    if (url.pathname.startsWith('/api/v1/')) {
+      url.pathname = url.pathname.replace('/api/v1/', '/api/');
+    } else if (url.pathname === '/api/v1') {
+      url.pathname = '/api';
+    }
+    // Add X-API-Version response header so callers can inspect active version
+    res.setHeader('X-API-Version', 'v1');
+
     // The rate-limit metrics endpoint is an observability route and must stay
     // reachable even after a client exhausts its quota — otherwise callers
     // can't read the very metrics that explain why they are being throttled.
@@ -408,7 +447,8 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
     }
 
     // Template API routes (handled first for priority)
-    if (options.templateService && req.url?.startsWith('/api/templates')) {
+    // url.pathname is already rewritten from /api/v1/* → /api/* above
+    if (options.templateService && url.pathname.startsWith('/api/templates')) {
       handleTemplateRoutes(req, res, requestId, options.templateService)
         .then((handled) => {
           if (!handled) {
@@ -424,7 +464,6 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
       return;
     }
 
-    if (req.method === 'GET' && req.url === '/health') {
     // GET /health
     if (req.method === 'GET' && url.pathname === '/health') {
       buildHealthResponse(options).then((health) => {
@@ -758,6 +797,18 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
 
           logger.info('Notification scheduled via API', { requestId, correlationId, notificationId, executeAt: data.executeAt });
         } catch (error) {
+          if (error instanceof PayloadTooLargeError) {
+            logger.warn('Payload too large', {
+              error,
+              requestId,
+              correlationId,
+              payloadSizeBytes: error.payloadSizeBytes,
+              maxSizeBytes: error.maxSizeBytes,
+            });
+            res.writeHead(413, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: error.message }));
+            return;
+          }
           logger.error('Failed to schedule notification', { error, requestId, correlationId });
           res.writeHead(500, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ error: (error as Error).message }));
@@ -781,6 +832,69 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
         })
         .catch((error) => {
           logger.error('Failed to get scheduler stats', { error, requestId, correlationId });
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: (error as Error).message }));
+        });
+      return;
+    }
+
+    // GET /api/schedule/execution-metrics
+    if (req.method === 'GET' && url.pathname === '/api/schedule/execution-metrics') {
+      if (!options.notificationAPI) {
+        res.writeHead(503, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Scheduler not enabled' }));
+        return;
+      }
+
+      options.notificationAPI.getExecutionMetrics()
+        .then((metrics) => {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(metrics));
+        })
+        .catch((error) => {
+          logger.error('Failed to get execution metrics', { error, requestId, correlationId });
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: (error as Error).message }));
+        });
+      return;
+    }
+
+    // GET /api/schedule/retry-distribution
+    if (req.method === 'GET' && url.pathname === '/api/schedule/retry-distribution') {
+      if (!options.notificationAPI) {
+        res.writeHead(503, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Scheduler not enabled' }));
+        return;
+      }
+
+      options.notificationAPI.getRetryDistribution()
+        .then((distribution) => {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(distribution));
+        })
+        .catch((error) => {
+          logger.error('Failed to get retry distribution', { error, requestId, correlationId });
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: (error as Error).message }));
+        });
+      return;
+    }
+
+    // GET /api/schedule/retry-statistics
+    if (req.method === 'GET' && url.pathname === '/api/schedule/retry-statistics') {
+      if (!options.notificationAPI) {
+        res.writeHead(503, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Scheduler not enabled' }));
+        return;
+      }
+
+      options.notificationAPI.getRetryStatistics()
+        .then((stats) => {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(stats));
+        })
+        .catch((error) => {
+          logger.error('Failed to get retry statistics', { error, requestId, correlationId });
           res.writeHead(500, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ error: (error as Error).message }));
         });
@@ -894,12 +1008,38 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
       const eventId = url.searchParams.get('eventId') ?? undefined;
       const status = url.searchParams.get('status') ?? undefined;
       const type = url.searchParams.get('type') ?? undefined;
+      const startDate = url.searchParams.get('startDate') ?? undefined;
+      const endDate = url.searchParams.get('endDate') ?? undefined;
       const limit = url.searchParams.get('limit') ? parseInt(url.searchParams.get('limit')!, 10) : undefined;
       const offset = url.searchParams.get('offset') ? parseInt(url.searchParams.get('offset')!, 10) : undefined;
 
-      logger.info('Handling GET /api/notifications/search', { requestId, correlationId, q, sender, txHash, eventId, status, type, limit, offset });
+      logger.info('Handling GET /api/notifications/search', {
+        requestId,
+        correlationId,
+        q,
+        sender,
+        txHash,
+        eventId,
+        status,
+        type,
+        startDate,
+        endDate,
+        limit,
+        offset,
+      });
 
-      notificationSearchService.search({ q, sender, txHash, eventId, status, type, limit, offset })
+      notificationSearchService.search({
+        q,
+        sender,
+        txHash,
+        eventId,
+        status,
+        type,
+        startDate,
+        endDate,
+        limit,
+        offset,
+      })
         .then((result) => {
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify(result));
