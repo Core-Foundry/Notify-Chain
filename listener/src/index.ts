@@ -43,6 +43,7 @@ async function main() {
   let retryScheduler: RetryScheduler | null = null;
   let notificationAPI: NotificationAPI | null = null;
   let templateService: TemplateService | null = null;
+  let healthMonitor: NotificationHealthMonitor | null = null;
 
   if (config.scheduler?.enabled) {
     try {
@@ -50,13 +51,17 @@ async function main() {
       const db = await initializeDatabase(config.databasePath);
   let templateService: NotificationTemplateService | null = null;
   let cleanupService: CleanupService | null = null;
+  let repository: ScheduledNotificationRepository | null = null;
   let reconciliationEngine: IndexingReconciliationEngine | null = null;
   let archiveService: ArchiveService | null = null;
   let archiveStore: ArchiveStore | null = null;
   let metricsRunner: NotificationMetricsRunner | null = null;
   let metricsStore: NotificationMetricsStore | null = null;
 
-  const healthMonitor = new NotificationHealthMonitor(null, getWorkerManager());
+  repository = new ScheduledNotificationRepository(db);
+  healthMonitor = new NotificationHealthMonitor(null, getWorkerManager(), {
+    repository,
+  });
 
   if (config.analytics?.enabled) {
     initNotificationAnalyticsAggregator(config.analytics);
@@ -119,7 +124,7 @@ async function main() {
     templateService = new NotificationTemplateService(templateRepository);
 
     if (config.scheduler?.enabled) {
-      const repository = new ScheduledNotificationRepository(db);
+      repository = new ScheduledNotificationRepository(db);
       notificationAPI = new NotificationAPI(repository);
 
       // Initialize template service
@@ -176,15 +181,19 @@ async function main() {
     healthMonitor,
   });
 
-  healthMonitor.start();
+  if (healthMonitor) {
+    healthMonitor.start();
+  }
 
-  const subscriber = new EventSubscriber(config);
+  const subscriber = new EventSubscriber(config, deduplicationService);
   await subscriber.start();
 
   const shutdown = async () => {
     logger.info('Shutting down services...');
 
-    healthMonitor.stop();
+    if (healthMonitor) {
+      healthMonitor.stop();
+    }
 
     if (cleanupService) {
       await cleanupService.stop();
