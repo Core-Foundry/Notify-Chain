@@ -314,7 +314,8 @@ impl AutoShareContract {
     }
 
     /// Reduces the usage count by 1.
-    pub fn reduce_usage(env: Env, id: BytesN<32>, caller: Address) {
+    pub fn reduce_usage(env: Env, id: BytesN<32>) {
+        let caller = env.current_contract_address();
         autoshare_logic::reduce_usage(env, id, caller).unwrap();
     }
 
@@ -454,6 +455,8 @@ impl AutoShareContract {
     /// The notification must exist, not already be revoked or expired, and not yet be delivered.
     pub fn recall_notification(env: Env, notification_id: BytesN<32>, caller: Address) {
         autoshare_logic::recall_notification(env, notification_id, caller).unwrap();
+    }
+
     /// Emits a `BatchProcessingCompleted` event for off-chain listeners.
     pub fn emit_batch_completed(env: Env, batch_id: BytesN<32>, processed_count: u32) {
         autoshare_logic::emit_batch_completed(env, batch_id, processed_count).unwrap();
@@ -527,6 +530,8 @@ impl AutoShareContract {
     /// Acknowledges multiple scheduled notifications in a single batch.
     pub fn acknowledge_notifications(env: Env, caller: Address, notification_ids: Vec<BytesN<32>>) {
         autoshare_logic::acknowledge_notifications(env, caller, notification_ids).unwrap();
+    }
+
     /// Extends the expiration period of a scheduled notification by `extension_seconds`.
     ///
     /// Only the notification creator or the contract admin can extend it.
@@ -663,13 +668,6 @@ mod tests {
     mod preferences_test;
 
     #[path = "tests/autoshare_test.rs"]
-#[cfg(test)]
-#[path = "tests/preferences_test.rs"]
-mod preferences_test;
-
-#[cfg(test)]
-mod tests {
-    #[path = "../tests/autoshare_test.rs"]
     mod autoshare_test;
 
     #[path = "tests/pause_test.rs"]
@@ -692,37 +690,37 @@ mod tests {
 
     #[path = "tests/ownership_transfer_test.rs"]
     mod ownership_transfer_test;
-    #[path = "../tests/notification_validation_test.rs"]
+
+    #[path = "tests/notification_validation_test.rs"]
     mod notification_validation_test;
-    #[path = "../tests/category_registry_test.rs"]
+
+    #[path = "tests/category_registry_test.rs"]
     mod category_registry_test;
 
-    #[path = "../tests/expiration_test.rs"]
-    mod expiration_test;
-
-    #[path = "../tests/batch_notification_test.rs"]
+    #[path = "tests/batch_notification_test.rs"]
     mod batch_notification_test;
 
-    #[path = "../tests/audit_log_test.rs"]
+    #[path = "tests/audit_log_test.rs"]
     mod audit_log_test;
 
-    #[path = "../tests/payload_validation_test.rs"]
+    #[path = "tests/payload_validation_test.rs"]
     mod payload_validation_test;
 
-    #[path = "../tests/revocation_test.rs"]
-    mod revocation_test;
-
-    #[path = "../tests/batch_ack_test.rs"]
+    #[path = "tests/batch_ack_test.rs"]
     mod batch_ack_test;
-    #[path = "../tests/fuzz_test.rs"]
+
+    #[path = "tests/fuzz_test.rs"]
     mod fuzz_test;
 
-    #[path = "../tests/schema_version_test.rs"]
+    #[path = "tests/schema_version_test.rs"]
     mod schema_version_test;
 
-    #[path = "../tests/access_log_test.rs"]
+    #[path = "tests/access_log_test.rs"]
     mod access_log_test;
 
-    #[path = "../tests/subscription_cancellation_test.rs"]
+    #[path = "tests/subscription_cancellation_test.rs"]
     mod subscription_cancellation_test;
+
+    #[path = "tests/notification_lifetime_test.rs"]
+    mod notification_lifetime_test;
 }
