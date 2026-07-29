@@ -117,6 +117,28 @@ pub struct AutoshareUpdated {
     pub id: BytesN<32>,
 }
 
+/// Emitted when a recipient updates a delivery channel preference.
+///
+/// Off-chain consumers can filter on `recipient` and inspect `channel` /
+/// `enabled` in the event data to react to channel configuration changes
+/// without decoding full preference storage.
+#[contractevent]
+#[derive(Clone)]
+pub struct ChannelPreferenceUpdated {
+    #[topic]
+    pub recipient: Address,
+    #[topic]
+    pub category: NotificationCategory,
+    #[topic]
+    pub priority: NotificationPriority,
+    /// Delivery channel that changed (0 = Wallet, 1 = Email, 2 = InApp).
+    pub channel: u32,
+    /// Whether the channel is now enabled.
+    pub enabled: bool,
+    /// Ledger timestamp when the preference was updated.
+    pub updated_at: u64,
+}
+
 /// Emitted when an AutoShare group is deactivated by its creator.
 #[contractevent(data_format = "single-value")]
 #[derive(Clone)]
