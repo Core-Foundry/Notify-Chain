@@ -107,5 +107,68 @@ describe('NotificationDetailsDrawer', () => {
 
     expect(await screen.findByText(/Failed to load details: boom/i)).toBeInTheDocument();
   });
+
+  it('renders Notification ID row with copy button when relatedNotificationId is present', () => {
+    const notification = makeNotification({ relatedNotificationId: 'notif-42' });
+    const onClose = jest.fn();
+
+    render(
+      <NotificationDetailsDrawer
+        isOpen={true}
+        notification={notification}
+        onClose={onClose}
+      />
+    );
+
+    expect(screen.getByText('Notification ID')).toBeInTheDocument();
+    // The shortened version should be displayed
+    expect(screen.getByTitle('notif-42')).toBeInTheDocument();
+    // A copy button for the Notification ID should be present
+    const copyButtons = screen.getAllByRole('button', { name: 'Copy' });
+    expect(copyButtons.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('does not render Notification ID row when relatedNotificationId is absent', () => {
+    const notification = makeNotification();
+    const onClose = jest.fn();
+
+    render(
+      <NotificationDetailsDrawer
+        isOpen={true}
+        notification={notification}
+        onClose={onClose}
+      />
+    );
+
+    expect(screen.queryByText('Notification ID')).not.toBeInTheDocument();
+  });
+
+  it('copies notification ID to clipboard and shows toast feedback', async () => {
+    Object.assign(navigator, {
+      clipboard: {
+        writeText: jest.fn().mockResolvedValue(undefined),
+      },
+    });
+
+    const notification = makeNotification({ relatedNotificationId: 'notif-42' });
+    const onClose = jest.fn();
+
+    render(
+      <NotificationDetailsDrawer
+        isOpen={true}
+        notification={notification}
+        onClose={onClose}
+      />
+    );
+
+    // Find the Notification ID row's copy button (first copy button in Blockchain Context)
+    const notifIdTitle = screen.getByTitle('notif-42');
+    const notifIdRow = notifIdTitle.closest('.drawer__row')!;
+    const copyBtn = notifIdRow.querySelector('button')!;
+    fireEvent.click(copyBtn);
+
+    expect(navigator.clipboard.writeText).toHaveBeenCalledWith('notif-42');
+    expect(await screen.findByText('Notification ID copied')).toBeInTheDocument();
+  });
 });
 
