@@ -49,6 +49,9 @@ import { ArchiveStore } from '../services/archive-store';
 import { ArchiveService } from '../services/archive-service';
 import { NotificationMetricsStore } from '../services/notification-metrics-store';
 import { NotificationHealthMonitor } from '../services/notification-health-monitor';
+import { getJobMonitor } from '../services/job-monitor';
+import { NotificationImportService } from '../services/notification-import-service';
+import { ResponseTimeMiddleware } from '../middleware/response-time';
 
 export interface EventsServerOptions {
   port: number;
@@ -79,6 +82,16 @@ export interface EventsServerOptions {
   signatureExpirationSeconds?: number;
   /** Optional health monitor — exposes its last report at GET /api/notifications/health. */
   healthMonitor?: NotificationHealthMonitor | null;
+  /**
+   * Requests slower than this threshold (ms) are logged at WARN level (#491).
+   * Defaults to 1 000 ms.
+   */
+  slowRequestThresholdMs?: number;
+  /**
+   * Override the ResponseTimeMiddleware instance — primarily for testing.
+   * When omitted a new instance is created using `slowRequestThresholdMs`.
+   */
+  responseTimeMiddleware?: ResponseTimeMiddleware | null;
 }
 
 type ServiceStatus = 'ok' | 'error' | 'not_configured';
@@ -400,11 +413,19 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
   const suggestionService = new SearchSuggestionService();
   const notificationSearchService = new NotificationSearchService();
   const rateLimiter = options.rateLimit ? new RateLimiter(options.rateLimit) : undefined;
+  // Response-time tracking (#491)
+  const responseTime =
+    options.responseTimeMiddleware !== undefined && options.responseTimeMiddleware !== null
+      ? options.responseTimeMiddleware
+      : new ResponseTimeMiddleware({ slowRequestThresholdMs: options.slowRequestThresholdMs });
 
   const server = http.createServer(async (req, res) => {
     const requestId = generateRequestId();
     const correlationId = resolveCorrelationId(req.headers['x-correlation-id']);
     const startTime = Date.now();
+
+    // Start response-time tracking for this request (#491)
+    responseTime.start(res);
 
     res.setHeader('Access-Control-Allow-Origin', corsOrigin);
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
@@ -415,6 +436,19 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
     res.setHeader('X-Correlation-Id', correlationId);
 
     const url = new URL(req.url ?? '/', 'http://localhost');
+
+    // ── API Route Versioning (#386) ─────────────────────────────────────────
+    // Accept requests to /api/v1/* and silently rewrite the pathname to the
+    // canonical /api/* form so the rest of the handler needs no changes.
+    // The original `req.url` is preserved; only the parsed `url.pathname` is
+    // modified. Unversioned /api/* routes continue to work unchanged.
+    if (url.pathname.startsWith('/api/v1/')) {
+      url.pathname = url.pathname.replace('/api/v1/', '/api/');
+    } else if (url.pathname === '/api/v1') {
+      url.pathname = '/api';
+    }
+    // Add X-API-Version response header so callers can inspect active version
+    res.setHeader('X-API-Version', 'v1');
 
     // The rate-limit metrics endpoint is an observability route and must stay
     // reachable even after a client exhausts its quota — otherwise callers
@@ -434,7 +468,8 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
     }
 
     // Template API routes (handled first for priority)
-    if (options.templateService && req.url?.startsWith('/api/templates')) {
+    // url.pathname is already rewritten from /api/v1/* → /api/* above
+    if (options.templateService && url.pathname.startsWith('/api/templates')) {
       handleTemplateRoutes(req, res, requestId, options.templateService)
         .then((handled) => {
           if (!handled) {
@@ -739,6 +774,49 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
       return;
     }
 
+    // POST /api/notifications/import — bulk import from JSON or CSV
+    if (req.method === 'POST' && url.pathname === '/api/notifications/import') {
+      if (!options.notificationAPI) {
+        res.writeHead(503, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Scheduler not enabled' }));
+        return;
+      }
+
+      const apiKeyHeader = req.headers['x-api-key'];
+      if (options.apiKeys && options.apiKeys.length > 0) {
+        const provided = Array.isArray(apiKeyHeader) ? apiKeyHeader[0] : apiKeyHeader;
+        const allowed = options.apiKeys.some((k) => k.key === provided);
+        if (!allowed) {
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Unauthorized' }));
+          return;
+        }
+      }
+
+      let body = '';
+      req.on('data', (chunk) => { body += chunk.toString(); });
+      req.on('end', async () => {
+        try {
+          const contentType = req.headers['content-type'] || '';
+          const importer = new NotificationImportService(options.notificationAPI!);
+          const summary = await importer.importFromBody(body, contentType, { requestId });
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(summary));
+          logger.info('Bulk notification import finished', {
+            requestId,
+            correlationId,
+            imported: summary.imported,
+            skipped: summary.skipped,
+          });
+        } catch (error) {
+          logger.error('Failed to import notifications', { error, requestId, correlationId });
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: (error as Error).message }));
+        }
+      });
+      return;
+    }
+
     // POST /api/schedule
     if (req.method === 'POST' && url.pathname === '/api/schedule') {
       if (!options.notificationAPI) {
@@ -818,6 +896,92 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
         })
         .catch((error) => {
           logger.error('Failed to get scheduler stats', { error, requestId, correlationId });
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: (error as Error).message }));
+        });
+      return;
+    }
+
+    // GET /api/schedule/jobs — background job monitoring snapshot
+    if (req.method === 'GET' && url.pathname === '/api/schedule/jobs') {
+      const monitor = getJobMonitor();
+      const limitParam = url.searchParams.get('limit');
+      const limit = limitParam ? Math.min(Math.max(parseInt(limitParam, 10) || 25, 1), 200) : 25;
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(
+        JSON.stringify({
+          ...monitor.getSnapshot(),
+          recentJobs: monitor.listRecentJobs(limit),
+          recentFailures: monitor.listFailures(limit),
+        })
+      );
+      return;
+    }
+
+    // GET /api/schedule/jobs/failures — failed job log
+    if (req.method === 'GET' && url.pathname === '/api/schedule/jobs/failures') {
+      const monitor = getJobMonitor();
+      const limitParam = url.searchParams.get('limit');
+      const limit = limitParam ? Math.min(Math.max(parseInt(limitParam, 10) || 50, 1), 200) : 50;
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ failures: monitor.listFailures(limit), count: monitor.listFailures(limit).length }));
+    // GET /api/schedule/execution-metrics
+    if (req.method === 'GET' && url.pathname === '/api/schedule/execution-metrics') {
+      if (!options.notificationAPI) {
+        res.writeHead(503, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Scheduler not enabled' }));
+        return;
+      }
+
+      options.notificationAPI.getExecutionMetrics()
+        .then((metrics) => {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(metrics));
+        })
+        .catch((error) => {
+          logger.error('Failed to get execution metrics', { error, requestId, correlationId });
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: (error as Error).message }));
+        });
+      return;
+    }
+
+    // GET /api/schedule/retry-distribution
+    if (req.method === 'GET' && url.pathname === '/api/schedule/retry-distribution') {
+      if (!options.notificationAPI) {
+        res.writeHead(503, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Scheduler not enabled' }));
+        return;
+      }
+
+      options.notificationAPI.getRetryDistribution()
+        .then((distribution) => {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(distribution));
+        })
+        .catch((error) => {
+          logger.error('Failed to get retry distribution', { error, requestId, correlationId });
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: (error as Error).message }));
+        });
+      return;
+    }
+
+    // GET /api/schedule/retry-statistics
+    if (req.method === 'GET' && url.pathname === '/api/schedule/retry-statistics') {
+      if (!options.notificationAPI) {
+        res.writeHead(503, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Scheduler not enabled' }));
+        return;
+      }
+
+      options.notificationAPI.getRetryStatistics()
+        .then((stats) => {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(stats));
+        })
+        .catch((error) => {
+          logger.error('Failed to get retry statistics', { error, requestId, correlationId });
           res.writeHead(500, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ error: (error as Error).message }));
         });
@@ -935,6 +1099,8 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
       const endDate = url.searchParams.get('endDate') ?? undefined;
       const limit = url.searchParams.get('limit') ? parseInt(url.searchParams.get('limit')!, 10) : undefined;
       const offset = url.searchParams.get('offset') ? parseInt(url.searchParams.get('offset')!, 10) : undefined;
+      const rawSortBy = url.searchParams.get('sortBy') ?? undefined;
+      const sortBy = (rawSortBy === 'oldest' || rawSortBy === 'status') ? rawSortBy : 'newest';
 
       logger.info('Handling GET /api/notifications/search', {
         requestId,
@@ -949,6 +1115,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
         endDate,
         limit,
         offset,
+        sortBy,
       });
 
       notificationSearchService.search({
@@ -962,6 +1129,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
         endDate,
         limit,
         offset,
+        sortBy,
       })
         .then((result) => {
           res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -1364,6 +1532,19 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
       if (handled) return;
     }
 
+    // GET /api/metrics/response-time — expose response-time counters (#491)
+    if (req.method === 'GET' && url.pathname === '/api/metrics/response-time') {
+      const metrics = responseTime.getMetrics();
+      const reset = url.searchParams.get('reset') === 'true';
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(metrics));
+      if (reset) {
+        responseTime.resetMetrics();
+        logger.info('Response-time metrics reset', { requestId });
+      }
+      return;
+    }
+
     logger.warn('Unhandled request', {
       requestId,
       method: req.method,
@@ -1371,6 +1552,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
     });
     res.writeHead(404, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: 'Not found' }));
+    responseTime.finish(req, res, requestId, 404);
   });
 
   if (rateLimiter) {

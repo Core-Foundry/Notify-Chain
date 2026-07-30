@@ -7,6 +7,7 @@ import {
   CreateScheduledNotificationInput,
   NotificationStatus,
   NotificationExecutionLog,
+  DeadLetterQueueEntry,
 } from '../types/scheduled-notification';
 import { hashPayload } from '../utils/payload-integrity';
 
@@ -278,6 +279,10 @@ export class ScheduledNotificationRepository {
       id,
     ]);
 
+    if (isFailed) {
+      await this.moveToDeadLetterQueue(id, error, errorDetails, nextRetryCount);
+    }
+
     logger.info('Notification marked for retry or failed', {
       id,
       newStatus,
@@ -285,6 +290,113 @@ export class ScheduledNotificationRepository {
       maxRetries,
       nextRetryAt: nextRetryAt?.toISOString(),
     });
+  }
+
+  async moveToDeadLetterQueue(
+    id: number,
+    error: Error,
+    errorDetails: string,
+    retryCount: number,
+    requestId?: string
+  ): Promise<boolean> {
+    const notification = await this.getById(id);
+    if (!notification) {
+      return false;
+    }
+
+    const insertSql = `
+      INSERT INTO dead_letter_queue (
+        scheduled_notification_id, notification_type, target_recipient, payload, failure_reason, error_details, retry_count
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(scheduled_notification_id) DO UPDATE SET
+        failure_reason = excluded.failure_reason,
+        error_details = excluded.error_details,
+        retry_count = excluded.retry_count,
+        last_retried_at = NULL
+    `;
+
+    await this.db.run(insertSql, [
+      id,
+      notification.notificationType,
+      notification.targetRecipient,
+      typeof notification.payload === 'string' ? notification.payload : JSON.stringify(notification.payload),
+      error.message,
+      errorDetails,
+      retryCount,
+    ]);
+
+    logger.warn('Notification moved to dead letter queue', {
+      requestId,
+      id,
+      notificationType: notification.notificationType,
+      failureReason: error.message,
+    });
+
+    return true;
+  }
+
+  async getDeadLetterQueue(): Promise<DeadLetterQueueEntry[]> {
+    const sql = `
+      SELECT id, scheduled_notification_id, notification_type, target_recipient, payload, failure_reason, error_details, created_at, last_retried_at, retry_count
+      FROM dead_letter_queue
+      ORDER BY created_at DESC
+    `;
+
+    const rows = await this.db.all<{
+      id: number;
+      scheduled_notification_id: number;
+      notification_type: string;
+      target_recipient: string;
+      payload: string;
+      failure_reason: string;
+      error_details: string | null;
+      created_at: string;
+      last_retried_at: string | null;
+      retry_count: number;
+    }>(sql);
+
+    return rows.map((row) => ({
+      id: row.id,
+      originalNotificationId: row.scheduled_notification_id,
+      notificationType: row.notification_type as any,
+      targetRecipient: row.target_recipient,
+      payload: row.payload,
+      failureReason: row.failure_reason,
+      errorDetails: row.error_details,
+      createdAt: new Date(row.created_at),
+      lastRetriedAt: row.last_retried_at ? new Date(row.last_retried_at) : null,
+      retryCount: row.retry_count,
+    }));
+  }
+
+  async retryDeadLetterNotification(id: number, requestId?: string): Promise<boolean> {
+    const entry = await this.db.get<{ scheduled_notification_id: number }>(
+      'SELECT scheduled_notification_id FROM dead_letter_queue WHERE id = ?',
+      [id]
+    );
+
+    if (!entry) {
+      return false;
+    }
+
+    await this.db.transaction(async () => {
+      await this.db.run(
+        `
+          UPDATE scheduled_notifications
+          SET status = ?, next_retry_at = NULL, updated_at = ?, retry_count = 0, last_error = NULL, error_details = NULL
+          WHERE id = ?
+        `,
+        [NotificationStatus.PENDING, new Date().toISOString(), entry.scheduled_notification_id]
+      );
+
+      await this.db.run(
+        `UPDATE dead_letter_queue SET last_retried_at = ?, retry_count = retry_count + 1 WHERE id = ?`,
+        [new Date().toISOString(), id]
+      );
+    });
+
+    logger.info('Dead-letter notification requeued', { requestId, id, notificationId: entry.scheduled_notification_id });
+    return true;
   }
 
   /**
@@ -462,6 +574,7 @@ export class ScheduledNotificationRepository {
     completed: number;
     failed: number;
     overdue: number;
+    deadLetterQueue: number;
   }> {
     const now = new Date().toISOString();
 
@@ -485,6 +598,7 @@ export class ScheduledNotificationRepository {
 
     const counts = await this.db.all<{ adjusted_status: string; count: number }>(countBySql, [now]);
     const overdueResult = await this.db.get<{ count: number }>(overdueSql, [now, now]);
+    const dlqResult = await this.db.get<{ count: number }>('SELECT COUNT(*) as count FROM dead_letter_queue');
 
     const stats = {
       pending: 0,
@@ -492,6 +606,7 @@ export class ScheduledNotificationRepository {
       completed: 0,
       failed: 0,
       overdue: overdueResult?.count ?? 0,
+      deadLetterQueue: dlqResult?.count ?? 0,
     };
 
     counts.forEach((row) => {

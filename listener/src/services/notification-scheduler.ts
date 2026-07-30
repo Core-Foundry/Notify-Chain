@@ -7,6 +7,7 @@ import { DiscordNotificationService } from './discord-notification';
 import { BatchValidationService } from './batch-validation-service';
 import { NotificationChannel } from '../utils/batch-validator';
 import { getWorkerManager } from './worker-manager';
+import { getJobMonitor } from './job-monitor';
 
 /**
  * Background scheduler that processes scheduled notifications
@@ -176,7 +177,8 @@ export class NotificationScheduler {
         return;
       }
 
-      // Process each notification with job tracking
+      // Process each notification with job tracking + monitoring
+      const jobMonitor = getJobMonitor();
       for (const notification of notifications) {
         const jobId = `notification-${notification.id}`;
         if (!workerManager.startJob(jobId)) {
@@ -191,8 +193,14 @@ export class NotificationScheduler {
           continue;
         }
 
+        jobMonitor.startJob(jobId, 'scheduled-notification', {
+          notificationId: notification.id,
+          type: notification.notificationType,
+          requestId,
+        });
+
         try {
-          await this.processNotification(notification, requestId);
+          await this.processNotification(notification, requestId, jobId);
         } finally {
           workerManager.completeJob(jobId);
         }
@@ -219,10 +227,12 @@ export class NotificationScheduler {
    */
   private async processNotification(
     notification: ScheduledNotification,
-    requestId: string
+    requestId: string,
+    jobId?: string
   ): Promise<void> {
     const startTime = Date.now();
     const executionAttempt = notification.retryCount + 1;
+    const jobMonitor = getJobMonitor();
 
     try {
       logger.info('Processing scheduled notification', {
@@ -251,6 +261,11 @@ export class NotificationScheduler {
           notification.retryCount,
           notification.maxRetries
         );
+        if (jobId) {
+          jobMonitor.failJob(jobId, 'Not yet due for execution', {
+            notificationId: notification.id,
+          });
+        }
         return;
       }
 
@@ -262,6 +277,7 @@ export class NotificationScheduler {
           now,
           missedByMs: timeDiff,
         });
+      }
       // Verify payload integrity before executing
       const secret = process.env.PAYLOAD_INTEGRITY_SECRET;
       if (secret) {
@@ -282,6 +298,11 @@ export class NotificationScheduler {
             notification.maxRetries, // exhaust retries — don't retry a tampered payload
             notification.maxRetries
           );
+          if (jobId) {
+            jobMonitor.failJob(jobId, 'Payload integrity check failed: hash mismatch', {
+              notificationId: notification.id,
+            });
+          }
           return;
         }
       }
@@ -301,6 +322,13 @@ export class NotificationScheduler {
           durationMs,
         });
 
+        if (jobId) {
+          jobMonitor.completeJob(jobId, {
+            notificationId: notification.id,
+            durationMs,
+          });
+        }
+
         logger.info('Notification delivered successfully', {
           requestId,
           id: notification.id,
@@ -319,6 +347,13 @@ export class NotificationScheduler {
         attempt: executionAttempt,
         durationMs,
       });
+
+      if (jobId) {
+        jobMonitor.failJob(jobId, (error as Error).message, {
+          notificationId: notification.id,
+          attempt: executionAttempt,
+        });
+      }
 
       const willRetry = notification.retryCount + 1 < notification.maxRetries;
       const nextRetryAt = willRetry

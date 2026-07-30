@@ -8,6 +8,7 @@ import { PaginationControls } from '../components/PaginationControls';
 import { NotificationDetailsDrawer } from '../components/NotificationDetailsDrawer';
 import { IndexingHealthPanel } from '../components/IndexingHealthPanel';
 import { NotificationHealthPanel } from '../components/NotificationHealthPanel';
+import { EmptyState } from '../components/EmptyState';
 import { useEventFilters, useEventLoadingState, useFilteredEvents } from '../hooks/useEventSelectors';
 import { useEventStore } from '../store/eventStore';
 import { fetchEvents, fetchStatus, type ContractStatus } from '../services/eventsApi';
@@ -50,6 +51,12 @@ export function EventExplorerPage() {
   const setEvents = useEventStore((state) => state.setEvents);
   const setLoading = useEventStore((state) => state.setLoading);
   const setError = useEventStore((state) => state.setError);
+  const setSearch = useEventStore((state) => state.setSearch);
+  const setContractFilter = useEventStore((state) => state.setContractFilter);
+  const setEventTypeFilter = useEventStore((state) => state.setEventTypeFilter);
+  const setStatusFilter = useEventStore((state) => state.setStatusFilter);
+  const setDateFrom = useEventStore((state) => state.setDateFrom);
+  const setDateTo = useEventStore((state) => state.setDateTo);
   // Re-fetch whenever lastFetchedAt is reset to 0 (via invalidateEvents()) so
   // that a successful blockchain status-change transaction is reflected on the
   // next render cycle without requiring a full hard refresh.
@@ -183,6 +190,16 @@ export function EventExplorerPage() {
   const fromIndex = filteredEvents.length === 0 ? 0 : (page - 1) * limit + 1;
   const toIndex = Math.min(filteredEvents.length, page * limit);
 
+  const handleClearFilters = useCallback(() => {
+    setSearch('');
+    setContractFilter('');
+    setEventTypeFilter('');
+    setStatusFilter('all');
+    setDateFrom('');
+    setDateTo('');
+    setPage(1);
+  }, [setSearch, setContractFilter, setEventTypeFilter, setStatusFilter, setDateFrom, setDateTo]);
+
   const handleRetry = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -274,13 +291,12 @@ export function EventExplorerPage() {
           contractStatuses={contractStatuses}
         />
       ) : (
-        <section className="event-explorer__empty-state" role="status" aria-live="polite">
-          <h2>No events found</h2>
-          <p>
-            Update the search, event type, or contract filter to uncover matching Soroban
-            contract events.
-          </p>
-        </section>
+        <EmptyState
+          icon="🔍"
+          title="No events found"
+          description="Update the search, event type, or contract filter to uncover matching Soroban contract events."
+          action={{ label: 'Clear filters', onClick: handleClearFilters }}
+        />
       )}
 
       <PaginationControls

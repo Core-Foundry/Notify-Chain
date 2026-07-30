@@ -5,6 +5,7 @@ import { ExportHistoryTable } from '../components/ExportHistoryTable';
 import { ExportHistorySkeleton } from '../components/ExportHistorySkeleton';
 import { PaginationControls } from '../components/PaginationControls';
 import { WalletConnectButton } from '../components/WalletConnectButton';
+import { EmptyState } from '../components/EmptyState';
 
 // ──────────────────────────────────────────────────────────────────
 // Constants
@@ -228,6 +229,13 @@ export function ExportHistoryPage() {
             Try modifying your search query or status filter to locate matching exports.
           </p>
         </section>
+      ) : (
+        <EmptyState
+          icon="📦"
+          title="No export records found"
+          description="Try modifying your search query or status filter to locate matching exports."
+          action={search || statusFilter !== 'all' ? { label: 'Clear filters', onClick: () => { setSearch(''); setStatusFilter('all'); } } : undefined}
+        />
       )}
 
       {/* ── Pagination ───────────────────────────────────────────── */}
