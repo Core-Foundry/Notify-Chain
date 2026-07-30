@@ -231,3 +231,202 @@ export function loadConfig(): Config {
   };
 }
 
+/**
+ * Validate a fully-loaded Config object and throw a descriptive ConfigError
+ * for every invalid value found.  Call this immediately after `loadConfig()`
+ * so that misconfigured services never start processing events (#494).
+ *
+ * All violations are collected before throwing so operators see every problem
+ * in a single error message rather than having to fix-and-restart repeatedly.
+ */
+export function validateConfig(config: Config): void {
+  const errors: string[] = [];
+
+  // ── Network ────────────────────────────────────────────────────────────────
+  if (!config.stellarRpcUrl || !config.stellarRpcUrl.startsWith('http')) {
+    errors.push(
+      'STELLAR_RPC_URL must be a valid HTTP/HTTPS URL ' +
+        `(received: "${config.stellarRpcUrl}").`,
+    );
+  }
+
+  if (!config.stellarNetworkPassphrase || config.stellarNetworkPassphrase.trim() === '') {
+    errors.push('STELLAR_NETWORK_PASSPHRASE must be a non-empty string.');
+  }
+
+  // ── Polling ────────────────────────────────────────────────────────────────
+  if (config.pollIntervalMs < 1000) {
+    errors.push(
+      `POLL_INTERVAL_MS must be at least 1000 ms to avoid excessive RPC load ` +
+        `(received: ${config.pollIntervalMs}).`,
+    );
+  }
+
+  if (config.maxReconnectAttempts < 1) {
+    errors.push(
+      `MAX_RECONNECT_ATTEMPTS must be >= 1 (received: ${config.maxReconnectAttempts}).`,
+    );
+  }
+
+  if (config.reconnectDelayMs < 0) {
+    errors.push(
+      `RECONNECT_DELAY_MS must be >= 0 (received: ${config.reconnectDelayMs}).`,
+    );
+  }
+
+  // ── API server ─────────────────────────────────────────────────────────────
+  if (config.eventsApiPort < 1 || config.eventsApiPort > 65535) {
+    errors.push(
+      `EVENTS_API_PORT must be between 1 and 65535 (received: ${config.eventsApiPort}).`,
+    );
+  }
+
+  // ── Contract addresses ─────────────────────────────────────────────────────
+  if (!Array.isArray(config.contractAddresses)) {
+    errors.push('CONTRACT_ADDRESSES must be a JSON array.');
+  } else {
+    config.contractAddresses.forEach((contract, index) => {
+      if (!contract.address || typeof contract.address !== 'string') {
+        errors.push(`CONTRACT_ADDRESSES[${index}].address must be a non-empty string.`);
+      }
+      if (!Array.isArray(contract.events) || contract.events.length === 0) {
+        errors.push(
+          `CONTRACT_ADDRESSES[${index}].events must be a non-empty array of event names.`,
+        );
+      }
+    });
+  }
+
+  // ── Discord ────────────────────────────────────────────────────────────────
+  if (config.discord) {
+    if (!config.discord.webhookUrl.startsWith('https://discord.com/api/webhooks/')) {
+      errors.push(
+        'DISCORD_WEBHOOK_URL must start with "https://discord.com/api/webhooks/". ' +
+          'Verify the URL copied from Discord server settings.',
+      );
+    }
+    if (!config.discord.webhookId || config.discord.webhookId.trim() === '') {
+      errors.push('DISCORD_WEBHOOK_ID must be a non-empty string.');
+    }
+    if (
+      config.discord.deduplicationWindowMs !== undefined &&
+      config.discord.deduplicationWindowMs < 0
+    ) {
+      errors.push(
+        `NOTIFICATION_DEDUPLICATION_WINDOW_MS must be >= 0 ` +
+          `(received: ${config.discord.deduplicationWindowMs}).`,
+      );
+    }
+  }
+
+  // ── Scheduler ─────────────────────────────────────────────────────────────
+  if (config.scheduler) {
+    if (config.scheduler.pollIntervalMs < 1000) {
+      errors.push(
+        `SCHEDULER_POLL_INTERVAL_MS must be >= 1000 ms ` +
+          `(received: ${config.scheduler.pollIntervalMs}).`,
+      );
+    }
+    if (config.scheduler.lockTimeoutMs < config.scheduler.pollIntervalMs) {
+      errors.push(
+        'SCHEDULER_LOCK_TIMEOUT_MS must be >= SCHEDULER_POLL_INTERVAL_MS to avoid ' +
+          'premature lock expiry. Increase SCHEDULER_LOCK_TIMEOUT_MS or reduce ' +
+          'SCHEDULER_POLL_INTERVAL_MS.',
+      );
+    }
+    if (config.scheduler.batchSize < 1) {
+      errors.push(`SCHEDULER_BATCH_SIZE must be >= 1 (received: ${config.scheduler.batchSize}).`);
+    }
+  }
+
+  // ── Retry scheduler ────────────────────────────────────────────────────────
+  if (config.retryScheduler) {
+    if (config.retryScheduler.pollIntervalMs < 1000) {
+      errors.push(
+        `RETRY_SCHEDULER_POLL_INTERVAL_MS must be >= 1000 ms ` +
+          `(received: ${config.retryScheduler.pollIntervalMs}).`,
+      );
+    }
+    if (config.retryScheduler.baseDelayMs < 0) {
+      errors.push(
+        `RETRY_BASE_DELAY_MS must be >= 0 (received: ${config.retryScheduler.baseDelayMs}).`,
+      );
+    }
+    if (config.retryScheduler.multiplier < 1) {
+      errors.push(
+        `RETRY_MULTIPLIER must be >= 1 (received: ${config.retryScheduler.multiplier}). ` +
+          'A multiplier below 1 would cause retry delays to shrink, not grow.',
+      );
+    }
+    if (config.retryScheduler.maxDelayMs < config.retryScheduler.baseDelayMs) {
+      errors.push(
+        'RETRY_MAX_DELAY_MS must be >= RETRY_BASE_DELAY_MS. ' +
+          `Received max=${config.retryScheduler.maxDelayMs}, base=${config.retryScheduler.baseDelayMs}.`,
+      );
+    }
+    if (config.retryScheduler.batchSize < 1) {
+      errors.push(
+        `RETRY_SCHEDULER_BATCH_SIZE must be >= 1 (received: ${config.retryScheduler.batchSize}).`,
+      );
+    }
+  }
+
+  // ── Rate limiting ──────────────────────────────────────────────────────────
+  if (config.rateLimit) {
+    if (config.rateLimit.windowMs < 1000) {
+      errors.push(
+        `RATE_LIMIT_WINDOW_MS must be >= 1000 ms (received: ${config.rateLimit.windowMs}).`,
+      );
+    }
+    if (config.rateLimit.maxRequests < 1) {
+      errors.push(
+        `RATE_LIMIT_MAX_REQUESTS must be >= 1 (received: ${config.rateLimit.maxRequests}).`,
+      );
+    }
+  }
+
+  // ── Analytics ─────────────────────────────────────────────────────────────
+  if (config.analytics) {
+    if (config.analytics.maxRecords < 1) {
+      errors.push(
+        `ANALYTICS_MAX_RECORDS must be >= 1 (received: ${config.analytics.maxRecords}).`,
+      );
+    }
+    if (config.analytics.bucketSizeMs < 60_000) {
+      errors.push(
+        `ANALYTICS_BUCKET_SIZE_MS must be >= 60000 ms (1 minute) ` +
+          `(received: ${config.analytics.bucketSizeMs}).`,
+      );
+    }
+    if (config.analytics.snapshotRetentionDays < 1) {
+      errors.push(
+        `ANALYTICS_SNAPSHOT_RETENTION_DAYS must be >= 1 ` +
+          `(received: ${config.analytics.snapshotRetentionDays}).`,
+      );
+    }
+  }
+
+  // ── Cleanup ────────────────────────────────────────────────────────────────
+  if (config.cleanup) {
+    if (config.cleanup.intervalMs < 60_000) {
+      errors.push(
+        `CLEANUP_INTERVAL_MS must be >= 60000 ms (1 minute) ` +
+          `(received: ${config.cleanup.intervalMs}).`,
+      );
+    }
+    if (config.cleanup.notificationRetentionMs < 60_000) {
+      errors.push(
+        `NOTIFICATION_RETENTION_MS must be >= 60000 ms ` +
+          `(received: ${config.cleanup.notificationRetentionMs}).`,
+      );
+    }
+  }
+
+  if (errors.length > 0) {
+    throw new ConfigError(
+      `Configuration validation failed with ${errors.length} error(s):\n` +
+        errors.map((e, i) => `  ${i + 1}. ${e}`).join('\n'),
+    );
+  }
+}
+
