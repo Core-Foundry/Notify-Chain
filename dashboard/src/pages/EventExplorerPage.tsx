@@ -194,7 +194,7 @@ export function EventExplorerPage() {
     setSearch('');
     setContractFilter('');
     setEventTypeFilter('');
-    setStatusFilter('');
+    setStatusFilter('all');
     setDateFrom('');
     setDateTo('');
     setPage(1);
@@ -296,7 +296,6 @@ export function EventExplorerPage() {
           title="No events found"
           description="Update the search, event type, or contract filter to uncover matching Soroban contract events."
           action={{ label: 'Clear filters', onClick: handleClearFilters }}
-        />
         />
       )}
 
