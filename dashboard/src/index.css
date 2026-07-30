@@ -175,6 +175,32 @@ body {
   display: flex;
   justify-content: flex-end;
   padding: 8px 0 0;
+  gap: 12px;
+  align-items: center;
+}
+
+.sync-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.85rem;
+  color: #9aa0a6;
+  white-space: nowrap;
+}
+
+.sync-status__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: #22c55e;
+}
+
+.sync-status--error .sync-status__dot {
+  background: #f87171;
+}
+
+.sync-status__error {
+  color: #f87171;
 }
 
 .app-nav {
@@ -5775,6 +5801,10 @@ body.event-explorer--resizing {
 
 [data-theme="light"] .app__brand {
   color: #202124;
+}
+
+[data-theme="light"] .sync-status {
+  color: #5f6368;
 }
 
 [data-theme="light"] .app__hamburger {
