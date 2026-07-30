@@ -114,7 +114,7 @@ export function App() {
             className="app-tabs__list"
             onKeyDown={handleTabKeyDown}
           >
-            {NAV_ITEMS.map((item, index) => (
+            {NAV_ITEMS.map((item) => (
               <button
                 key={item.id}
                 type="button"
