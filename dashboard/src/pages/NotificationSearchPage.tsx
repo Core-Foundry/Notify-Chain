@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { NotificationSearchSkeleton } from '../components/NotificationSearchSkeleton';
+import { formatTimestamp } from '../utils/formatTime';
 import { getEventsApiBaseUrl } from '../config/eventsApiUrl';
 import { useDebounce } from '../hooks/useDebounce';
 import { EmptyState } from '../components/EmptyState';
@@ -462,7 +463,6 @@ function NotificationResultCard({ result }: { result: NotificationSearchResult }
         {result.eventId && (
           <>
             <dt>Event ID</dt>
-            <dd>{result.eventId}</dd>
             <dd>
               <code>{result.eventId}</code>
               <CopyButton value={result.eventId} label="event ID" size="xs" />
@@ -472,7 +472,6 @@ function NotificationResultCard({ result }: { result: NotificationSearchResult }
         {result.txHash && (
           <>
             <dt>Tx Hash</dt>
-            <dd>{result.txHash}</dd>
             <dd>
               <code>{result.txHash}</code>
               <CopyButton value={result.txHash} label="tx hash" size="xs" />
@@ -498,7 +497,7 @@ function NotificationResultCard({ result }: { result: NotificationSearchResult }
           </>
         )}
         <dt>Created</dt>
-        <dd>{new Date(result.createdAt).toLocaleString()}</dd>
+        <dd>{formatTimestamp(result.createdAt)}</dd>
       </dl>
     </article>
   );
