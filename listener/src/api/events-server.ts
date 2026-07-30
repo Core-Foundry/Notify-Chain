@@ -51,6 +51,7 @@ import { NotificationMetricsStore } from '../services/notification-metrics-store
 import { NotificationHealthMonitor } from '../services/notification-health-monitor';
 import { getJobMonitor } from '../services/job-monitor';
 import { NotificationImportService } from '../services/notification-import-service';
+import { ResponseTimeMiddleware } from '../middleware/response-time';
 
 export interface EventsServerOptions {
   port: number;
@@ -81,6 +82,16 @@ export interface EventsServerOptions {
   signatureExpirationSeconds?: number;
   /** Optional health monitor — exposes its last report at GET /api/notifications/health. */
   healthMonitor?: NotificationHealthMonitor | null;
+  /**
+   * Requests slower than this threshold (ms) are logged at WARN level (#491).
+   * Defaults to 1 000 ms.
+   */
+  slowRequestThresholdMs?: number;
+  /**
+   * Override the ResponseTimeMiddleware instance — primarily for testing.
+   * When omitted a new instance is created using `slowRequestThresholdMs`.
+   */
+  responseTimeMiddleware?: ResponseTimeMiddleware | null;
 }
 
 type ServiceStatus = 'ok' | 'error' | 'not_configured';
@@ -402,11 +413,19 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
   const suggestionService = new SearchSuggestionService();
   const notificationSearchService = new NotificationSearchService();
   const rateLimiter = options.rateLimit ? new RateLimiter(options.rateLimit) : undefined;
+  // Response-time tracking (#491)
+  const responseTime =
+    options.responseTimeMiddleware !== undefined && options.responseTimeMiddleware !== null
+      ? options.responseTimeMiddleware
+      : new ResponseTimeMiddleware({ slowRequestThresholdMs: options.slowRequestThresholdMs });
 
   const server = http.createServer(async (req, res) => {
     const requestId = generateRequestId();
     const correlationId = resolveCorrelationId(req.headers['x-correlation-id']);
     const startTime = Date.now();
+
+    // Start response-time tracking for this request (#491)
+    responseTime.start(res);
 
     res.setHeader('Access-Control-Allow-Origin', corsOrigin);
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
@@ -1080,6 +1099,8 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
       const endDate = url.searchParams.get('endDate') ?? undefined;
       const limit = url.searchParams.get('limit') ? parseInt(url.searchParams.get('limit')!, 10) : undefined;
       const offset = url.searchParams.get('offset') ? parseInt(url.searchParams.get('offset')!, 10) : undefined;
+      const rawSortBy = url.searchParams.get('sortBy') ?? undefined;
+      const sortBy = (rawSortBy === 'oldest' || rawSortBy === 'status') ? rawSortBy : 'newest';
 
       logger.info('Handling GET /api/notifications/search', {
         requestId,
@@ -1094,6 +1115,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
         endDate,
         limit,
         offset,
+        sortBy,
       });
 
       notificationSearchService.search({
@@ -1107,6 +1129,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
         endDate,
         limit,
         offset,
+        sortBy,
       })
         .then((result) => {
           res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -1509,6 +1532,19 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
       if (handled) return;
     }
 
+    // GET /api/metrics/response-time — expose response-time counters (#491)
+    if (req.method === 'GET' && url.pathname === '/api/metrics/response-time') {
+      const metrics = responseTime.getMetrics();
+      const reset = url.searchParams.get('reset') === 'true';
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(metrics));
+      if (reset) {
+        responseTime.resetMetrics();
+        logger.info('Response-time metrics reset', { requestId });
+      }
+      return;
+    }
+
     logger.warn('Unhandled request', {
       requestId,
       method: req.method,
@@ -1516,6 +1552,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
     });
     res.writeHead(404, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: 'Not found' }));
+    responseTime.finish(req, res, requestId, 404);
   });
 
   if (rateLimiter) {

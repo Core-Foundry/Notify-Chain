@@ -51,6 +51,7 @@ export function NotificationSearchPage() {
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [page, setPage] = useState(1);
+  const [sortBy, setSortBy] = useState<'newest' | 'oldest' | 'status'>('newest');
 
   const [response, setResponse] = useState<NotificationSearchResponse | null>(null);
   const [loading, setLoading] = useState(false);
@@ -87,6 +88,7 @@ export function NotificationSearchPage() {
       type: type || undefined,
       startDate: dateFrom || undefined,
       endDate: dateTo || undefined,
+      sortBy,
     };
   }, [
     debouncedQuery,
@@ -97,6 +99,7 @@ export function NotificationSearchPage() {
     type,
     dateFrom,
     dateTo,
+    sortBy,
   ]);
 
   const runSearch = useCallback(async () => {
@@ -128,7 +131,7 @@ export function NotificationSearchPage() {
   }, [currentFilters, page, hasParams]);
 
   // Re-run search whenever debounced params change; reset page when filters change
-  const filtersKey = `${debouncedQuery}|${debouncedSender}|${debouncedTxHash}|${debouncedEventId}|${status}|${type}|${dateFrom}|${dateTo}`;
+  const filtersKey = `${debouncedQuery}|${debouncedSender}|${debouncedTxHash}|${debouncedEventId}|${status}|${type}|${dateFrom}|${dateTo}|${sortBy}`;
   const prevFiltersRef = useRef(filtersKey);
   useEffect(() => {
     if (filtersKey !== prevFiltersRef.current) {
@@ -150,6 +153,7 @@ export function NotificationSearchPage() {
     setType('');
     setDateFrom('');
     setDateTo('');
+    setSortBy('newest');
     setPage(1);
     setResponse(null);
     setError(null);
@@ -272,6 +276,22 @@ export function NotificationSearchPage() {
               {NOTIFICATION_DELIVERY_STATUS_OPTIONS.map(({ value, label }) => (
                 <option key={value || 'all'} value={value}>{label}</option>
               ))}
+            </select>
+          </div>
+
+          {/* Sort control (#495) */}
+          <div className="notif-search-form__group">
+            <label htmlFor="nsf-sort" className="notif-search-form__label">Sort by</label>
+            <select
+              id="nsf-sort"
+              className="notif-search-form__input"
+              value={sortBy}
+              onChange={(e) => setSortBy(e.target.value as 'newest' | 'oldest' | 'status')}
+              aria-label="Sort notifications"
+            >
+              <option value="newest">Newest first</option>
+              <option value="oldest">Oldest first</option>
+              <option value="status">Delivery status</option>
             </select>
           </div>
 
@@ -494,6 +514,12 @@ function NotificationResultCard({ result }: { result: NotificationSearchResult }
               {result.targetRecipient}
               <CopyButton value={result.targetRecipient} label="recipient" size="xs" />
             </dd>
+          </>
+        )}
+        {result.failureReason && (
+          <>
+            <dt>Failure reason</dt>
+            <dd className="notif-result-card__failure-reason">{result.failureReason}</dd>
           </>
         )}
         <dt>Created</dt>
