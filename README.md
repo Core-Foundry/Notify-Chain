@@ -31,6 +31,12 @@ The project enables developers to build reactive decentralized applications with
 > - [Notification Failure Recovery](NOTIFICATION_FAILURE_RECOVERY.md) — retry lifecycle, configuration, and troubleshooting.
 >
 > **Event reference**: [Smart Contract Event Reference Guide](CONTRACT_EVENT_REFERENCE.md) — all emitted events, parameters, data types, and usage recommendations for indexers and listeners.
+>
+> **API errors**: [API Error Reference](docs/API_ERROR_REFERENCE.md) — every error response the listener API returns, with causes and resolutions.
+>
+> **Architecture decisions**: [Architecture Decision Records](docs/adr/README.md) — the *why* behind the project's significant technical choices, including the [off-chain listener architecture](docs/adr/0001-off-chain-listener-architecture.md), [Soroban on Stellar](docs/adr/0002-soroban-smart-contracts.md), [SQLite persistence](docs/adr/0003-sqlite-for-local-persistence.md), [TypeScript for the listener](docs/adr/0004-typescript-for-listener-service.md), and the [event deduplication strategy](docs/adr/0005-event-deduplication-strategy.md).
+>
+> **Contributor guides**: [Git Workflow](docs/GIT_WORKFLOW.md) · [Contributor Troubleshooting](docs/CONTRIBUTOR_TROUBLESHOOTING.md)
 
 ---
 
@@ -638,6 +644,9 @@ See [`frontend/src/components/SubscriptionForm.tsx`](frontend/src/components/Sub
 Contributions are welcome! Please follow these steps (or start with the canonical workflow guide):
 
 - [`CONTRIBUTOR_DEVELOPMENT_WORKFLOW_GUIDE.md`](CONTRIBUTOR_DEVELOPMENT_WORKFLOW_GUIDE.md)
+- [`docs/GIT_WORKFLOW.md`](docs/GIT_WORKFLOW.md) — branching strategy, commit conventions, and the PR process
+- [`docs/CONTRIBUTOR_TROUBLESHOOTING.md`](docs/CONTRIBUTOR_TROUBLESHOOTING.md) — fixes for common build, test, and workflow problems
+- [`docs/adr/README.md`](docs/adr/README.md) — architecture decision records; read these before proposing a significant design change
 - [`docs/ROADMAP.md`](docs/ROADMAP.md) — planned features and milestones
 
 1. Fork the repository
