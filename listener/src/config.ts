@@ -1,5 +1,4 @@
-import { Config, ContractConfig, DiscordConfig, WebhookSecret, AppCleanupConfig, EventQueueConfig, RetrySchedulerOptions } from './types';
-import { Config, ContractConfig, DiscordConfig, WebhookSecret, AppCleanupConfig, EventQueueConfig, RetrySchedulerOptions, AnalyticsConfig } from './types';
+import { Config, ContractConfig, DiscordConfig, WebhookSecret, ApiKey, AppCleanupConfig, EventQueueConfig, RetrySchedulerOptions, AnalyticsConfig } from './types';
 
 export class ConfigError extends Error {
   constructor(message: string) {
@@ -11,6 +10,22 @@ export class ConfigError extends Error {
 function trimEnv(name: string): string | undefined {
   const value = process.env[name];
   return value === undefined ? undefined : value.trim();
+}
+
+// Environment variables the listener cannot safely start without.
+// Keep this list in sync with the "Required" column in
+// ENVIRONMENT_VARIABLES_AND_SECRETS.md.
+const REQUIRED_ENV_VARS = ['CONTRACT_ADDRESSES'];
+
+function validateRequiredEnvVars(): void {
+  const missing = REQUIRED_ENV_VARS.filter((name) => !trimEnv(name));
+
+  if (missing.length > 0) {
+    throw new ConfigError(
+      `Missing required environment variable(s): ${missing.join(', ')}. ` +
+        'Copy .env.example to .env and set them before starting the listener.'
+    );
+  }
 }
 
 function parseIntegerEnv(name: string, defaultValue: string): number {
@@ -175,6 +190,8 @@ function loadRetrySchedulerConfig(): RetrySchedulerOptions {
 }
 
 export function loadConfig(): Config {
+  validateRequiredEnvVars();
+
   const discord = loadDiscordConfig();
   const rawContractAddresses = parseJsonEnv<unknown>('CONTRACT_ADDRESSES', '[]');
   const rawWebhookSecrets = parseJsonEnv<unknown>('WEBHOOK_SECRETS', '[]');
@@ -182,6 +199,7 @@ export function loadConfig(): Config {
     'RATE_LIMIT_CLIENT_OVERRIDES',
     '{}'
   );
+  const rawApiKeys = parseJsonEnv<unknown>('API_KEYS', '[]');
 
   return {
     stellarNetwork: trimEnv('STELLAR_NETWORK') || 'testnet',
