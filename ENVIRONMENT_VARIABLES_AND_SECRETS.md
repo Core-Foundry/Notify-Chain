@@ -33,6 +33,8 @@ The Rust smart contracts in `contract/` contain no runtime environment variables
 
 The listener is the only service with server-side secrets. All variables below are read from `process.env` in `listener/src/config.ts` (and supporting files) at startup.
 
+Variables marked **Required** are checked by `validateRequiredEnvVars()` in `listener/src/config.ts` before the rest of the config is loaded. If any are missing, `loadConfig()` throws a `ConfigError` listing every missing variable and the process exits instead of starting with an invalid configuration.
+
 ### 2.1 Logging / runtime
 
 | Variable | Default | Required | Description |
@@ -52,7 +54,7 @@ The listener is the only service with server-side secrets. All variables below a
 
 | Variable | Default | Required | Description |
 |---|---|---|---|
-| `CONTRACT_ADDRESSES` | `[]` | **Yes** (for any useful work) | JSON array of contract objects to monitor. See shape below. |
+| `CONTRACT_ADDRESSES` | *(none — enforced at startup)* | **Yes** | JSON array of contract objects to monitor. Missing this variable prevents the listener from starting; see note above. |
 
 **Shape:**
 ```json

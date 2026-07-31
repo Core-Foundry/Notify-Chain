@@ -143,6 +143,20 @@ export class NotificationAPI {
   }
 
   /**
+   * Get all notifications currently in the dead-letter queue.
+   */
+  async getDeadLetterQueue() {
+    return await this.repository.getDeadLetterQueue();
+  }
+
+  /**
+   * Requeue a dead-lettered notification so it can be retried again.
+   */
+  async retryDeadLetterNotification(id: number, requestId?: string): Promise<boolean> {
+    return await this.repository.retryDeadLetterNotification(id, requestId);
+  }
+
+  /**
    * Aggregated retry statistics for delivery monitoring dashboards.
    */
   async getRetryStatistics() {

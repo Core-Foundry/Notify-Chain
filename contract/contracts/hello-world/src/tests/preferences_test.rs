@@ -372,4 +372,119 @@ mod preferences_tests {
         assert!(!client.is_channel_enabled(&user2, &DeliveryChannel::Wallet));
         assert!(client.is_channel_enabled(&user2, &DeliveryChannel::Email));
     }
+
+    // ============================================================================
+    // ChannelPreferenceUpdated event emission
+    // ============================================================================
+
+    fn count_channel_preference_events(env: &Env) -> u32 {
+        use soroban_sdk::testutils::Events;
+        use soroban_sdk::{Symbol, TryFromVal};
+        let target = Symbol::new(env, "channel_preference_updated");
+        let mut n = 0u32;
+        for (_addr, topics, _data) in env.events().all().iter() {
+            if topics.is_empty() {
+                continue;
+            }
+            let first = topics.get(0).unwrap();
+            if let Ok(name) = Symbol::try_from_val(env, &first) {
+                if name == target {
+                    n += 1;
+                }
+            }
+        }
+        n
+    }
+
+    #[test]
+    fn test_set_channel_preference_emits_channel_preference_updated() {
+        let test_env = setup_test_env();
+        let client = AutoShareContractClient::new(&test_env.env, &test_env.autoshare_contract);
+        let recipient = test_env.users.get(0).unwrap();
+
+        let before = count_channel_preference_events(&test_env.env);
+        client.set_channel_preference(&recipient, &DeliveryChannel::Email, &false);
+        let after = count_channel_preference_events(&test_env.env);
+
+        assert_eq!(
+            after - before,
+            1,
+            "set_channel_preference should emit ChannelPreferenceUpdated"
+        );
+
+        // Inspect latest event topics/data for updated fields
+        use soroban_sdk::testutils::Events;
+        use soroban_sdk::{Symbol, TryFromVal, Val};
+        let target = Symbol::new(&test_env.env, "channel_preference_updated");
+        let mut found = false;
+        for (_addr, topics, data) in test_env.env.events().all().iter() {
+            if topics.is_empty() {
+                continue;
+            }
+            let first = topics.get(0).unwrap();
+            if let Ok(name) = Symbol::try_from_val(&test_env.env, &first) {
+                if name == target {
+                    found = true;
+                    // recipient is an indexed topic
+                    assert!(topics.len() >= 2, "event should include recipient topic");
+                    // data map/struct should be present with updated fields
+                    let _data: Val = data;
+                }
+            }
+        }
+        assert!(found, "ChannelPreferenceUpdated event must be present");
+    }
+
+    #[test]
+    fn test_set_preferences_emits_channel_events_for_each_channel() {
+        let test_env = setup_test_env();
+        let client = AutoShareContractClient::new(&test_env.env, &test_env.autoshare_contract);
+        let recipient = test_env.users.get(0).unwrap();
+
+        let mut channels = Vec::new(&test_env.env);
+        channels.push_back(ChannelPreference {
+            channel: DeliveryChannel::Wallet,
+            enabled: true,
+        });
+        channels.push_back(ChannelPreference {
+            channel: DeliveryChannel::Email,
+            enabled: false,
+        });
+        channels.push_back(ChannelPreference {
+            channel: DeliveryChannel::InApp,
+            enabled: true,
+        });
+
+        let mut categories = Vec::new(&test_env.env);
+        categories.push_back(CategoryPreference {
+            category: NotificationCategory::Payment,
+            enabled: true,
+        });
+        categories.push_back(CategoryPreference {
+            category: NotificationCategory::GroupMembership,
+            enabled: true,
+        });
+        categories.push_back(CategoryPreference {
+            category: NotificationCategory::GroupStatus,
+            enabled: true,
+        });
+        categories.push_back(CategoryPreference {
+            category: NotificationCategory::SystemAlerts,
+            enabled: true,
+        });
+        categories.push_back(CategoryPreference {
+            category: NotificationCategory::General,
+            enabled: true,
+        });
+
+        let before = count_channel_preference_events(&test_env.env);
+        client.set_preferences(&recipient, &channels, &categories);
+        let after = count_channel_preference_events(&test_env.env);
+
+        assert_eq!(
+            after - before,
+            3,
+            "set_preferences should emit one ChannelPreferenceUpdated per channel"
+        );
+    }
 }

@@ -5,6 +5,9 @@ describe('Config validation', () => {
 
   beforeEach(() => {
     process.env = { ...originalEnv };
+    // CONTRACT_ADDRESSES is a required variable; give it a valid default so
+    // tests unrelated to required-variable validation aren't affected.
+    process.env.CONTRACT_ADDRESSES = JSON.stringify([{ address: 'CTEST', events: ['*'] }]);
   });
 
   afterEach(() => {
@@ -36,6 +39,15 @@ describe('Config validation', () => {
     expect(() => loadConfig()).toThrow('CONTRACT_ADDRESSES must be valid JSON. Received: not-json');
   });
 
+  it('throws a descriptive error when a required environment variable is missing', () => {
+    delete process.env.CONTRACT_ADDRESSES;
+
+    expect(() => loadConfig()).toThrow(ConfigError);
+    expect(() => loadConfig()).toThrow(
+      'Missing required environment variable(s): CONTRACT_ADDRESSES.'
+    );
+  });
+
   it('throws a descriptive error for invalid integer variables', () => {
     process.env.EVENTS_API_PORT = 'eighty';
 
@@ -44,9 +56,9 @@ describe('Config validation', () => {
   });
 
   it('loads default values when optional environment variables are omitted', () => {
+    process.env.CONTRACT_ADDRESSES = JSON.stringify([{ address: 'CTEST', events: ['*'] }]);
     delete process.env.STELLAR_NETWORK;
     delete process.env.STELLAR_RPC_URL;
-    delete process.env.CONTRACT_ADDRESSES;
     delete process.env.POLL_INTERVAL_MS;
     delete process.env.MAX_RECONNECT_ATTEMPTS;
     delete process.env.RECONNECT_DELAY_MS;
@@ -64,7 +76,7 @@ describe('Config validation', () => {
     expect(config).toMatchObject({
       stellarNetwork: 'testnet',
       stellarRpcUrl: 'https://soroban-testnet.stellar.org:443',
-      contractAddresses: [],
+      contractAddresses: [{ address: 'CTEST', events: ['*'] }],
       pollIntervalMs: 30000,
       maxReconnectAttempts: 5,
       reconnectDelayMs: 5000,
