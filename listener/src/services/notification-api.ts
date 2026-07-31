@@ -6,6 +6,7 @@ import {
   DEFAULT_MAX_PAYLOAD_SIZE_BYTES,
 } from '../utils/payload-size-validator';
 import logger from '../utils/logger';
+import { buildRetryStatisticsPayload } from './retry-statistics';
 
 /**
  * High-level API for scheduling notifications
@@ -13,6 +14,8 @@ import logger from '../utils/logger';
  * Includes support for idempotent request handling
  */
 export class NotificationAPI {
+  private readonly maxPayloadSizeBytes: number = DEFAULT_MAX_PAYLOAD_SIZE_BYTES;
+
   constructor(
     private repository: ScheduledNotificationRepository,
     private idempotencyService?: IdempotencyKeyService
@@ -139,5 +142,39 @@ export class NotificationAPI {
    */
   async getRetryDistribution() {
     return await this.repository.getRetryDistribution();
+  }
+
+  /**
+   * Get all notifications currently in the dead-letter queue.
+   */
+  async getDeadLetterQueue() {
+    return await this.repository.getDeadLetterQueue();
+  }
+
+  /**
+   * Requeue a dead-lettered notification so it can be retried again.
+   */
+  async retryDeadLetterNotification(id: number, requestId?: string): Promise<boolean> {
+    return await this.repository.retryDeadLetterNotification(id, requestId);
+  }
+
+  /**
+   * Aggregated retry statistics for delivery monitoring dashboards.
+   */
+  async getRetryStatistics() {
+    const [metrics, distribution] = await Promise.all([
+      this.getExecutionMetrics(),
+      this.getRetryDistribution(),
+    ]);
+
+    return buildRetryStatisticsPayload({
+      totalNotifications: metrics.totalNotifications,
+      successfulFirstAttempt: metrics.successfulFirstAttempt,
+      successfulAfterRetry: metrics.successfulAfterRetry,
+      permanentFailures: metrics.permanentFailures,
+      totalRetryAttempts: metrics.totalRetryAttempts,
+      averageRetriesPerNotification: metrics.averageRetriesPerNotification,
+      distribution,
+    });
   }
 }

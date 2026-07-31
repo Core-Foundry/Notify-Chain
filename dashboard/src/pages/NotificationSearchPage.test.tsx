@@ -1,5 +1,6 @@
 import '@testing-library/jest-dom';
 import { render, screen, waitFor, fireEvent, act } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { NotificationSearchPage } from './NotificationSearchPage';
 import { searchNotifications } from '../services/eventsApi';
 import type { NotificationSearchResponse } from '../services/eventsApi';
@@ -9,6 +10,27 @@ jest.mock('../services/eventsApi', () => ({
 }));
 
 const mockedSearch = searchNotifications as jest.MockedFunction<typeof searchNotifications>;
+
+jest.mock('../services/eventsApi', () => {
+  const actual = jest.requireActual('../services/eventsApi') as typeof import('../services/eventsApi');
+  return {
+    ...actual,
+    searchNotifications: jest.fn(),
+  };
+});
+
+const mockedSearch = searchNotifications as jest.MockedFunction<typeof searchNotifications>;
+
+function emptyResponse(): NotificationSearchResponse {
+  return {
+    results: [],
+    total: 0,
+    limit: 20,
+    offset: 0,
+    itemCount: 0,
+    totalPages: 0,
+  };
+}
 
 const mockResult: NotificationSearchResponse = {
   results: [
@@ -44,9 +66,11 @@ function emptyResponse(): NotificationSearchResponse {
 }
 
 describe('NotificationSearchPage loading skeletons', () => {
+describe('NotificationSearchPage filters', () => {
   beforeEach(() => {
-    mockedSearch.mockReset();
     jest.useFakeTimers();
+    mockedSearch.mockReset();
+    mockedSearch.mockResolvedValue(emptyResponse());
   });
 
   afterEach(() => {
@@ -87,10 +111,10 @@ describe('NotificationSearchPage loading skeletons', () => {
     });
 
     await waitFor(() => {
-      expect(searchNotifications).toHaveBeenCalled();
+      expect(mockedSearch).toHaveBeenCalled();
     });
 
-    const lastCall = searchNotifications.mock.calls[searchNotifications.mock.calls.length - 1];
+    const lastCall = mockedSearch.mock.calls[mockedSearch.mock.calls.length - 1];
     expect(lastCall?.[1]).toMatchObject({
       type: 'discord',
       status: 'FAILED',
@@ -162,6 +186,52 @@ describe('NotificationSearchPage loading skeletons', () => {
     expect(screen.queryByRole('button', { name: /clear all filters/i })).not.toBeInTheDocument();
   });
 
+describe('searchNotifications query params', () => {
+  const originalFetch = global.fetch;
+
+  beforeEach(() => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      json: async () => emptyResponse(),
+    });
+  });
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+  });
+
+  it('appends type, status, startDate, and endDate to the URL', async () => {
+    const { searchNotifications: realSearch } = jest.requireActual(
+      '../services/eventsApi'
+    ) as typeof import('../services/eventsApi');
+
+    await realSearch('http://localhost:8787', {
+      type: 'webhook',
+      status: 'COMPLETED',
+      startDate: '2026-01-01',
+      endDate: '2026-01-31',
+    });
+
+    expect(global.fetch).toHaveBeenCalledWith(
+      expect.stringContaining('type=webhook')
+    );
+    const calledUrl = (global.fetch as jest.Mock).mock.calls[0][0] as string;
+    expect(calledUrl).toContain('status=COMPLETED');
+    expect(calledUrl).toContain('startDate=2026-01-01');
+    expect(calledUrl).toContain('endDate=2026-01-31');
+  });
+});
+
+describe('NotificationSearchPage loading skeletons', () => {
+  beforeEach(() => {
+    mockedSearch.mockReset();
+    jest.useFakeTimers();
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
   it('shows result-card skeletons while searching and hides Searching text', async () => {
     mockedSearch.mockReturnValue(new Promise(() => {}));
 
@@ -226,6 +296,14 @@ describe('searchNotifications query params', () => {
     global.fetch = jest.fn().mockResolvedValue({
       ok: true,
       json: async () => emptyResponse(),
+describe('NotificationResultCard copy notification ID', () => {
+  beforeEach(() => {
+    mockedSearch.mockReset();
+    jest.useFakeTimers();
+    Object.assign(navigator, {
+      clipboard: {
+        writeText: jest.fn().mockResolvedValue(undefined),
+      },
     });
   });
 
@@ -252,5 +330,82 @@ describe('searchNotifications query params', () => {
     expect(calledUrl).toContain('status=COMPLETED');
     expect(calledUrl).toContain('startDate=2026-01-01');
     expect(calledUrl).toContain('endDate=2026-01-31');
+    jest.useRealTimers();
+  });
+
+  it('renders the notification ID with a copy button in result cards', async () => {
+    mockedSearch.mockResolvedValue(mockResult);
+    render(<NotificationSearchPage />);
+
+    // Trigger a search
+    fireEvent.change(screen.getByLabelText(/free-text search/i), {
+      target: { value: 'test' },
+    });
+
+    await act(async () => {
+      jest.advanceTimersByTime(300);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText('1')).toBeInTheDocument();
+    });
+
+    // Verify the notification ID label and value are present
+    expect(screen.getByText('Notification ID')).toBeInTheDocument();
+
+    // Verify a CopyButton with the correct aria-label is present
+    const copyBtn = screen.getByRole('button', { name: /copy notification id/i });
+    expect(copyBtn).toBeInTheDocument();
+  });
+
+  it('copies notification ID to clipboard when copy button is clicked', async () => {
+    mockedSearch.mockResolvedValue(mockResult);
+    render(<NotificationSearchPage />);
+
+    fireEvent.change(screen.getByLabelText(/free-text search/i), {
+      target: { value: 'test' },
+    });
+
+    await act(async () => {
+      jest.advanceTimersByTime(300);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText('Notification ID')).toBeInTheDocument();
+    });
+
+    const copyBtn = screen.getByRole('button', { name: /copy notification id/i });
+    await act(async () => {
+      fireEvent.click(copyBtn);
+    });
+
+    expect(navigator.clipboard.writeText).toHaveBeenCalledWith('1');
+  });
+
+  it('shows success feedback after copying notification ID', async () => {
+    mockedSearch.mockResolvedValue(mockResult);
+    render(<NotificationSearchPage />);
+
+    fireEvent.change(screen.getByLabelText(/free-text search/i), {
+      target: { value: 'test' },
+    });
+
+    await act(async () => {
+      jest.advanceTimersByTime(300);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText('Notification ID')).toBeInTheDocument();
+    });
+
+    const copyBtn = screen.getByRole('button', { name: /copy notification id/i });
+    await act(async () => {
+      fireEvent.click(copyBtn);
+    });
+
+    // After clicking, the CopyButton should show "Copied" feedback
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /notification id copied/i })).toBeInTheDocument();
+    });
   });
 });

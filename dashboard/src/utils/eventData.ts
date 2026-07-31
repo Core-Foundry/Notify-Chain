@@ -1,4 +1,4 @@
-import type { BlockchainEvent } from '../types/event';
+import type { BlockchainEvent, NotificationSortOption } from '../types/event';
 
 export function generateMockEvents(count: number): BlockchainEvent[] {
   const eventNames = [
@@ -32,6 +32,52 @@ export function generateMockEvents(count: number): BlockchainEvent[] {
   });
 }
 
+/**
+ * Sort comparator for blockchain events (#495).
+ *
+ * - newest          – most recently received first (default, matches previous behaviour)
+ * - oldest          – earliest received first
+ * - priority        – lower ledger number first (on-chain ordering proxy), then newest within ledger
+ * - delivery_status – active → expired → revoked → undefined, then newest within each bucket
+ */
+export function sortEvents(
+  events: BlockchainEvent[],
+  sortBy: NotificationSortOption = 'newest',
+): BlockchainEvent[] {
+  const STATUS_ORDER: Record<string, number> = {
+    active: 0,
+    expired: 1,
+    revoked: 2,
+  };
+
+  const copy = [...events];
+
+  switch (sortBy) {
+    case 'oldest':
+      return copy.sort((a, b) => a.receivedAt - b.receivedAt);
+
+    case 'priority':
+      // Lower ledger number = earlier on-chain = higher priority; break ties newest-first
+      return copy.sort((a, b) => {
+        const ledgerDiff = a.ledger - b.ledger;
+        if (ledgerDiff !== 0) return ledgerDiff;
+        return b.receivedAt - a.receivedAt;
+      });
+
+    case 'delivery_status':
+      return copy.sort((a, b) => {
+        const sa = STATUS_ORDER[a.notificationStatus ?? ''] ?? 3;
+        const sb = STATUS_ORDER[b.notificationStatus ?? ''] ?? 3;
+        if (sa !== sb) return sa - sb;
+        return b.receivedAt - a.receivedAt;
+      });
+
+    case 'newest':
+    default:
+      return copy.sort((a, b) => b.receivedAt - a.receivedAt);
+  }
+}
+
 export function filterEvents(
   events: BlockchainEvent[],
   search: string,
@@ -40,7 +86,8 @@ export function filterEvents(
   status: import('../types/event').NotificationReadFilter = 'all',
   dateFrom = '',
   dateTo = '',
-  txHash = ''
+  txHash = '',
+  sortBy: NotificationSortOption = 'newest',
 ): BlockchainEvent[] {
   const normalizedSearch = search.trim().toLowerCase();
   const normalizedTxHash = txHash.trim().toLowerCase();
@@ -48,7 +95,7 @@ export function filterEvents(
   // dateTo is inclusive: include the entire day
   const toMs = dateTo ? new Date(dateTo).getTime() + 86_399_999 : Infinity;
 
-  return events.filter((event) => {
+  const filtered = events.filter((event) => {
     if (contractAddress !== 'all' && event.contractAddress !== contractAddress) return false;
     if (eventType !== 'all' && event.eventName !== eventType) return false;
 
@@ -68,4 +115,6 @@ export function filterEvents(
       event.txHash?.toLowerCase().includes(normalizedSearch)
     );
   });
+
+  return sortEvents(filtered, sortBy);
 }
