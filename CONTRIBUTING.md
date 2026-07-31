@@ -16,6 +16,12 @@ Welcome, and thanks for your interest in contributing. This document is your sta
 
 ---
 
+**Companion guides:**
+- [`docs/GIT_WORKFLOW.md`](docs/GIT_WORKFLOW.md) — the full branching strategy, commit conventions, and PR process, with a command cheat sheet
+- [`docs/CONTRIBUTOR_TROUBLESHOOTING.md`](docs/CONTRIBUTOR_TROUBLESHOOTING.md) — solutions for common build, test, database, and Git problems
+- [`docs/API_ERROR_REFERENCE.md`](docs/API_ERROR_REFERENCE.md) — every error response the listener API returns
+- [`docs/adr/README.md`](docs/adr/README.md) — Architecture Decision Records
+
 ## Code of Conduct
 
 - Be respectful and inclusive
@@ -110,6 +116,9 @@ Branch naming:
 | `refactor/` | Refactoring |
 | `test/` | Tests only |
 | `chore/` | Maintenance |
+> For the complete branching strategy — including naming rules, what to avoid, and how to recover from common mistakes — see [`docs/GIT_WORKFLOW.md`](docs/GIT_WORKFLOW.md).
+
+### 2. Make Your Changes
 
 ### 2. Make changes
 
@@ -117,6 +126,11 @@ Branch naming:
 - Add comments for non-obvious logic.
 - Update docs when behavior changes.
 - Write tests for all new logic and bug fixes.
+**Making a significant architectural change?** Read the [Architecture Decision Records](docs/adr/README.md) first — they document why the current design is what it is. If your change alters one of those decisions, add a new ADR using [`docs/adr/0000-template.md`](docs/adr/0000-template.md) and reference it in your PR.
+
+**Hit a problem?** Check [`docs/CONTRIBUTOR_TROUBLESHOOTING.md`](docs/CONTRIBUTOR_TROUBLESHOOTING.md) before opening an issue.
+
+### 3. Write and Run Tests
 
 ### 3. Run tests before pushing
 
