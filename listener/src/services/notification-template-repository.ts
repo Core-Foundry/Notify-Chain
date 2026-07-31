@@ -154,6 +154,8 @@ export class NotificationTemplateRepository {
       'SELECT * FROM notification_templates',
     );
     return rows.map(row => this.rowToModel(row));
+  }
+
   async listAll(): Promise<NotificationTemplate[]> {
     const rows = await this.db.all<NotificationTemplateRow>(
       'SELECT * FROM notification_templates ORDER BY created_at DESC',
@@ -220,6 +222,6 @@ export class NotificationTemplateRepository {
       metadata: row.metadata ? JSON.parse(row.metadata) : undefined,
       createdAt: new Date(row.created_at),
       updatedAt: new Date(row.updated_at),
-    };
+    } as any;
   }
 }
