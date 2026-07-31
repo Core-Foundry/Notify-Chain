@@ -19,7 +19,7 @@
   "license": "ISC",
   "description": "",
   "dependencies": {
-    "@stellar/stellar-sdk": "^15.1.0",
+    "@stellar/stellar-sdk": "^16.1.0",
     "dotenv": "^17.4.2",
     "node-cache": "^5.1.2",
     "sqlite3": "^5.1.7",
