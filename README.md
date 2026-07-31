@@ -27,6 +27,7 @@ The project enables developers to build reactive decentralized applications with
 > **Listener service docs**:
 > - [API Contract and Event Reference](listener/API_CONTRACT_EVENT_REFERENCE.md)
 > - [API Usage Cookbook](listener/API_USAGE_COOKBOOK.md)
+> - [Notification Processing Flow](docs/NOTIFICATION-FLOW.md) — blockchain event to delivery stages, diagrams, failure/retry, and troubleshooting.
 > - [Notification Lifecycle](NOTIFICATION_LIFECYCLE.md) — end-to-end on-chain/off-chain flow from event detection to delivery, ack, retry, and archival.
 > - [Notification Failure Recovery](NOTIFICATION_FAILURE_RECOVERY.md) — retry lifecycle, configuration, and troubleshooting.
 >
@@ -214,6 +215,8 @@ Notify-Chain/
 
 ## Event Flow
 
+> **Processing flow guide:** [Notification Processing Flow](docs/NOTIFICATION-FLOW.md) — event detection through delivery, retries, and DLQ.
+>
 > 📊 **See also:** [API & Notification Sequence Diagrams](API_SEQUENCE_DIAGRAMS.md) — Mermaid diagrams that visually trace the complete notification request flow, on-chain event processing lifecycle, scheduled delivery states, retry/failure recovery, and dashboard data fetch.
 
 ### End-to-End Notification Flow
