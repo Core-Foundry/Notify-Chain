@@ -323,7 +323,8 @@ impl AutoShareContract {
     }
 
     /// Reduces the usage count by 1.
-    pub fn reduce_usage(env: Env, id: BytesN<32>, caller: Address) {
+    pub fn reduce_usage(env: Env, id: BytesN<32>) {
+        let caller = env.current_contract_address();
         autoshare_logic::reduce_usage(env, id, caller).unwrap();
     }
 
@@ -753,4 +754,7 @@ mod tests {
 
     #[path = "tests/subscription_cancellation_test.rs"]
     mod subscription_cancellation_test;
+
+    #[path = "tests/notification_lifetime_test.rs"]
+    mod notification_lifetime_test;
 }
