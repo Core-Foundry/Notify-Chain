@@ -8,6 +8,15 @@ module.exports = {
   },
   moduleNameMapper: {
     '^uuid$': '<rootDir>/src/__mocks__/uuid.js'
+    '^.+\\.tsx?$': ['ts-jest', {
+      diagnostics: {
+        ignoreCodes: [2307]
+      }
+    }]
+  },
+  moduleNameMapper: {
+    '^@stellar/stellar-sdk$': '<rootDir>/src/__mocks__/@stellar/stellar-sdk.ts',
+    '^node-cache$': '<rootDir>/src/__mocks__/node-cache.ts'
   },
   setupFilesAfterEnv: ['<rootDir>/jest.setup.js']
 };

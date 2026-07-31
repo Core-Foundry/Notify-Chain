@@ -1,6 +1,7 @@
 import type { BlockchainEvent } from '../types/event';
 import type { ContractStatus } from '../services/eventsApi';
 import { formatTimestamp } from '../utils/formatTime';
+import { CopyButton } from './CopyButton';
 
 const EVENT_KIND_STYLES: Record<string, string> = {
   contract: 'event-explorer__badge--blue',
@@ -109,13 +110,21 @@ export function EventExplorerCard({
       </div>
 
       <div className="event-explorer__cell" data-label="Ledger" role="cell">
-        <span>{event.ledger.toLocaleString()}</span>
+        <div className="event-explorer__id-cell">
+          <span>{event.ledger.toLocaleString()}</span>
+          <CopyButton value={event.eventId} label="event ID" size="xs" />
+        </div>
       </div>
 
       <div className="event-explorer__cell" data-label="Transaction" role="cell">
-        <span title={event.txHash ?? 'No transaction hash'}>
-          {event.txHash ? shortenAddress(event.txHash) : '—'}
-        </span>
+        {event.txHash ? (
+          <div className="event-explorer__id-cell">
+            <span title={event.txHash}>{shortenAddress(event.txHash)}</span>
+            <CopyButton value={event.txHash} label="tx hash" size="xs" />
+          </div>
+        ) : (
+          <span>—</span>
+        )}
       </div>
     </article>
   );

@@ -222,6 +222,6 @@ export class NotificationTemplateRepository {
       metadata: row.metadata ? JSON.parse(row.metadata) : undefined,
       createdAt: new Date(row.created_at),
       updatedAt: new Date(row.updated_at),
-    };
+    } as any;
   }
 }
