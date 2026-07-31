@@ -22,6 +22,9 @@ interface EventStoreState {
    * after it completes.
    */
   lastFetchedAt: number;
+  lastSuccessfulSyncAt: number | null;
+  lastSyncFailureAt: number | null;
+  lastSyncError: string | null;
   setEvents: (events: BlockchainEvent[]) => void;
   appendEvents: (events: BlockchainEvent[]) => void;
   setSearch: (search: string) => void;
@@ -38,6 +41,8 @@ interface EventStoreState {
   setSortBy: (sortBy: NotificationSortOption) => void;
   setLoading: (isLoading: boolean) => void;
   setError: (error: string | null) => void;
+  markSyncSuccess: () => void;
+  markSyncFailure: (error: string) => void;
   /**
    * Patch the `notificationStatus` of every cached event whose `eventId`
    * matches `targetEventId`. Call this immediately after a successful
@@ -99,6 +104,9 @@ export const useEventStore = create<EventStoreState>((set) => ({
   isLoading: false,
   error: null,
   lastFetchedAt: 0,
+  lastSuccessfulSyncAt: null,
+  lastSyncFailureAt: null,
+  lastSyncError: null,
   setEvents: (events) => set({ events: dedupeEventsById(events), lastFetchedAt: Date.now() }),
   appendEvents: (events) =>
     set((state) => ({
@@ -129,6 +137,8 @@ export const useEventStore = create<EventStoreState>((set) => ({
   },
   setLoading: (isLoading) => set({ isLoading }),
   setError: (error) => set({ error }),
+  markSyncSuccess: () => set({ lastSuccessfulSyncAt: Date.now(), lastSyncFailureAt: null, lastSyncError: null }),
+  markSyncFailure: (error) => set({ lastSyncFailureAt: Date.now(), lastSyncError: error }),
   updateEventStatus: (targetEventId, status) =>
     set((state) => ({
       events: state.events.map((event) =>

@@ -27,6 +27,7 @@ import { ToastProvider } from './context/ToastContext';
 import { useTheme } from './hooks/useTheme';
 import { DeliveryHeatmap } from './components/DeliveryHeatmap';
 import { useEventStore } from './store/eventStore';
+import { SyncStatus } from './components/SyncStatus';
 
 type Tab =
   | 'explorer'
@@ -201,6 +202,7 @@ export function App() {
             <span className="app__brand">NotifyChain</span>
 
             <div className="app__theme-bar">
+              <SyncStatus />
               <ThemeToggle theme={theme} onToggle={toggleTheme} />
             </div>
           </div>
