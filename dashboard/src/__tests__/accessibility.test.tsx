@@ -2,7 +2,6 @@
  * Accessibility audit tests (#394)
  * Uses jest-axe to detect WCAG 2.1 AA violations in key components.
  */
-import React from 'react';
 import { render } from '@testing-library/react';
 import '@testing-library/jest-dom';
 import { axe, toHaveNoViolations } from 'jest-axe';

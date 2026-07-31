@@ -216,6 +216,36 @@ pub fn is_group_member(env: Env, id: BytesN<32>, address: Address) -> Result<boo
     Ok(false)
 }
 
+/// Returns whether `wallet` is actively subscribed to the channel (AutoShare
+/// group) identified by `id`.
+///
+/// A wallet is considered actively subscribed when the channel exists, is
+/// currently active (not deactivated by its creator or an admin — see
+/// [`deactivate_group`]), and the wallet is either the channel's creator or a
+/// registered member. Read-only; never mutates state.
+///
+/// # Errors
+/// - [`Error::NotFound`] if `id` does not correspond to a known channel.
+pub fn is_subscribed(env: Env, id: BytesN<32>, wallet: Address) -> Result<bool, Error> {
+    let details = get_autoshare(env, id)?;
+
+    if !details.is_active {
+        return Ok(false);
+    }
+
+    if details.creator == wallet {
+        return Ok(true);
+    }
+
+    for member in details.members.iter() {
+        if member.address == wallet {
+            return Ok(true);
+        }
+    }
+
+    Ok(false)
+}
+
 /// Retrieves the list of members for a specific AutoShare group.
 pub fn get_group_members(env: Env, id: BytesN<32>) -> Result<Vec<GroupMember>, Error> {
     let details = get_autoshare(env, id)?;
@@ -695,6 +725,12 @@ pub fn topup_subscription(
         .get(&key)
         .ok_or(Error::NotFound)?;
 
+    // A deactivated channel accepts no new subscriptions (top-ups), though its
+    // historical members and payment history remain readable.
+    if !details.is_active {
+        return Err(Error::GroupInactive);
+    }
+
     // Verify token is supported
     if !is_token_supported(env.clone(), payment_token.clone()) {
         return Err(Error::UnsupportedToken);
@@ -970,7 +1006,13 @@ pub fn update_members(
     Ok(())
 }
 
-/// Deactivates a specific AutoShare group, preventing further usage.
+/// Deactivates a specific AutoShare group (channel), preventing further usage.
+///
+/// Callable by the channel's creator **or** the contract admin. Deactivating a
+/// channel does not delete its members or payment history — those remain
+/// fully readable via [`get_group_members`], [`get_user_payment_history`], and
+/// [`get_group_payment_history`] — but [`topup_subscription`] (new
+/// subscriptions) is blocked until the channel is reactivated.
 pub fn deactivate_group(env: Env, id: BytesN<32>, caller: Address) -> Result<(), Error> {
     caller.require_auth();
 
@@ -985,7 +1027,11 @@ pub fn deactivate_group(env: Env, id: BytesN<32>, caller: Address) -> Result<(),
         .get(&key)
         .ok_or(Error::NotFound)?;
 
-    if details.creator != caller {
+    let admin = get_admin(env.clone()).ok();
+    let is_creator = details.creator == caller;
+    let is_admin = admin.as_ref().map_or(false, |a| *a == caller);
+
+    if !is_creator && !is_admin {
         publish_authorization_failure(&env, &caller, "deactivate_group");
         return Err(Error::Unauthorized);
     }
@@ -1160,7 +1206,9 @@ fn is_revoked(notification: &ScheduledNotification) -> bool {
 /// The notification is stored with an `expires_at` of `now + ttl_seconds`. A
 /// zero duration (or one that overflows the ledger clock) is rejected, as is a
 /// duplicate identifier. Metadata is validated for consistency and length.
-/// Emits [`NotificationScheduled`].
+/// `priority` (High, Medium, or Low) determines the order in which off-chain
+/// consumers should process and deliver the notification, and is stored
+/// alongside it. Emits [`NotificationScheduled`] with the assigned priority.
 ///
 /// # Errors
 /// - `ContractPaused` if the contract is paused
@@ -1173,6 +1221,7 @@ pub fn schedule_notification(
     creator: Address,
     ttl_seconds: u64,
     title: String,
+    priority: NotificationPriority,
 ) -> Result<(), Error> {
     creator.require_auth();
 
@@ -1207,6 +1256,7 @@ pub fn schedule_notification(
     let notification = ScheduledNotification {
         id: notification_id.clone(),
         creator: creator.clone(),
+        priority,
         created_at,
         expires_at,
         revoked_by: None,
@@ -1229,7 +1279,7 @@ pub fn schedule_notification(
     NotificationScheduled {
         creator,
         category: NotificationCategory::Notification,
-        priority: NOTIFICATION_PRIORITY,
+        priority,
         notification_id,
     }
     .publish(&env);
@@ -1368,6 +1418,7 @@ pub fn batch_schedule_notifications(
     creator: Address,
     ttl_seconds: Vec<u64>,
     titles: Vec<String>,
+    priorities: Vec<NotificationPriority>,
 ) -> Result<(), Error> {
     creator.require_auth();
 
@@ -1383,7 +1434,7 @@ pub fn batch_schedule_notifications(
     }
 
     // Lengths must match.
-    if count != ttl_seconds.len() || count != titles.len() {
+    if count != ttl_seconds.len() || count != titles.len() || count != priorities.len() {
         return Err(Error::InvalidInput);
     }
 
@@ -1435,11 +1486,13 @@ pub fn batch_schedule_notifications(
         let ttl = ttl_seconds.get(i).unwrap();
         let id = ids.get(i).unwrap();
         let title = titles.get(i).unwrap();
+        let priority = priorities.get(i).unwrap();
         let expires_at = created_at + ttl;
 
         let notification = ScheduledNotification {
             id: id.clone(),
             creator: creator.clone(),
+            priority,
             created_at,
             expires_at,
             revoked_by: None,
@@ -1458,7 +1511,7 @@ pub fn batch_schedule_notifications(
         NotificationScheduled {
             creator: creator.clone(),
             category: NotificationCategory::Notification,
-            priority: NOTIFICATION_PRIORITY,
+            priority,
             notification_id: id.clone(),
         }
         .publish(&env);
@@ -1831,6 +1884,7 @@ pub fn emit_batch_completed(
     batch_id: BytesN<32>,
     processed_count: u32,
 ) -> Result<(), Error> {
+pub fn emit_batch_completed(env: Env, batch_id: BytesN<32>, processed_count: u32) -> Result<(), Error> {
     BatchProcessingCompleted {
         batch_id,
         category: NotificationCategory::Notification,

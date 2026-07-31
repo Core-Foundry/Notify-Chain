@@ -80,4 +80,9 @@ pub enum Error {
     /// Triggered when a notification lifetime exceeds the protocol maximum.
     /// See `MAX_NOTIFICATION_LIFETIME_SECONDS` in autoshare_logic.
     NotificationLifetimeTooLong = 36,
+    NotAuthorizedToAcknowledge = 29,
+    /// Triggered when an invalid limit configuration is provided.
+    InvalidLimit = 32,
+    /// Triggered when a notification has already been delivered and cannot be recalled.
+    NotificationDelivered = 30,
 }

@@ -130,6 +130,13 @@ impl AutoShareContract {
         autoshare_logic::is_group_member(env, id, address).unwrap()
     }
 
+    /// Returns whether `wallet` is actively subscribed to the channel
+    /// identified by `id` — the channel must be active and `wallet` must be
+    /// its creator or a registered member. Read-only.
+    pub fn is_subscribed(env: Env, id: BytesN<32>, wallet: Address) -> bool {
+        autoshare_logic::is_subscribed(env, id, wallet).unwrap()
+    }
+
     pub fn get_group_members(env: Env, id: BytesN<32>) -> Vec<base::types::GroupMember> {
         autoshare_logic::get_group_members(env, id).unwrap()
     }
@@ -145,7 +152,9 @@ impl AutoShareContract {
         autoshare_logic::add_group_member(env, id, caller, address, percentage).unwrap();
     }
 
-    /// Deactivates a group. Only the creator can deactivate.
+    /// Deactivates a channel (group). Callable by the creator or the contract
+    /// admin. Historical membership and payment history remain visible; new
+    /// subscriptions (top-ups) are blocked until reactivated.
     pub fn deactivate_group(env: Env, id: BytesN<32>, caller: Address) {
         autoshare_logic::deactivate_group(env, id, caller).unwrap();
     }
@@ -410,16 +419,27 @@ impl AutoShareContract {
     ///
     /// The notification becomes invalid once the ledger timestamp reaches
     /// `created_at + ttl_seconds`. Metadata (title) is validated for consistency.
-    /// Emits a `NotificationScheduled` event.
+    /// `priority` (High, Medium, or Low) determines the order in which
+    /// off-chain consumers should process and deliver the notification, and is
+    /// stored on-chain alongside it. Emits a `NotificationScheduled` event
+    /// carrying the assigned priority.
     pub fn schedule_notification(
         env: Env,
         notification_id: BytesN<32>,
         creator: Address,
         ttl_seconds: u64,
         title: String,
+        priority: base::events::NotificationPriority,
     ) {
-        autoshare_logic::schedule_notification(env, notification_id, creator, ttl_seconds, title)
-            .unwrap();
+        autoshare_logic::schedule_notification(
+            env,
+            notification_id,
+            creator,
+            ttl_seconds,
+            title,
+            priority,
+        )
+        .unwrap();
     }
 
     /// Returns the stored details for a scheduled notification.
@@ -468,18 +488,29 @@ impl AutoShareContract {
 
     /// Creates multiple scheduled notifications in a single transaction.
     ///
-    /// `ids` and `ttl_seconds` must have the same length, must not be empty, and
-    /// must not exceed 50 entries. Emits one `NotificationScheduled` event per
-    /// notification plus a single `BatchNotificationsCreated` summary event.
+    /// `ids`, `ttl_seconds`, `titles`, and `priorities` must all have the same
+    /// length, must not be empty, and must not exceed 50 entries. Each
+    /// notification is stored with its own assigned priority (High, Medium, or
+    /// Low). Emits one `NotificationScheduled` event per notification (carrying
+    /// its assigned priority) plus a single `BatchNotificationsCreated` summary
+    /// event.
     pub fn batch_schedule_notifications(
         env: Env,
         ids: Vec<BytesN<32>>,
         creator: Address,
         ttl_seconds: Vec<u64>,
         titles: Vec<String>,
+        priorities: Vec<base::events::NotificationPriority>,
     ) {
-        autoshare_logic::batch_schedule_notifications(env, ids, creator, ttl_seconds, titles)
-            .unwrap();
+        autoshare_logic::batch_schedule_notifications(
+            env,
+            ids,
+            creator,
+            ttl_seconds,
+            titles,
+            priorities,
+        )
+        .unwrap();
     }
 
     // ============================================================================
@@ -699,6 +730,9 @@ mod tests {
 
     #[path = "tests/batch_notification_test.rs"]
     mod batch_notification_test;
+
+    #[path = "tests/batch_event_test.rs"]
+    mod batch_event_test;
 
     #[path = "tests/audit_log_test.rs"]
     mod audit_log_test;
