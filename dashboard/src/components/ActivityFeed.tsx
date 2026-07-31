@@ -4,6 +4,7 @@ import type { ActivityEvent, ActivityType } from '../types/activity';
 import { formatTimestamp } from '../utils/formatTime';
 import { PaginationControls } from './PaginationControls';
 import { useWalletAccountSync } from '../hooks/useWalletAccountSync';
+import { EmptyState } from './EmptyState';
 
 // Helper to get icon/color based on activity type
 const getActivityTypeStyle = (type: ActivityType) => {
@@ -200,9 +201,12 @@ export function ActivityFeed() {
         {loading && events.length === 0 ? (
           Array.from({ length: 5 }).map((_, i) => <ActivitySkeleton key={i} />)
         ) : displayedEvents.length === 0 ? (
-          <div className="activity-feed__empty" role="status">
-            <p>No activity yet</p>
-          </div>
+          <EmptyState
+            className="empty-state--compact"
+            icon="📋"
+            title="No activity yet"
+            description="System events, notification deliveries, and contract activity will appear here as they occur."
+          />
         ) : (
           displayedEvents.map(event => (
             <ActivityEventCard key={event.id} event={event} />
