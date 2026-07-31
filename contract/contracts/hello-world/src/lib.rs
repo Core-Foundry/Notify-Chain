@@ -130,6 +130,13 @@ impl AutoShareContract {
         autoshare_logic::is_group_member(env, id, address).unwrap()
     }
 
+    /// Returns whether `wallet` is actively subscribed to the channel
+    /// identified by `id` — the channel must be active and `wallet` must be
+    /// its creator or a registered member. Read-only.
+    pub fn is_subscribed(env: Env, id: BytesN<32>, wallet: Address) -> bool {
+        autoshare_logic::is_subscribed(env, id, wallet).unwrap()
+    }
+
     pub fn get_group_members(env: Env, id: BytesN<32>) -> Vec<base::types::GroupMember> {
         autoshare_logic::get_group_members(env, id).unwrap()
     }
@@ -145,7 +152,9 @@ impl AutoShareContract {
         autoshare_logic::add_group_member(env, id, caller, address, percentage).unwrap();
     }
 
-    /// Deactivates a group. Only the creator can deactivate.
+    /// Deactivates a channel (group). Callable by the creator or the contract
+    /// admin. Historical membership and payment history remain visible; new
+    /// subscriptions (top-ups) are blocked until reactivated.
     pub fn deactivate_group(env: Env, id: BytesN<32>, caller: Address) {
         autoshare_logic::deactivate_group(env, id, caller).unwrap();
     }
@@ -166,8 +175,49 @@ impl AutoShareContract {
     }
 
     /// Transfers admin rights to a new address. Only current admin can call.
+    /// Rejects transfers where new_admin == current_admin.
     pub fn transfer_admin(env: Env, current_admin: Address, new_admin: Address) {
         autoshare_logic::transfer_admin(env, current_admin, new_admin).unwrap();
+    }
+
+    // ============================================================================
+    // Two-Step Ownership Transfer (Issue #367)
+    // ============================================================================
+
+    /// Returns the address currently nominated as the pending owner, or `None`
+    /// if no two-step ownership transfer is currently in progress.
+    pub fn get_pending_owner(env: Env) -> Option<Address> {
+        autoshare_logic::get_pending_owner(env)
+    }
+
+    /// Initiates a two-step ownership transfer.
+    ///
+    /// The current owner nominates `new_owner` as the pending owner. The transfer
+    /// is NOT final until `new_owner` calls `accept_ownership`. Until then the
+    /// current owner retains all privileges.
+    ///
+    /// Rejects:
+    /// - Callers that are not the current owner (panics with `Unauthorized`).
+    /// - A `new_owner` equal to the current owner (`ZeroAddressTransfer`).
+    ///
+    /// Emits: `OwnershipTransferInitiated { previous_owner, pending_owner }`.
+    pub fn initiate_ownership_transfer(env: Env, current_owner: Address, new_owner: Address) {
+        autoshare_logic::initiate_ownership_transfer(env, current_owner, new_owner).unwrap();
+    }
+
+    /// Completes a two-step ownership transfer.
+    ///
+    /// Must be called by the address previously nominated via
+    /// `initiate_ownership_transfer`. On success the caller becomes the new
+    /// owner and the pending-owner slot is cleared.
+    ///
+    /// Rejects:
+    /// - No pending transfer in progress (`NoPendingOwnershipTransfer`).
+    /// - Caller is not the pending owner (`NotPendingOwner`).
+    ///
+    /// Emits: `OwnershipTransferred { previous_owner, new_owner }`.
+    pub fn accept_ownership(env: Env, new_owner: Address) {
+        autoshare_logic::accept_ownership(env, new_owner).unwrap();
     }
 
     /// Withdraws tokens from the contract. Only admin can call.
@@ -234,6 +284,16 @@ impl AutoShareContract {
             .unwrap();
     }
 
+    /// Cancels an active notification subscription for a group.
+    ///
+    /// The `subscriber` must be the group's creator or a current member. On
+    /// success the group is deactivated, its remaining usage count is zeroed, and
+    /// a `SubscriptionCancelled` event is emitted so off-chain consumers can
+    /// track the full subscription lifecycle.
+    pub fn cancel_subscription(env: Env, id: BytesN<32>, subscriber: Address) {
+        autoshare_logic::cancel_subscription(env, id, subscriber).unwrap();
+    }
+
     // ============================================================================
     // Payment History
     // ============================================================================
@@ -263,7 +323,8 @@ impl AutoShareContract {
     }
 
     /// Reduces the usage count by 1.
-    pub fn reduce_usage(env: Env, id: BytesN<32>, caller: Address) {
+    pub fn reduce_usage(env: Env, id: BytesN<32>) {
+        let caller = env.current_contract_address();
         autoshare_logic::reduce_usage(env, id, caller).unwrap();
     }
 
@@ -358,16 +419,27 @@ impl AutoShareContract {
     ///
     /// The notification becomes invalid once the ledger timestamp reaches
     /// `created_at + ttl_seconds`. Metadata (title) is validated for consistency.
-    /// Emits a `NotificationScheduled` event.
+    /// `priority` (High, Medium, or Low) determines the order in which
+    /// off-chain consumers should process and deliver the notification, and is
+    /// stored on-chain alongside it. Emits a `NotificationScheduled` event
+    /// carrying the assigned priority.
     pub fn schedule_notification(
         env: Env,
         notification_id: BytesN<32>,
         creator: Address,
         ttl_seconds: u64,
         title: String,
+        priority: base::events::NotificationPriority,
     ) {
-        autoshare_logic::schedule_notification(env, notification_id, creator, ttl_seconds, title)
-            .unwrap();
+        autoshare_logic::schedule_notification(
+            env,
+            notification_id,
+            creator,
+            ttl_seconds,
+            title,
+            priority,
+        )
+        .unwrap();
     }
 
     /// Returns the stored details for a scheduled notification.
@@ -403,6 +475,8 @@ impl AutoShareContract {
     /// The notification must exist, not already be revoked or expired, and not yet be delivered.
     pub fn recall_notification(env: Env, notification_id: BytesN<32>, caller: Address) {
         autoshare_logic::recall_notification(env, notification_id, caller).unwrap();
+    }
+
     /// Emits a `BatchProcessingCompleted` event for off-chain listeners.
     pub fn emit_batch_completed(env: Env, batch_id: BytesN<32>, processed_count: u32) {
         autoshare_logic::emit_batch_completed(env, batch_id, processed_count).unwrap();
@@ -414,18 +488,29 @@ impl AutoShareContract {
 
     /// Creates multiple scheduled notifications in a single transaction.
     ///
-    /// `ids` and `ttl_seconds` must have the same length, must not be empty, and
-    /// must not exceed 50 entries. Emits one `NotificationScheduled` event per
-    /// notification plus a single `BatchNotificationsCreated` summary event.
+    /// `ids`, `ttl_seconds`, `titles`, and `priorities` must all have the same
+    /// length, must not be empty, and must not exceed 50 entries. Each
+    /// notification is stored with its own assigned priority (High, Medium, or
+    /// Low). Emits one `NotificationScheduled` event per notification (carrying
+    /// its assigned priority) plus a single `BatchNotificationsCreated` summary
+    /// event.
     pub fn batch_schedule_notifications(
         env: Env,
         ids: Vec<BytesN<32>>,
         creator: Address,
         ttl_seconds: Vec<u64>,
         titles: Vec<String>,
+        priorities: Vec<base::events::NotificationPriority>,
     ) {
-        autoshare_logic::batch_schedule_notifications(env, ids, creator, ttl_seconds, titles)
-            .unwrap();
+        autoshare_logic::batch_schedule_notifications(
+            env,
+            ids,
+            creator,
+            ttl_seconds,
+            titles,
+            priorities,
+        )
+        .unwrap();
     }
 
     // ============================================================================
@@ -476,6 +561,8 @@ impl AutoShareContract {
     /// Acknowledges multiple scheduled notifications in a single batch.
     pub fn acknowledge_notifications(env: Env, caller: Address, notification_ids: Vec<BytesN<32>>) {
         autoshare_logic::acknowledge_notifications(env, caller, notification_ids).unwrap();
+    }
+
     /// Extends the expiration period of a scheduled notification by `extension_seconds`.
     ///
     /// Only the notification creator or the contract admin can extend it.
@@ -594,69 +681,92 @@ impl AutoShareContract {
 }
 
 #[cfg(test)]
-#[path = "tests/test_utils.rs"]
-pub mod test_utils;
-
-#[cfg(test)]
-#[path = "tests/test_utils_test.rs"]
-mod test_utils_test;
-
-#[cfg(test)]
-#[path = "tests/storage_optimization_test.rs"]
-mod storage_optimization_test;
-
-#[cfg(test)]
-#[path = "tests/preferences_test.rs"]
-mod preferences_test;
+pub mod test_utils {
+    #[path = "tests/test_utils.rs"]
+    mod inner;
+    pub use inner::*;
+}
 
 #[cfg(test)]
 mod tests {
-    #[path = "../tests/autoshare_test.rs"]
-    mod autoshare_test;
-
-    #[path = "../tests/pause_test.rs"]
-    mod pause_test;
-
-    #[path = "../tests/mock_token_test.rs"]
-    mod mock_token_test;
-
-    #[path = "../tests/version_test.rs"]
-    mod version_test;
-
-    #[path = "../tests/test_utils_test.rs"]
+    #[path = "tests/test_utils_test.rs"]
     mod test_utils_test;
-
-    #[path = "../tests/notification_test.rs"]
+    #[path = "tests/storage_optimization_test.rs"]
+    mod storage_optimization_test;
+    #[path = "tests/preferences_test.rs"]
+    mod preferences_test;
+    #[path = "tests/autoshare_test.rs"]
+    mod autoshare_test;
+    #[path = "tests/pause_test.rs"]
+    mod pause_test;
+    #[path = "tests/mock_token_test.rs"]
+    mod mock_token_test;
+    #[path = "tests/version_test.rs"]
+    mod version_test;
+    #[path = "tests/notification_test.rs"]
     mod notification_test;
-
-    #[path = "../tests/notification_validation_test.rs"]
+    #[path = "tests/expiration_test.rs"]
+    mod expiration_test;
+    #[path = "tests/revocation_test.rs"]
+    mod revocation_test;
+    #[path = "tests/ownership_transfer_test.rs"]
+    mod ownership_transfer_test;
+    #[path = "tests/notification_validation_test.rs"]
     mod notification_validation_test;
-    #[path = "../tests/category_registry_test.rs"]
+    #[path = "tests/category_registry_test.rs"]
+    mod category_registry_test;
+    #[path = "tests/batch_notification_test.rs"]
+    mod batch_notification_test;
+    #[path = "tests/audit_log_test.rs"]
+    mod audit_log_test;
+    #[path = "tests/payload_validation_test.rs"]
+    mod payload_validation_test;
+    #[path = "tests/batch_ack_test.rs"]
+    mod batch_ack_test;
+    #[path = "tests/fuzz_test.rs"]
+    mod fuzz_test;
+    #[path = "tests/schema_version_test.rs"]
+    mod schema_version_test;
+    #[path = "tests/access_log_test.rs"]
+    mod access_log_test;
+    #[path = "tests/subscription_cancellation_test.rs"]
+    mod subscription_cancellation_test;
+    #[path = "tests/extended_coverage_test.rs"]
+    mod extended_coverage_test;
+
+    #[path = "tests/notification_validation_test.rs"]
+    mod notification_validation_test;
+
+    #[path = "tests/category_registry_test.rs"]
     mod category_registry_test;
 
-    #[path = "../tests/expiration_test.rs"]
-    mod expiration_test;
-
-    #[path = "../tests/batch_notification_test.rs"]
+    #[path = "tests/batch_notification_test.rs"]
     mod batch_notification_test;
 
-    #[path = "../tests/audit_log_test.rs"]
+    #[path = "tests/batch_event_test.rs"]
+    mod batch_event_test;
+
+    #[path = "tests/audit_log_test.rs"]
     mod audit_log_test;
 
-    #[path = "../tests/payload_validation_test.rs"]
+    #[path = "tests/payload_validation_test.rs"]
     mod payload_validation_test;
 
-    #[path = "../tests/revocation_test.rs"]
-    mod revocation_test;
-
-    #[path = "../tests/batch_ack_test.rs"]
+    #[path = "tests/batch_ack_test.rs"]
     mod batch_ack_test;
-    #[path = "../tests/fuzz_test.rs"]
+
+    #[path = "tests/fuzz_test.rs"]
     mod fuzz_test;
 
-    #[path = "../tests/schema_version_test.rs"]
+    #[path = "tests/schema_version_test.rs"]
     mod schema_version_test;
 
-    #[path = "../tests/access_log_test.rs"]
+    #[path = "tests/access_log_test.rs"]
     mod access_log_test;
+
+    #[path = "tests/subscription_cancellation_test.rs"]
+    mod subscription_cancellation_test;
+
+    #[path = "tests/notification_lifetime_test.rs"]
+    mod notification_lifetime_test;
 }

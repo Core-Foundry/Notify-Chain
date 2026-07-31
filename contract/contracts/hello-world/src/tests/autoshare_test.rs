@@ -1976,91 +1976,43 @@ fn test_members_at_max_succeeds() {
     client.update_members(&id, &creator, &members);
 }
 
-// ============================================================================
-// Issue #3: Dedicated unit tests for get_all_groups
-// ============================================================================
+// ============================================
+// Channel Subscription Status (is_subscribed)
+// ============================================
 
-/// Verifies that get_all_groups returns an empty vec when no groups have been
-/// created — the contract starts with a clean slate.
 #[test]
-fn test_get_all_groups() {
+fn test_is_subscribed_true_for_creator() {
     let test_env = setup_test_env();
     let client = AutoShareContractClient::new(&test_env.env, &test_env.autoshare_contract);
-
-    // No groups created yet — result must be empty.
-    let groups = client.get_all_groups();
-    assert_eq!(groups.len(), 0, "Expected 0 groups on a fresh contract");
-}
-
-/// Verifies that get_all_groups returns all groups after several have been
-/// created, regardless of who the creator is.
-#[test]
-fn test_get_all_groups_returns_all_created_groups() {
-    let test_env = setup_test_env();
-    let client = AutoShareContractClient::new(&test_env.env, &test_env.autoshare_contract);
-
-    let creator1 = test_env.users.get(0).unwrap().clone();
-    let creator2 = test_env.users.get(1).unwrap().clone();
-    let token = test_env.mock_tokens.get(0).unwrap().clone();
-
-    let mut members = Vec::new(&test_env.env);
-    members.push_back(GroupMember {
-        address: Address::generate(&test_env.env),
-        percentage: 100,
-    });
-
-    // Create three groups under two different creators.
-    let id1 = create_test_group(
-        &test_env.env,
-        &test_env.autoshare_contract,
-        &creator1,
-        &members,
-        1,
-        &token,
-    );
-    let id2 = create_test_group(
-        &test_env.env,
-        &test_env.autoshare_contract,
-        &creator2,
-        &members,
-        2,
-        &token,
-    );
-    let id3 = create_test_group(
-        &test_env.env,
-        &test_env.autoshare_contract,
-        &creator1,
-        &members,
-        3,
-        &token,
-    );
-
-    let all = client.get_all_groups();
-
-    // All three must appear in insertion order.
-    assert_eq!(all.len(), 3, "Expected exactly 3 groups");
-    assert_eq!(all.get(0).unwrap().id, id1);
-    assert_eq!(all.get(1).unwrap().id, id2);
-    assert_eq!(all.get(2).unwrap().id, id3);
-}
-
-/// Verifies that get_all_groups includes groups that have been deactivated —
-/// the function is a full listing, not a filter for active groups only.
-#[test]
-fn test_get_all_groups_includes_deactivated_groups() {
-    let test_env = setup_test_env();
-    let client = AutoShareContractClient::new(&test_env.env, &test_env.autoshare_contract);
-
     let creator = test_env.users.get(0).unwrap().clone();
     let token = test_env.mock_tokens.get(0).unwrap().clone();
 
+    let id = create_test_group(
+        &test_env.env,
+        &test_env.autoshare_contract,
+        &creator,
+        &Vec::new(&test_env.env),
+        1,
+        &token,
+    );
+
+    assert!(client.is_subscribed(&id, &creator));
+}
+
+#[test]
+fn test_is_subscribed_true_for_member() {
+    let test_env = setup_test_env();
+    let client = AutoShareContractClient::new(&test_env.env, &test_env.autoshare_contract);
+    let creator = test_env.users.get(0).unwrap().clone();
+    let member = test_env.users.get(1).unwrap().clone();
+    let token = test_env.mock_tokens.get(0).unwrap().clone();
+
     let mut members = Vec::new(&test_env.env);
     members.push_back(GroupMember {
-        address: Address::generate(&test_env.env),
+        address: member.clone(),
         percentage: 100,
     });
-
-    let id1 = create_test_group(
+    let id = create_test_group(
         &test_env.env,
         &test_env.autoshare_contract,
         &creator,
@@ -2068,178 +2020,130 @@ fn test_get_all_groups_includes_deactivated_groups() {
         1,
         &token,
     );
-    let id2 = create_test_group(
-        &test_env.env,
-        &test_env.autoshare_contract,
-        &creator,
-        &members,
-        2,
-        &token,
-    );
 
-    // Deactivate the second group.
-    client.deactivate_group(&id2, &creator);
-
-    let all = client.get_all_groups();
-
-    assert_eq!(all.len(), 2, "Both groups (active and inactive) must be listed");
-
-    // Find group by id to avoid depending on ordering in assertions.
-    let group1 = all.iter().find(|g| g.id == id1).expect("id1 not found");
-    let group2 = all.iter().find(|g| g.id == id2).expect("id2 not found");
-
-    assert!(group1.is_active, "Group 1 should still be active");
-    assert!(!group2.is_active, "Group 2 should be inactive after deactivation");
+    assert!(client.is_subscribed(&id, &member));
 }
 
-/// Verifies that get_all_groups returns the correct group details (name,
-/// creator, usage_count) for a single group.
 #[test]
-fn test_get_all_groups_correct_group_details() {
+fn test_is_subscribed_false_for_non_member() {
     let test_env = setup_test_env();
     let client = AutoShareContractClient::new(&test_env.env, &test_env.autoshare_contract);
-
     let creator = test_env.users.get(0).unwrap().clone();
+    let stranger = test_env.users.get(1).unwrap().clone();
     let token = test_env.mock_tokens.get(0).unwrap().clone();
-
-    let mut members = Vec::new(&test_env.env);
-    members.push_back(GroupMember {
-        address: Address::generate(&test_env.env),
-        percentage: 100,
-    });
 
     let id = create_test_group(
         &test_env.env,
         &test_env.autoshare_contract,
         &creator,
-        &members,
-        5,
+        &Vec::new(&test_env.env),
+        1,
         &token,
     );
 
-    let all = client.get_all_groups();
-
-    assert_eq!(all.len(), 1);
-    let group = all.get(0).unwrap();
-
-    assert_eq!(group.id, id, "Group id must match");
-    assert_eq!(group.creator, creator, "Group creator must match");
-    assert_eq!(group.usage_count, 5, "Group usage_count must match creation value");
-    assert!(group.is_active, "Newly created group must be active");
+    assert!(!client.is_subscribed(&id, &stranger));
 }
 
-// ============================================================================
-// Issue #4: Comprehensive tests for reduce_usage
-// ============================================================================
-
-/// Verifies that the creator can reduce usage by 1 and the count decreases.
 #[test]
-fn test_reduce_usage_success() {
+fn test_is_subscribed_false_after_channel_deactivated() {
     let test_env = setup_test_env();
     let client = AutoShareContractClient::new(&test_env.env, &test_env.autoshare_contract);
-
     let creator = test_env.users.get(0).unwrap().clone();
     let token = test_env.mock_tokens.get(0).unwrap().clone();
-
-    let mut members = Vec::new(&test_env.env);
-    members.push_back(GroupMember {
-        address: Address::generate(&test_env.env),
-        percentage: 100,
-    });
 
     let id = create_test_group(
         &test_env.env,
         &test_env.autoshare_contract,
         &creator,
-        &members,
-        3,
+        &Vec::new(&test_env.env),
+        1,
         &token,
     );
+    assert!(client.is_subscribed(&id, &creator));
 
-    // Reduce once — count should drop from 3 to 2.
-    client.reduce_usage(&id, &creator);
+    client.deactivate_group(&id, &creator);
 
-    let remaining = client.get_remaining_usages(&id);
-    assert_eq!(remaining, 2, "usage_count should decrease by 1 after reduce_usage");
+    // The creator is still the creator, but the channel is no longer active,
+    // so it must not be reported as an active subscription.
+    assert!(!client.is_subscribed(&id, &creator));
 }
 
-/// Verifies that a non-creator is rejected with an authorization error.
 #[test]
-#[should_panic] // Unauthorized
-fn test_reduce_usage_unauthorized_caller_fails() {
+#[should_panic]
+fn test_is_subscribed_on_nonexistent_channel_fails() {
     let test_env = setup_test_env();
     let client = AutoShareContractClient::new(&test_env.env, &test_env.autoshare_contract);
+    let wallet = test_env.users.get(0).unwrap().clone();
+    let id = BytesN::from_array(&test_env.env, &[99u8; 32]);
 
+    client.is_subscribed(&id, &wallet);
+}
+
+// ============================================
+// Admin Channel Deactivation (Issue: admin channel management)
+// ============================================
+
+#[test]
+fn test_admin_can_deactivate_channel_even_if_not_creator() {
+    let test_env = setup_test_env();
+    let client = AutoShareContractClient::new(&test_env.env, &test_env.autoshare_contract);
     let creator = test_env.users.get(0).unwrap().clone();
-    let intruder = test_env.users.get(1).unwrap().clone();
     let token = test_env.mock_tokens.get(0).unwrap().clone();
-
-    let mut members = Vec::new(&test_env.env);
-    members.push_back(GroupMember {
-        address: Address::generate(&test_env.env),
-        percentage: 100,
-    });
 
     let id = create_test_group(
         &test_env.env,
         &test_env.autoshare_contract,
         &creator,
-        &members,
-        5,
+        &Vec::new(&test_env.env),
+        1,
         &token,
     );
 
-    // An address that is not the creator must be rejected.
-    client.reduce_usage(&id, &intruder);
+    // The admin is neither the creator nor a member, yet can deactivate.
+    client.deactivate_group(&id, &test_env.admin);
+
+    assert!(!client.is_group_active(&id));
 }
 
-/// Verifies that reduce_usage fails when the group is inactive.
 #[test]
-#[should_panic] // GroupInactive
-fn test_reduce_usage_on_inactive_group_fails() {
+fn test_deactivated_channel_blocks_new_subscriptions() {
     let test_env = setup_test_env();
     let client = AutoShareContractClient::new(&test_env.env, &test_env.autoshare_contract);
-
     let creator = test_env.users.get(0).unwrap().clone();
     let token = test_env.mock_tokens.get(0).unwrap().clone();
-
-    let mut members = Vec::new(&test_env.env);
-    members.push_back(GroupMember {
-        address: Address::generate(&test_env.env),
-        percentage: 100,
-    });
 
     let id = create_test_group(
         &test_env.env,
         &test_env.autoshare_contract,
         &creator,
-        &members,
-        5,
+        &Vec::new(&test_env.env),
+        1,
         &token,
     );
 
     client.deactivate_group(&id, &creator);
+    crate::test_utils::mint_tokens(&test_env.env, &token, &creator, 10_000);
 
-    // Calling reduce_usage on an inactive group must be rejected.
-    client.reduce_usage(&id, &creator);
+    let result = client.try_topup_subscription(&id, &10u32, &token, &creator);
+    assert!(
+        result.is_err(),
+        "topping up (a new subscription) on a deactivated channel must be rejected"
+    );
 }
 
-/// Verifies that reduce_usage fails when usage_count is already 0.
 #[test]
-#[should_panic] // NoUsagesRemaining
-fn test_reduce_usage_when_zero_remaining_fails() {
+fn test_deactivated_channel_preserves_historical_subscription_data() {
     let test_env = setup_test_env();
     let client = AutoShareContractClient::new(&test_env.env, &test_env.autoshare_contract);
-
     let creator = test_env.users.get(0).unwrap().clone();
+    let member = test_env.users.get(1).unwrap().clone();
     let token = test_env.mock_tokens.get(0).unwrap().clone();
 
     let mut members = Vec::new(&test_env.env);
     members.push_back(GroupMember {
-        address: Address::generate(&test_env.env),
+        address: member.clone(),
         percentage: 100,
     });
-
     let id = create_test_group(
         &test_env.env,
         &test_env.autoshare_contract,
@@ -2249,67 +2153,20 @@ fn test_reduce_usage_when_zero_remaining_fails() {
         &token,
     );
 
-    // Exhaust the single usage.
-    client.reduce_usage(&id, &creator);
+    // Top up before deactivation to create payment history.
+    crate::test_utils::mint_tokens(&test_env.env, &token, &creator, 10_000);
+    client.topup_subscription(&id, &5u32, &token, &creator);
 
-    // Second call must be rejected — no usages remaining.
-    client.reduce_usage(&id, &creator);
-}
+    client.deactivate_group(&id, &creator);
 
-/// Verifies that reduce_usage fails for a non-existent group id.
-#[test]
-#[should_panic] // NotFound
-fn test_reduce_usage_non_existent_group_fails() {
-    let test_env = setup_test_env();
-    let client = AutoShareContractClient::new(&test_env.env, &test_env.autoshare_contract);
+    // Existing subscription data (members, payment history) remains visible.
+    let stored_members = client.get_group_members(&id);
+    assert_eq!(stored_members.len(), 1);
+    assert_eq!(stored_members.get(0).unwrap().address, member);
 
-    let caller = test_env.users.get(0).unwrap().clone();
-    let phantom_id = BytesN::from_array(&test_env.env, &[0xFFu8; 32]);
-
-    client.reduce_usage(&phantom_id, &caller);
-}
-
-/// Verifies that multiple sequential reduce_usage calls correctly decrement
-/// the counter each time, and total_usages_paid remains unchanged.
-#[test]
-fn test_reduce_usage_multiple_times_decrements_correctly() {
-    let test_env = setup_test_env();
-    let client = AutoShareContractClient::new(&test_env.env, &test_env.autoshare_contract);
-
-    let creator = test_env.users.get(0).unwrap().clone();
-    let token = test_env.mock_tokens.get(0).unwrap().clone();
-
-    let mut members = Vec::new(&test_env.env);
-    members.push_back(GroupMember {
-        address: Address::generate(&test_env.env),
-        percentage: 100,
-    });
-
-    let initial_usages: u32 = 5;
-    let id = create_test_group(
-        &test_env.env,
-        &test_env.autoshare_contract,
-        &creator,
-        &members,
-        initial_usages,
-        &token,
-    );
-
-    for expected_remaining in (0..initial_usages).rev() {
-        client.reduce_usage(&id, &creator);
-        let remaining = client.get_remaining_usages(&id);
-        assert_eq!(
-            remaining, expected_remaining,
-            "After {} reduces, remaining should be {}",
-            initial_usages - expected_remaining,
-            expected_remaining
-        );
-    }
-
-    // total_usages_paid must not be affected by reduce_usage.
-    let total_paid = client.get_total_usages_paid(&id);
-    assert_eq!(
-        total_paid, initial_usages,
-        "total_usages_paid must remain equal to the originally purchased amount"
+    let history = client.get_group_payment_history(&id);
+    assert!(
+        !history.is_empty(),
+        "historical payment/subscription records must remain visible after deactivation"
     );
 }

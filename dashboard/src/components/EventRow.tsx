@@ -1,6 +1,7 @@
 import { memo } from 'react';
 import type { BlockchainEvent } from '../types/event';
 import { formatTimestamp } from '../utils/formatTime';
+import { CopyButton } from './CopyButton';
 
 interface EventRowProps {
   event: BlockchainEvent;
@@ -31,6 +32,7 @@ export const EventRow = memo(function EventRow({ event }: EventRowProps) {
           <span className="sr-only">Received: </span>
           {formatTimestamp(event.receivedAt)}
         </span>
+        <CopyButton value={event.eventId} label="notification ID" size="xs" />
       </div>
       <div className="event-row__details">
         <span>Value: {event.value}</span>

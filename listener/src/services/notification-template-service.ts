@@ -26,7 +26,7 @@ export class NotificationTemplateService {
 
   async create(input: CreateNotificationTemplateInput): Promise<NotificationTemplate> {
     const template = await this.repository.create(input);
-    this.cache.set(template.id, template);
+    this.cache.set(String(template.id ?? ''), template);
     return template;
   }
 
@@ -79,10 +79,6 @@ export class NotificationTemplateService {
 
   async getAll(): Promise<NotificationTemplate[]> {
     return this.repository.getAll();
-  }
-
-  async delete(templateId: string): Promise<void> {
-    return this.repository.delete(templateId);
   }
 
   async getAuditHistory(templateId: string): Promise<TemplateAuditRecord[]> {
