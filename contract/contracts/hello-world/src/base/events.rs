@@ -371,6 +371,13 @@ pub struct NotificationRevoked {
 pub struct BatchProcessingCompleted {
     #[topic]
     pub batch_id: BytesN<32>,
+    #[topic]
+    pub category: NotificationCategory,
+    #[topic]
+    pub priority: NotificationPriority,
+    pub processed_count: u32,
+}
+
 /// Emitted when a scheduled notification's expiry period is extended by an authorized sender.
 #[contractevent(data_format = "single-value")]
 #[derive(Clone)]
@@ -393,6 +400,15 @@ pub struct NotificationExtended {
 pub struct ReputationUpdated {
     #[topic]
     pub sender: Address,
+    #[topic]
+    pub category: NotificationCategory,
+    #[topic]
+    pub priority: NotificationPriority,
+    pub new_score: i64,
+    pub successful_count: u32,
+    pub failed_count: u32,
+}
+
 /// Emitted when protocol-level notification limits are configured or updated.
 #[contractevent]
 #[derive(Clone)]
@@ -403,9 +419,10 @@ pub struct NotificationLimitsConfigured {
     pub category: NotificationCategory,
     #[topic]
     pub priority: NotificationPriority,
-    pub new_score: i64,
-    pub successful_count: u32,
-    pub failed_count: u32,
+    pub max_payload_size: u32,
+    pub max_expiration_seconds: u64,
+    pub min_expiration_seconds: u64,
+    pub max_batch_size: u32,
 }
 
 /// Emitted when a sender's reputation tier changes (e.g., from Bronze to Silver).
@@ -421,13 +438,6 @@ pub struct ReputationTierChanged {
     pub old_tier: u32,
     pub new_tier: u32,
     pub reputation_score: i64,
-}
-
-    pub processed_count: u32,
-    pub max_payload_size: u32,
-    pub max_expiration_seconds: u64,
-    pub min_expiration_seconds: u64,
-    pub max_batch_size: u32,
 }
 
 // ============================================================================
@@ -506,6 +516,14 @@ pub struct SubscriptionCancelled {
     /// The address that cancelled the subscription.
     #[topic]
     pub subscriber: Address,
+    #[topic]
+    pub category: NotificationCategory,
+    #[topic]
+    pub priority: NotificationPriority,
+    /// Ledger timestamp (seconds) when the cancellation occurred.
+    pub cancelled_at: u64,
+}
+
 /// Emitted when the current owner initiates a two-step ownership transfer by
 /// nominating a `pending_owner`. The transfer is not final until the pending
 /// owner calls `accept_ownership`.
@@ -536,7 +554,5 @@ pub struct OwnershipTransferred {
     pub category: NotificationCategory,
     #[topic]
     pub priority: NotificationPriority,
-    /// Ledger timestamp (seconds) when the cancellation occurred.
-    pub cancelled_at: u64,
     pub new_owner: Address,
 }

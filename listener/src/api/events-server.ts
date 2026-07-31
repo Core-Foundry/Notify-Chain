@@ -6,10 +6,9 @@ import { PreferencesUpdateInput } from '../types/preferences';
 import { NotificationAPI } from '../services/notification-api';
 import { NotificationType } from '../types/scheduled-notification';
 import logger from '../utils/logger';
-import { generateRequestId } from '../utils/request-id';
+import { applyRequestContext } from '../utils/request-id';
 import { TemplateService } from '../services/template-service';
 import { handleTemplateRoutes } from './template-routes';
-import { generateRequestId, resolveCorrelationId } from '../utils/request-id';
 import { NotificationHistoryService } from '../services/notification-history';
 import { SearchSuggestionService } from '../services/search-suggestion';
 import { NotificationSearchService } from '../services/notification-search-service';
@@ -63,7 +62,8 @@ export interface EventsServerOptions {
   webhookSecrets?: WebhookSecret[];
   apiKeys?: Array<{ key: string; name?: string }>;
   notificationAPI?: NotificationAPI | null;
-  templateService?: TemplateService | null;
+  /** Scheduler-scoped template service, used to render templates for scheduled notifications. */
+  schedulerTemplateService?: TemplateService | null;
   rateLimit?: RateLimitConfig;
   /**
    * Optional override for the analytics aggregator. Tests use this to inject
@@ -263,17 +263,6 @@ async function buildStatusResponse(options: EventsServerOptions): Promise<{
   }>;
   timestamp: string;
 }> {
-  const contractStatuses = options.contractAddresses 
-    ? await Promise.all(
-        options.contractAddresses.map(async (contractConfig) => {
-          const status = await getContractPauseStatus(contractConfig.address, options.stellarRpcUrl);
-          return {
-            address: contractConfig.address,
-            ...status
-          };
-        })
-      )
-    : [];
   const contractStatuses = await Promise.all(
     (options.contractAddresses ?? []).map(async (contractConfig) => {
       const status = await getContractPauseStatus(contractConfig.address, options.stellarRpcUrl);
@@ -420,8 +409,10 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
       : new ResponseTimeMiddleware({ slowRequestThresholdMs: options.slowRequestThresholdMs });
 
   const server = http.createServer(async (req, res) => {
-    const requestId = generateRequestId();
-    const correlationId = resolveCorrelationId(req.headers['x-correlation-id']);
+    // Correlation-ID middleware: mints a requestId and resolves a correlationId
+    // for every request, and stamps both onto the response headers. See
+    // listener/src/utils/request-id.ts and LOGGING.md for details.
+    const { requestId, correlationId } = applyRequestContext(req, res);
     const startTime = Date.now();
 
     // Start response-time tracking for this request (#491)
@@ -429,11 +420,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
 
     res.setHeader('Access-Control-Allow-Origin', corsOrigin);
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-API-Key, Authorization, X-Correlation-Id');
-    res.setHeader('X-Request-Id', requestId);
-    res.setHeader('X-Correlation-Id', correlationId);
 
     const url = new URL(req.url ?? '/', 'http://localhost');
 
@@ -469,8 +456,8 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
 
     // Template API routes (handled first for priority)
     // url.pathname is already rewritten from /api/v1/* → /api/* above
-    if (options.templateService && url.pathname.startsWith('/api/templates')) {
-      handleTemplateRoutes(req, res, requestId, options.templateService)
+    if (options.schedulerTemplateService && url.pathname.startsWith('/api/templates')) {
+      handleTemplateRoutes(req, res, requestId, options.schedulerTemplateService)
         .then((handled) => {
           if (!handled) {
             res.writeHead(404, { 'Content-Type': 'application/json' });
@@ -478,7 +465,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
           }
         })
         .catch((error) => {
-          logger.error('Template route handler error', { error, requestId });
+          logger.error('Template route handler error', { error, requestId, correlationId });
           res.writeHead(500, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ error: 'Internal server error' }));
         });
@@ -1075,6 +1062,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
 
           logger.info('GET /api/notifications/history complete', {
             requestId,
+            correlationId,
             total: result.total,
             durationMs: Date.now() - startTime,
           });
@@ -1158,6 +1146,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
 
           logger.info('GET /api/search/suggestions complete', {
             requestId,
+            correlationId,
             durationMs: Date.now() - startTime,
           });
         })
@@ -1176,6 +1165,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
         res.end(JSON.stringify({ error: 'Template service not enabled' }));
         return;
       }
+      logger.info('Handling GET /api/templates', { requestId, correlationId });
       options.templateService.listAll()
         .then((templates) => {
           res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -1308,28 +1298,6 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
       return;
     }
 
-    // GET /api/templates
-    if (req.method === 'GET' && url.pathname === '/api/templates') {
-      if (!options.templateService) {
-        res.writeHead(503, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'Template service not enabled' }));
-        return;
-      }
-
-      logger.info('Handling GET /api/templates', { requestId, correlationId });
-      options.templateService.getAll()
-        .then((templates) => {
-          res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify(templates.map(serializeTemplate)));
-        })
-        .catch((error) => {
-          logger.error('Failed to load templates', { error, requestId, correlationId });
-          res.writeHead(500, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: (error as Error).message }));
-        });
-      return;
-    }
-
     // DELETE /api/templates/:id
     const deleteTemplateMatch = url.pathname.match(/^\/api\/templates\/([^/]+)$/);
     if (req.method === 'DELETE' && deleteTemplateMatch) {
@@ -1453,36 +1421,6 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
       return;
     }
 
-    // DELETE /api/templates/:id
-    const deleteTemplateMatch = url.pathname.match(/^\/api\/templates\/([^/]+)$/);
-    if (req.method === 'DELETE' && deleteTemplateMatch) {
-      if (!options.templateService) {
-        res.writeHead(503, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'Template service not enabled' }));
-        return;
-      }
-
-      const templateId = decodeURIComponent(deleteTemplateMatch[1]);
-      logger.info('Handling DELETE /api/templates/:id', { requestId, correlationId, templateId });
-
-      options.templateService.delete(templateId)
-        .then(() => {
-          res.writeHead(204);
-          res.end();
-        })
-        .catch((error) => {
-          if (error instanceof TemplateNotFoundError) {
-            res.writeHead(404, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ error: error.message }));
-            return;
-          }
-          logger.error('Failed to delete template', { error, requestId, correlationId, templateId });
-          res.writeHead(500, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: (error as Error).message }));
-        });
-      return;
-    }
-
     // GET /api/preferences/:userId
     const getPrefsMatch = url.pathname.match(/^\/api\/preferences\/([^/]+)$/);
     if (req.method === 'GET' && getPrefsMatch) {
@@ -1547,6 +1485,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
 
     logger.warn('Unhandled request', {
       requestId,
+      correlationId,
       method: req.method,
       url: req.url,
     });

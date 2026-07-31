@@ -154,6 +154,9 @@ export class NotificationAPI {
    */
   async retryDeadLetterNotification(id: number, requestId?: string): Promise<boolean> {
     return await this.repository.retryDeadLetterNotification(id, requestId);
+  }
+
+  /**
    * Aggregated retry statistics for delivery monitoring dashboards.
    */
   async getRetryStatistics() {
