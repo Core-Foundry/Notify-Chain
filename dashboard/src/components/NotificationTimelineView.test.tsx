@@ -83,7 +83,7 @@ describe('NotificationTimelineView', () => {
     fireEvent.submit(screen.getByRole('search'));
 
     await waitFor(() =>
-      expect(screen.getByText(/no history entries found/i)).toBeInTheDocument()
+      expect(screen.getByText(/no history entries/i)).toBeInTheDocument()
     );
   });
 
@@ -108,5 +108,63 @@ describe('NotificationTimelineView', () => {
 
     resolve(MOCK_TIMELINE);
     await waitFor(() => expect(screen.getByRole('button', { name: /view timeline/i })).not.toBeDisabled());
+  });
+
+  it('renders a copy button for the notification ID in the timeline summary', async () => {
+    mockFetch.mockResolvedValue(MOCK_TIMELINE);
+    renderView();
+
+    fireEvent.change(screen.getByLabelText(/notification id/i), { target: { value: '7' } });
+    fireEvent.submit(screen.getByRole('search'));
+
+    await waitFor(() => expect(mockFetch).toHaveBeenCalledWith(7));
+
+    // Verify the copy button for notification ID is rendered
+    const copyBtn = screen.getByRole('button', { name: /copy notification id/i });
+    expect(copyBtn).toBeInTheDocument();
+  });
+
+  it('copies notification ID to clipboard when copy button is clicked in timeline', async () => {
+    Object.assign(navigator, {
+      clipboard: {
+        writeText: jest.fn().mockResolvedValue(undefined),
+      },
+    });
+
+    mockFetch.mockResolvedValue(MOCK_TIMELINE);
+    renderView();
+
+    fireEvent.change(screen.getByLabelText(/notification id/i), { target: { value: '7' } });
+    fireEvent.submit(screen.getByRole('search'));
+
+    await waitFor(() => expect(mockFetch).toHaveBeenCalledWith(7));
+
+    const copyBtn = screen.getByRole('button', { name: /copy notification id/i });
+    fireEvent.click(copyBtn);
+
+    expect(navigator.clipboard.writeText).toHaveBeenCalledWith('7');
+  });
+
+  it('shows copied feedback after clicking the notification ID copy button', async () => {
+    Object.assign(navigator, {
+      clipboard: {
+        writeText: jest.fn().mockResolvedValue(undefined),
+      },
+    });
+
+    mockFetch.mockResolvedValue(MOCK_TIMELINE);
+    renderView();
+
+    fireEvent.change(screen.getByLabelText(/notification id/i), { target: { value: '7' } });
+    fireEvent.submit(screen.getByRole('search'));
+
+    await waitFor(() => expect(mockFetch).toHaveBeenCalledWith(7));
+
+    const copyBtn = screen.getByRole('button', { name: /copy notification id/i });
+    fireEvent.click(copyBtn);
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /notification id copied/i })).toBeInTheDocument();
+    });
   });
 });

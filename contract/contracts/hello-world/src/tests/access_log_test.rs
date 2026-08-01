@@ -1,3 +1,4 @@
+use crate::base::events::NotificationPriority;
 use crate::{AutoShareContract, AutoShareContractClient};
 use soroban_sdk::{testutils::Address as _, Address, BytesN, Env, String};
 
@@ -18,7 +19,13 @@ fn schedule_test_notification(
     let mut id_bytes = [0u8; 32];
     id_bytes[0] = 42;
     let notification_id = BytesN::from_array(env, &id_bytes);
-    client.schedule_notification(&notification_id, creator, &3600u64, &String::from_str(env, "Test"));
+    client.schedule_notification(
+        &notification_id,
+        creator,
+        &3600u64,
+        &String::from_str(env, "Test"),
+        &NotificationPriority::Medium,
+    );
     notification_id
 }
 
