@@ -585,6 +585,50 @@ export class ScheduledNotificationRepository {
   }
 
   /**
+   * List pending jobs for queue visibility.
+   * Returns notifications in PENDING status ordered by priority then enqueue
+   * time (execute_at), with each entry carrying the minimum fields needed for
+   * queue inspection: id, notificationType, createdAt (enqueue time),
+   * executeAt (scheduled delivery time), priority, and retryCount.
+   */
+  async getPendingJobs(limit: number = 100): Promise<
+    Array<{
+      id: number;
+      notificationType: string;
+      createdAt: string;
+      executeAt: string;
+      priority: number;
+      retryCount: number;
+    }>
+  > {
+    const sql = `
+      SELECT id, notification_type, created_at, execute_at, priority, retry_count
+      FROM scheduled_notifications
+      WHERE status = ?
+      ORDER BY priority ASC, execute_at ASC
+      LIMIT ?
+    `;
+
+    const rows = await this.db.all<{
+      id: number;
+      notification_type: string;
+      created_at: string;
+      execute_at: string;
+      priority: number;
+      retry_count: number;
+    }>(sql, [NotificationStatus.PENDING, limit]);
+
+    return rows.map((row) => ({
+      id: row.id,
+      notificationType: row.notification_type,
+      createdAt: row.created_at,
+      executeAt: row.execute_at,
+      priority: row.priority,
+      retryCount: row.retry_count,
+    }));
+  }
+
+  /**
    * Get statistics about scheduled notifications
    */
   async getStats(): Promise<{

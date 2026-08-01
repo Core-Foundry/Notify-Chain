@@ -943,6 +943,39 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
       return;
     }
 
+    // GET /api/schedule/queue — queue visibility: list pending jobs
+    // Returns jobs currently waiting in the queue with id, type, enqueued
+    // time (createdAt), scheduled delivery time (executeAt), priority, and
+    // retryCount.  Accepts an optional ?limit= query param (default 100).
+    if (req.method === 'GET' && url.pathname === '/api/schedule/queue') {
+      if (!options.notificationAPI) {
+        res.writeHead(503, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Scheduler not enabled' }));
+        return;
+      }
+
+      const limitParam = url.searchParams.get('limit');
+      const limit = limitParam ? Math.max(1, Math.min(500, parseInt(limitParam, 10) || 100)) : undefined;
+
+      options.notificationAPI.getPendingJobs(limit)
+        .then((jobs) => {
+          logger.info('Handling GET /api/schedule/queue', {
+            requestId,
+            correlationId,
+            count: jobs.length,
+            durationMs: Date.now() - startTime,
+          });
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ count: jobs.length, jobs }));
+        })
+        .catch((error) => {
+          logger.error('Failed to get pending jobs', { error, requestId, correlationId });
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: (error as Error).message }));
+        });
+      return;
+    }
+
     // GET /api/schedule/:id
     if (req.method === 'GET' && url.pathname.startsWith('/api/schedule/')) {
       if (!options.notificationAPI) {

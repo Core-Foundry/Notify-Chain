@@ -130,6 +130,16 @@ export class NotificationAPI {
   }
 
   /**
+   * List pending jobs for queue visibility.
+   * Returns jobs currently waiting in the queue with their id, type,
+   * enqueue time (createdAt), scheduled delivery time (executeAt),
+   * priority, and retry count.
+   */
+  async getPendingJobs(limit?: number) {
+    return await this.repository.getPendingJobs(limit);
+  }
+
+  /**
    * Get execution metrics with deduplication
    * Use this for dashboard metrics to prevent double-counting retried notifications
    */
