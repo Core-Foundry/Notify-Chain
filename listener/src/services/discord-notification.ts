@@ -131,6 +131,12 @@ export class DiscordNotificationService {
 
       // Exponential backoff: base * 2^attempt (seconds)
       const delayMs = Math.pow(2, attempt) * backoffBaseSeconds * 1000;
+      logger.warn('Retrying Discord webhook', {
+        ...logContext,
+        attempt: attempt + 1,
+        nextDelayMs: delayMs,
+        maxRetries,
+      });
 
       await this.delay(delayMs);
       attempt++;

@@ -14,12 +14,25 @@ import { buildRetryStatisticsPayload } from './retry-statistics';
  * Includes support for idempotent request handling
  */
 export class NotificationAPI {
+  /** Maximum allowed serialised payload size in bytes. */
+  readonly maxPayloadSizeBytes: number;
   private readonly maxPayloadSizeBytes: number = DEFAULT_MAX_PAYLOAD_SIZE_BYTES;
 
   constructor(
     private repository: ScheduledNotificationRepository,
-    private idempotencyService?: IdempotencyKeyService
-  ) {}
+    maxPayloadSizeBytesOrIdempotency?: number | IdempotencyKeyService,
+    private idempotencyService?: IdempotencyKeyService,
+  ) {
+    if (typeof maxPayloadSizeBytesOrIdempotency === 'number') {
+      this.maxPayloadSizeBytes = maxPayloadSizeBytesOrIdempotency;
+    } else {
+      this.maxPayloadSizeBytes = DEFAULT_MAX_PAYLOAD_SIZE_BYTES;
+      // Support legacy two-argument form: new NotificationAPI(repo, idempotencyService)
+      if (maxPayloadSizeBytesOrIdempotency != null) {
+        this.idempotencyService = maxPayloadSizeBytesOrIdempotency;
+      }
+    }
+  }
 
   /**
    * Schedule a notification for future delivery
@@ -100,6 +113,39 @@ export class NotificationAPI {
       payload: { message, webhookUrl },
       notificationType: NotificationType.DISCORD,
       targetRecipient: webhookUrl,
+      executeAt,
+      maxRetries: options?.maxRetries,
+      priority: options?.priority,
+      metadata: options?.metadata,
+    });
+  }
+
+  /**
+   * Schedule a generic HTTP webhook notification.
+   *
+   * The `payload` is POSTed as JSON to `targetUrl` at `executeAt`.
+   * Failed deliveries (5xx, timeouts, network errors) are automatically
+   * re-queued by the RetryScheduler with exponential backoff.
+   *
+   * @param targetUrl  - Full URL that will receive the POST request.
+   * @param payload    - JSON-serialisable body to deliver.
+   * @param executeAt  - When to make the first delivery attempt.
+   * @param options    - Optional overrides for retries, priority, and metadata.
+   */
+  async scheduleWebhookNotification(
+    targetUrl: string,
+    payload: Record<string, any>,
+    executeAt: Date,
+    options?: {
+      maxRetries?: number;
+      priority?: number;
+      metadata?: Record<string, any>;
+    }
+  ): Promise<number> {
+    return await this.scheduleNotification({
+      payload,
+      notificationType: NotificationType.WEBHOOK,
+      targetRecipient: targetUrl,
       executeAt,
       maxRetries: options?.maxRetries,
       priority: options?.priority,
