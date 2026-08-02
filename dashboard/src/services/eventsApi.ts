@@ -41,6 +41,11 @@ export interface NotificationSearchResult {
   status: string;
   createdAt: string;
   payload: string | null;
+  /**
+   * Human-readable reason the delivery failed (#493).
+   * `null` when the notification succeeded or is still pending.
+   */
+  failureReason: string | null;
 }
 
 export interface NotificationSearchResponse {
@@ -59,8 +64,14 @@ export interface NotificationSearchParams {
   eventId?: string;
   status?: string;
   type?: string;
+  /** Inclusive lower bound (YYYY-MM-DD or ISO datetime) */
+  startDate?: string;
+  /** Inclusive upper bound (YYYY-MM-DD or ISO datetime) */
+  endDate?: string;
   limit?: number;
   offset?: number;
+  /** Sort order for results (#495): newest (default) | oldest | status */
+  sortBy?: 'newest' | 'oldest' | 'status';
 }
 
 export async function fetchEvents(apiUrl: string): Promise<BlockchainEvent[]> {
@@ -93,8 +104,11 @@ export async function searchNotifications(
   if (params.eventId) url.searchParams.set('eventId', params.eventId);
   if (params.status) url.searchParams.set('status', params.status);
   if (params.type) url.searchParams.set('type', params.type);
+  if (params.startDate) url.searchParams.set('startDate', params.startDate);
+  if (params.endDate) url.searchParams.set('endDate', params.endDate);
   if (params.limit !== undefined) url.searchParams.set('limit', String(params.limit));
   if (params.offset !== undefined) url.searchParams.set('offset', String(params.offset));
+  if (params.sortBy) url.searchParams.set('sortBy', params.sortBy);
 
   const response = await fetch(url.toString());
   if (!response.ok) {

@@ -61,6 +61,7 @@ export interface Config {
   rateLimit?: RateLimitConfig;
   cleanup?: AppCleanupConfig;
   analytics?: AnalyticsConfig;
+  expiration?: ExpirationConfig;
 }
 
 export interface SchedulerConfig {
@@ -117,5 +118,14 @@ export interface AnalyticsConfig {
   persistIntervalMs: number;
   /** How long to retain persisted snapshots (days). */
   snapshotRetentionDays: number;
+}
+
+export interface ExpirationConfig {
+  /** Default expiration time in milliseconds (default: 24 hours = 86400000). */
+  defaultExpirationMs: number;
+  /** Per-event-type expiration times in milliseconds. */
+  perEventTypeExpiration?: Record<string, number>;
+  /** Whether expiration checking is enabled (default: true). */
+  enabled: boolean;
 }
 

@@ -134,6 +134,52 @@ export class ArchiveService {
     return { archived, purged, durationMs };
   }
 
+  /**
+   * Immediately archive a single processed notification by id.
+   * Used when a notification reaches a terminal state so active storage
+   * stays lean without waiting for the next background cycle.
+   * Returns true if the row was archived, false if not found / not terminal.
+   */
+  async archiveProcessedById(id: number): Promise<boolean> {
+    const row = await this.db.get<NotificationRow>(
+      `SELECT id, payload, notification_type, target_recipient, execute_at,
+              created_at, processing_completed_at, status, retry_count,
+              last_error, event_id, contract_address, metadata
+       FROM scheduled_notifications
+       WHERE id = ?
+         AND status IN ('COMPLETED','FAILED','CANCELLED')`,
+      [id],
+    );
+
+    if (!row) {
+      return false;
+    }
+
+    await this.db.transaction(async () => {
+      await this.store.insertBatch([
+        {
+          originalId: row.id,
+          payload: row.payload,
+          notificationType: row.notification_type,
+          targetRecipient: row.target_recipient,
+          executeAt: row.execute_at,
+          createdAt: row.created_at,
+          processingCompletedAt: row.processing_completed_at,
+          status: row.status,
+          retryCount: row.retry_count,
+          lastError: row.last_error,
+          eventId: row.event_id,
+          contractAddress: row.contract_address,
+          metadata: row.metadata,
+        },
+      ]);
+      await this.db.run(`DELETE FROM scheduled_notifications WHERE id = ?`, [id]);
+    });
+
+    logger.info('ArchiveService: archived processed notification immediately', { id });
+    return true;
+  }
+
   // ---------------------------------------------------------------------------
   // Private helpers
   // ---------------------------------------------------------------------------

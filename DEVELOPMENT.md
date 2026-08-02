@@ -27,7 +27,7 @@ Before starting, ensure you have the following software installed on your machin
 
 | Tool | Minimum Version | Purpose | Installation Link |
 |------|----------------|---------|-------------------|
-| **Node.js** | v18.0.0+ | JavaScript runtime for listener & dashboard | [nodejs.org](https://nodejs.org/) |
+| **Node.js** | v18+ (v20 recommended for Listener) | JavaScript runtime for listener & dashboard | [nodejs.org](https://nodejs.org/) |
 | **npm** | v9.0.0+ | Package manager (bundled with Node.js) | Comes with Node.js |
 | **Rust** | Latest stable | Smart contract development | [rustup.rs](https://rustup.rs/) |
 | **Stellar CLI** | Latest | Deploy & interact with contracts | See [installation](#installing-stellar-cli) |
@@ -48,7 +48,7 @@ Before starting, ensure you have the following software installed on your machin
 
 ```
 NotifyChain/
-├── 📂 contract/                    # Soroban smart contracts (Rust)
+├── contract/                    # Soroban smart contracts (Rust)
 │   ├── contracts/
 │   │   └── hello-world/           # AutoShare contract
 │   │       ├── src/
@@ -61,7 +61,7 @@ NotifyChain/
 │   │       └── Makefile
 │   └── Cargo.toml                # Workspace configuration
 │
-├── 📂 listener/                    # Off-chain event listener (Node.js/TypeScript)
+├── listener/                    # Off-chain event listener (Node.js/TypeScript)
 │   ├── src/
 │   │   ├── api/                   # REST API endpoints
 │   │   ├── database/              # SQLite database layer
@@ -81,7 +81,7 @@ NotifyChain/
 │   ├── tsconfig.json
 │   └── jest.config.js
 │
-├── 📂 dashboard/                   # React frontend dashboard
+├── dashboard/                   # React frontend dashboard
 │   ├── src/
 │   │   ├── components/            # React components
 │   │   ├── hooks/                 # Custom React hooks
@@ -95,7 +95,7 @@ NotifyChain/
 │   ├── vite.config.ts
 │   └── tsconfig.json
 │
-├── 📂 Documents/
+├── Documents/
 │   └── Task Bounty/               # TaskBounty contract (alternative example)
 │
 ├── .github/
@@ -124,8 +124,8 @@ NotifyChain/
 ### 1. Clone the Repository
 
 ```bash
-git clone https://github.com/your-org/NotifyChain.git
-cd NotifyChain
+git clone https://github.com/Core-Foundry/Notify-Chain.git
+cd Notify-Chain
 ```
 
 ### 2. Install Node.js Dependencies
@@ -739,6 +739,11 @@ test: Add tests for Discord service
 ### Documentation
 
 - [README.md](./README.md) - Project overview
+- [LOCAL_DEVELOPMENT.md](./LOCAL_DEVELOPMENT.md) - Quick local setup
+- [CONTRIBUTOR_SETUP.md](./CONTRIBUTOR_SETUP.md) - Detailed contributor setup
+- [CONTRIBUTOR_DEVELOPMENT_WORKFLOW_GUIDE.md](./CONTRIBUTOR_DEVELOPMENT_WORKFLOW_GUIDE.md) - Canonical contribution workflow
+- [docs/](./docs/) - Additional architecture and API docs
+- [dashboard/STORYBOOK.md](./dashboard/STORYBOOK.md) - Dashboard component Storybook
 - [listener/INSTALLATION.md](./listener/INSTALLATION.md) - Detailed listener setup
 - [listener/README-SCHEDULER.md](./listener/README-SCHEDULER.md) - Scheduler documentation
 - [listener/TEST-FIXTURE-MIGRATION-GUIDE.md](./listener/TEST-FIXTURE-MIGRATION-GUIDE.md) - Testing guide
@@ -753,8 +758,8 @@ test: Add tests for Discord service
 
 ### Community
 
-- [GitHub Issues](https://github.com/your-org/NotifyChain/issues)
-- [GitHub Discussions](https://github.com/your-org/NotifyChain/discussions)
+- [GitHub Issues](https://github.com/Core-Foundry/Notify-Chain/issues)
+- [GitHub Discussions](https://github.com/Core-Foundry/Notify-Chain/discussions)
 
 ---
 
@@ -776,4 +781,4 @@ Before considering your setup complete, verify:
 
 **You're ready to contribute to NotifyChain!** 🚀
 
-For questions or issues, please open a [GitHub Issue](https://github.com/your-org/NotifyChain/issues).
+For questions or issues, please open a [GitHub Issue](https://github.com/Core-Foundry/Notify-Chain/issues).

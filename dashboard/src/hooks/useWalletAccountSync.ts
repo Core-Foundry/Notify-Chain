@@ -9,7 +9,7 @@ import { useWalletStore } from '../store/walletStore';
  * its initial value) — it fires only for subsequent transitions, i.e. a real
  * wallet switch or disconnect while the page is open.
  */
-export function useWalletAccountSync(onAccountChange: (address: string | null) => void): void {
+export function useWalletAccountSync(onAccountChange: () => void): void {
   const address = useWalletStore((state) => state.address);
 
   // Track whether this is the very first render so we can skip it.
@@ -24,6 +24,6 @@ export function useWalletAccountSync(onAccountChange: (address: string | null) =
       isFirstRender.current = false;
       return;
     }
-    callbackRef.current(address);
+    callbackRef.current();
   }, [address]);
 }

@@ -81,7 +81,7 @@ These variables are commonly exported during CLI deployment scripting:
 - `DISPUTE_RESOLVER_ADDRESS`: The designated address authorized to resolve disputed tasks in `TaskBounty`.
 
 ### 2.2 Off-Chain Listener Configuration (`listener/.env`)
-Once the contracts are deployed, their IDs must be registered in the listener's environment config [listener/.env.example](file:///workspaces/Notify-Chain/listener/.env.example):
+Once the contracts are deployed, their IDs must be registered in the listener's environment config [listener/.env.example](listener/.env.example):
 - `STELLAR_NETWORK`: Set to `testnet` or `public` (mainnet).
 - `STELLAR_RPC_URL`: The Stellar RPC endpoint URL (e.g., `https://soroban-testnet.stellar.org:443`).
 - `CONTRACT_ADDRESSES`: A JSON array specifying the contract addresses and events to subscribe to.
@@ -93,7 +93,7 @@ Once the contracts are deployed, their IDs must be registered in the listener's 
   ```
 
 ### 2.3 Frontend Dashboard Configuration (`dashboard/.env`)
-Provide the frontend dashboard [dashboard/.env.example](file:///workspaces/Notify-Chain/dashboard/.env.example) with details to query the listener:
+Provide the frontend dashboard [dashboard/.env.example](dashboard/.env.example) with details to query the listener:
 - `VITE_EVENTS_API_URL`: HTTP URL of the listener event feed (e.g., `http://localhost:8787/api/events`).
 - `VITE_STELLAR_NETWORK`: Network context (`TESTNET` or `PUBLIC`).
 
@@ -102,8 +102,8 @@ Provide the frontend dashboard [dashboard/.env.example](file:///workspaces/Notif
 ## 3. Step-by-Step Deployment Examples
 
 NotifyChain contains two primary smart contracts that must be compiled and deployed:
-1. `AutoShare` - Subscription and group management contract located in [contract/contracts/hello-world](file:///workspaces/Notify-Chain/contract/contracts/hello-world).
-2. `TaskBounty` - Decentralized task and reward board contract located in [Documents/Task Bounty](file:///workspaces/Notify-Chain/Documents/Task%20Bounty).
+1. `AutoShare` - Subscription and group management contract located in [contract/contracts/hello-world](contract/contracts/hello-world).
+2. `TaskBounty` - Decentralized task and reward board contract located in [Documents/Task Bounty](Documents/Task%20Bounty).
 
 ---
 
@@ -142,7 +142,7 @@ export AUTOSHARE_CONTRACT_ID=<returned-contract-id>
 ```
 
 #### Step A.4: Initialize the Contract
-The `AutoShare` contract requires initializing the administrator identity before it can accept groups and payments. Call the [initialize_admin](file:///workspaces/Notify-Chain/contract/contracts/hello-world/src/lib.rs#L38) function:
+The `AutoShare` contract requires initializing the administrator identity before it can accept groups and payments. Call the [initialize_admin](contract/contracts/hello-world/src/lib.rs#L38) function:
 ```bash
 stellar contract invoke \
   --id $AUTOSHARE_CONTRACT_ID \
@@ -186,7 +186,7 @@ export TASKBOUNTY_CONTRACT_ID=<returned-contract-id>
 ```
 
 #### Step B.4: Initialize the Contract
-The `TaskBounty` contract requires setting up the admin address and a dispute resolver. Call the [initialize](file:///workspaces/Notify-Chain/Documents/Task%20Bounty/src/lib.rs#L38) function:
+The `TaskBounty` contract requires setting up the admin address and a dispute resolver. Call the [initialize](Documents/Task%20Bounty/src/lib.rs#L38) function:
 ```bash
 stellar contract invoke \
   --id $TASKBOUNTY_CONTRACT_ID \

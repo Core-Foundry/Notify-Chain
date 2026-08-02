@@ -5,6 +5,7 @@ import {
   UpdateNotificationTemplateInput
 } from '../types/notificationTemplate';
 import { templatesApi } from '../services/templatesApi';
+import { EmptyState } from '../components/EmptyState';
 
 type ViewMode = 'list' | 'create' | 'edit' | 'preview';
 
@@ -209,7 +210,22 @@ export function TemplatesPage() {
   }
 
   function renderList() {
-    if (loading) return <div>Loading templates...</div>;
+    if (loading) {
+      return (
+        <div className="templates-list" aria-busy="true" aria-label="Loading templates">
+          <div className="templates-list__header">
+            <h3>Templates</h3>
+          </div>
+          <div className="templates-list__items templates-list__items--skeleton" role="status">
+            {Array.from({ length: 3 }).map((_, index) => (
+              <div key={index} className="templates-list__item templates-list__item--skeleton">
+                <div className="skeleton-block skeleton-block--row" />
+              </div>
+            ))}
+          </div>
+        </div>
+      );
+    }
 
     return (
       <div className="templates-list">
@@ -242,7 +258,15 @@ export function TemplatesPage() {
             </div>
           ))}
           {templates.length === 0 && (
-            <p className="templates-list__empty">No templates yet. Create your first template!</p>
+            <EmptyState
+              title="No templates yet"
+              message="Create a notification template to start sending emails, Discord, Slack, or Telegram alerts."
+              action={{ label: 'Create Template', onClick: handleCreateClick }}
+              icon="📝"
+              title="No templates yet"
+              description="Create reusable notification templates for email, Discord, Slack, and more."
+              action={{ label: 'Create your first template', onClick: handleCreateClick }}
+            />
           )}
         </div>
       </div>
