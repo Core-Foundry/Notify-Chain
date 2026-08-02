@@ -1,3 +1,4 @@
+import { Config, ContractConfig, DiscordConfig, WebhookSecret, AppCleanupConfig, EventQueueConfig, RetrySchedulerOptions, AnalyticsConfig } from './types';
 import { Config, ContractConfig, DiscordConfig, WebhookSecret, ApiKey, AppCleanupConfig, EventQueueConfig, RetrySchedulerOptions, AnalyticsConfig } from './types';
 
 export class ConfigError extends Error {

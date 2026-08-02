@@ -40,6 +40,8 @@ export const NOTIFICATION_TYPE_OPTIONS = [
   { value: 'webhook', label: 'Webhook' },
   { value: 'sms', label: 'SMS' },
 ];
+const API_BASE = getEventsApiBaseUrl();
+
 
 export function NotificationSearchPage() {
   const [query, setQuery] = useState('');

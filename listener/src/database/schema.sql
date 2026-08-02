@@ -49,6 +49,9 @@ CREATE INDEX IF NOT EXISTS idx_scheduled_notifications_status_execute_at
 CREATE INDEX IF NOT EXISTS idx_scheduled_notifications_lock_expires 
   ON scheduled_notifications(lock_expires_at, status);
 
+-- Migration: add next_retry_at for explicit retry scheduling
+
+
 CREATE INDEX IF NOT EXISTS idx_scheduled_notifications_next_retry_at
   ON scheduled_notifications(next_retry_at, status)
   WHERE status = 'PENDING';

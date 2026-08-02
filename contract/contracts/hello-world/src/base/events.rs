@@ -25,6 +25,8 @@ pub enum NotificationCategory {
     Financial = 2,
     /// Scheduled notification operations: scheduling, expiry, cancellation.
     Notification = 3,
+    /// System testing category
+    System = 4,
 }
 
 /// Severity level attached to every emitted event alongside its category.

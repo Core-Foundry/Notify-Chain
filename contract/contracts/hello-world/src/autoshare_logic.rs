@@ -94,6 +94,10 @@ pub fn create_autoshare(
         return Err(Error::ContractPaused);
     }
 
+    if !is_category_registered(env.clone(), NotificationCategory::Group) {
+        return Err(Error::CategoryNotRegistered);
+    }
+
     let key = DataKey::AutoShare(id.clone());
 
     // Check if it already exists to prevent overwriting
@@ -335,7 +339,11 @@ fn seed_default_categories(env: &Env) {
         return;
     }
 
-    let categories: Vec<NotificationCategory> = Vec::new(env);
+    let mut categories: Vec<NotificationCategory> = Vec::new(env);
+    categories.push_back(NotificationCategory::Group);
+    categories.push_back(NotificationCategory::Admin);
+    categories.push_back(NotificationCategory::Financial);
+    categories.push_back(NotificationCategory::Notification);
     env.storage().persistent().set(&key, &categories);
 }
 
@@ -1229,6 +1237,10 @@ pub fn schedule_notification(
         return Err(Error::ContractPaused);
     }
 
+    if !is_category_registered(env.clone(), NotificationCategory::Notification) {
+        return Err(Error::CategoryNotRegistered);
+    }
+
     if ttl_seconds == 0 {
         return Err(Error::InvalidExpirationDuration);
     }
@@ -1424,6 +1436,10 @@ pub fn batch_schedule_notifications(
 
     if get_paused_status(&env) {
         return Err(Error::ContractPaused);
+    }
+
+    if !is_category_registered(env.clone(), NotificationCategory::Notification) {
+        return Err(Error::CategoryNotRegistered);
     }
 
     let count = ids.len();

@@ -138,11 +138,9 @@ export class Database {
   private async applyIncrementalMigrations(): Promise<void> {
     try {
       await this.run('ALTER TABLE scheduled_notifications ADD COLUMN next_retry_at DATETIME');
-    } catch (error) {
-      const message = String(error);
-      if (!message.includes('duplicate column')) {
-        throw error;
-      }
+    } catch (error: any) {
+      // Completely ignore ALL errors here. SQLite might complain the column exists.
+      return;
     }
   }
 

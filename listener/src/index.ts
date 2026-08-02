@@ -31,6 +31,7 @@ import logger from './utils/logger';
 import { loadConfig, validateConfig, ConfigError } from './config';
 import { NotificationHealthMonitor } from './services/notification-health-monitor';
 import { getWorkerManager } from './services/worker-manager';
+import { EventDeduplicationService } from './services/event-deduplication-service';
 
 dotenv.config();
 
@@ -48,11 +49,6 @@ async function main() {
   let templateService: TemplateService | null = null;
   let healthMonitor: NotificationHealthMonitor | null = null;
 
-  if (config.scheduler?.enabled) {
-    try {
-      logger.info('Initializing database for scheduled notifications and templates');
-      const db = await initializeDatabase(config.databasePath);
-  let templateService: NotificationTemplateService | null = null;
   let cleanupService: CleanupService | null = null;
   let repository: ScheduledNotificationRepository | null = null;
   let reconciliationEngine: IndexingReconciliationEngine | null = null;
@@ -60,6 +56,7 @@ async function main() {
   let archiveStore: ArchiveStore | null = null;
   let metricsRunner: NotificationMetricsRunner | null = null;
   let metricsStore: NotificationMetricsStore | null = null;
+  let deduplicationService: EventDeduplicationService | null = null;
 
   repository = new ScheduledNotificationRepository(db);
   healthMonitor = new NotificationHealthMonitor(null, getWorkerManager(), {
@@ -69,15 +66,6 @@ async function main() {
   if (config.analytics?.enabled) {
     initNotificationAnalyticsAggregator(config.analytics);
   }
-  const retryCount = process.env.DISCORD_RETRY_COUNT
-    ? parseInt(process.env.DISCORD_RETRY_COUNT, 10)
-    : undefined;
-  const backoffBaseSeconds = process.env.DISCORD_BACKOFF_BASE_SECONDS
-    ? parseFloat(process.env.DISCORD_BACKOFF_BASE_SECONDS)
-    : undefined;
-
-  return { webhookUrl, webhookId, retryCount, backoffBaseSeconds };
-}
 
   try {
     logger.info('Initializing database');
@@ -204,6 +192,7 @@ async function main() {
 
     if (reconciliationEngine) {
       reconciliationEngine.stop();
+    }
     if (metricsRunner) {
       await metricsRunner.stop();
     }

@@ -45,7 +45,7 @@ import {
   serializeAuditRecord,
   serializeTemplate,
 } from './template-api';
-import { CreateNotificationTemplateInput } from '../types/notification-template';
+import { CreateNotificationTemplateInputOld } from '../types/notification-template';
 import { BatchValidationService } from '../services/batch-validation-service';
 import { handleArchiveRequest } from './archive-api';
 import { ArchiveStore } from '../services/archive-store';
@@ -1314,7 +1314,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
       req.on('end', () => {
         void (async () => {
           try {
-            const parsed = JSON.parse(body) as CreateNotificationTemplateInput;
+            const parsed = JSON.parse(body) as CreateNotificationTemplateInputOld;
             if (!parsed?.id || !parsed?.name || !parsed?.type || !parsed?.body) {
               sendErr(res, 400, 'Invalid body: id, name, type, and body are required', ErrorCode.BAD_REQUEST);
               return;
