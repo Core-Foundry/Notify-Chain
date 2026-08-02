@@ -10,6 +10,7 @@ import { generateRequestId, resolveCorrelationId } from '../utils/request-id';
 import { TemplateService } from '../services/template-service';
 import { handleTemplateRoutes } from './template-routes';
 import { sendOk, sendErr, sendJson, ErrorCode } from '../utils/response';
+import { handleApiError, ApiError } from './error-handler';
 import { applyRequestContext } from '../utils/request-id';
 import { TemplateService } from '../services/template-service';
 import { handleTemplateRoutes } from './template-routes';
@@ -466,14 +467,12 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
       handleTemplateRoutes(req, res, requestId, options.schedulerTemplateService)
         .then((handled) => {
           if (!handled) {
-            res.writeHead(404, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ error: 'Not found' }));
+            sendErr(res, 404, 'Not found', ErrorCode.NOT_FOUND);
           }
         })
         .catch((error) => {
           logger.error('Template route handler error', { error, requestId, correlationId });
-          res.writeHead(500, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: 'Internal server error' }));
+          handleApiError(res, error, requestId, correlationId);
         });
       return;
     }
@@ -713,8 +712,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
     // POST /api/notifications/import — bulk import from JSON or CSV
     if (req.method === 'POST' && url.pathname === '/api/notifications/import') {
       if (!options.notificationAPI) {
-        res.writeHead(503, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'Scheduler not enabled' }));
+        sendErr(res, 503, 'Scheduler not enabled', ErrorCode.SERVICE_UNAVAILABLE);
         return;
       }
 
@@ -723,8 +721,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
         const provided = Array.isArray(apiKeyHeader) ? apiKeyHeader[0] : apiKeyHeader;
         const allowed = options.apiKeys.some((k) => k.key === provided);
         if (!allowed) {
-          res.writeHead(401, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: 'Unauthorized' }));
+          sendErr(res, 401, 'Unauthorized', ErrorCode.UNAUTHORIZED);
           return;
         }
       }
@@ -736,8 +733,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
           const contentType = req.headers['content-type'] || '';
           const importer = new NotificationImportService(options.notificationAPI!);
           const summary = await importer.importFromBody(body, contentType, { requestId });
-          res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify(summary));
+          sendOk(res, 200, summary);
           logger.info('Bulk notification import finished', {
             requestId,
             correlationId,
@@ -746,8 +742,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
           });
         } catch (error) {
           logger.error('Failed to import notifications', { error, requestId, correlationId });
-          res.writeHead(400, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: (error as Error).message }));
+          handleApiError(res, error, requestId, correlationId);
         }
       });
       return;
@@ -862,14 +857,11 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
       const monitor = getJobMonitor();
       const limitParam = url.searchParams.get('limit');
       const limit = limitParam ? Math.min(Math.max(parseInt(limitParam, 10) || 25, 1), 200) : 25;
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(
-        JSON.stringify({
-          ...monitor.getSnapshot(),
-          recentJobs: monitor.listRecentJobs(limit),
-          recentFailures: monitor.listFailures(limit),
-        })
-      );
+      sendOk(res, 200, {
+        ...monitor.getSnapshot(),
+        recentJobs: monitor.listRecentJobs(limit),
+        recentFailures: monitor.listFailures(limit),
+      });
       return;
     }
 
@@ -878,25 +870,22 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
       const monitor = getJobMonitor();
       const limitParam = url.searchParams.get('limit');
       const limit = limitParam ? Math.min(Math.max(parseInt(limitParam, 10) || 50, 1), 200) : 50;
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ failures: monitor.listFailures(limit), count: monitor.listFailures(limit).length }));
-    // GET /api/schedule/execution-metrics
+      sendOk(res, 200, { failures: monitor.listFailures(limit), count: monitor.listFailures(limit).length });
+      return;
+    }
     if (req.method === 'GET' && url.pathname === '/api/schedule/execution-metrics') {
       if (!options.notificationAPI) {
-        res.writeHead(503, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'Scheduler not enabled' }));
+        sendErr(res, 503, 'Scheduler not enabled', ErrorCode.SERVICE_UNAVAILABLE);
         return;
       }
 
       options.notificationAPI.getExecutionMetrics()
         .then((metrics) => {
-          res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify(metrics));
+          sendOk(res, 200, metrics);
         })
         .catch((error) => {
           logger.error('Failed to get execution metrics', { error, requestId, correlationId });
-          res.writeHead(500, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: (error as Error).message }));
+          handleApiError(res, error, requestId, correlationId);
         });
       return;
     }
@@ -904,20 +893,17 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
     // GET /api/schedule/retry-distribution
     if (req.method === 'GET' && url.pathname === '/api/schedule/retry-distribution') {
       if (!options.notificationAPI) {
-        res.writeHead(503, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'Scheduler not enabled' }));
+        sendErr(res, 503, 'Scheduler not enabled', ErrorCode.SERVICE_UNAVAILABLE);
         return;
       }
 
       options.notificationAPI.getRetryDistribution()
         .then((distribution) => {
-          res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify(distribution));
+          sendOk(res, 200, distribution);
         })
         .catch((error) => {
           logger.error('Failed to get retry distribution', { error, requestId, correlationId });
-          res.writeHead(500, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: (error as Error).message }));
+          handleApiError(res, error, requestId, correlationId);
         });
       return;
     }
@@ -925,20 +911,17 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
     // GET /api/schedule/retry-statistics
     if (req.method === 'GET' && url.pathname === '/api/schedule/retry-statistics') {
       if (!options.notificationAPI) {
-        res.writeHead(503, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'Scheduler not enabled' }));
+        sendErr(res, 503, 'Scheduler not enabled', ErrorCode.SERVICE_UNAVAILABLE);
         return;
       }
 
       options.notificationAPI.getRetryStatistics()
         .then((stats) => {
-          res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify(stats));
+          sendOk(res, 200, stats);
         })
         .catch((error) => {
           logger.error('Failed to get retry statistics', { error, requestId, correlationId });
-          res.writeHead(500, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: (error as Error).message }));
+          handleApiError(res, error, requestId, correlationId);
         });
       return;
     }
@@ -949,8 +932,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
     // retryCount.  Accepts an optional ?limit= query param (default 100).
     if (req.method === 'GET' && url.pathname === '/api/schedule/queue') {
       if (!options.notificationAPI) {
-        res.writeHead(503, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'Scheduler not enabled' }));
+        sendErr(res, 503, 'Scheduler not enabled', ErrorCode.SERVICE_UNAVAILABLE);
         return;
       }
 
@@ -965,13 +947,11 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
             count: jobs.length,
             durationMs: Date.now() - startTime,
           });
-          res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ count: jobs.length, jobs }));
+          sendOk(res, 200, { count: jobs.length, jobs });
         })
         .catch((error) => {
           logger.error('Failed to get pending jobs', { error, requestId, correlationId });
-          res.writeHead(500, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: (error as Error).message }));
+          handleApiError(res, error, requestId, correlationId);
         });
       return;
     }
@@ -1124,10 +1104,6 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
       suggestionService.getSuggestions(q, limit)
         .then((result) => {
           sendOk(res, 200, result);
-          logger.info('GET /api/search/suggestions complete', { requestId, durationMs: Date.now() - startTime });
-          res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify(result));
-
           logger.info('GET /api/search/suggestions complete', {
             requestId,
             correlationId,
@@ -1147,16 +1123,11 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
         sendErr(res, 503, 'Template service not enabled', ErrorCode.SERVICE_UNAVAILABLE);
         return;
       }
+
+      logger.info('Handling GET /api/templates', { requestId, correlationId });
       (options.templateService as any).listAll()
         .then((templates: any[]) => { sendOk(res, 200, templates.map(serializeTemplate)); })
         .catch((error: Error) => {
-      logger.info('Handling GET /api/templates', { requestId, correlationId });
-      options.templateService.listAll()
-        .then((templates) => {
-          res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify(templates.map(serializeTemplate)));
-        })
-        .catch((error) => {
           logger.error('Failed to list templates', { error, requestId, correlationId });
           sendErr(res, 500, error.message, ErrorCode.INTERNAL_ERROR);
         });
@@ -1257,23 +1228,6 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
           }
         })();
       });
-      return;
-    }
-
-    // GET /api/templates (getAll — duplicate handler kept for compatibility)
-    if (req.method === 'GET' && url.pathname === '/api/templates') {
-      if (!options.templateService) {
-        sendErr(res, 503, 'Template service not enabled', ErrorCode.SERVICE_UNAVAILABLE);
-        return;
-      }
-
-      logger.info('Handling GET /api/templates', { requestId, correlationId });
-      (options.templateService as any).getAll()
-        .then((templates: any[]) => { sendOk(res, 200, templates.map(serializeTemplate)); })
-        .catch((error: Error) => {
-          logger.error('Failed to load templates', { error, requestId, correlationId });
-          sendErr(res, 500, error.message, ErrorCode.INTERNAL_ERROR);
-        });
       return;
     }
 
@@ -1425,30 +1379,26 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
       if (handled) return;
     }
 
-    logger.warn('Unhandled request', { requestId, method: req.method, url: req.url });
-    sendErr(res, 404, 'Not found', ErrorCode.NOT_FOUND);
-    // GET /api/metrics/response-time — expose response-time counters (#491)
-    if (req.method === 'GET' && url.pathname === '/api/metrics/response-time') {
-      const metrics = responseTime.getMetrics();
-      const reset = url.searchParams.get('reset') === 'true';
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify(metrics));
-      if (reset) {
-        responseTime.resetMetrics();
-        logger.info('Response-time metrics reset', { requestId });
-      }
-      return;
-    }
+// GET /api/metrics/response-time — expose response-time counters (#491)
+     if (req.method === 'GET' && url.pathname === '/api/metrics/response-time') {
+       const metrics = responseTime.getMetrics();
+       const reset = url.searchParams.get('reset') === 'true';
+       sendOk(res, 200, metrics);
+       if (reset) {
+         responseTime.resetMetrics();
+         logger.info('Response-time metrics reset', { requestId });
+       }
+       return;
+     }
 
-    logger.warn('Unhandled request', {
-      requestId,
-      correlationId,
-      method: req.method,
-      url: req.url,
-    });
-    res.writeHead(404, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ error: 'Not found' }));
-    responseTime.finish(req, res, requestId, 404);
+     logger.warn('Unhandled request', {
+       requestId,
+       correlationId,
+       method: req.method,
+       url: req.url,
+     });
+     sendErr(res, 404, 'Not found', ErrorCode.NOT_FOUND);
+     responseTime.finish(req, res, requestId, 404);
   });
 
   if (rateLimiter) {
