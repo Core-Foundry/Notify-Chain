@@ -623,6 +623,96 @@ body {
   transform: translateX(18px);
 }
 
+/* ── Issue #497: Channel search ────────────────────────────────────────────── */
+.channel-search {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 20px;
+  margin-bottom: 4px;
+}
+
+.channel-search__label {
+  flex-shrink: 0;
+  font-size: 0.9rem;
+  color: #9aa0a6;
+  font-weight: 500;
+}
+
+.channel-search__input {
+  flex: 1;
+  max-width: 280px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 10px;
+  padding: 9px 14px;
+  background: #12151c;
+  color: inherit;
+  font-family: inherit;
+  font-size: 0.92rem;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.channel-search__input:focus-visible {
+  outline: none;
+  border-color: rgba(91, 125, 255, 0.6);
+  box-shadow: 0 0 0 3px rgba(91, 125, 255, 0.15);
+}
+
+.channel-search__clear {
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  color: #9aa0a6;
+  cursor: pointer;
+  font-size: 0.9rem;
+  line-height: 1;
+  padding: 6px 10px;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.channel-search__clear:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: #e8eaed;
+}
+
+.notification-preferences__no-results {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 32px 20px;
+  border: 1px dashed rgba(255, 255, 255, 0.12);
+  border-radius: 14px;
+  text-align: center;
+  color: #9aa0a6;
+  margin-top: 4px;
+}
+
+.notification-preferences__no-results p {
+  margin: 0;
+  font-size: 0.97rem;
+}
+
+.notification-preferences__no-results strong {
+  color: #c2c8d3;
+}
+
+.channel-search__clear-inline {
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  color: #5b7dff;
+  cursor: pointer;
+  font-size: 0.88rem;
+  padding: 6px 14px;
+  transition: background 0.15s ease;
+}
+
+.channel-search__clear-inline:hover {
+  background: rgba(91, 125, 255, 0.1);
+}
+
 .notification-preferences__control-panel {
   display: grid;
   gap: 18px;
