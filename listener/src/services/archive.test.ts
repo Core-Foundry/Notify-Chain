@@ -61,6 +61,15 @@ class MemoryDb {
       return { lastID: 0, changes: before - this.tables.scheduled_notifications.length };
     }
 
+    if (s.startsWith('DELETE FROM SCHEDULED_NOTIFICATIONS WHERE ID =')) {
+      const id = params[0] as number;
+      const before = this.tables.scheduled_notifications.length;
+      this.tables.scheduled_notifications = this.tables.scheduled_notifications.filter(
+        (r) => (r as any).id !== id,
+      );
+      return { lastID: 0, changes: before - this.tables.scheduled_notifications.length };
+    }
+
     if (s.startsWith('DELETE FROM NOTIFICATION_ARCHIVE WHERE ARCHIVED_AT <')) {
       const cutoff = params[0] as string;
       const before = this.tables.notification_archive.length;
@@ -82,6 +91,17 @@ class MemoryDb {
     if (s.includes('* FROM NOTIFICATION_ARCHIVE WHERE ID =')) {
       const id = params[0] as number;
       const row = this.tables.notification_archive.find((r) => (r as any).id === id);
+      return row as unknown as T | undefined;
+    }
+    if (s.includes('FROM SCHEDULED_NOTIFICATIONS') && s.includes('WHERE ID =')) {
+      const id = params[0] as number;
+      const row = this.tables.scheduled_notifications.find((r) => {
+        const rec = r as any;
+        return (
+          rec.id === id &&
+          ['COMPLETED', 'FAILED', 'CANCELLED'].includes(rec.status)
+        );
+      });
       return row as unknown as T | undefined;
     }
     return undefined;
@@ -326,6 +346,24 @@ describe('ArchiveService', () => {
     expect(result.archived).toBe(2);
     expect(db.scheduledCount()).toBe(0);
     expect(db.archiveCount()).toBe(2);
+  });
+
+  it('archives a processed notification immediately by id', async () => {
+    db.seedScheduledNotification({
+      id: 42,
+      status: 'COMPLETED',
+      processing_completed_at: new Date().toISOString(),
+    });
+    // Reset nextId after explicit id seed — seed already pushed with id 42
+    expect(db.scheduledCount()).toBe(1);
+
+    const ok = await service.archiveProcessedById(42);
+    expect(ok).toBe(true);
+    expect(db.scheduledCount()).toBe(0);
+    expect(db.archiveCount()).toBe(1);
+
+    const missing = await service.archiveProcessedById(999);
+    expect(missing).toBe(false);
   });
 
   it('does not archive PENDING notifications', async () => {
