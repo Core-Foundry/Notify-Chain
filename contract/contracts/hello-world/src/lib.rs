@@ -21,6 +21,7 @@ mod autoshare_logic;
 mod channel_logic;
 mod preferences_logic;
 mod reputation_logic;
+mod template_registry_logic;
 
 #[cfg(test)]
 pub mod mock_token;
@@ -652,6 +653,55 @@ impl AutoShareContract {
     }
 
     // ============================================================================
+    // Template Registry  (Issue #352)
+    // ============================================================================
+
+    /// Registers a new reusable notification template on-chain.
+    ///
+    /// `id` must be unique — reverts with `AlreadyExists` if it is already taken.
+    /// `creator` becomes the sole owner and is the only address that can update it.
+    /// Emits a `TemplateRegistered` event on success.
+    pub fn register_template(
+        env: Env,
+        id: BytesN<32>,
+        creator: Address,
+        name: String,
+        content: String,
+    ) {
+        template_registry_logic::register_template(env, id, creator, name, content).unwrap();
+    }
+
+    /// Updates the `name` and `content` of an existing template.
+    ///
+    /// Only the original owner (creator) may call this function.
+    /// Reverts with `Unauthorized` for any other caller.
+    /// Reverts with `TemplateNotFound` if `id` is not registered.
+    /// Emits a `TemplateUpdated` event on success.
+    pub fn update_template(
+        env: Env,
+        id: BytesN<32>,
+        caller: Address,
+        name: String,
+        content: String,
+    ) {
+        template_registry_logic::update_template(env, id, caller, name, content).unwrap();
+    }
+
+    /// Returns the full `NotificationTemplate` record for `id`.
+    ///
+    /// Reverts with `TemplateNotFound` if `id` is not registered.
+    pub fn get_template(env: Env, id: BytesN<32>) -> base::types::NotificationTemplate {
+        template_registry_logic::get_template(env, id).unwrap()
+    }
+
+    /// Returns `true` if a template is registered under `id`, `false` otherwise.
+    ///
+    /// This is a pure view function and never reverts.
+    pub fn template_exists(env: Env, id: BytesN<32>) -> bool {
+        template_registry_logic::template_exists(env, id)
+    }
+
+    // ============================================================================
     // Schema Version Tracking  (Issue #309)
     // ============================================================================
 
@@ -899,6 +949,8 @@ mod tests {
     #[path = "tests/access_log_test.rs"]
     mod access_log_test;
 
+    #[path = "../tests/template_registry_test.rs"]
+    mod template_registry_test;
     #[path = "tests/subscription_cancellation_test.rs"]
     mod subscription_cancellation_test;
 

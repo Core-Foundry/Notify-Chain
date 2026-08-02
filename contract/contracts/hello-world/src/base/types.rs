@@ -202,6 +202,32 @@ pub struct AuditRecord {
     pub timestamp: u64,
 }
 
+// ============================================================================
+// Template Registry  (Issue #352)
+// ============================================================================
+
+/// A reusable notification template stored on-chain.
+///
+/// Senders can register a template once and reference its `id` in subsequent
+/// notifications instead of resending identical payload data, reducing
+/// transaction size and gas cost.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NotificationTemplate {
+    /// Unique identifier for this template.
+    pub id: BytesN<32>,
+    /// Address that created and owns the template. Only the owner may update it.
+    pub owner: Address,
+    /// Human-readable name for the template (max 100 characters).
+    pub name: String,
+    /// The reusable notification content/payload stored with this template.
+    pub content: String,
+    /// Ledger timestamp (seconds) when the template was first registered.
+    pub created_at: u64,
+    /// Ledger timestamp (seconds) when the template was last updated, if ever.
+    pub updated_at: Option<u64>,
+}
+
 /// Protocol-level configurable limits for notifications.
 /// Allows administrators to set boundaries on notification sizes,
 /// expiration periods, and batch operation sizes.
