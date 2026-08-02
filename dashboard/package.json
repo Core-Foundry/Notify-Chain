@@ -8,6 +8,7 @@
     "preview": "node ./node_modules/vite/bin/vite.js preview",
     "dev": "node ./node_modules/vite/bin/vite.js",
     "lint": "node ./node_modules/eslint/bin/eslint.js \"src/**/*.{ts,tsx}\" --max-warnings=0",
+    "format:check": "node ./node_modules/prettier/bin/prettier.cjs --check \"src/**/*.{ts,tsx}\" --config ../.prettierrc",
     "test": "node ./node_modules/jest/bin/jest.js",
     "test:wallet": "node ./node_modules/jest/bin/jest.js src/__tests__/wallet-integration.test.tsx",
     "benchmark": "node ./node_modules/jest/bin/jest.js src/benchmark",
@@ -44,6 +45,7 @@
     "jest-environment-jsdom": "^29.7.0",
     "jsdom": "^26.1.0",
     "storybook": "^8.6.14",
+    "prettier": "3.3.3",
     "ts-jest": "^29.2.5",
     "typescript": "^5.8.3",
     "vite": "^6.3.5"

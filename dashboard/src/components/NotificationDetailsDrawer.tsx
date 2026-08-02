@@ -194,6 +194,21 @@ export function NotificationDetailsDrawer({
 
         <section className="drawer__section">
           <h3 className="drawer__section-title">Blockchain Context</h3>
+          {notification.relatedNotificationId && (
+            <div className="drawer__row">
+              <span className="drawer__label">Notification ID</span>
+              <span className="drawer__value" title={notification.relatedNotificationId}>
+                {shorten(notification.relatedNotificationId, 10, 6)}
+              </span>
+              <button
+                type="button"
+                className="drawer__action"
+                onClick={() => void tryCopy('Notification ID', notification.relatedNotificationId!)}
+              >
+                Copy
+              </button>
+            </div>
+          )}
           <div className="drawer__row">
             <span className="drawer__label">Ledger</span>
             <span className="drawer__value">{notification.ledger.toLocaleString()}</span>

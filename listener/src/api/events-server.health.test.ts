@@ -18,7 +18,7 @@ jest.mock('@stellar/stellar-sdk', () => ({
       getHealth: mockGetHealth,
     })),
   },
-}));
+}), { virtual: true });
 
 jest.mock('../store/event-registry', () => ({
   eventRegistry: { getEvents: jest.fn(() => []), count: jest.fn(() => 0) },

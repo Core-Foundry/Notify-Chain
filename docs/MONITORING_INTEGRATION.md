@@ -22,6 +22,16 @@ Notification ID: 100
 
 ---
 
+## Background Job Monitoring
+
+Scheduled jobs are also tracked by `JobMonitor`. See **[JOB_MONITORING.md](./JOB_MONITORING.md)** for:
+
+- `GET /api/schedule/jobs` — job status snapshot
+- `GET /api/schedule/jobs/failures` — failed job log
+- Job record schema and operational notes
+
+---
+
 ## Best Practices
 
 ### ✅ DO: Use the Metrics API

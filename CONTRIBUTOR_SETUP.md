@@ -1,7 +1,6 @@
 # Contributor Environment Setup Guide
 
-> **Goal**: A new contributor should be able to set up NotifyChain from scratch
-> on a clean machine without asking maintainers for help.
+> **Canonical setup guide:** [`docs/ENVIRONMENT_SETUP.md`](docs/ENVIRONMENT_SETUP.md)
 
 This guide walks you through setting up a local development environment for
 NotifyChain. By the end, you will have the listener service, the dashboard,
@@ -11,6 +10,14 @@ your machine.
 For the canonical contribution workflow, start with
 [`CONTRIBUTOR_DEVELOPMENT_WORKFLOW_GUIDE.md`](CONTRIBUTOR_DEVELOPMENT_WORKFLOW_GUIDE.md).
 For a shorter setup path, see [`LOCAL_DEVELOPMENT.md`](LOCAL_DEVELOPMENT.md).
+That document contains step-by-step instructions to install required tools,
+clone the repository, configure the listener and dashboard, build contracts, and
+verify your installation (including CI-parity checks).
+
+For day-to-day development after setup, see [LOCAL_DEVELOPMENT.md](LOCAL_DEVELOPMENT.md).
+For Git workflow (fork, branch, PR), see
+[CONTRIBUTOR_DEVELOPMENT_WORKFLOW_GUIDE.md](CONTRIBUTOR_DEVELOPMENT_WORKFLOW_GUIDE.md).
+> Goal: a new contributor should be able to set up NotifyChain from scratch on a clean machine without asking maintainers for help.
 
 ---
 
@@ -27,12 +34,23 @@ For a shorter setup path, see [`LOCAL_DEVELOPMENT.md`](LOCAL_DEVELOPMENT.md).
 9. [Running Tests](#9-running-tests)
 10. [VS Code Setup (Recommended)](#10-vs-code-setup-recommended)
 11. [Troubleshooting & FAQ](#11-troubleshooting--faq)
+5. [Smart Contracts Setup](#5-smart-contracts-setup)
+6. [Environment Variables Reference](#6-environment-variables-reference)
+7. [Running Tests](#7-running-tests)
+8. [VS Code Setup](#8-vs-code-setup)
+9. [Troubleshooting & FAQ](#9-troubleshooting--faq)
 
 ---
 
 ## 1. Required Dependencies
 
-### Essential Toolchain
+| Dependency | Minimum Version | Install | Used By |
+|---|---|---|---|
+| Rust (stable) | stable | [rustup.rs](https://rustup.rs) | Smart contracts |
+| `wasm32-unknown-unknown` | — | `rustup target add wasm32-unknown-unknown` | Soroban contracts |
+| Stellar CLI | latest | `cargo install --locked stellar-cli --features opt` | Contract build/deploy |
+| Node.js | **22** | [nodejs.org](https://nodejs.org) or `nvm` | Listener, Dashboard |
+| Git | — | your package manager | Version control |
 
 | Dependency     | Minimum Version | Install Method                          | Used By            |
 |----------------|-----------------|-----------------------------------------|--------------------|
@@ -42,42 +60,15 @@ For a shorter setup path, see [`LOCAL_DEVELOPMENT.md`](LOCAL_DEVELOPMENT.md).
 | Node.js        | **18** (dashboard), **20** (listener) | [nodejs.org](https://nodejs.org) or `nvm` | Listener, Dashboard |
 | npm            | comes with Node  | —                                       | Package management |
 | Git            | —               | Your package manager or [git-scm.com](https://git-scm.com) | Version control |
+### Platform notes
 
-### Platform Notes
+- **macOS**: Install Xcode Command Line Tools first: `xcode-select --install`
+- **Linux**: Install build tools first: `sudo apt install build-essential`
+- **Windows**: Install [Visual Studio Build Tools](https://visualstudio.microsoft.com/downloads/#build-tools-for-visual-studio-2022) with the "C++ build tools" workload (needed for native `sqlite3` bindings)
 
-- **macOS**: Install Xcode Command Line Tools (`xcode-select --install`) before Rust.
-- **Linux**: Install `build-essential` (`sudo apt install build-essential`) before Rust.
-- **Windows**: Use [Visual Studio Build Tools](https://visualstudio.microsoft.com/downloads/#build-tools-for-visual-studio-2022) with "C++ build tools" workload for native `sqlite3` bindings.
-
-### Node.js Version Management
-
-The project uses **two different Node.js versions** across its components:
-
-| Workspace   | Node Version | CI Reference |
-|-------------|-------------|--------------|
-| `listener/` | **20**       | `.github/workflows/ci.yml` — `node-version: 20` |
-| `dashboard/` | **18**      | `.github/workflows/ci.yml` — `node-version: 18` |
-
-**Recommendation**: Use [nvm](https://github.com/nvm-sh/nvm) (Node Version Manager) to switch between versions:
+### Quick install (Rust + Stellar CLI)
 
 ```bash
-# Install nvm (macOS/Linux)
-curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash
-
-# Restart your terminal, then install both versions
-nvm install 18
-nvm install 20
-
-# Use Node 20 for the listener (the more demanding component)
-nvm use 20
-```
-
-For most local development, **Node 20 is sufficient** for both components. If you encounter CI-related issues, test against the specific version used in CI.
-
-### Quick Install Commands
-
-```bash
-# ── Rust + WebAssembly + Stellar CLI ──
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 source "$HOME/.cargo/env"
 rustup target add wasm32-unknown-unknown
@@ -89,19 +80,87 @@ rustc --version && cargo --version && stellar --version
 
 ---
 
-## 2. Clone the Repository
+## Docker Setup (Recommended)
+
+Docker removes the need to install Node.js or manage per-service env files. All you need is [Docker Desktop](https://www.docker.com/products/docker-desktop/) (or Docker Engine + Compose on Linux).
+
+### Start everything
+
+```bash
+# 1. Copy the root env file (only needed once)
+cp .env.example .env
+
+# 2. Edit .env — at minimum set CONTRACT_ADDRESSES to your deployed contract ID
+
+# 3. Build images and start listener + dashboard
+docker compose up --build
+```
+
+| Service | URL |
+|---|---|
+| Dashboard (Vite HMR) | http://localhost:5173 |
+| Listener API | http://localhost:8787 |
+| Listener health check | http://localhost:8787/health |
+
+The SQLite database is stored in a named Docker volume (`listener_data`) and persists across container restarts.
+
+### Common commands
+
+```bash
+docker compose up --build        # rebuild images and start (needed after code changes)
+docker compose up                # start with existing images
+docker compose down              # stop and remove containers
+docker compose down -v           # stop and delete the database volume (full reset)
+docker compose logs -f listener  # tail listener logs
+docker compose logs -f dashboard # tail dashboard logs
+docker compose restart listener  # restart one service after env change
+```
+
+### Change configuration
+
+Edit `.env` at the repo root, then:
 
 ```bash
 git clone https://github.com/Core-Foundry/Notify-Chain.git
 cd Notify-Chain
+docker compose restart listener        # for most listener settings
+docker compose up --build dashboard    # required if VITE_* vars changed (baked in at build time)
 ```
 
-If you plan to contribute, fork the repository first, then clone your fork:
+### Reset the database
+
+```bash
+docker compose down -v   # removes listener_data volume
+docker compose up        # fresh start — migrations run automatically on boot
+```
+
+### What doesn't run in Docker
+
+The **Rust/Soroban contract** is a build-only component — no runtime container exists for it. Build and test it locally following [Smart Contracts Setup](#5-smart-contracts-setup).
+
+---
+
+## Manual Setup (Without Docker)
+
+Follow sections 2–9 below to set up each component directly on your machine.
+
+---
+
+## 2. Clone the Repository
+
+Fork the repo on GitHub first, then:
 
 ```bash
 git clone https://github.com/YOUR-USERNAME/Notify-Chain.git
 cd Notify-Chain
 git remote add upstream https://github.com/Core-Foundry/Notify-Chain.git
+```
+
+Verify remotes:
+```bash
+git remote -v
+# origin    https://github.com/YOUR-USERNAME/Notify-Chain.git (fetch)
+# upstream  https://github.com/Core-Foundry/Notify-Chain.git (fetch)
 ```
 
 ---
@@ -110,349 +169,201 @@ git remote add upstream https://github.com/Core-Foundry/Notify-Chain.git
 
 The listener is the core off-chain service that polls the Stellar network, processes contract events, and delivers notifications.
 
-### 3.1 Install Dependencies
+### 3.1 Install dependencies
 
 ```bash
 cd listener
 npm install
 ```
 
-> **Note**: The `sqlite3` package includes native bindings. If the install fails, see the [Troubleshooting](#9-troubleshooting--faq) section.
+> If `npm install` fails with `node-gyp` or `sqlite3` errors, see [Troubleshooting](#9-troubleshooting--faq).
 
-### 3.2 Configure Environment
+### 3.2 Configure environment
 
 ```bash
 cp .env.example .env
 ```
 
-Open `listener/.env` in your editor. At minimum, set:
+Minimum required values in `listener/.env`:
 
 ```bash
 STELLAR_RPC_URL=https://soroban-testnet.stellar.org:443
 CONTRACT_ADDRESSES=[{"address":"YOUR_CONTRACT_ID","events":["*"]}]
 ```
 
-If you plan to use Discord notifications, also set:
+For Discord notifications, also add:
 
 ```bash
 DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/YOUR_WEBHOOK_ID/YOUR_TOKEN
 DISCORD_WEBHOOK_ID=YOUR_WEBHOOK_ID
 ```
 
-> **Note**: Both `DISCORD_WEBHOOK_URL` and `DISCORD_WEBHOOK_ID` are required
-> together. If either is missing, Discord notifications are disabled.
+Full variable reference: [Environment Variables Reference](#6-environment-variables-reference).
 
-For a full reference of every variable, see [Environment Variables Reference](#7-environment-variables-reference).
-For a full reference of every variable, see [Environment Variables Reference](#6-environment-variables-reference).
-
-### 3.3 Initialize the Database
+### 3.3 Initialize the database
 
 ```bash
 npm run migrate
 ```
 
-This creates the SQLite database file (default location: `listener/data/notifications.db`) and runs all schema migrations.
+This creates `listener/data/notifications.db` and runs all schema migrations.
 
-### 3.4 Run the Listener
+### 3.4 Run the listener
 
 ```bash
 npm run dev
 ```
 
-The listener starts and immediately begins polling the configured contracts. You should see log output showing poll cycles.
-
-**Verify it's running:**
+Verify it's working:
 
 ```bash
-curl http://localhost:8787/health        # Health check
-curl http://localhost:8787/api/events    # Event feed (may be empty initially)
+curl http://localhost:8787/health
+curl http://localhost:8787/api/events
 ```
 
-### 3.5 Useful Listener Commands
+### 3.5 Listener commands
 
-| Command                 | Purpose                                          |
-|-------------------------|--------------------------------------------------|
-| `npm run dev`           | Start in development mode (ts-node, hot reload)  |
-| `npm run build`         | Compile TypeScript to JavaScript                 |
-| `npm start`             | Run the compiled production build                |
-| `npm test`              | Run all tests                                    |
-| `npm run typecheck`     | TypeScript type checking (no emit)               |
-| `npm run migrate`       | Initialize or update the SQLite database schema  |
-| `npm run lint`          | Alias for `typecheck`                            |
+| Command | Purpose |
+|---|---|
+| `npm run dev` | Start in dev mode (ts-node, hot reload) |
+| `npm run build` | Compile TypeScript |
+| `npm start` | Run compiled production build |
+| `npm test` | Run all tests |
+| `npm run typecheck` | TypeScript type check (no emit) |
+| `npm run lint` | ESLint |
+| `npm run migrate` | Initialize or update SQLite schema |
 
 ---
 
 ## 4. Dashboard Setup
 
-The dashboard is a React + Vite application that visualizes events from the listener's API.
+The dashboard is a React + Vite app that visualizes events from the listener's API.
 
-### 4.1 Install Dependencies
+### 4.1 Install dependencies
 
 ```bash
 cd dashboard
 npm install
 ```
 
-### 4.2 Configure Environment
+### 4.2 Configure environment
 
 ```bash
 cp .env.example .env
 ```
 
-The default `.env.example` is pre-configured for local development:
+Default `.env.example` works for local development:
 
 ```bash
 VITE_EVENTS_API_URL=http://localhost:8787/api/events
 VITE_STELLAR_NETWORK=TESTNET
 ```
 
-Change `VITE_EVENTS_API_URL` if your listener runs on a different port.
-
-### 4.3 Run the Dashboard
+### 4.3 Run the dashboard
 
 ```bash
 npm run dev
 ```
 
-Open [http://localhost:5173](http://localhost:5173) in your browser. The dashboard fetches events from the listener API and displays them in real-time.
+Open [http://localhost:5173](http://localhost:5173). The dashboard fetches from the listener API.
 
-### 4.4 Useful Dashboard Commands
-
-| Command          | Purpose                                          |
-|------------------|--------------------------------------------------|
-| `npm run dev`    | Start Vite dev server with hot module replacement |
-| `npm run build`  | TypeScript check + Vite production build          |
-| `npm test`       | Run all tests                                    |
-| `npm run lint`   | ESLint with zero-tolerance for warnings           |
-| `npm run preview` | Preview the production build locally             |
-| `npm run benchmark` | Run performance rendering benchmarks           |
-
----
-
-## 5. Frontend (Next.js Analytics) Setup
-
-> **Note**: The frontend is a legacy Next.js app for analytics visualization.
-> Most contributors only need the **Dashboard** (section 4). Skip this section
-> unless you are working on analytics features.
-
-The frontend is a Next.js 14 application with Chart.js for analytics
-dashboards and Tailwind CSS for styling.
-
-### 5.1 Install Dependencies
-
-```bash
-cd frontend
-npm install
-```
-
-### 5.2 Configure Environment
-
-The frontend reads from the listener's API and does not require its own
-`.env` file for basic operation. If you need to override defaults, create:
-
-```bash
-echo "NEXT_PUBLIC_API_URL=http://localhost:8787" > .env.local
-```
-
-### 5.3 Run the Frontend
-
-```bash
-npm run dev
-```
-
-Opens at [http://localhost:3000](http://localhost:3000).
-
-### 5.4 Useful Frontend Commands
+### 4.4 Dashboard commands
 
 | Command | Purpose |
-|---------|---------|
-| `npm run dev` | Start Next.js dev server |
-| `npm run build` | Production build |
-| `npm start` | Start production server |
-| `npm run lint` | Run Next.js linting |
+|---|---|
+| `npm run dev` | Start Vite dev server |
+| `npm run build` | TypeScript check + Vite production build |
+| `npm test` | Run all tests |
+| `npm run lint` | ESLint (zero warnings) |
+| `npm run preview` | Preview production build locally |
+| `npm run benchmark` | Run rendering performance benchmarks |
 
 ---
 
-## 6. Smart Contracts Setup
-
-The project contains two Soroban smart contracts. Building them is optional — you only need to do this if you are modifying contracts or deploying your own instances.
-
-### 6.1 Build Contracts
 ## 5. Smart Contracts Setup
 
-The project contains two Soroban smart contracts. Building them is optional — you only need to do this if you are modifying contracts or deploying your own instances.
+Only needed if you're modifying or deploying contracts.
 
-### 5.1 Build Contracts
-
-**AutoShare Contract** (`contract/`):
+### 5.1 Build
 
 ```bash
 cd contract
 stellar contract build
 ```
 
-The compiled `.wasm` file is written to `contract/target/wasm32-unknown-unknown/release/`.
+Output goes to `contract/target/wasm32-unknown-unknown/release/`.
 
-**TaskBounty Contract** (`Documents/Task Bounty/`):
-
-```bash
-cd Documents/Task\ Bounty
-stellar contract build
-```
-
-### 6.2 Run Contract Tests
-### 5.2 Run Contract Tests
+### 5.2 Run tests
 
 ```bash
-# AutoShare
 cd contract/contracts/hello-world
 cargo test
-
-# TaskBounty
-cd Documents/Task\ Bounty
-cargo test
 ```
 
-### 6.3 Deploy to Testnet (Optional)
-### 5.3 Deploy to Testnet (Optional)
-
-This requires a funded Stellar testnet identity:
+### 5.3 Deploy to testnet (optional)
 
 ```bash
-# Generate and fund a test identity
+# Generate and fund a testnet identity
 stellar keys generate my-identity --network testnet
 stellar keys fund my-identity --network testnet
 
-# Deploy the AutoShare contract
+# Deploy
 cd contract
 stellar contract deploy \
   --wasm target/wasm32-unknown-unknown/release/hello_world.wasm \
   --source my-identity \
   --network testnet
-
-# The contract ID is printed after successful deployment
+# Contract ID is printed on success
 ```
 
-### 6.4 Initialize a Deployed Contract
+### 5.4 Contract commands
 
-Most contracts require initialization after deployment. For the AutoShare
-contract:
-
-```bash
-# Find your wallet address
-stellar keys address my-identity
-
-# Initialize the contract with your admin address
-stellar contract invoke \
-  --id YOUR_CONTRACT_ID \
-  --source my-identity \
-  --network testnet \
-  -- \
-  initialize_admin \
-  --admin YOUR_WALLET_ADDRESS
-```
-
-For the TaskBounty contract (see `Documents/Task Bounty/SETUP.md` for
-detailed configuration):
-
-```bash
-stellar contract invoke \
-  --id YOUR_CONTRACT_ID \
-  --source my-identity \
-  --network testnet \
-  -- \
-  initialize
-```
-
-After initializing, add the contract ID to your `listener/.env`
-`CONTRACT_ADDRESSES` so the listener knows to monitor it.
-
-### 6.5 Useful Contract Commands
-### 5.4 Useful Contract Commands
-
-| Command                                          | Purpose                     |
-|--------------------------------------------------|-----------------------------|
-| `stellar contract build`                         | Build all contracts         |
-| `cargo test`                                     | Run contract tests          |
-| `stellar contract deploy --wasm <FILE> --source <ID> --network testnet` | Deploy to testnet |
-| `stellar contract invoke --id <ID> --source <ID> --network testnet -- <FUNCTION> [ARGS]` | Call a contract function |
-| `stellar contract optimize --wasm <FILE>`         | Optimize Wasm for production |
-| `stellar contract inspect --wasm <FILE>`          | Inspect contract interface  |
-| `cargo fmt --all`                                 | Format Rust code            |
+| Command | Purpose |
+|---|---|
+| `stellar contract build` | Build all contracts |
+| `cargo test` | Run contract unit tests |
+| `cargo fmt --all` | Format Rust code |
+| `cargo fmt --all -- --check` | Verify formatting (used in CI) |
+| `stellar contract deploy ...` | Deploy to testnet |
+| `stellar contract invoke ...` | Call a contract function |
 
 ---
 
-## 7. Environment Variables Reference
-
-### 7.1 Listener (`listener/.env`)
 ## 6. Environment Variables Reference
 
-### 6.1 Listener (`listener/.env`)
+### Listener (`listener/.env`)
 
 | Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| **Stellar Network** | | | |
-| `STELLAR_NETWORK` | No | `testnet` | Network passphrase (`testnet`, `pubnet`, or custom) |
-| `STELLAR_RPC_URL` | **Yes** | `https://soroban-testnet.stellar.org:443` | Soroban RPC endpoint to poll for events |
-| **Contracts** | | | |
-| `CONTRACT_ADDRESSES` | **Yes** | `[]` | JSON array of contract configs. Format: `[{"address":"C...","events":["*"]}]`. Each entry has `address` (string, the Stellar contract ID) and `events` (string array of event names to filter on, or `["*"]` for all). |
-| **Polling** | | | |
-| `POLL_INTERVAL_MS` | No | `30000` | Time between RPC polls (milliseconds) |
-| `MAX_RECONNECT_ATTEMPTS` | No | `5` | Max consecutive RPC failures before stopping |
-| `RECONNECT_DELAY_MS` | No | `5000` | Base delay between reconnection attempts (exponential backoff) |
-| **API Server** | | | |
-| `EVENTS_API_PORT` | No | `8787` | HTTP server port for `/health` and `/api/events` |
-| `EVENTS_API_CORS_ORIGIN` | No | `http://localhost:5173` | Allowed CORS origin (dashboard URL) |
-| `WEBHOOK_SECRETS` | No | `[]` | JSON array of webhook secrets for HMAC verification. Format: `[{"id":"default","secret":"whsec_..."}]` |
-| **Discord Notifications** | | | |
-| `DISCORD_WEBHOOK_URL` | No | — | Discord webhook URL for sending notifications |
-| `DISCORD_WEBHOOK_ID` | No | — | Discord webhook ID (required together with webhook URL) |
-| `NOTIFICATION_DEDUPLICATION_WINDOW_MS` | No | `60000` | In-memory dedup window for Discord notifications (ms) |
-| `NOTIFICATION_DEDUPLICATION_MAX_SIZE` | No | `10000` | Max entries in in-memory dedup cache |
-| `DISCORD_WEBHOOK_ID` | No | — | Discord webhook ID (required if webhook URL is set) |
-| **Retry Queue** | | | |
-| `RETRY_BASE_DELAY_MS` | No | `5000` | Base delay for notification retry exponential backoff |
-| `RETRY_MAX_RETRIES` | No | `5` | Max retry attempts for failed Discord notifications |
-| **Event Processing Queue** | | | |
-| `EVENT_QUEUE_MAX_CONCURRENCY` | No | `1` | Max events to process concurrently (1 = ordered) |
-| `EVENT_QUEUE_MAX_RETRIES` | No | `3` | Max retry attempts per event before permanent failure |
-| `EVENT_QUEUE_BASE_DELAY_MS` | No | `2000` | Base delay for event retry exponential backoff |
-| `EVENT_QUEUE_POLL_INTERVAL_MS` | No | `1000` | How often the queue checks for due events (ms) |
-| **Database** | | | |
-| `DATABASE_PATH` | No | `./data/notifications.db` | SQLite database file path |
-| **Scheduler** | | | |
-| `SCHEDULER_ENABLED` | No | `true` | Enable the notification scheduler |
-| `SCHEDULER_POLL_INTERVAL_MS` | No | `10000` | How often the scheduler polls for due notifications |
-| `SCHEDULER_LOCK_TIMEOUT_MS` | No | `60000` | Distributed lock timeout for scheduler |
-| `SCHEDULER_PROCESSOR_ID` | No | auto-generated | Unique ID for this scheduler instance (multi-instance setups) |
-| `SCHEDULER_BATCH_SIZE` | No | `10` | Max notifications to process per poll cycle |
-| `SCHEDULER_TIMING_BUFFER_MS` | No | `60000` | Buffer to prevent premature notification delivery |
-| **Rate Limiting** | | | |
+|---|---|---|---|
+| `STELLAR_RPC_URL` | Yes | `https://soroban-testnet.stellar.org:443` | Soroban RPC endpoint |
+| `CONTRACT_ADDRESSES` | Yes | `[]` | JSON array: `[{"address":"C...","events":["*"]}]` |
+| `STELLAR_NETWORK` | No | `testnet` | Network passphrase |
+| `POLL_INTERVAL_MS` | No | `30000` | Time between RPC polls (ms) |
+| `MAX_RECONNECT_ATTEMPTS` | No | `5` | Max RPC failures before stopping |
+| `RECONNECT_DELAY_MS` | No | `5000` | Base delay between reconnect attempts |
+| `EVENTS_API_PORT` | No | `8787` | HTTP server port |
+| `EVENTS_API_CORS_ORIGIN` | No | `http://localhost:5173` | Allowed CORS origin |
+| `DATABASE_PATH` | No | `./data/notifications.db` | SQLite file path |
+| `DISCORD_WEBHOOK_URL` | No | — | Discord webhook URL |
+| `DISCORD_WEBHOOK_ID` | No | — | Discord webhook ID (required with URL) |
+| `RETRY_BASE_DELAY_MS` | No | `5000` | Base delay for notification retry backoff |
+| `RETRY_MAX_RETRIES` | No | `5` | Max retry attempts for failed notifications |
+| `SCHEDULER_ENABLED` | No | `true` | Enable notification scheduler |
+| `SCHEDULER_POLL_INTERVAL_MS` | No | `10000` | Scheduler poll frequency (ms) |
+| `SCHEDULER_BATCH_SIZE` | No | `10` | Max notifications per scheduler cycle |
 | `RATE_LIMIT_ENABLED` | No | `true` | Enable HTTP API rate limiting |
-| `RATE_LIMIT_WINDOW_MS` | No | `60000` | Rate limit window (milliseconds) |
 | `RATE_LIMIT_MAX_REQUESTS` | No | `60` | Max requests per window per client |
-| `RATE_LIMIT_CLIENT_OVERRIDES` | No | `{}` | JSON object of per-client rate limit overrides |
-| **Cleanup** | | | |
-| `CLEANUP_INTERVAL_MS` | No | `3600000` | How often to run cleanup jobs (1 hour) |
-| `NOTIFICATION_RETENTION_MS` | No | `604800000` | Retain completed notifications (7 days) |
-| `RATE_LIMIT_EVENT_RETENTION_MS` | No | `86400000` | Retain rate limit audit events (1 day) |
-| `EVENT_RETENTION_MS` | No | `86400000` | Retain in-memory events (1 day) |
-| **Logging** | | | |
-| `LOG_LEVEL` | No | `info` | Winston log level (`error`, `warn`, `info`, `debug`) |
-| `NODE_ENV` | No | — | Set to `production` for newline-delimited JSON log output |
+| `LOG_LEVEL` | No | `info` | Winston log level (`error`,`warn`,`info`,`debug`) |
+| `NODE_ENV` | No | — | Set to `production` for JSON log output |
 
-### 7.2 Dashboard (`dashboard/.env`)
-### 6.2 Dashboard (`dashboard/.env`)
+### Dashboard (`dashboard/.env`)
 
 | Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `VITE_EVENTS_API_URL` | No | `http://localhost:8787/api/events` | Listener API endpoint for fetching events |
-| `VITE_STELLAR_NETWORK` | No | `TESTNET` | Stellar network for wallet integration (`TESTNET` or `MAINNET`) |
+|---|---|---|---|
+| `VITE_EVENTS_API_URL` | No | `http://localhost:8787/api/events` | Listener API endpoint |
+| `VITE_STELLAR_NETWORK` | No | `TESTNET` | Stellar network (`TESTNET` or `MAINNET`) |
 
-### 7.3 Minimum Viable Configuration
-### 6.3 Minimum Viable Configuration
-
-To run the listener with no optional features:
+### Minimum viable listener config
 
 ```bash
 STELLAR_RPC_URL=https://soroban-testnet.stellar.org:443
@@ -462,110 +373,26 @@ EVENTS_API_CORS_ORIGIN=http://localhost:5173
 DATABASE_PATH=./data/notifications.db
 ```
 
-To add Discord notifications, also set:
-
-```bash
-DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/YOUR_WEBHOOK_ID/YOUR_TOKEN
-DISCORD_WEBHOOK_ID=YOUR_WEBHOOK_ID
-```
-
----
-
-## 8. Full-Stack Verification Checklist
-
-Run these checks to confirm every component is working correctly.
-
-### 8.1 Listener Health
-
-```bash
-# Check the health endpoint
-curl http://localhost:8787/health
-
-# Expected: {"status":"ok","services":{"stellarRpc":{"status":"ok"},"eventRegistry":{"status":"ok","eventCount":0}}}
-```
-
-### 8.2 Event Feed
-
-```bash
-# Check the events API (may be empty if no contracts are active)
-curl http://localhost:8787/api/events
-
-# Expected: {"events":[],"total":0} (or populated with events)
-```
-
-### 8.3 Scheduler Stats
-
-```bash
-# Check scheduler status
-curl http://localhost:8787/api/schedule/stats
-
-# Expected: {"pending":0,"processing":0,"completed":0,"failed":0,"overdue":0}
-```
-
-### 8.4 Dashboard
-
-Open [http://localhost:5173](http://localhost:5173) in your browser and
-confirm:
-- The page loads without errors
-- The events feed renders (may be empty)
-- No CORS errors in the browser console (F12 → Console)
-
-### 8.5 Frontend Analytics
-
-If you set up the frontend, open
-[http://localhost:3000](http://localhost:3000) and confirm:
-- The analytics dashboard loads
-- Charts render without errors
-
-### 8.6 Database Inspection
-
-```bash
-# Verify the database exists and has the correct schema
-sqlite3 listener/data/notifications.db ".tables"
-
-# Expected: notification_execution_log  notification_templates        polling_cursors
-#           notification_template_audit_log  processed_events        rate_limit_events
-#           scheduled_notifications
-```
-
-### 8.7 Clean Up and Start Fresh
-
-If you need to reset everything:
-
-```bash
-# Reset listener database
-rm -f listener/data/notifications.db
-cd listener && npm run migrate
-
-# Clear listener event registry (restart the process)
-# Stop with Ctrl+C, then npm run dev again
-```
-
----
-
-## 9. Running Tests
-```
-
 ---
 
 ## 7. Running Tests
 
-Always run tests before submitting a pull request.
+Run these before opening any PR.
 
 ### Contracts
 
 ```bash
-# AutoShare
-cd contract/contracts/hello-world && cargo test
-
-# TaskBounty
-cd Documents/Task\ Bounty && cargo test
+cd contract/contracts/hello-world
+cargo fmt --all -- --check   # must be clean
+cargo test
 ```
 
 ### Listener
 
 ```bash
 cd listener
+npm run typecheck
+npm run lint
 npm test
 ```
 
@@ -573,49 +400,41 @@ npm test
 
 ```bash
 cd dashboard
+npm run lint
+npm run build
 npm test
 ```
 
-### CI Validation (What GitHub Actions Runs)
-
-The CI pipeline executes these checks on every pull request:
+### What CI runs on every PR
 
 ```bash
-# Listener
-cd listener
-npm run typecheck   # TypeScript strict type checking
-npm test            # Jest test suite
-
 # Dashboard
-cd dashboard
-npm run lint        # ESLint (zero warnings)
-npm run build       # TypeScript check + Vite build
-npm test            # Jest test suite
+npm run lint && npm run build && npm test
+
+# Listener
+npm run lint && npm run typecheck && npm test
 
 # Contracts
-cd contract
-cargo fmt --all -- --check   # Rust formatting check
+cargo fmt --all -- --check
 cargo test --workspace --all-features --verbose
+cargo test fuzz_ --verbose -- --nocapture
 ```
 
 ---
 
-## 10. VS Code Setup (Recommended)
-## 8. VS Code Setup (Recommended)
+## 8. VS Code Setup
 
-### Extensions
+### Recommended extensions
 
-Install these VS Code extensions:
+1. [rust-analyzer](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer)
+2. [CodeLLDB](https://marketplace.visualstudio.com/items?itemName=vadimcn.vscode-lldb) — Rust debugger
+3. [ESLint](https://marketplace.visualstudio.com/items?itemName=dbaeumer.vscode-eslint)
+4. [Prettier](https://marketplace.visualstudio.com/items?itemName=esbenp.prettier-vscode)
+5. [Better TOML](https://marketplace.visualstudio.com/items?itemName=bungcip.better-toml)
 
-1. [rust-analyzer](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer) — Rust language support
-2. [CodeLLDB](https://marketplace.visualstudio.com/items?itemName=vadimcn.vscode-lldb) — Debugger for Rust
-3. [Better TOML](https://marketplace.visualstudio.com/items?itemName=bungcip.better-toml) — TOML file support
-4. [ESLint](https://marketplace.visualstudio.com/items?itemName=dbaeumer.vscode-eslint) — TypeScript linting
-5. [Prettier](https://marketplace.visualstudio.com/items?itemName=esbenp.prettier-vscode) — Code formatter
+### `.vscode/settings.json`
 
-### Settings
-
-Add this to `.vscode/settings.json` (already present in the repository):
+The repo includes this already:
 
 ```json
 {
@@ -624,100 +443,63 @@ Add this to `.vscode/settings.json` (already present in the repository):
 }
 ```
 
-This configures `rust-analyzer` to use the `wasm32` target and avoids false-positive type errors from non-Wasm platform checks.
+This prevents false-positive errors from non-Wasm platform checks.
 
 ---
 
-## 11. Troubleshooting & FAQ
 ## 9. Troubleshooting & FAQ
 
-> A more extensive troubleshooting guide is available at [`TROUBLESHOOTING.md`](TROUBLESHOOTING.md). This section covers the most common setup issues.
+### `npm install` fails with `node-gyp` / `sqlite3` errors
 
-### Node.js & npm
-
-**Q: `npm install` fails with `node-gyp` or `sqlite3` errors.**
-
-Native `sqlite3` bindings must be compiled for your platform and Node.js version.
+Native `sqlite3` bindings must be compiled for your platform:
 
 ```bash
-# Rebuild native bindings
 npm rebuild sqlite3
-
-# If that fails, reinstall
+# If that fails:
 npm uninstall sqlite3 && npm install
 ```
 
-On Windows, ensure you have Visual Studio Build Tools installed with the
-"C++ build tools" workload. On macOS, install Xcode Command Line Tools:
-`xcode-select --install`.
-On Windows, ensure you have Visual Studio Build Tools installed with the "C++ build tools" workload.
+On Windows, ensure Visual Studio Build Tools are installed with the "C++ build tools" workload.
 
 ---
 
-**Q: Which Node.js version should I use?**
+### No events appear in the listener
 
-The listener CI runs on Node 20, the dashboard CI runs on Node 18. Use **Node 20** for local development (it is forward-compatible with the dashboard). Use `nvm` to switch if needed.
+1. Confirm the contract ID in `CONTRACT_ADDRESSES` is deployed on the same network as `STELLAR_RPC_URL`.
+2. Check the RPC is reachable:
+   ```bash
+   curl -X POST https://soroban-testnet.stellar.org:443 \
+     -H "Content-Type: application/json" \
+     -d '{"jsonrpc":"2.0","id":1,"method":"getHealth"}'
+   ```
+3. Check listener logs for poll output — look for `"Received events"`.
 
 ---
 
-### Stellar RPC & Network
-
-**Q: The listener starts but no events appear.**
-
-1. Verify the contract ID in `CONTRACT_ADDRESSES` is correct and deployed on the same network as `STELLAR_RPC_URL`.
-2. Confirm the RPC endpoint is reachable:
-   ```bash
-   curl -X POST https://soroban-testnet.stellar.org:443 -H "Content-Type: application/json" -d '{"jsonrpc":"2.0","id":1,"method":"getHealth"}'
-   ```
-3. Check listener logs for poll cycle output:
-   ```bash
-   cd listener && npm run dev
-   ```
-   Look for lines containing `"Received events"` or `"Processing event"`.
-4. Verify the API is responding:
-   ```bash
-   curl http://localhost:8787/health
-   curl http://localhost:8787/api/events
-   ```
-
----
-
-**Q: `stellar: command not found`**
+### `stellar: command not found`
 
 ```bash
-# Ensure cargo's bin directory is in your PATH
 source "$HOME/.cargo/env"
-
-# Or reinstall
+# Or reinstall:
 cargo install --locked stellar-cli --features opt
 ```
 
 ---
 
-### Database
-
-**Q: `Error: Database not initialized` or `SQLITE_ERROR: no such table`**
+### `SQLITE_ERROR: no such table` or `Database not initialized`
 
 ```bash
 cd listener
-npm run migrate
-```
-
-If the data directory is missing:
-
-```bash
-mkdir -p listener/data
+mkdir -p data
 npm run migrate
 ```
 
 ---
 
-### Port Conflicts
-
-**Q: `EADDRINUSE: address already in use :::8787`**
+### Port conflict: `EADDRINUSE :::8787`
 
 ```bash
-# Find the process using the port (macOS/Linux)
+# macOS/Linux — find and kill the process
 lsof -i :8787
 kill -9 <PID>
 
@@ -727,19 +509,15 @@ EVENTS_API_PORT=8788
 
 ---
 
-### Dashboard
-
-**Q: Dashboard shows a blank page or "Failed to fetch"**
+### Dashboard shows blank page or "Failed to fetch"
 
 1. Is the listener running? (`npm run dev` in `listener/`)
-2. Does `VITE_EVENTS_API_URL` in `dashboard/.env` match the listener's port?
+2. Does `VITE_EVENTS_API_URL` in `dashboard/.env` match the listener port?
 3. Restart the Vite dev server after editing `.env`.
 
 ---
 
-### Contracts
-
-**Q: `error: toolchain 'stable' does not support target 'wasm32-unknown-unknown'`**
+### `error: toolchain 'stable' does not support target 'wasm32-unknown-unknown'`
 
 ```bash
 rustup target add wasm32-unknown-unknown
@@ -747,40 +525,49 @@ rustup target add wasm32-unknown-unknown
 
 ---
 
-**Q: `error[E0463]: can't find crate for 'std'`**
-
-Build with the correct target:
+### After `git pull` things stop working
 
 ```bash
-cargo build --target wasm32-unknown-unknown --release
-# Or use Stellar CLI (handles the target automatically):
-stellar contract build
-```
-
----
-
-### After a `git pull`
-
-If things stop working after pulling latest changes, run the full refresh:
-If things stop working after pulling latest changes:
-
-```bash
-# Contracts
-cd contract && stellar contract build
-
-# Listener
-cd listener && npm install && npm run migrate
-
-# Dashboard
+cd listener  && npm install && npm run migrate
 cd dashboard && npm install
+cd contract  && stellar contract build
+```
 
-# Frontend
-cd frontend && npm install
+With Docker, rebuild after pulling:
+
+```bash
+docker compose up --build
 ```
 
 ---
 
-### Still Stuck?
+### Docker: dashboard shows "Failed to fetch" or blank page
+
+`VITE_EVENTS_API_URL` is baked in at image build time. If you changed it in `.env`, you need to rebuild:
+
+```bash
+docker compose up --build dashboard
+```
+
+Also confirm the listener is healthy before the dashboard starts:
+
+```bash
+docker compose ps          # check listener status shows "healthy"
+docker compose logs listener
+```
+
+---
+
+### Docker: `listener_data` volume has stale schema
+
+```bash
+docker compose down -v     # removes the volume
+docker compose up --build  # fresh start, migrations run automatically
+```
+
+---
+
+### Still stuck?
 
 1. Search [open issues](https://github.com/Core-Foundry/Notify-Chain/issues) — your problem may already be reported.
 1. Search [open issues](https://github.com/Core-Foundry/Notify-Chain/issues) — your problem may already be reported.
@@ -790,6 +577,8 @@ cd frontend && npm install
    - Output of `rustc --version`, `node --version`, `stellar --version`
    - The full error message and stack trace
    - Steps you have already tried
+1. Search [open issues](https://github.com/Core-Foundry/Notify-Chain/issues).
+2. Open a new issue with: your OS, output of `rustc --version && node --version && stellar --version`, the full error and stack trace, and steps already tried.
 
 ---
 
@@ -797,42 +586,44 @@ cd frontend && npm install
 
 ```
 Notify-Chain/
-├── contract/                          # Soroban smart contract workspace
-│   ├── contracts/hello-world/         #  AutoShare contract (active)
-│   └── Cargo.toml                     # Workspace configuration
+├── contract/                        # Soroban smart contract workspace
+│   ├── contracts/hello-world/       # AutoShare notification contract
+│   │   └── src/                     # Rust source + tests
+│   └── Cargo.toml                   # Workspace config
 │
-├── listener/                          #  Off-chain listener service
+├── listener/                        # Off-chain listener service (Node.js/TypeScript)
+│   ├── Dockerfile                   # Multi-stage Docker image
+│   ├── .dockerignore
 │   ├── src/
-│   │   ├── api/                       # HTTP API (events, health, templates)
-│   │   ├── services/                  # Core: subscriber, dedup, notifier, scheduler
-│   │   ├── store/                     # In-memory event registry + preferences
-│   │   ├── database/                  # SQLite schema and client
-│   │   ├── types/                     # TypeScript type definitions
-│   │   ├── utils/                     # Logging, formatting, helpers
-│   │   └── index.ts                   # Entry point
-│   └── src/__tests__/                 # Integration / E2E tests
+│   │   ├── api/                     # HTTP API (events, health, schedule)
+│   │   ├── services/                # Core: subscriber, dedup, notifier, scheduler
+│   │   ├── store/                   # SQLite repositories + in-memory registry
+│   │   ├── database/                # Schema and client
+│   │   ├── types/                   # TypeScript type definitions
+│   │   └── index.ts                 # Entry point
+│   └── src/__tests__/               # Integration tests
 │
-├── dashboard/                         #  React + Vite event dashboard
+├── dashboard/                       # React + Vite event dashboard
+│   ├── Dockerfile                   # Multi-stage Docker image (dev + production)
+│   ├── .dockerignore
 │   └── src/
-│       ├── components/                # UI components (EventCard, filters, etc.)
-│       ├── services/                  # API client
-│       ├── store/                     # Zustand state management
-│       └── pages/                     # Page components
+│       ├── components/              # UI components
+│       ├── services/                # API client
+│       ├── store/                   # Zustand state
+│       └── pages/                   # Page components
 │
-├── Documents/Task Bounty/             #  TaskBounty contract (Soroban)
+├── docker-compose.yml               # Orchestrates listener + dashboard
+├── .env.example                     # Root env template for Docker Compose
+├── .dockerignore                    # Root-level build context exclusions
 │
-├── frontend/                          #  Next.js analytics dashboard (Chart.js)
-│   └── app/
-│       ├── analytics/                 # Analytics pages with charts
-│       └── page.tsx                   # Landing page
-├── frontend/                          # Legacy Next.js frontend (not actively maintained)
+├── .github/
+│   ├── workflows/ci.yml             # CI pipeline
+│   ├── dependabot.yml               # Automated dependency updates
+│   └── pull_request_template.md     # PR description template
 │
-├── scripts/                           # Helper scripts (health check, etc.)
-│
-├── CONTRIBUTOR_SETUP.md               #  This file
-├── CONTRIBUTING.md                    # Contribution guidelines & PR workflow
-├── TROUBLESHOOTING.md                 # Detailed troubleshooting reference
-├── ARCHITECTURE_OVERVIEW.md           # High-level architecture walkthrough
-├── SYSTEM_ARCHITECTURE.md             # Visual architecture with Mermaid diagrams
-└── README.md                          # Project overview and quick start
+├── CONTRIBUTING.md                  # Workflow, standards, PR guidelines ← start here
+├── CONTRIBUTOR_SETUP.md             # This file — local environment setup
+├── CONTRIBUTOR_DEVELOPMENT_WORKFLOW_GUIDE.md
+├── CONTRIBUTOR_ARCHITECTURE_DEEP_DIVE.md
+└── ARCHITECTURE_OVERVIEW.md
 ```
