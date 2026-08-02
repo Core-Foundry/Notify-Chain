@@ -15,6 +15,7 @@ import * as http from 'http';
 import { TemplateService } from '../services/template-service';
 import logger from '../utils/logger';
 import { TemplateChannelType } from '../types/notification-template';
+import { sendOk, sendErr, ErrorCode } from '../utils/response';
 
 export interface TemplateAPIOptions {
   templateService: TemplateService;
@@ -45,14 +46,6 @@ function parseBody(req: http.IncomingMessage): Promise<any> {
 }
 
 /**
- * Send JSON response
- */
-function sendJSON(res: http.ServerResponse, statusCode: number, data: any) {
-  res.writeHead(statusCode, { 'Content-Type': 'application/json' });
-  res.end(JSON.stringify(data));
-}
-
-/**
  * Template API Request Handler
  */
 export function createTemplateAPIHandler(options: TemplateAPIOptions) {
@@ -77,25 +70,19 @@ export function createTemplateAPIHandler(options: TemplateAPIOptions) {
       if (req.method === 'POST' && pathname === '/api/templates') {
         const body = await parseBody(req);
 
-        // Validate required fields
         if (!body.uniqueKey || !body.name || !body.channelType || !body.bodyTemplate) {
-          sendJSON(res, 400, {
-            error: 'Missing required fields: uniqueKey, name, channelType, bodyTemplate',
-          });
+          sendErr(res, 400, 'Missing required fields: uniqueKey, name, channelType, bodyTemplate', ErrorCode.BAD_REQUEST);
           return;
         }
 
         const result = await templateService.createTemplate(body);
 
         if (!result.success) {
-          sendJSON(res, 400, {
-            error: result.error,
-            validation: result.validation,
-          });
+          sendErr(res, 400, result.error ?? 'Template creation failed', ErrorCode.BAD_REQUEST, result.validation);
           return;
         }
 
-        sendJSON(res, 201, {
+        sendOk(res, 201, {
           id: result.templateId,
           message: 'Template created successfully',
           validation: result.validation,
@@ -117,17 +104,14 @@ export function createTemplateAPIHandler(options: TemplateAPIOptions) {
           offset: offset ? parseInt(offset, 10) : undefined,
         });
 
-        sendJSON(res, 200, {
-          count: templates.length,
-          templates,
-        });
+        sendOk(res, 200, { count: templates.length, templates });
         return;
       }
 
       // GET /api/templates/stats - Get statistics
       if (req.method === 'GET' && pathname === '/api/templates/stats') {
         const stats = await templateService.getOverviewStats();
-        sendJSON(res, 200, stats);
+        sendOk(res, 200, stats);
         return;
       }
 
@@ -136,18 +120,18 @@ export function createTemplateAPIHandler(options: TemplateAPIOptions) {
         const id = parseInt(pathname.split('/').pop() || '', 10);
 
         if (isNaN(id)) {
-          sendJSON(res, 400, { error: 'Invalid template ID' });
+          sendErr(res, 400, 'Invalid template ID', ErrorCode.BAD_REQUEST);
           return;
         }
 
         const template = await templateService.getTemplate(id);
 
         if (!template) {
-          sendJSON(res, 404, { error: 'Template not found' });
+          sendErr(res, 404, 'Template not found', ErrorCode.NOT_FOUND);
           return;
         }
 
-        sendJSON(res, 200, template);
+        sendOk(res, 200, template);
         return;
       }
 
@@ -156,7 +140,7 @@ export function createTemplateAPIHandler(options: TemplateAPIOptions) {
         const id = parseInt(pathname.split('/').pop() || '', 10);
 
         if (isNaN(id)) {
-          sendJSON(res, 400, { error: 'Invalid template ID' });
+          sendErr(res, 400, 'Invalid template ID', ErrorCode.BAD_REQUEST);
           return;
         }
 
@@ -164,17 +148,11 @@ export function createTemplateAPIHandler(options: TemplateAPIOptions) {
         const result = await templateService.updateTemplate(id, body);
 
         if (!result.success) {
-          sendJSON(res, 400, {
-            error: result.error,
-            validation: result.validation,
-          });
+          sendErr(res, 400, result.error ?? 'Template update failed', ErrorCode.BAD_REQUEST, result.validation);
           return;
         }
 
-        sendJSON(res, 200, {
-          message: 'Template updated successfully',
-          validation: result.validation,
-        });
+        sendOk(res, 200, { message: 'Template updated successfully', validation: result.validation });
         return;
       }
 
@@ -183,11 +161,10 @@ export function createTemplateAPIHandler(options: TemplateAPIOptions) {
         const id = parseInt(pathname.split('/').pop() || '', 10);
 
         if (isNaN(id)) {
-          sendJSON(res, 400, { error: 'Invalid template ID' });
+          sendErr(res, 400, 'Invalid template ID', ErrorCode.BAD_REQUEST);
           return;
         }
 
-        // Check query parameter for hard delete
         const hardDelete = url.searchParams.get('hard') === 'true';
 
         const success = hardDelete
@@ -195,11 +172,11 @@ export function createTemplateAPIHandler(options: TemplateAPIOptions) {
           : await templateService.deactivateTemplate(id);
 
         if (!success) {
-          sendJSON(res, 404, { error: 'Template not found' });
+          sendErr(res, 404, 'Template not found', ErrorCode.NOT_FOUND);
           return;
         }
 
-        sendJSON(res, 200, {
+        sendOk(res, 200, {
           message: hardDelete ? 'Template deleted permanently' : 'Template deactivated',
         });
         return;
@@ -210,45 +187,34 @@ export function createTemplateAPIHandler(options: TemplateAPIOptions) {
         const body = await parseBody(req);
 
         if (!body.template || !body.context) {
-          sendJSON(res, 400, {
-            error: 'Missing required fields: template (ID or uniqueKey), context',
-          });
+          sendErr(res, 400, 'Missing required fields: template (ID or uniqueKey), context', ErrorCode.BAD_REQUEST);
           return;
         }
 
         const result = await templateService.renderTemplate(body.template, body.context);
 
         if (!result.success) {
-          sendJSON(res, 400, {
-            error: result.error,
-            missingVariables: result.missingVariables,
-          });
+          sendErr(res, 400, result.error ?? 'Render failed', ErrorCode.BAD_REQUEST, { missingVariables: result.missingVariables });
           return;
         }
 
-        sendJSON(res, 200, {
-          rendered: result.rendered,
-        });
+        sendOk(res, 200, { rendered: result.rendered });
         return;
       }
 
       // GET /api/templates/:id/stats - Get template usage stats
       if (req.method === 'GET' && pathname.match(/^\/api\/templates\/\d+\/stats$/)) {
         const id = parseInt(pathname.split('/')[3], 10);
-
         const stats = await templateService.getTemplateStats(id);
-        sendJSON(res, 200, stats);
+        sendOk(res, 200, stats);
         return;
       }
 
       // Not found
-      sendJSON(res, 404, { error: 'Endpoint not found' });
+      sendErr(res, 404, 'Endpoint not found', ErrorCode.NOT_FOUND);
     } catch (error) {
       logger.error('Template API error', { error, path: url.pathname });
-      sendJSON(res, 500, {
-        error: 'Internal server error',
-        message: error instanceof Error ? error.message : 'Unknown error',
-      });
+      sendErr(res, 500, error instanceof Error ? error.message : 'Unknown error', ErrorCode.INTERNAL_ERROR);
     }
   };
 }
@@ -262,8 +228,8 @@ import {
 export function serializeTemplate(template: NotificationTemplate): Record<string, unknown> {
   return {
     ...template,
-    createdAt: template.createdAt.toISOString(),
-    updatedAt: template.updatedAt.toISOString(),
+    createdAt: template.createdAt ? template.createdAt.toISOString() : new Date().toISOString(),
+    updatedAt: template.updatedAt ? template.updatedAt.toISOString() : new Date().toISOString(),
   };
 }
 

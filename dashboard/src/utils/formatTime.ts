@@ -1,7 +1,7 @@
 /**
  * Centralized timestamp formatting utilities.
  *
- * All functions accept a Unix millisecond timestamp and return a locale-aware
+ * All functions accept raw/unknown timestamp values and return a locale-aware
  * string in the browser's local timezone. The timezone abbreviation is always
  * included so users can see which timezone is being displayed, preventing
  * ambiguity across different locales and regions.
@@ -24,18 +24,74 @@ const SHORT_OPTIONS: Intl.DateTimeFormatOptions = {
   timeZoneName: 'short',
 };
 
+const FALLBACK_STRING = 'Unknown time';
+
 /**
- * Formats a timestamp as a full date + time string with timezone abbreviation.
- * Example: "Jan 15, 2024, 02:30:45 PM EST"
+ * Parses any raw input (number, string, Date, null, undefined) defensively into a Date object.
+ * Handles seconds vs. milliseconds Unix timestamps automatically.
  */
-export function formatTimestamp(timestamp: number): string {
-  return new Intl.DateTimeFormat(undefined, FULL_OPTIONS).format(new Date(timestamp));
+export function parseToDate(input: unknown): Date | null {
+  if (input === null || input === undefined) {
+    return null;
+  }
+
+  if (input instanceof Date) {
+    return isNaN(input.getTime()) ? null : input;
+  }
+
+  if (typeof input === 'number') {
+    if (isNaN(input) || !isFinite(input)) {
+      return null;
+    }
+    // Any timestamp below 10 billion (10,000,000,000) is treated as seconds.
+    if (input < 10000000000) {
+      return new Date(input * 1000);
+    }
+    return new Date(input);
+  }
+
+  if (typeof input === 'string') {
+    const trimmed = input.trim();
+    if (!trimmed) {
+      return null;
+    }
+    // Check if it's a numeric string
+    if (/^\d+$/.test(trimmed)) {
+      const num = Number(trimmed);
+      if (num < 10000000000) {
+        return new Date(num * 1000);
+      }
+      return new Date(num);
+    }
+    const d = new Date(trimmed);
+    return isNaN(d.getTime()) ? null : d;
+  }
+
+  return null;
 }
 
 /**
- * Formats a timestamp as a short time-only string with timezone abbreviation.
- * Example: "02:30:45 PM EST"
+ * Formats any raw/unknown timestamp as a full date + time string with timezone abbreviation.
+ * Example: "Jan 15, 2024, 02:30:45 PM EST"
+ * Gracefully returns "Unknown time" if the input is malformed, null, or undefined.
  */
-export function formatTimestampShort(timestamp: number): string {
-  return new Intl.DateTimeFormat(undefined, SHORT_OPTIONS).format(new Date(timestamp));
+export function formatTimestamp(timestamp: unknown): string {
+  const d = parseToDate(timestamp);
+  if (!d) {
+    return FALLBACK_STRING;
+  }
+  return new Intl.DateTimeFormat(undefined, FULL_OPTIONS).format(d);
+}
+
+/**
+ * Formats any raw/unknown timestamp as a short time-only string with timezone abbreviation.
+ * Example: "02:30:45 PM EST"
+ * Gracefully returns "Unknown time" if the input is malformed, null, or undefined.
+ */
+export function formatTimestampShort(timestamp: unknown): string {
+  const d = parseToDate(timestamp);
+  if (!d) {
+    return FALLBACK_STRING;
+  }
+  return new Intl.DateTimeFormat(undefined, SHORT_OPTIONS).format(d);
 }

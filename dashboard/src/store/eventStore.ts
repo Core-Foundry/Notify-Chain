@@ -1,6 +1,11 @@
 import { create } from 'zustand';
-import type { BlockchainEvent, EventFilters, NotificationStatus } from '../types/event';
-import { NOTIFICATION_STATUS_EVENTS } from '../types/event';
+import type {
+  BlockchainEvent,
+  EventFilters,
+  NotificationReadFilter,
+  NotificationSortOption,
+  NotificationStatus,
+} from '../types/event';
 import { filterEvents } from '../utils/eventData';
 
 interface EventStoreState {
@@ -17,16 +22,27 @@ interface EventStoreState {
    * after it completes.
    */
   lastFetchedAt: number;
+  lastSuccessfulSyncAt: number | null;
+  lastSyncFailureAt: number | null;
+  lastSyncError: string | null;
   setEvents: (events: BlockchainEvent[]) => void;
   appendEvents: (events: BlockchainEvent[]) => void;
   setSearch: (search: string) => void;
   setContractFilter: (contractAddress: string) => void;
   setEventTypeFilter: (eventType: string) => void;
-  setStatusFilter: (status: NotificationStatus) => void;
+  setStatusFilter: (status: NotificationReadFilter) => void;
   setDateFrom: (dateFrom: string) => void;
   setDateTo: (dateTo: string) => void;
+  setTxHashFilter: (txHash: string) => void;
+  /**
+   * Set the active sort order (#495).
+   * The selection is persisted to localStorage so it survives page refreshes.
+   */
+  setSortBy: (sortBy: NotificationSortOption) => void;
   setLoading: (isLoading: boolean) => void;
   setError: (error: string | null) => void;
+  markSyncSuccess: () => void;
+  markSyncFailure: (error: string) => void;
   /**
    * Patch the `notificationStatus` of every cached event whose `eventId`
    * matches `targetEventId`. Call this immediately after a successful
@@ -58,6 +74,21 @@ function dedupeEventsById(events: BlockchainEvent[]): BlockchainEvent[] {
   return Array.from(byId.values());
 }
 
+/** Persist the selected sort order across page refreshes. */
+const SORT_STORAGE_KEY = 'notifychain:sortBy';
+
+function loadPersistedSort(): NotificationSortOption {
+  try {
+    const saved = localStorage.getItem(SORT_STORAGE_KEY) as NotificationSortOption | null;
+    if (saved && ['newest', 'oldest', 'priority', 'delivery_status'].includes(saved)) {
+      return saved;
+    }
+  } catch {
+    // localStorage may be unavailable in some environments
+  }
+  return 'newest';
+}
+
 export const useEventStore = create<EventStoreState>((set) => ({
   events: [],
   filters: {
@@ -67,10 +98,15 @@ export const useEventStore = create<EventStoreState>((set) => ({
     status: 'all',
     dateFrom: '',
     dateTo: '',
+    txHash: '',
+    sortBy: loadPersistedSort(),
   },
   isLoading: false,
   error: null,
   lastFetchedAt: 0,
+  lastSuccessfulSyncAt: null,
+  lastSyncFailureAt: null,
+  lastSyncError: null,
   setEvents: (events) => set({ events: dedupeEventsById(events), lastFetchedAt: Date.now() }),
   appendEvents: (events) =>
     set((state) => ({
@@ -89,8 +125,20 @@ export const useEventStore = create<EventStoreState>((set) => ({
     set((state) => ({ filters: { ...state.filters, dateFrom } })),
   setDateTo: (dateTo) =>
     set((state) => ({ filters: { ...state.filters, dateTo } })),
+  setTxHashFilter: (txHash) =>
+    set((state) => ({ filters: { ...state.filters, txHash } })),
+  setSortBy: (sortBy) => {
+    try {
+      localStorage.setItem(SORT_STORAGE_KEY, sortBy);
+    } catch {
+      // localStorage may be unavailable
+    }
+    set((state) => ({ filters: { ...state.filters, sortBy } }));
+  },
   setLoading: (isLoading) => set({ isLoading }),
   setError: (error) => set({ error }),
+  markSyncSuccess: () => set({ lastSuccessfulSyncAt: Date.now(), lastSyncFailureAt: null, lastSyncError: null }),
+  markSyncFailure: (error) => set({ lastSyncFailureAt: Date.now(), lastSyncError: error }),
   updateEventStatus: (targetEventId, status) =>
     set((state) => ({
       events: state.events.map((event) =>
@@ -111,7 +159,9 @@ export function selectFilteredEvents(state: EventStoreState): BlockchainEvent[] 
     filters.eventType,
     filters.status,
     filters.dateFrom,
-    filters.dateTo
+    filters.dateTo,
+    filters.txHash,
+    filters.sortBy ?? 'newest',
   );
 }
 
