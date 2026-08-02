@@ -137,6 +137,7 @@ export class DiscordNotificationService {
         nextDelayMs: delayMs,
         maxRetries,
       });
+
       await this.delay(delayMs);
       attempt++;
     }

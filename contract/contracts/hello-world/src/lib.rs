@@ -682,7 +682,7 @@ impl AutoShareContract {
 
 #[cfg(test)]
 pub mod test_utils {
-    #[path = "tests/test_utils.rs"]
+    #[path = "../tests/test_utils.rs"]
     mod inner;
     pub use inner::*;
 }

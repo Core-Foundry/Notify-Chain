@@ -29,6 +29,7 @@ import logger from './utils/logger';
 import { loadConfig, validateConfig, ConfigError } from './config';
 import { NotificationHealthMonitor } from './services/notification-health-monitor';
 import { getWorkerManager } from './services/worker-manager';
+import { EventDeduplicationService } from './services/event-deduplication-service';
 
 dotenv.config();
 
@@ -57,6 +58,7 @@ async function main() {
   let archiveStore: ArchiveStore | null = null;
   let metricsRunner: NotificationMetricsRunner | null = null;
   let metricsStore: NotificationMetricsStore | null = null;
+  let deduplicationService: EventDeduplicationService | null = null;
 
   repository = new ScheduledNotificationRepository(db);
   healthMonitor = new NotificationHealthMonitor(null, getWorkerManager(), {

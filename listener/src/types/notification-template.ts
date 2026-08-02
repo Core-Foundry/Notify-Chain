@@ -97,6 +97,18 @@ export interface ChannelNotificationTemplateRow {
   updated_by: string | null;
 }
 
+export interface NotificationTemplateOld {
+  id: string;
+  name: string;
+  type: string;
+  subject?: string;
+  body: string;
+  variables?: string[];
+  metadata?: Record<string, unknown>;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
 export interface CreateNotificationTemplateInput {
   id: string;
   name: string;

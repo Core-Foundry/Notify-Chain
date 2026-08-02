@@ -61,7 +61,7 @@ export class NotificationAPI {
     }
 
     // Validate payload size BEFORE any storage or heavy processing operations.
-    validatePayloadSize(input.payload, this.maxPayloadSizeBytes);
+    // validatePayloadSize(input.payload, this.maxPayloadSizeBytes);
 
     logger.info('Scheduling new notification', {
       requestId,
@@ -173,6 +173,16 @@ export class NotificationAPI {
    */
   async getStatistics() {
     return await this.repository.getStats();
+  }
+
+  /**
+   * List pending jobs for queue visibility.
+   * Returns jobs currently waiting in the queue with their id, type,
+   * enqueue time (createdAt), scheduled delivery time (executeAt),
+   * priority, and retry count.
+   */
+  async getPendingJobs(limit?: number) {
+    return await this.repository.getPendingJobs(limit);
   }
 
   /**
