@@ -2,6 +2,7 @@ import logger from '../utils/logger';
 import { EventProcessingQueue } from './event-processing-queue';
 import { WorkerManager } from './worker-manager';
 import { eventRegistry } from '../store/event-registry';
+import { ScheduledNotificationRepository } from './scheduled-notification-repository';
 
 export type ComponentStatus = 'healthy' | 'degraded' | 'unhealthy';
 
@@ -9,6 +10,7 @@ export interface QueueHealth {
   status: ComponentStatus;
   pendingJobs: number;
   stalledSince: number | null;
+  deadLetterQueueDepth: number;
 }
 
 export interface WorkerHealth {
@@ -41,6 +43,8 @@ export interface NotificationHealthMonitorOptions {
   maxProcessingDelayMs?: number;
   /** Injected clock for tests. */
   now?: () => number;
+  /** Optional repository used to surface DLQ depth in the health report. */
+  repository?: ScheduledNotificationRepository | null;
 }
 
 /**
@@ -58,6 +62,7 @@ export class NotificationHealthMonitor {
 
   private queue: EventProcessingQueue | null;
   private workerManager: WorkerManager | null;
+  private repository: ScheduledNotificationRepository | null;
 
   private timer: ReturnType<typeof setInterval> | null = null;
   private lastReport: HealthReport | null = null;
@@ -74,6 +79,7 @@ export class NotificationHealthMonitor {
   ) {
     this.queue = queue;
     this.workerManager = workerManager;
+    this.repository = options.repository ?? null;
     this.intervalMs = options.intervalMs ?? 30_000;
     this.stallThresholdCycles = options.stallThresholdCycles ?? 3;
     this.maxProcessingDelayMs = options.maxProcessingDelayMs ?? 60_000;
@@ -139,7 +145,7 @@ export class NotificationHealthMonitor {
 
   private checkQueue(): QueueHealth {
     if (!this.queue) {
-      return { status: 'healthy', pendingJobs: 0, stalledSince: null };
+      return { status: 'healthy', pendingJobs: 0, stalledSince: null, deadLetterQueueDepth: this.getDeadLetterQueueDepth() };
     }
 
     const pending = this.queue.pendingCount();
@@ -167,7 +173,21 @@ export class NotificationHealthMonitor {
       status = 'degraded';
     }
 
-    return { status, pendingJobs: pending, stalledSince: this.stalledSince };
+    return { status, pendingJobs: pending, stalledSince: this.stalledSince, deadLetterQueueDepth: this.getDeadLetterQueueDepth() };
+  }
+
+  private getDeadLetterQueueDepth(): number {
+    if (!this.repository) {
+      return 0;
+    }
+
+    try {
+      const stats = this.repository.getStats();
+      return (stats as any).deadLetterQueue ?? 0;
+    } catch (error) {
+      logger.warn('Unable to determine dead letter queue depth', { error });
+      return 0;
+    }
   }
 
   private checkWorkers(): WorkerHealth {

@@ -15,7 +15,7 @@ import {
   RenderContext,
   RenderedTemplate,
   TemplateValidationResult,
-  NotificationTemplate,
+  ChannelNotificationTemplate,
   TemplateChannelType,
 } from '../types/notification-template';
 import { InputValidator, isNonEmptyString, isOneOf, isPlainObject } from '../utils/validation';
@@ -320,7 +320,7 @@ export class TemplateService {
   /**
    * Get template by ID or unique key
    */
-  async getTemplate(uniqueKeyOrId: string | number): Promise<NotificationTemplate | null> {
+  async getTemplate(uniqueKeyOrId: string | number): Promise<ChannelNotificationTemplate | null> {
     if (typeof uniqueKeyOrId === 'string') {
       return await this.repository.getByUniqueKey(uniqueKeyOrId);
     }
@@ -335,7 +335,7 @@ export class TemplateService {
     isActive?: boolean;
     limit?: number;
     offset?: number;
-  }): Promise<NotificationTemplate[]> {
+  }): Promise<ChannelNotificationTemplate[]> {
     return await this.repository.getAll(filters);
   }
 

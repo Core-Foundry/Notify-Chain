@@ -4,8 +4,11 @@ import {
   CreateNotificationTemplateInput,
   AuditedNotificationTemplate,
   AuditedNotificationTemplateRow,
+  CreateNotificationTemplateInputOld,
+  NotificationTemplateOld,
+  NotificationTemplateRowOld,
   TemplateAuditRecord,
-  UpdateNotificationTemplateInput,
+  UpdateNotificationTemplateInputOld,
 } from '../types/notification-template';
 import { TemplateAuditTrail } from './template-audit-trail';
 import { NotificationTemplateCache } from './notification-template-cache';
@@ -35,6 +38,7 @@ export class NotificationTemplateRepository {
   ) {}
 
   async create(input: CreateNotificationTemplateInput): Promise<AuditedNotificationTemplate> {
+  async create(input: CreateNotificationTemplateInputOld): Promise<NotificationTemplateOld> {
     this.validateTemplateInput(input.id, input.name, input.body);
 
     const now = new Date();
@@ -68,6 +72,8 @@ export class NotificationTemplateRepository {
 
   async getById(templateId: string): Promise<AuditedNotificationTemplate | undefined> {
     const row = await this.db.get<AuditedNotificationTemplateRow>(
+  async getById(templateId: string): Promise<NotificationTemplateOld | undefined> {
+    const row = await this.db.get<NotificationTemplateRowOld>(
       'SELECT * FROM notification_templates WHERE id = ?',
       [templateId],
     );
@@ -76,9 +82,10 @@ export class NotificationTemplateRepository {
 
   async update(
     templateId: string,
-    input: UpdateNotificationTemplateInput,
+    input: UpdateNotificationTemplateInputOld,
     actor: string,
   ): Promise<AuditedNotificationTemplate> {
+  ): Promise<NotificationTemplateOld> {
     const trimmedActor = actor?.trim();
     if (!trimmedActor) {
       throw new TemplateValidationError('Actor is required for template updates');
@@ -94,6 +101,7 @@ export class NotificationTemplateRepository {
     this.validateTemplateInput(templateId, nextName, nextBody);
 
     const updated: AuditedNotificationTemplate = {
+    const updated: NotificationTemplateOld = {
       ...existing,
       ...input,
       name: nextName,
@@ -156,6 +164,17 @@ export class NotificationTemplateRepository {
     return rows.map(row => this.rowToModel(row));
   async listAll(): Promise<AuditedNotificationTemplate[]> {
     const rows = await this.db.all<AuditedNotificationTemplateRow>(
+  async getAll(): Promise<NotificationTemplateOld[]> {
+    const rows = await this.db.all<NotificationTemplateRowOld>(
+      'SELECT * FROM notification_templates',
+    );
+    return rows.map(row => this.rowToModel(row));
+  }
+  async listAll(): Promise<NotificationTemplateOld[]> {
+    const rows = await this.db.all<NotificationTemplateRowOld>(
+
+  async listAll(): Promise<NotificationTemplate[]> {
+    const rows = await this.db.all<NotificationTemplateRow>(
       'SELECT * FROM notification_templates ORDER BY created_at DESC',
       [],
     );
@@ -191,12 +210,15 @@ export class NotificationTemplateRepository {
   private hasTemplateChanges(
     previous: AuditedNotificationTemplate,
     next: AuditedNotificationTemplate,
+    previous: NotificationTemplateOld,
+    next: NotificationTemplateOld,
   ): boolean {
     return JSON.stringify(this.snapshotForComparison(previous))
       !== JSON.stringify(this.snapshotForComparison(next));
   }
 
   private snapshotForComparison(template: AuditedNotificationTemplate): Record<string, unknown> {
+  private snapshotForComparison(template: NotificationTemplateOld): Record<string, unknown> {
     return {
       id: template.id,
       name: template.name,
@@ -210,6 +232,7 @@ export class NotificationTemplateRepository {
   }
 
   private rowToModel(row: AuditedNotificationTemplateRow): AuditedNotificationTemplate {
+  private rowToModel(row: NotificationTemplateRowOld): NotificationTemplateOld {
     return {
       id: row.id,
       name: row.name,
@@ -220,6 +243,6 @@ export class NotificationTemplateRepository {
       metadata: row.metadata ? JSON.parse(row.metadata) : undefined,
       createdAt: new Date(row.created_at),
       updatedAt: new Date(row.updated_at),
-    };
+    } as any;
   }
 }

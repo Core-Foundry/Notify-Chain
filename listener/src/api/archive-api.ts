@@ -6,8 +6,8 @@
  *   GET  /api/archive/:id          – single archived record by archive PK
  *   POST /api/archive/run          – trigger an on-demand archive cycle (admin)
  *
- * All endpoints return JSON.  The optional `archiveService` parameter is only
- * needed for the admin /run endpoint; read-only endpoints only require `store`.
+ * All endpoints return JSON using the standardised response envelope
+ * (Issue #385):  { success: true, data: … }  /  { success: false, error: … }
  */
 import http from 'http';
 import { ArchiveStore } from '../services/archive-store';
@@ -22,6 +22,7 @@ import {
   parseOptionalIntParam,
   validationErrorBody,
 } from '../utils/validation';
+import { sendOk, sendErr, ErrorCode } from '../utils/response';
 
 export interface ArchiveApiHandlerDeps {
   store: ArchiveStore;
@@ -45,19 +46,16 @@ export async function handleArchiveRequest(
   // POST /api/archive/run  – trigger on-demand cycle
   if (req.method === 'POST' && pathname === '/api/archive/run') {
     if (!deps.service) {
-      res.writeHead(503, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: 'Archive service not enabled' }));
+      sendErr(res, 503, 'Archive service not enabled', ErrorCode.SERVICE_UNAVAILABLE);
       return true;
     }
     logger.info('Handling POST /api/archive/run', { requestId });
     try {
       const result = await deps.service.runCycle();
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify(result));
+      sendOk(res, 200, result);
     } catch (err) {
       logger.error('Archive run failed', { error: err, requestId });
-      res.writeHead(500, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: (err as Error).message }));
+      sendErr(res, 500, (err as Error).message, ErrorCode.INTERNAL_ERROR);
     }
     return true;
   }
@@ -75,16 +73,13 @@ export async function handleArchiveRequest(
     try {
       const record = await deps.store.getById(id);
       if (!record) {
-        res.writeHead(404, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'Archived record not found' }));
+        sendErr(res, 404, 'Archived record not found', ErrorCode.NOT_FOUND);
         return true;
       }
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify(record));
+      sendOk(res, 200, record);
     } catch (err) {
       logger.error('Failed to fetch archive record', { error: err, requestId, id });
-      res.writeHead(500, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: (err as Error).message }));
+      sendErr(res, 500, (err as Error).message, ErrorCode.INTERNAL_ERROR);
     }
     return true;
   }
@@ -118,8 +113,7 @@ export async function handleArchiveRequest(
         endDate,
       };
       const result = await deps.store.query(options);
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify(result));
+      sendOk(res, 200, result);
     } catch (err) {
       if (err instanceof ValidationError) {
         logger.warn('Archive query rejected', { requestId, error: err.message });
@@ -128,8 +122,7 @@ export async function handleArchiveRequest(
         return true;
       }
       logger.error('Failed to query archive', { error: err, requestId });
-      res.writeHead(500, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: (err as Error).message }));
+      sendErr(res, 500, (err as Error).message, ErrorCode.INTERNAL_ERROR);
     }
     return true;
   }
