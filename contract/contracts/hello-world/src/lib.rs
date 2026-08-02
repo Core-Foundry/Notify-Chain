@@ -3,6 +3,7 @@ use soroban_sdk::{contract, contractimpl, Address, BytesN, Env, String, Vec};
 
 // 1. Declare the foundational modules (Requirement: Modular Structure)
 pub mod base {
+    pub mod channel;
     pub mod errors;
     pub mod events;
     pub mod metadata_validation;
@@ -17,6 +18,7 @@ pub mod interfaces {
 
 // 2. Declare the main logic files where the functions are implemented
 mod autoshare_logic;
+mod channel_logic;
 mod preferences_logic;
 mod reputation_logic;
 
@@ -678,6 +680,57 @@ impl AutoShareContract {
     pub fn record_notification_access(env: Env, notification_id: BytesN<32>, accessor: Address) {
         autoshare_logic::record_notification_access(env, notification_id, accessor).unwrap();
     }
+
+    // ============================================================================
+    // Notification Channel Subscriptions
+    // ============================================================================
+
+    /// Creates a notification channel and permanently stores the creator address.
+    pub fn create_channel(env: Env, id: BytesN<32>, name: String, creator: Address) {
+        channel_logic::create_channel(env, id, name, creator).unwrap();
+    }
+
+    /// Returns full channel metadata (creator, name, subscriber_count, etc.).
+    pub fn get_channel(env: Env, id: BytesN<32>) -> base::channel::NotificationChannel {
+        channel_logic::get_channel(env, id).unwrap()
+    }
+
+    /// Returns the wallet address that originally created the channel.
+    pub fn get_channel_creator(env: Env, id: BytesN<32>) -> Address {
+        channel_logic::get_channel_creator(env, id).unwrap()
+    }
+
+    /// Read-only view of the active subscriber count for a channel.
+    pub fn get_subscriber_count(env: Env, id: BytesN<32>) -> u32 {
+        channel_logic::get_subscriber_count(env, id).unwrap()
+    }
+
+    /// Returns whether `subscriber` is currently subscribed to the channel.
+    pub fn is_channel_subscriber(env: Env, id: BytesN<32>, subscriber: Address) -> bool {
+        channel_logic::is_channel_subscriber(env, id, subscriber)
+    }
+
+    /// Subscribe to a single notification channel.
+    pub fn subscribe(env: Env, channel_id: BytesN<32>, subscriber: Address) {
+        channel_logic::subscribe(env, channel_id, subscriber).unwrap();
+    }
+
+    /// Unsubscribe from a notification channel.
+    pub fn unsubscribe(env: Env, channel_id: BytesN<32>, subscriber: Address) {
+        channel_logic::unsubscribe(env, channel_id, subscriber).unwrap();
+    }
+
+    /// Subscribe to multiple channels in one transaction.
+    ///
+    /// Individual failures are skipped without corrupting successful subscriptions.
+    /// See `docs/BATCH_SUBSCRIBE_GAS.md` for gas documentation.
+    pub fn batch_subscribe(
+        env: Env,
+        channel_ids: Vec<BytesN<32>>,
+        subscriber: Address,
+    ) -> base::channel::BatchSubscribeResult {
+        channel_logic::batch_subscribe(env, channel_ids, subscriber).unwrap()
+    }
 }
 
 #[cfg(test)]
@@ -767,6 +820,8 @@ mod tests {
     #[path = "tests/subscription_cancellation_test.rs"]
     mod subscription_cancellation_test;
 
+    #[path = "../tests/channel_subscription_test.rs"]
+    mod channel_subscription_test;
     #[path = "tests/notification_lifetime_test.rs"]
     mod notification_lifetime_test;
 }
