@@ -240,6 +240,14 @@ The PR template will prompt you for:
 
 ## Automated Dependency Updates
 
+Review expectations and a per-area checklist live in
+[`docs/CODE_REVIEW_GUIDELINES.md`](docs/CODE_REVIEW_GUIDELINES.md).
+
+### For Contributors
+1. Ensure all tests pass locally
+2. Address reviewer feedback promptly
+3. Keep PR scope focused on a single issue or feature
+4. Be open to suggestions
 [Dependabot](https://docs.github.com/en/code-security/dependabot) opens PRs weekly (Mondays) for outdated dependencies across all four ecosystems. Config is in [`.github/dependabot.yml`](.github/dependabot.yml).
 
 When reviewing Dependabot PRs: check the changelog for breaking changes, wait for CI to pass, and review the migration guide for major version bumps.
