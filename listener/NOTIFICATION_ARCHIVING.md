@@ -28,6 +28,12 @@ Every ARCHIVE_INTERVAL_MS (default 6 h)
 
 Both phases run inside a single `setInterval` tick.  The batch size cap keeps individual transactions short and prevents long table locks.
 
+In addition, `ArchiveService.archiveProcessedById(id)` can move a single
+terminal-state notification into the archive immediately (for example right
+after delivery completes) so active storage stays lean without waiting for the
+next cycle. Archived rows remain fully queryable via `GET /api/archive` and
+`GET /api/archive/:id` — no data is lost.
+
 ---
 
 ## Data Schema
