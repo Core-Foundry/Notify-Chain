@@ -2,6 +2,10 @@
 
 Welcome, and thanks for your interest in contributing. This document is your starting point — it covers the contribution workflow, coding standards, and PR guidelines. Deeper references are linked throughout.
 
+**Start here instead (recommended):**
+
+- Environment setup (tools, clone, verify): [`docs/ENVIRONMENT_SETUP.md`](docs/ENVIRONMENT_SETUP.md)
+- Development workflow (fork, branch, PR): [`CONTRIBUTOR_DEVELOPMENT_WORKFLOW_GUIDE.md`](CONTRIBUTOR_DEVELOPMENT_WORKFLOW_GUIDE.md)
 ---
 
 ## Documentation Map
@@ -25,6 +29,46 @@ Welcome, and thanks for your interest in contributing. This document is your sta
 ## Code of Conduct
 
 - Be respectful and inclusive
+- Provide constructive feedback
+- Focus on what is best for the community
+- Show empathy towards other contributors
+
+## Getting Started
+
+### Prerequisites
+
+To contribute to NotifyChain, install the tools listed in
+[`docs/ENVIRONMENT_SETUP.md`](docs/ENVIRONMENT_SETUP.md) (Rust, WebAssembly
+target, Stellar CLI, Node.js 22, Git). The guide includes verification steps
+to confirm your machine is ready.
+
+You should also have a basic understanding of Soroban smart contracts, Git, and GitHub.
+
+### Setup (Fork Workflow)
+
+To set up a local development environment, follow this fork-and-clone workflow:
+
+1. **Fork the Repository**: Visit [Notify-Chain](https://github.com/Core-Foundry/Notify-Chain) and click the **Fork** button to create a copy of the repository under your GitHub account.
+2. **Clone your Fork**:
+   ```bash
+   git clone https://github.com/your-username/Notify-Chain.git
+   cd Notify-Chain
+   ```
+3. **Configure Upstream Remote**: Keep your fork updated by pointing to the upstream repository:
+   ```bash
+   git remote add upstream https://github.com/Core-Foundry/Notify-Chain.git
+   ```
+4. **Verify Remotes**: Run `git remote -v` to ensure your configuration is correct:
+   ```bash
+   origin    https://github.com/your-username/Notify-Chain.git (fetch)
+   origin    https://github.com/your-username/Notify-Chain.git (push)
+   upstream  https://github.com/Core-Foundry/Notify-Chain.git (fetch)
+   upstream  https://github.com/Core-Foundry/Notify-Chain.git (push)
+   ```
+
+### Syncing Your Fork
+
+Before starting any new work or creating a branch, always pull the latest changes from the upstream `main` branch to prevent merge conflicts:
 - Give constructive, specific feedback
 - Show empathy — everyone is learning
 
