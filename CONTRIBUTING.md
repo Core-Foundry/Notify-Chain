@@ -93,6 +93,7 @@ For a detailed walkthrough including platform-specific notes, see [`CONTRIBUTOR_
 
 Requires [Docker Desktop](https://www.docker.com/products/docker-desktop/) (or Docker Engine + Compose on Linux). No Node.js install needed.
 
+Verify Stellar CLI:
 ```bash
 git clone https://github.com/YOUR-USERNAME/Notify-Chain.git
 cd Notify-Chain
@@ -136,7 +137,10 @@ Full setup details: [`CONTRIBUTOR_SETUP.md`](CONTRIBUTOR_SETUP.md)
 
 ---
 
-## Development Workflow
+```bash
+git remote add upstream https://github.com/Core-Foundry/Notify-Chain.git
+git remote -v  # verify: origin = your fork, upstream = main repo
+```
 
 ### 1. Sync and branch
 
@@ -162,7 +166,10 @@ Branch naming:
 | `chore/` | Maintenance |
 > For the complete branching strategy — including naming rules, what to avoid, and how to recover from common mistakes — see [`docs/GIT_WORKFLOW.md`](docs/GIT_WORKFLOW.md).
 
-### 2. Make Your Changes
+```bash
+cd dashboard
+npm ci
+```
 
 ### 2. Make changes
 
@@ -174,7 +181,7 @@ Branch naming:
 
 **Hit a problem?** Check [`docs/CONTRIBUTOR_TROUBLESHOOTING.md`](docs/CONTRIBUTOR_TROUBLESHOOTING.md) before opening an issue.
 
-### 3. Write and Run Tests
+## Running Tests
 
 ### 3. Run tests before pushing
 
@@ -250,7 +257,10 @@ Then open a PR on GitHub against `main`. GitHub will pre-fill the PR template �
 
 ---
 
-## Pull Request Guidelines
+5. **Push your branch** and open a Pull Request on GitHub:
+   ```bash
+   git push -u origin <branch-name>
+   ```
 
 ### Title
 
