@@ -25,6 +25,11 @@ export class EventRegistry {
   }
 
   startCleanup(intervalMs = 60_000): void {
+    if (this.cleanupTimer) return;
+    this.cleanupTimer = setInterval(() => this.pruneExpired(), intervalMs);
+  }
+
+  stopCleanup(): void {
     if (this.cleanupTimer) {
       clearInterval(this.cleanupTimer);
       this.cleanupTimer = null;
@@ -110,3 +115,5 @@ export class EventRegistry {
 }
 
 export const eventRegistry = new EventRegistry();
+
+

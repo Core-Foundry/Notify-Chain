@@ -120,7 +120,8 @@ export function NotificationHealthPanel(props: { healthUrl: string; pollInterval
 
       setLastUpdated(Date.now());
     } catch (err) {
-      if ((err as any)?.name === 'AbortError') return;
+      if (err instanceof DOMException && err.name === 'AbortError') return;
+      if (err instanceof Error && err.name === 'AbortError') return;
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setIsRefreshing(false);

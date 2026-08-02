@@ -132,36 +132,12 @@ export class DiscordNotificationService {
       // Exponential backoff: base * 2^attempt (seconds)
       const delayMs = Math.pow(2, attempt) * backoffBaseSeconds * 1000;
       logger.warn('Retrying Discord webhook', {
-      this.deduplicator.markSent(fingerprint);
-      this.analytics?.record({
-        notificationType: NotificationType.DISCORD,
-        contractAddress: contractConfig.address,
-        outcome: 'success',
-        durationMs,
-        timestamp: Date.now(),
-      });
-      logger.info('Discord notification delivered', {
-        ...logContext,
-        durationMs,
-        deduplication: this.deduplicator.getMetrics(),
-      });
-      return true;
-    } catch (error) {
-      const durationMs = Date.now() - startTime;
-      this.analytics?.record({
-        notificationType: NotificationType.DISCORD,
-        contractAddress: contractConfig.address,
-        outcome: 'failure',
-        durationMs,
-        errorReason: error instanceof Error ? error.message : String(error),
-        timestamp: Date.now(),
-      });
-      logger.error('Error sending Discord notification', {
         ...logContext,
         attempt: attempt + 1,
         nextDelayMs: delayMs,
         maxRetries,
       });
+
       await this.delay(delayMs);
       attempt++;
     }

@@ -17,8 +17,6 @@ import { initializeDatabase } from './database/database';
 import { DiscordNotificationService } from './services/discord-notification';
 import { TemplateService } from './services/template-service';
 import { TemplateRepository } from './services/template-repository';
-import { TemplateValidator } from './services/template-validator';
-import { TemplateRenderer } from './services/template-renderer';
 import {
   IndexingReconciliationEngine,
   createDefaultAlertSink,
@@ -28,59 +26,55 @@ import { NotificationMetricsStore } from './services/notification-metrics-store'
 import { NotificationMetricsRunner } from './services/notification-metrics-runner';
 import { eventRegistry } from './store/event-registry';
 import logger from './utils/logger';
-import { loadConfig, ConfigError } from './config';
+import { loadConfig, validateConfig, ConfigError } from './config';
 import { NotificationHealthMonitor } from './services/notification-health-monitor';
 import { getWorkerManager } from './services/worker-manager';
+import { EventDeduplicationService } from './services/event-deduplication-service';
 
 dotenv.config();
 
 async function main() {
   const config = loadConfig();
+  // Validate all config values before starting any services (#494).
+  // This throws a descriptive ConfigError listing every problem found.
+  validateConfig(config);
 
-  // Initialize database for scheduled notifications and templates
-  // Initialize database for templates, scheduler, and rate limiting
   let scheduler: NotificationScheduler | null = null;
   let retryScheduler: RetryScheduler | null = null;
   let notificationAPI: NotificationAPI | null = null;
   let templateService: TemplateService | null = null;
+  let healthMonitor: NotificationHealthMonitor | null = null;
 
   if (config.scheduler?.enabled) {
     try {
       logger.info('Initializing database for scheduled notifications and templates');
       const db = await initializeDatabase(config.databasePath);
   let templateService: NotificationTemplateService | null = null;
+  let legacyTemplateService: TemplateService | null = null;
   let cleanupService: CleanupService | null = null;
+  let repository: ScheduledNotificationRepository | null = null;
   let reconciliationEngine: IndexingReconciliationEngine | null = null;
   let archiveService: ArchiveService | null = null;
   let archiveStore: ArchiveStore | null = null;
   let metricsRunner: NotificationMetricsRunner | null = null;
   let metricsStore: NotificationMetricsStore | null = null;
+  let deduplicationService: EventDeduplicationService | null = null;
 
-  const healthMonitor = new NotificationHealthMonitor(null, getWorkerManager());
+  repository = new ScheduledNotificationRepository(db);
+  healthMonitor = new NotificationHealthMonitor(null, getWorkerManager(), {
+    repository,
+  });
 
   if (config.analytics?.enabled) {
     initNotificationAnalyticsAggregator(config.analytics);
   }
-  const retryCount = process.env.DISCORD_RETRY_COUNT
-    ? parseInt(process.env.DISCORD_RETRY_COUNT, 10)
-    : undefined;
-  const backoffBaseSeconds = process.env.DISCORD_BACKOFF_BASE_SECONDS
-    ? parseFloat(process.env.DISCORD_BACKOFF_BASE_SECONDS)
-    : undefined;
-
-  return { webhookUrl, webhookId, retryCount, backoffBaseSeconds };
-}
 
   try {
     logger.info('Initializing database');
     const db = await initializeDatabase(config.databasePath);
 
-    // Initialize deduplication service
-    deduplicationService = new EventDeduplicationService(db);
-
     // Rebuild registry with configured event TTL
     if (config.cleanup) {
-      (eventRegistry as any).ttlMs = config.cleanup.eventRetentionMs;
       eventRegistry.setTtlMs(config.cleanup.eventRetentionMs);
     }
 
@@ -94,6 +88,7 @@ async function main() {
       alertSink: createDefaultAlertSink(config.discord?.webhookUrl),
     });
     reconciliationEngine.start();
+
     if (config.analytics?.enabled) {
       metricsStore = new NotificationMetricsStore(db);
       metricsRunner = new NotificationMetricsRunner(config.analytics, metricsStore);
@@ -119,18 +114,12 @@ async function main() {
     templateService = new NotificationTemplateService(templateRepository);
 
     if (config.scheduler?.enabled) {
-      const repository = new ScheduledNotificationRepository(db);
+      repository = new ScheduledNotificationRepository(db);
       notificationAPI = new NotificationAPI(repository);
 
-      // Initialize template service
-      const templateRepository = new TemplateRepository(db);
-      const templateValidator = new TemplateValidator();
-      const templateRenderer = new TemplateRenderer();
-      templateService = new TemplateService(
-        templateRepository,
-        templateValidator,
-        templateRenderer
-      );
+      // Initialize legacy template service
+      const legacyTemplateRepo = new TemplateRepository(db);
+      legacyTemplateService = new TemplateService(legacyTemplateRepo);
 
       logger.info('Template service initialized successfully');
 
@@ -163,12 +152,10 @@ async function main() {
     stellarNetworkPassphrase: config.stellarNetworkPassphrase,
     contractAddresses: config.contractAddresses,
     discordWebhookUrl: config.discord?.webhookUrl,
-    notificationAPI, // Pass API to events server for scheduling endpoints
-    templateService, // Pass template service for template endpoints
+    notificationAPI,
+    templateService: legacyTemplateService,
     webhookSecrets: config.webhookSecrets,
     apiKeys: config.apiKeys,
-    notificationAPI,
-    templateService,
     rateLimit: config.rateLimit,
     archiveStore,
     archiveService,
@@ -176,15 +163,19 @@ async function main() {
     healthMonitor,
   });
 
-  healthMonitor.start();
+  if (healthMonitor) {
+    healthMonitor.start();
+  }
 
-  const subscriber = new EventSubscriber(config);
+  const subscriber = new EventSubscriber(config, deduplicationService);
   await subscriber.start();
 
   const shutdown = async () => {
     logger.info('Shutting down services...');
 
-    healthMonitor.stop();
+    if (healthMonitor) {
+      healthMonitor.stop();
+    }
 
     if (cleanupService) {
       await cleanupService.stop();
@@ -192,6 +183,8 @@ async function main() {
 
     if (reconciliationEngine) {
       reconciliationEngine.stop();
+    }
+
     if (metricsRunner) {
       await metricsRunner.stop();
     }

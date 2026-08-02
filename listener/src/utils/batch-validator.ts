@@ -143,13 +143,17 @@ export class BatchValidator {
 }
 
 function runTerminalSimulation() {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const log = require('./logger').default as typeof import('./logger').default;
+
   const sampleMockBatch = [
     { id: 'evt_001', recipient: 'discord_channel_alpha', channel: 'discord', message: 'TaskCreated: Bounty #42 active.' },
     { id: 'evt_002', recipient: 'discord_channel_alpha', channel: 'discord', message: 'WorkSubmitted: Task completed.' },
     { id: 'evt_003', recipient: '', channel: 'webhook', message: 'Missing recipient details' },
   ];
 
-  console.log('🚀 Running NotifyChain Batch Validation Check...');
+  log.info('Running NotifyChain Batch Validation Check');
+
   const validationReport = BatchValidator.validateBatch(sampleMockBatch);
 
   const reportsDir = path.join(__dirname, '../../reports');
@@ -157,17 +161,26 @@ function runTerminalSimulation() {
     fs.mkdirSync(reportsDir, { recursive: true });
   }
 
-  fs.writeFileSync(
-    path.join(reportsDir, 'last-validation-run.json'),
-    JSON.stringify(validationReport, null, 2),
-    'utf-8'
-  );
+  const reportPath = path.join(reportsDir, 'last-validation-run.json');
+  fs.writeFileSync(reportPath, JSON.stringify(validationReport, null, 2), 'utf-8');
 
-  console.log(`\n📊 Execution Results Logged:`);
-  console.log(`   Status: ${validationReport.isValid ? '🟩 PASSED' : '🟥 REJECTED'}`);
-  console.log(`   Errors Found: ${validationReport.errors.length}`);
-  validationReport.errors.forEach((err) => console.log(`   ⚠️  ${err.message}`));
-  console.log(`\n💾 Saved audit report to: listener/reports/last-validation-run.json`);
+  log.info('Batch validation complete', {
+    status: validationReport.isValid ? 'PASSED' : 'REJECTED',
+    processedCount: validationReport.processedCount,
+    errorCount: validationReport.errors.length,
+    reportPath,
+  });
+
+  if (!validationReport.isValid) {
+    validationReport.errors.forEach((err) => {
+      log.warn('Validation error detail', {
+        index: err.index,
+        field: err.field,
+        code: err.code,
+        message: err.message,
+      });
+    });
+  }
 }
 
 if (require.main === module) {

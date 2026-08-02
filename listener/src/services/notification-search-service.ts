@@ -7,10 +7,25 @@ export interface NotificationSearchParams {
   sender?: string;    // target_recipient exact/partial match
   txHash?: string;    // tx_hash exact/partial match
   eventId?: string;   // event_id exact/partial match
-  status?: string;    // scheduled_notifications.status
-  type?: string;      // notification_type
+  status?: string;    // scheduled_notifications.status / processed_events.status
+  type?: string;      // notification_type (discord|email|webhook|sms)
+  startDate?: string; // inclusive lower bound on created_at / processed_at (YYYY-MM-DD or ISO)
+  endDate?: string;   // inclusive upper bound on created_at / processed_at (YYYY-MM-DD or ISO)
   limit?: number;
   offset?: number;
+  /**
+   * Sort order for results (#495).
+   * - newest (default) – most recently created first
+   * - oldest           – earliest created first
+   * - status           – group by delivery status, then newest within each group
+   */
+  sortBy?: 'newest' | 'oldest' | 'status';
+}
+
+/** Normalize a date filter so YYYY-MM-DD covers the full UTC day. */
+export function normalizeSearchDateBound(value: string, bound: 'start' | 'end'): string {
+  if (value.includes('T')) return value;
+  return bound === 'start' ? `${value}T00:00:00.000Z` : `${value}T23:59:59.999Z`;
 }
 
 export interface NotificationSearchResult {
@@ -24,6 +39,13 @@ export interface NotificationSearchResult {
   status: string;
   createdAt: string;
   payload: string | null;
+  /**
+   * Human-readable reason the delivery failed (#493).
+   * Populated from `last_error` for scheduled notifications and from
+   * `error_message` for processed events.  `null` when the notification
+   * succeeded or is still pending.
+   */
+  failureReason: string | null;
 }
 
 export interface PaginatedSearchResponse {
@@ -48,7 +70,28 @@ export class NotificationSearchService {
 
       // Merge, sort by createdAt desc, then re-paginate
       const merged = [...scheduledResults.rows, ...processedResults.rows].sort(
-        (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+        (a, b) => {
+          const sortBy = params.sortBy ?? 'newest';
+          if (sortBy === 'oldest') {
+            return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+          }
+          if (sortBy === 'status') {
+            const STATUS_ORDER: Record<string, number> = {
+              PENDING: 0,
+              PROCESSING: 1,
+              COMPLETED: 2,
+              FAILED: 3,
+              CANCELLED: 4,
+              PROCESSED: 5,
+            };
+            const sa = STATUS_ORDER[a.status.toUpperCase()] ?? 99;
+            const sb = STATUS_ORDER[b.status.toUpperCase()] ?? 99;
+            if (sa !== sb) return sa - sb;
+            return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+          }
+          // default: newest
+          return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+        }
       );
       const total = scheduledResults.total + processedResults.total;
 
@@ -100,8 +143,16 @@ export class NotificationSearchService {
       queryParams.push(params.status.toUpperCase());
     }
     if (params.type) {
-      conditions.push('notification_type LIKE ?');
-      queryParams.push(`%${params.type}%`);
+      conditions.push('LOWER(notification_type) = ?');
+      queryParams.push(params.type.toLowerCase());
+    }
+    if (params.startDate) {
+      conditions.push('created_at >= ?');
+      queryParams.push(normalizeSearchDateBound(params.startDate, 'start'));
+    }
+    if (params.endDate) {
+      conditions.push('created_at <= ?');
+      queryParams.push(normalizeSearchDateBound(params.endDate, 'end'));
     }
 
     const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
@@ -121,8 +172,9 @@ export class NotificationSearchService {
       status: string;
       created_at: string;
       payload: string;
+      last_error: string | null;
     }>(
-      `SELECT id, event_id, contract_address, notification_type, target_recipient, status, created_at, payload
+      `SELECT id, event_id, contract_address, notification_type, target_recipient, status, created_at, payload, last_error
        FROM scheduled_notifications ${where}
        ORDER BY created_at DESC
        LIMIT ? OFFSET ?`,
@@ -142,6 +194,7 @@ export class NotificationSearchService {
         status: r.status,
         createdAt: r.created_at,
         payload: r.payload,
+        failureReason: r.last_error ?? null,
       })),
     };
   }
@@ -173,8 +226,21 @@ export class NotificationSearchService {
       conditions.push('status = ?');
       queryParams.push(params.status.toUpperCase());
     }
+    if (params.type) {
+      // processed_events store channel/event type in event_type
+      conditions.push('LOWER(event_type) = ?');
+      queryParams.push(params.type.toLowerCase());
+    }
+    if (params.startDate) {
+      conditions.push('processed_at >= ?');
+      queryParams.push(normalizeSearchDateBound(params.startDate, 'start'));
+    }
+    if (params.endDate) {
+      conditions.push('processed_at <= ?');
+      queryParams.push(normalizeSearchDateBound(params.endDate, 'end'));
+    }
 
-    // sender / type don't apply to processed_events, skip those params
+    // sender does not apply to processed_events
 
     const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
 
@@ -192,8 +258,9 @@ export class NotificationSearchService {
       event_type: string;
       status: string;
       processed_at: string;
+      error_reason: string | null;
     }>(
-      `SELECT id, event_id, tx_hash, contract_address, event_type, status, processed_at
+      `SELECT id, event_id, tx_hash, contract_address, event_type, status, processed_at, error_reason
        FROM processed_events ${where}
        ORDER BY processed_at DESC
        LIMIT ? OFFSET ?`,
@@ -213,6 +280,7 @@ export class NotificationSearchService {
         status: r.status,
         createdAt: r.processed_at,
         payload: null,
+        failureReason: r.error_reason ?? null,
       })),
     };
   }

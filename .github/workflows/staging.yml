@@ -31,9 +31,20 @@ jobs:
           cd listener
           npm ci
           npm run build
+      - name: Start listener (background)
+        run: |
+          cd listener
+          nohup npm run start >/tmp/listener.log 2>&1 &
+          echo $! >/tmp/listener.pid
       - run: |
           cd dashboard
           npm ci
           npm run build
       - run: |
-          bash scripts/health-check.sh http://localhost:3000/health
+          bash scripts/health-check.sh
+      - name: Stop listener
+        if: always()
+        run: |
+          if [ -f /tmp/listener.pid ]; then
+            kill "$(cat /tmp/listener.pid)" || true
+          fi

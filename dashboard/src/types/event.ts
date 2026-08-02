@@ -71,12 +71,28 @@ export interface BlockchainEvent {
  * - `unread` – show only notifications the user has not yet seen.
  */
 export type NotificationStatus = 'all' | 'read' | 'unread';
+/** Read/unread filter used by the notification search UI. */
+/** Read/unread filter for Event Explorer notification lists (not delivery status). */
+export type NotificationReadFilter = 'all' | 'read' | 'unread';
+
+/**
+ * Sort options for the notification list (#495).
+ *
+ * - `newest`          – most recently received first (default)
+ * - `oldest`          – earliest received first
+ * - `priority`        – events with the highest scheduling priority first
+ * - `delivery_status` – group by delivery status (active → expired → revoked → undefined)
+ */
+export type NotificationSortOption = 'newest' | 'oldest' | 'priority' | 'delivery_status';
 
 export interface EventFilters {
   search: string;
   contractAddress: string;
   eventType: string;
-  status: NotificationStatus;
+  status: NotificationReadFilter;
   dateFrom: string; // ISO date string "YYYY-MM-DD" or ""
   dateTo: string;   // ISO date string "YYYY-MM-DD" or ""
+  txHash?: string;
+  /** Active sort order for the notification list (#495). Defaults to "newest". */
+  sortBy?: NotificationSortOption;
 }

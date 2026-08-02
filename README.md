@@ -27,12 +27,21 @@ The project enables developers to build reactive decentralized applications with
 > **Listener service docs**:
 > - [API Contract and Event Reference](listener/API_CONTRACT_EVENT_REFERENCE.md)
 > - [API Usage Cookbook](listener/API_USAGE_COOKBOOK.md)
+> - [Listener Configuration](docs/LISTENER-CONFIGURATION.md) — env options, defaults, examples, and recommended values.
+> - [Notification Processing Flow](docs/NOTIFICATION-FLOW.md) — blockchain event to delivery stages, diagrams, failure/retry, and troubleshooting.
+> - [Notification Lifecycle](NOTIFICATION_LIFECYCLE.md) — end-to-end on-chain/off-chain flow from event detection to delivery, ack, retry, and archival.
 > - [Notification Failure Recovery](NOTIFICATION_FAILURE_RECOVERY.md) — retry lifecycle, configuration, and troubleshooting.
-> [Notification Lifecycle](NOTIFICATION_LIFECYCLE.md) — creation, delivery, acknowledgment semantics, retries, and archival.
-> [Notification Failure Recovery](NOTIFICATION_FAILURE_RECOVERY.md) — retry lifecycle, configuration, and troubleshooting.
-> **Listener service docs**: [Notification Failure Recovery](NOTIFICATION_FAILURE_RECOVERY.md) — retry lifecycle, configuration, and troubleshooting.
+>
+> **Repository map**: [Project Structure Guide](docs/PROJECT-STRUCTURE.md) — major directories, modules, and where code belongs.
 >
 > **Event reference**: [Smart Contract Event Reference Guide](CONTRACT_EVENT_REFERENCE.md) — all emitted events, parameters, data types, and usage recommendations for indexers and listeners.
+>
+> **Dashboard Storybook**: [dashboard/STORYBOOK.md](dashboard/STORYBOOK.md) — component documentation for design and development reviews.
+> **API errors**: [API Error Reference](docs/API_ERROR_REFERENCE.md) — every error response the listener API returns, with causes and resolutions.
+>
+> **Architecture decisions**: [Architecture Decision Records](docs/adr/README.md) — the *why* behind the project's significant technical choices, including the [off-chain listener architecture](docs/adr/0001-off-chain-listener-architecture.md), [Soroban on Stellar](docs/adr/0002-soroban-smart-contracts.md), [SQLite persistence](docs/adr/0003-sqlite-for-local-persistence.md), [TypeScript for the listener](docs/adr/0004-typescript-for-listener-service.md), and the [event deduplication strategy](docs/adr/0005-event-deduplication-strategy.md).
+>
+> **Contributor guides**: [Git Workflow](docs/GIT_WORKFLOW.md) · [Contributor Troubleshooting](docs/CONTRIBUTOR_TROUBLESHOOTING.md)
 
 ---
 
@@ -86,6 +95,11 @@ run and developed independently.
 >
 > A more detailed, contract-level architecture write-up lives in
 > [`Documents/Task Bounty/ARCHITECTURE.md`](Documents/Task%20Bounty/ARCHITECTURE.md).
+>
+> **New to the codebase?** The
+> [API & Notification Sequence Diagrams](API_SEQUENCE_DIAGRAMS.md)
+> visually trace every major data flow — from client request to subscriber
+> delivery and from on-chain event to dashboard render.
 
 ### Contract Responsibilities
 
@@ -132,6 +146,10 @@ Key Modules:
 ---
 
 ## Project Structure
+
+> **Full directory guide:** [docs/PROJECT-STRUCTURE.md](docs/PROJECT-STRUCTURE.md) —
+> purpose and responsibilities of every major directory and module, plus where
+> new code should live.
 
 ```
 Notify-Chain/
@@ -204,6 +222,10 @@ Notify-Chain/
 ---
 
 ## Event Flow
+
+> **Processing flow guide:** [Notification Processing Flow](docs/NOTIFICATION-FLOW.md) — event detection through delivery, retries, and DLQ.
+>
+> 📊 **See also:** [API & Notification Sequence Diagrams](API_SEQUENCE_DIAGRAMS.md) — Mermaid diagrams that visually trace the complete notification request flow, on-chain event processing lifecycle, scheduled delivery states, retry/failure recovery, and dashboard data fetch.
 
 ### End-to-End Notification Flow
 
@@ -328,8 +350,8 @@ stellar --version
 
 1. **Clone the repository**:
    ```bash
-   git clone https://github.com/your-org/notify-chain.git
-   cd notify-chain
+   git clone https://github.com/Core-Foundry/Notify-Chain.git
+   cd Notify-Chain
    ```
 
 2. **Building the AutoShare contract**:
@@ -543,7 +565,7 @@ Common Freighter wallet issues and how to resolve them.
 
 ## Wallet UX States
 
-The frontend models four wallet connection states. Every UI that depends on the wallet must handle all of them.
+The frontend (legacy Next.js analytics app under `frontend/`) models four wallet connection states. Every UI that depends on the wallet must handle all of them.
 
 | State | Description | User-facing message |
 |-------|-------------|---------------------|
@@ -633,6 +655,10 @@ See [`frontend/src/components/SubscriptionForm.tsx`](frontend/src/components/Sub
 Contributions are welcome! Please follow these steps (or start with the canonical workflow guide):
 
 - [`CONTRIBUTOR_DEVELOPMENT_WORKFLOW_GUIDE.md`](CONTRIBUTOR_DEVELOPMENT_WORKFLOW_GUIDE.md)
+- [`docs/GIT_WORKFLOW.md`](docs/GIT_WORKFLOW.md) — branching strategy, commit conventions, and the PR process
+- [`docs/CONTRIBUTOR_TROUBLESHOOTING.md`](docs/CONTRIBUTOR_TROUBLESHOOTING.md) — fixes for common build, test, and workflow problems
+- [`docs/adr/README.md`](docs/adr/README.md) — architecture decision records; read these before proposing a significant design change
+- [`docs/ROADMAP.md`](docs/ROADMAP.md) — planned features and milestones
 
 1. Fork the repository
 2. Create a feature branch
@@ -643,7 +669,9 @@ Contributions are welcome! Please follow these steps (or start with the canonica
 Please follow the project's coding standards and include tests where applicable.
 
 For more detailed contribution guidelines, check:
-- `Documents/Task Bounty/CONTRIBUTING.md`
+- [`CONTRIBUTING.md`](CONTRIBUTING.md)
+- [`CONTRIBUTOR_DEVELOPMENT_WORKFLOW_GUIDE.md`](CONTRIBUTOR_DEVELOPMENT_WORKFLOW_GUIDE.md)
+- `Documents/Task Bounty/CONTRIBUTING.md` (TaskBounty contract-specific)
 
 ---
 
