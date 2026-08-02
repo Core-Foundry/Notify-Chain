@@ -72,8 +72,9 @@ pub struct GroupMember {
 ///
 /// 1. Identity    — `id` (BytesN<32>)
 /// 2. Ownership   — `creator` (Address)
-/// 3. Timestamps  — `created_at`, `expires_at` (u64 each, adjacent)
-/// 4. Revocation  — `revoked_at` (Option<u64>), `revoked_by` (Option<Address>)
+/// 3. Priority    — `priority` (enum, small discriminant)
+/// 4. Timestamps  — `created_at`, `expires_at` (u64 each, adjacent)
+/// 5. Revocation  — `revoked_at` (Option<u64>), `revoked_by` (Option<Address>)
 ///
 /// Keeping both u64 timestamps adjacent avoids interleaving fixed and variable
 /// fields in the XDR stream.
@@ -84,6 +85,8 @@ pub struct ScheduledNotification {
     pub id: BytesN<32>,
     /// Address that scheduled this notification.
     pub creator: Address,
+    /// Delivery priority assigned at scheduling time; determines processing order.
+    pub priority: NotificationPriority,
     /// Ledger timestamp (seconds) at which the notification was scheduled.
     pub created_at: u64,
     /// Ledger timestamp (seconds) at or after which the notification is expired.

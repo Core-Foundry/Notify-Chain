@@ -7,6 +7,10 @@ use crate::base::events::{
     NotificationDelivered, NotificationExpired, NotificationExtended,
     NotificationLimitsConfigured, NotificationPriority, NotificationRecalled, NotificationRevoked,
     NotificationScheduled, OwnershipTransferInitiated, OwnershipTransferred,
+    ContractPaused, ContractUnpaused, GroupActivated, GroupDeactivated, NotificationAccessed,
+    NotificationAcknowledged, NotificationCategory, NotificationDelivered, NotificationExpired,
+    NotificationExtended, NotificationLimitsConfigured, NotificationPriority, NotificationRecalled,
+    NotificationRevoked, NotificationScheduled, OwnershipTransferInitiated, OwnershipTransferred,
     ScheduledNotificationCancelled, SchemaVersionSet, SubscriptionCancelled, Withdrawal,
 };
 use crate::base::metadata_validation::{validate_metadata, NotificationMetadata};
@@ -98,6 +102,10 @@ pub fn create_autoshare(
     // Check if contract is paused
     if get_paused_status(&env) {
         return Err(Error::ContractPaused);
+    }
+
+    if !is_category_registered(env.clone(), NotificationCategory::Group) {
+        return Err(Error::CategoryNotRegistered);
     }
 
     let key = DataKey::AutoShare(id.clone());
@@ -222,6 +230,36 @@ pub fn is_group_member(env: Env, id: BytesN<32>, address: Address) -> Result<boo
     Ok(false)
 }
 
+/// Returns whether `wallet` is actively subscribed to the channel (AutoShare
+/// group) identified by `id`.
+///
+/// A wallet is considered actively subscribed when the channel exists, is
+/// currently active (not deactivated by its creator or an admin — see
+/// [`deactivate_group`]), and the wallet is either the channel's creator or a
+/// registered member. Read-only; never mutates state.
+///
+/// # Errors
+/// - [`Error::NotFound`] if `id` does not correspond to a known channel.
+pub fn is_subscribed(env: Env, id: BytesN<32>, wallet: Address) -> Result<bool, Error> {
+    let details = get_autoshare(env, id)?;
+
+    if !details.is_active {
+        return Ok(false);
+    }
+
+    if details.creator == wallet {
+        return Ok(true);
+    }
+
+    for member in details.members.iter() {
+        if member.address == wallet {
+            return Ok(true);
+        }
+    }
+
+    Ok(false)
+}
+
 /// Retrieves the list of members for a specific AutoShare group.
 pub fn get_group_members(env: Env, id: BytesN<32>) -> Result<Vec<GroupMember>, Error> {
     let details = get_autoshare(env, id)?;
@@ -269,14 +307,16 @@ pub fn add_group_member(
     // Add new member (embedded in AutoShareDetails — no separate GroupMembers key)
     details.members.push_back(GroupMember {
         address,
+        address: address.clone(),
         percentage,
     });
 
     // Validate total percentage after adding
     validate_members(&env, &details.members)?;
 
-    // Save updated details
+    // Save updated details (members embedded in details — no separate GroupMembers key)
     env.storage().persistent().set(&key, &details);
+
     Ok(())
 }
 
@@ -310,7 +350,11 @@ fn seed_default_categories(env: &Env) {
         return;
     }
 
-    let categories: Vec<NotificationCategory> = Vec::new(env);
+    let mut categories: Vec<NotificationCategory> = Vec::new(env);
+    categories.push_back(NotificationCategory::Group);
+    categories.push_back(NotificationCategory::Admin);
+    categories.push_back(NotificationCategory::Financial);
+    categories.push_back(NotificationCategory::Notification);
     env.storage().persistent().set(&key, &categories);
 }
 
@@ -503,9 +547,7 @@ pub fn accept_ownership(env: Env, new_owner: Address) -> Result<(), Error> {
 
     // Finalise: install the new owner and clear the pending slot.
     env.storage().instance().set(&INSTANCE_ADMIN, &new_owner);
-    env.storage()
-        .instance()
-        .remove(&INSTANCE_PENDING_OWNER);
+    env.storage().instance().remove(&INSTANCE_PENDING_OWNER);
 
     OwnershipTransferred {
         previous_owner,
@@ -702,6 +744,12 @@ pub fn topup_subscription(
         .get(&key)
         .ok_or(Error::NotFound)?;
 
+    // A deactivated channel accepts no new subscriptions (top-ups), though its
+    // historical members and payment history remain readable.
+    if !details.is_active {
+        return Err(Error::GroupInactive);
+    }
+
     // Verify token is supported
     if !is_token_supported(env.clone(), payment_token.clone()) {
         return Err(Error::UnsupportedToken);
@@ -744,11 +792,7 @@ pub fn topup_subscription(
 ///                                 member of the group.
 /// - [`Error::GroupInactive`]    – the group is already inactive (subscription
 ///                                 already cancelled or never active).
-pub fn cancel_subscription(
-    env: Env,
-    id: BytesN<32>,
-    subscriber: Address,
-) -> Result<(), Error> {
+pub fn cancel_subscription(env: Env, id: BytesN<32>, subscriber: Address) -> Result<(), Error> {
     subscriber.require_auth();
 
     if get_paused_status(&env) {
@@ -981,7 +1025,13 @@ pub fn update_members(
     Ok(())
 }
 
-/// Deactivates a specific AutoShare group, preventing further usage.
+/// Deactivates a specific AutoShare group (channel), preventing further usage.
+///
+/// Callable by the channel's creator **or** the contract admin. Deactivating a
+/// channel does not delete its members or payment history — those remain
+/// fully readable via [`get_group_members`], [`get_user_payment_history`], and
+/// [`get_group_payment_history`] — but [`topup_subscription`] (new
+/// subscriptions) is blocked until the channel is reactivated.
 pub fn deactivate_group(env: Env, id: BytesN<32>, caller: Address) -> Result<(), Error> {
     caller.require_auth();
 
@@ -996,7 +1046,11 @@ pub fn deactivate_group(env: Env, id: BytesN<32>, caller: Address) -> Result<(),
         .get(&key)
         .ok_or(Error::NotFound)?;
 
-    if details.creator != caller {
+    let admin = get_admin(env.clone()).ok();
+    let is_creator = details.creator == caller;
+    let is_admin = admin.as_ref().map_or(false, |a| *a == caller);
+
+    if !is_creator && !is_admin {
         publish_authorization_failure(&env, &caller, "deactivate_group");
         return Err(Error::Unauthorized);
     }
@@ -1138,6 +1192,17 @@ fn validate_members(env: &Env, members: &Vec<GroupMember>) -> Result<(), Error> 
 /// Default priority attached to notification lifecycle events.
 const NOTIFICATION_PRIORITY: NotificationPriority = NotificationPriority::Medium;
 
+/// Maximum allowed notification lifetime, in seconds.
+///
+/// Notifications with a `ttl_seconds` value exceeding this constant are
+/// rejected with [`Error::NotificationLifetimeTooLong`]. This prevents
+/// notifications from being created with excessively long expiration periods
+/// (issue #477).
+///
+/// **Placeholder value: 30 days (2_592_000 seconds).** Adjust this value in
+/// review if a different maximum is required by the product specification.
+const MAX_NOTIFICATION_LIFETIME_SECONDS: u64 = 30 * 24 * 60 * 60; // 30 days
+
 /// Reads a scheduled notification from storage, if one is tracked for `id`.
 fn load_notification(env: &Env, id: &BytesN<32>) -> Option<ScheduledNotification> {
     env.storage()
@@ -1160,7 +1225,9 @@ fn is_revoked(notification: &ScheduledNotification) -> bool {
 /// The notification is stored with an `expires_at` of `now + ttl_seconds`. A
 /// zero duration (or one that overflows the ledger clock) is rejected, as is a
 /// duplicate identifier. Metadata is validated for consistency and length.
-/// Emits [`NotificationScheduled`].
+/// `priority` (High, Medium, or Low) determines the order in which off-chain
+/// consumers should process and deliver the notification, and is stored
+/// alongside it. Emits [`NotificationScheduled`] with the assigned priority.
 ///
 /// # Errors
 /// - `ContractPaused` if the contract is paused
@@ -1173,11 +1240,16 @@ pub fn schedule_notification(
     creator: Address,
     ttl_seconds: u64,
     title: String,
+    priority: NotificationPriority,
 ) -> Result<(), Error> {
     creator.require_auth();
 
     if get_paused_status(&env) {
         return Err(Error::ContractPaused);
+    }
+
+    if !is_category_registered(env.clone(), NotificationCategory::Notification) {
+        return Err(Error::CategoryNotRegistered);
     }
 
     if ttl_seconds == 0 {
@@ -1192,6 +1264,15 @@ pub fn schedule_notification(
         custom_fields: None,
     };
     validate_metadata(&metadata)?;
+    // Reject lifetimes that exceed the protocol maximum (issue #477).
+    if ttl_seconds > MAX_NOTIFICATION_LIFETIME_SECONDS {
+        return Err(Error::NotificationLifetimeTooLong);
+    }
+
+    // Validate metadata (title is required)
+    if title.is_empty() {
+        return Err(Error::InvalidInput);
+    }
 
     let key = DataKey::ScheduledNotification(notification_id.clone());
     if env.storage().persistent().has(&key) {
@@ -1206,6 +1287,7 @@ pub fn schedule_notification(
     let notification = ScheduledNotification {
         id: notification_id.clone(),
         creator: creator.clone(),
+        priority,
         created_at,
         expires_at,
         revoked_by: None,
@@ -1229,7 +1311,7 @@ pub fn schedule_notification(
     NotificationScheduled {
         creator,
         category: NotificationCategory::Notification,
-        priority: NOTIFICATION_PRIORITY,
+        priority,
         notification_id,
     }
     .publish(&env);
@@ -1379,11 +1461,16 @@ pub fn batch_schedule_notifications(
     creator: Address,
     ttl_seconds: Vec<u64>,
     titles: Vec<String>,
+    priorities: Vec<NotificationPriority>,
 ) -> Result<(), Error> {
     creator.require_auth();
 
     if get_paused_status(&env) {
         return Err(Error::ContractPaused);
+    }
+
+    if !is_category_registered(env.clone(), NotificationCategory::Notification) {
+        return Err(Error::CategoryNotRegistered);
     }
 
     let count = ids.len();
@@ -1394,7 +1481,7 @@ pub fn batch_schedule_notifications(
     }
 
     // Lengths must match.
-    if count != ttl_seconds.len() || count != titles.len() {
+    if count != ttl_seconds.len() || count != titles.len() || count != priorities.len() {
         return Err(Error::InvalidInput);
     }
 
@@ -1412,6 +1499,10 @@ pub fn batch_schedule_notifications(
         let ttl = ttl_seconds.get(i).unwrap();
         if ttl == 0 {
             return Err(Error::InvalidExpirationDuration);
+        }
+        // Reject lifetimes that exceed the protocol maximum (issue #477).
+        if ttl > MAX_NOTIFICATION_LIFETIME_SECONDS {
+            return Err(Error::NotificationLifetimeTooLong);
         }
         let id = ids.get(i).unwrap();
         let title = titles.get(i).unwrap();
@@ -1442,6 +1533,7 @@ pub fn batch_schedule_notifications(
         let ttl = ttl_seconds.get(i).unwrap();
         let id = ids.get(i).unwrap();
         let title = titles.get(i).unwrap();
+        let priority = priorities.get(i).unwrap();
         let expires_at = created_at + ttl;
 
         let metadata = NotificationMetadata {
@@ -1455,6 +1547,7 @@ pub fn batch_schedule_notifications(
         let notification = ScheduledNotification {
             id: id.clone(),
             creator: creator.clone(),
+            priority,
             created_at,
             expires_at,
             revoked_by: None,
@@ -1474,7 +1567,7 @@ pub fn batch_schedule_notifications(
         NotificationScheduled {
             creator: creator.clone(),
             category: NotificationCategory::Notification,
-            priority: NOTIFICATION_PRIORITY,
+            priority,
             notification_id: id.clone(),
         }
         .publish(&env);
@@ -1855,6 +1948,7 @@ pub fn emit_batch_completed(
     batch_id: BytesN<32>,
     processed_count: u32,
 ) -> Result<(), Error> {
+pub fn emit_batch_completed(env: Env, batch_id: BytesN<32>, processed_count: u32) -> Result<(), Error> {
     BatchProcessingCompleted {
         batch_id,
         category: NotificationCategory::Notification,
@@ -1913,6 +2007,14 @@ pub fn extend_notification_expiry(
         .expires_at
         .checked_add(extension_seconds)
         .ok_or(Error::InvalidExpirationDuration)?;
+
+    // Ensure the total lifetime from creation does not exceed the protocol
+    // maximum (issue #477). We compare the new expiry against created_at so
+    // that the same ceiling applies to extensions as to initial scheduling.
+    let new_total_lifetime = new_expires_at.saturating_sub(notification.created_at);
+    if new_total_lifetime > MAX_NOTIFICATION_LIFETIME_SECONDS {
+        return Err(Error::NotificationLifetimeTooLong);
+    }
 
     notification.expires_at = new_expires_at;
 
@@ -2045,7 +2147,9 @@ pub fn set_schema_version(env: Env, admin: Address, schema_version: u32) -> Resu
         return Err(Error::Unauthorized);
     }
 
-    if schema_version < MIN_SUPPORTED_SCHEMA_VERSION || schema_version > MAX_SUPPORTED_SCHEMA_VERSION {
+    if schema_version < MIN_SUPPORTED_SCHEMA_VERSION
+        || schema_version > MAX_SUPPORTED_SCHEMA_VERSION
+    {
         return Err(Error::InvalidInput);
     }
 
