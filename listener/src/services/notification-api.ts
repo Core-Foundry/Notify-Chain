@@ -5,7 +5,22 @@ import {
   validatePayloadSize,
   DEFAULT_MAX_PAYLOAD_SIZE_BYTES,
 } from '../utils/payload-size-validator';
+import { validateNotificationMetadata } from '../utils/metadata-validator';
+import { ensureNotificationVersion } from '../utils/notification-version';
 import logger from '../utils/logger';
+import {
+  InputValidator,
+  isNonEmptyString,
+  isNonNegativeInteger,
+  isOneOf,
+  isPlainObject,
+  isInRange,
+  isInteger,
+} from '../utils/validation';
+
+const PRIORITY_MIN = 1;
+const PRIORITY_MAX = 10;
+import { buildRetryStatisticsPayload } from './retry-statistics';
 
 /**
  * High-level API for scheduling notifications
@@ -13,10 +28,33 @@ import logger from '../utils/logger';
  * Includes support for idempotent request handling
  */
 export class NotificationAPI {
+  private readonly maxPayloadSizeBytes: number;
+
   constructor(
     private repository: ScheduledNotificationRepository,
-    private idempotencyService?: IdempotencyKeyService
-  ) {}
+    private idempotencyService?: IdempotencyKeyService,
+    maxPayloadSizeBytes: number = DEFAULT_MAX_PAYLOAD_SIZE_BYTES
+  ) {
+    this.maxPayloadSizeBytes = maxPayloadSizeBytes;
+  /** Maximum allowed serialised payload size in bytes. */
+  readonly maxPayloadSizeBytes: number;
+  private readonly maxPayloadSizeBytes: number = DEFAULT_MAX_PAYLOAD_SIZE_BYTES;
+
+  constructor(
+    private repository: ScheduledNotificationRepository,
+    maxPayloadSizeBytesOrIdempotency?: number | IdempotencyKeyService,
+    private idempotencyService?: IdempotencyKeyService,
+  ) {
+    if (typeof maxPayloadSizeBytesOrIdempotency === 'number') {
+      this.maxPayloadSizeBytes = maxPayloadSizeBytesOrIdempotency;
+    } else {
+      this.maxPayloadSizeBytes = DEFAULT_MAX_PAYLOAD_SIZE_BYTES;
+      // Support legacy two-argument form: new NotificationAPI(repo, idempotencyService)
+      if (maxPayloadSizeBytesOrIdempotency != null) {
+        this.idempotencyService = maxPayloadSizeBytesOrIdempotency;
+      }
+    }
+  }
 
   /**
    * Schedule a notification for future delivery
@@ -36,16 +74,51 @@ export class NotificationAPI {
       throw new Error('executeAt must be a future timestamp — the provided date has already expired');
     }
 
-    if (!input.payload || typeof input.payload !== 'object') {
+    if (!isPlainObject(input.payload)) {
       throw new Error('payload must be a valid object');
     }
 
-    if (!input.targetRecipient) {
-      throw new Error('targetRecipient is required');
+    if (!isNonEmptyString(input.targetRecipient)) {
+      throw new Error('targetRecipient is required and must be a non-empty string');
     }
 
+    const v = new InputValidator();
+    v.check(
+      isOneOf(input.notificationType, Object.values(NotificationType)),
+      'notificationType',
+      `must be one of: ${Object.values(NotificationType).join(', ')}`,
+    );
+    if (input.maxRetries !== undefined) {
+      v.check(isNonNegativeInteger(input.maxRetries), 'maxRetries', 'must be a non-negative integer');
+    }
+    if (input.priority !== undefined) {
+      v.check(
+        isInteger(input.priority) && isInRange(input.priority, PRIORITY_MIN, PRIORITY_MAX),
+        'priority',
+        `must be an integer between ${PRIORITY_MIN} and ${PRIORITY_MAX}`,
+      );
+    }
+    if (input.eventId !== undefined) {
+      v.check(isNonEmptyString(input.eventId), 'eventId', 'must be a non-empty string');
+    }
+    if (input.contractAddress !== undefined) {
+      v.check(isNonEmptyString(input.contractAddress), 'contractAddress', 'must be a non-empty string');
+    }
+    if (input.metadata !== undefined) {
+      v.check(isPlainObject(input.metadata), 'metadata', 'must be an object');
+    }
+    v.throwIfInvalid();
+    // Stamp / verify protocol version on the payload.
+    input = {
+      ...input,
+      payload: ensureNotificationVersion(input.payload as Record<string, unknown>),
+    };
+
+    // Validate metadata before any storage write.
+    validateNotificationMetadata(input.metadata ?? null);
+
     // Validate payload size BEFORE any storage or heavy processing operations.
-    validatePayloadSize(input.payload, this.maxPayloadSizeBytes);
+    // validatePayloadSize(input.payload, this.maxPayloadSizeBytes);
 
     logger.info('Scheduling new notification', {
       requestId,
@@ -53,6 +126,7 @@ export class NotificationAPI {
       type: input.notificationType,
       executeAt: input.executeAt,
       recipient: input.targetRecipient,
+      version: (input.payload as Record<string, unknown>).version,
     });
 
     // If idempotency service is available, use it for deduplication
@@ -105,6 +179,39 @@ export class NotificationAPI {
   }
 
   /**
+   * Schedule a generic HTTP webhook notification.
+   *
+   * The `payload` is POSTed as JSON to `targetUrl` at `executeAt`.
+   * Failed deliveries (5xx, timeouts, network errors) are automatically
+   * re-queued by the RetryScheduler with exponential backoff.
+   *
+   * @param targetUrl  - Full URL that will receive the POST request.
+   * @param payload    - JSON-serialisable body to deliver.
+   * @param executeAt  - When to make the first delivery attempt.
+   * @param options    - Optional overrides for retries, priority, and metadata.
+   */
+  async scheduleWebhookNotification(
+    targetUrl: string,
+    payload: Record<string, any>,
+    executeAt: Date,
+    options?: {
+      maxRetries?: number;
+      priority?: number;
+      metadata?: Record<string, any>;
+    }
+  ): Promise<number> {
+    return await this.scheduleNotification({
+      payload,
+      notificationType: NotificationType.WEBHOOK,
+      targetRecipient: targetUrl,
+      executeAt,
+      maxRetries: options?.maxRetries,
+      priority: options?.priority,
+      metadata: options?.metadata,
+    });
+  }
+
+  /**
    * Cancel a scheduled notification.
    */
   async cancelNotification(id: number, requestId?: string): Promise<boolean> {
@@ -127,6 +234,16 @@ export class NotificationAPI {
   }
 
   /**
+   * List pending jobs for queue visibility.
+   * Returns jobs currently waiting in the queue with their id, type,
+   * enqueue time (createdAt), scheduled delivery time (executeAt),
+   * priority, and retry count.
+   */
+  async getPendingJobs(limit?: number) {
+    return await this.repository.getPendingJobs(limit);
+  }
+
+  /**
    * Get execution metrics with deduplication
    * Use this for dashboard metrics to prevent double-counting retried notifications
    */
@@ -139,5 +256,39 @@ export class NotificationAPI {
    */
   async getRetryDistribution() {
     return await this.repository.getRetryDistribution();
+  }
+
+  /**
+   * Get all notifications currently in the dead-letter queue.
+   */
+  async getDeadLetterQueue() {
+    return await this.repository.getDeadLetterQueue();
+  }
+
+  /**
+   * Requeue a dead-lettered notification so it can be retried again.
+   */
+  async retryDeadLetterNotification(id: number, requestId?: string): Promise<boolean> {
+    return await this.repository.retryDeadLetterNotification(id, requestId);
+  }
+
+  /**
+   * Aggregated retry statistics for delivery monitoring dashboards.
+   */
+  async getRetryStatistics() {
+    const [metrics, distribution] = await Promise.all([
+      this.getExecutionMetrics(),
+      this.getRetryDistribution(),
+    ]);
+
+    return buildRetryStatisticsPayload({
+      totalNotifications: metrics.totalNotifications,
+      successfulFirstAttempt: metrics.successfulFirstAttempt,
+      successfulAfterRetry: metrics.successfulAfterRetry,
+      permanentFailures: metrics.permanentFailures,
+      totalRetryAttempts: metrics.totalRetryAttempts,
+      averageRetriesPerNotification: metrics.averageRetriesPerNotification,
+      distribution,
+    });
   }
 }

@@ -1,4 +1,5 @@
 import { UserPreferences, PreferencesUpdateInput } from '../types/preferences';
+import { InputValidator, isBoolean, isNonEmptyString, isPlainObject } from '../utils/validation';
 
 export class PreferenceStore {
   private store = new Map<string, UserPreferences>();
@@ -17,8 +18,18 @@ export class PreferenceStore {
     return { ...stored, categories: { ...stored.categories } };
   }
 
-  /** Merges category updates, returns updated preferences */
+  /** Merges category updates, returns updated preferences. Throws ValidationError on invalid input. */
   update(userId: string, input: PreferencesUpdateInput): UserPreferences {
+    const v = new InputValidator();
+    v.check(isNonEmptyString(userId), 'userId', 'is required');
+    if (v.check(isPlainObject(input?.categories), 'categories', 'must be an object of category name to boolean')) {
+      for (const [category, enabled] of Object.entries(input.categories)) {
+        v.check(isNonEmptyString(category), 'categories', 'category names must be non-empty strings');
+        v.check(isBoolean(enabled), `categories.${category}`, `must be a boolean, received ${JSON.stringify(enabled)}`);
+      }
+    }
+    v.throwIfInvalid();
+
     const existing = this.get(userId);
     const updated: UserPreferences = {
       ...existing,

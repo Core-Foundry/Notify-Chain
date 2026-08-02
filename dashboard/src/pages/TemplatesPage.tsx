@@ -5,6 +5,7 @@ import {
   UpdateNotificationTemplateInput
 } from '../types/notificationTemplate';
 import { templatesApi } from '../services/templatesApi';
+import { EmptyState } from '../components/EmptyState';
 
 type ViewMode = 'list' | 'create' | 'edit' | 'preview';
 
@@ -257,7 +258,15 @@ export function TemplatesPage() {
             </div>
           ))}
           {templates.length === 0 && (
-            <p className="templates-list__empty">No templates yet. Create your first template!</p>
+            <EmptyState
+              title="No templates yet"
+              message="Create a notification template to start sending emails, Discord, Slack, or Telegram alerts."
+              action={{ label: 'Create Template', onClick: handleCreateClick }}
+              icon="📝"
+              title="No templates yet"
+              description="Create reusable notification templates for email, Discord, Slack, and more."
+              action={{ label: 'Create your first template', onClick: handleCreateClick }}
+            />
           )}
         </div>
       </div>

@@ -100,3 +100,16 @@ export interface SchedulerConfig {
   timingBufferMs: number;
   retryDelayMs?: number;
 }
+
+export interface DeadLetterQueueEntry {
+  id?: number;
+  originalNotificationId: number;
+  notificationType: NotificationType;
+  targetRecipient: string;
+  payload: string;
+  failureReason: string;
+  errorDetails?: string | null;
+  createdAt?: Date;
+  lastRetriedAt?: Date | null;
+  retryCount: number;
+}
