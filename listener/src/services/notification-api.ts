@@ -14,6 +14,8 @@ import { buildRetryStatisticsPayload } from './retry-statistics';
  * Includes support for idempotent request handling
  */
 export class NotificationAPI {
+  private readonly maxPayloadSizeBytes: number = DEFAULT_MAX_PAYLOAD_SIZE_BYTES;
+
   constructor(
     private repository: ScheduledNotificationRepository,
     private idempotencyService?: IdempotencyKeyService
@@ -128,6 +130,16 @@ export class NotificationAPI {
   }
 
   /**
+   * List pending jobs for queue visibility.
+   * Returns jobs currently waiting in the queue with their id, type,
+   * enqueue time (createdAt), scheduled delivery time (executeAt),
+   * priority, and retry count.
+   */
+  async getPendingJobs(limit?: number) {
+    return await this.repository.getPendingJobs(limit);
+  }
+
+  /**
    * Get execution metrics with deduplication
    * Use this for dashboard metrics to prevent double-counting retried notifications
    */
@@ -154,6 +166,9 @@ export class NotificationAPI {
    */
   async retryDeadLetterNotification(id: number, requestId?: string): Promise<boolean> {
     return await this.repository.retryDeadLetterNotification(id, requestId);
+  }
+
+  /**
    * Aggregated retry statistics for delivery monitoring dashboards.
    */
   async getRetryStatistics() {

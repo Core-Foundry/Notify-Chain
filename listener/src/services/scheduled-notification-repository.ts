@@ -10,13 +10,21 @@ import {
   DeadLetterQueueEntry,
 } from '../types/scheduled-notification';
 import { hashPayload } from '../utils/payload-integrity';
+import { NotificationStatsCache, getStatsCache } from './notification-stats-cache';
 
 /**
  * Repository for scheduled notifications database operations
  * Handles all CRUD operations and queries
  */
 export class ScheduledNotificationRepository {
-  constructor(private db: Database) {}
+  private statsCache: NotificationStatsCache;
+
+  constructor(
+    private db: Database,
+    statsCache?: NotificationStatsCache,
+  ) {
+    this.statsCache = statsCache ?? getStatsCache();
+  }
 
   /**
    * Create a new scheduled notification
@@ -37,7 +45,6 @@ export class ScheduledNotificationRepository {
 
     const params = [
       serializedPayload,
-      payloadJson,
       payloadHash,
       input.notificationType,
       input.targetRecipient,
@@ -50,6 +57,10 @@ export class ScheduledNotificationRepository {
     ];
 
     const result = await this.db.run(sql, params);
+    
+    // Invalidate stats cache after creation
+    this.statsCache.invalidate();
+    
     logger.info('Scheduled notification created', {
       requestId,
       id: result.lastID,
@@ -227,6 +238,9 @@ export class ScheduledNotificationRepository {
       id,
     ]);
 
+    // Invalidate stats cache after completion
+    this.statsCache.invalidate();
+
     logger.info('Notification marked as completed', { requestId, id });
   }
 
@@ -243,6 +257,9 @@ export class ScheduledNotificationRepository {
     const nextRetryCount = currentRetryCount + 1;
     const isFailed = nextRetryCount >= maxRetries;
     const newStatus = isFailed ? NotificationStatus.FAILED : NotificationStatus.PENDING;
+    // When permanently failing, preserve currentRetryCount so the distribution
+    // reflects actual retries performed (not an incremented-past-max value).
+    const storedRetryCount = isFailed ? currentRetryCount : nextRetryCount;
 
     const sql = `
       UPDATE scheduled_notifications
@@ -269,19 +286,21 @@ export class ScheduledNotificationRepository {
 
     await this.db.run(sql, [
       newStatus,
-      nextRetryCount,
+      storedRetryCount,
       error.message,
       errorDetails,
+      isFailed ? null : (nextRetryAt?.toISOString() ?? null),
       isFailed ? now : null,
       now,
-      isFailed ? null : (nextRetryAt?.toISOString() ?? null),
-      completedAt,
       id,
     ]);
 
     if (isFailed) {
       await this.moveToDeadLetterQueue(id, error, errorDetails, nextRetryCount);
     }
+
+    // Invalidate stats cache after status change
+    this.statsCache.invalidate();
 
     logger.info('Notification marked for retry or failed', {
       id,
@@ -566,6 +585,50 @@ export class ScheduledNotificationRepository {
   }
 
   /**
+   * List pending jobs for queue visibility.
+   * Returns notifications in PENDING status ordered by priority then enqueue
+   * time (execute_at), with each entry carrying the minimum fields needed for
+   * queue inspection: id, notificationType, createdAt (enqueue time),
+   * executeAt (scheduled delivery time), priority, and retryCount.
+   */
+  async getPendingJobs(limit: number = 100): Promise<
+    Array<{
+      id: number;
+      notificationType: string;
+      createdAt: string;
+      executeAt: string;
+      priority: number;
+      retryCount: number;
+    }>
+  > {
+    const sql = `
+      SELECT id, notification_type, created_at, execute_at, priority, retry_count
+      FROM scheduled_notifications
+      WHERE status = ?
+      ORDER BY priority ASC, execute_at ASC
+      LIMIT ?
+    `;
+
+    const rows = await this.db.all<{
+      id: number;
+      notification_type: string;
+      created_at: string;
+      execute_at: string;
+      priority: number;
+      retry_count: number;
+    }>(sql, [NotificationStatus.PENDING, limit]);
+
+    return rows.map((row) => ({
+      id: row.id,
+      notificationType: row.notification_type,
+      createdAt: row.created_at,
+      executeAt: row.execute_at,
+      priority: row.priority,
+      retryCount: row.retry_count,
+    }));
+  }
+
+  /**
    * Get statistics about scheduled notifications
    */
   async getStats(): Promise<{
@@ -576,47 +639,50 @@ export class ScheduledNotificationRepository {
     overdue: number;
     deadLetterQueue: number;
   }> {
-    const now = new Date().toISOString();
+    // Use cache with getOrLoad pattern
+    return await this.statsCache.getOrLoad(async () => {
+      const now = new Date().toISOString();
 
-    const countBySql = `
-      SELECT 
-        CASE 
-          WHEN status = 'PROCESSING' AND lock_expires_at IS NOT NULL AND lock_expires_at < ? THEN 'PENDING'
-          ELSE status
-        END AS adjusted_status,
-        COUNT(*) as count
-      FROM scheduled_notifications
-      GROUP BY adjusted_status
-    `;
+      const countBySql = `
+        SELECT 
+          CASE 
+            WHEN status = 'PROCESSING' AND lock_expires_at IS NOT NULL AND lock_expires_at < ? THEN 'PENDING'
+            ELSE status
+          END AS adjusted_status,
+          COUNT(*) as count
+        FROM scheduled_notifications
+        GROUP BY adjusted_status
+      `;
 
-    const overdueSql = `
-      SELECT COUNT(*) as count
-      FROM scheduled_notifications
-      WHERE (status = 'PENDING' OR (status = 'PROCESSING' AND lock_expires_at IS NOT NULL AND lock_expires_at < ?))
-        AND execute_at < ?
-    `;
+      const overdueSql = `
+        SELECT COUNT(*) as count
+        FROM scheduled_notifications
+        WHERE (status = 'PENDING' OR (status = 'PROCESSING' AND lock_expires_at IS NOT NULL AND lock_expires_at < ?))
+          AND execute_at < ?
+      `;
 
-    const counts = await this.db.all<{ adjusted_status: string; count: number }>(countBySql, [now]);
-    const overdueResult = await this.db.get<{ count: number }>(overdueSql, [now, now]);
-    const dlqResult = await this.db.get<{ count: number }>('SELECT COUNT(*) as count FROM dead_letter_queue');
+      const counts = await this.db.all<{ adjusted_status: string; count: number }>(countBySql, [now]);
+      const overdueResult = await this.db.get<{ count: number }>(overdueSql, [now, now]);
+      const dlqResult = await this.db.get<{ count: number }>('SELECT COUNT(*) as count FROM dead_letter_queue');
 
-    const stats = {
-      pending: 0,
-      processing: 0,
-      completed: 0,
-      failed: 0,
-      overdue: overdueResult?.count ?? 0,
-      deadLetterQueue: dlqResult?.count ?? 0,
-    };
+      const stats = {
+        pending: 0,
+        processing: 0,
+        completed: 0,
+        failed: 0,
+        overdue: overdueResult?.count ?? 0,
+        deadLetterQueue: dlqResult?.count ?? 0,
+      };
 
-    counts.forEach((row) => {
-      const status = row.adjusted_status.toLowerCase();
-      if (status in stats) {
-        (stats as any)[status] = row.count;
-      }
+      counts.forEach((row) => {
+        const status = row.adjusted_status.toLowerCase();
+        if (status in stats) {
+          (stats as any)[status] = row.count;
+        }
+      });
+
+      return stats;
     });
-
-    return stats;
   }
 
   /**
@@ -745,8 +811,8 @@ export class ScheduledNotificationRepository {
 
     return {
       id: row.id,
-      payload: decompressPayload(row.payload),
       payload: row.payload,
+      payload: decompressPayload(row.payload),
       payloadHash: row.payload_hash,
       notificationType: row.notification_type as any,
       targetRecipient: row.target_recipient,

@@ -28,7 +28,7 @@ import { NotificationMetricsStore } from './services/notification-metrics-store'
 import { NotificationMetricsRunner } from './services/notification-metrics-runner';
 import { eventRegistry } from './store/event-registry';
 import logger from './utils/logger';
-import { loadConfig, ConfigError } from './config';
+import { loadConfig, validateConfig, ConfigError } from './config';
 import { NotificationHealthMonitor } from './services/notification-health-monitor';
 import { getWorkerManager } from './services/worker-manager';
 import { EventDeduplicationService } from './services/event-deduplication-service';
@@ -37,6 +37,9 @@ dotenv.config();
 
 async function main() {
   const config = loadConfig();
+  // Validate all config values before starting any services (#494).
+  // This throws a descriptive ConfigError listing every problem found.
+  validateConfig(config);
 
   // Initialize database for scheduled notifications and templates
   // Initialize database for templates, scheduler, and rate limiting
@@ -173,7 +176,7 @@ async function main() {
     healthMonitor.start();
   }
 
-  const subscriber = new EventSubscriber(config);
+  const subscriber = new EventSubscriber(config, deduplicationService);
   await subscriber.start();
 
   const shutdown = async () => {

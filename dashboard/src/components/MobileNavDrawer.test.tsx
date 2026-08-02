@@ -1,7 +1,6 @@
 /**
  * Tests for MobileNavDrawer (#396)
  */
-import React from 'react';
 import { render, screen, fireEvent } from '@testing-library/react';
 import '@testing-library/jest-dom';
 import { MobileNavDrawer, NAV_ITEMS } from '../components/MobileNavDrawer';

@@ -1,13 +1,18 @@
 /**
  * Tests for ToastContext (#397)
  */
-import React from 'react';
 import { render, screen, act, fireEvent } from '@testing-library/react';
 import '@testing-library/jest-dom';
 import { ToastProvider, useToast } from '../context/ToastContext';
 
+interface ToastTriggerProps {
+  message?: string;
+  variant?: 'success' | 'error' | 'warning' | 'info';
+  duration?: number;
+}
+
 // Helper component that exposes toast actions
-function ToastTrigger({ message = 'Test message', variant = 'success' as const, duration = 0 }) {
+function ToastTrigger({ message = 'Test message', variant = 'success' as const, duration = 0 }: ToastTriggerProps) {
   const { addToast, removeToast, showSuccess, showError, showInfo, showWarning, toasts } =
     useToast();
   return (
