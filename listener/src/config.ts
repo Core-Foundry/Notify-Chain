@@ -196,6 +196,7 @@ export function loadConfig(): Config {
   const discord = loadDiscordConfig();
   const rawContractAddresses = parseJsonEnv<unknown>('CONTRACT_ADDRESSES', '[]');
   const rawWebhookSecrets = parseJsonEnv<unknown>('WEBHOOK_SECRETS', '[]');
+  const rawApiKeys = parseJsonEnv<unknown>('API_KEYS', '[]');
   const clientOverrides = parseJsonEnv<Record<string, { maxRequests: number; windowMs?: number }>>(
     'RATE_LIMIT_CLIENT_OVERRIDES',
     '{}'

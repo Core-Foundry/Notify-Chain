@@ -220,7 +220,7 @@ async function getContractPauseStatus(
   try {
     const server = new StellarSDK.rpc.Server(stellarRpcUrl);
     const contract = new StellarSDK.Contract(contractAddress);
-    
+
     // Create a dummy account for simulation (we don't need to actually sign anything)
     const dummyKeypair = StellarSDK.Keypair.random();
     const sourceAccount = await server.getAccount(dummyKeypair.publicKey()).catch(() => {
@@ -254,9 +254,9 @@ async function getContractPauseStatus(
     const value = StellarSDK.scValToNative(simResult.retval);
     return { paused: !!value };
   } catch (err) {
-    return { 
-      paused: false, 
-      error: err instanceof Error ? err.message : String(err) 
+    return {
+      paused: false,
+      error: err instanceof Error ? err.message : String(err)
     };
   }
 }
@@ -429,6 +429,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-API-Key, Authorization, X-Correlation-Id');
 
     const url = new URL(req.url ?? '/', 'http://localhost');
+    const pathname = url.pathname;
 
     // ── API Route Versioning (#386) ─────────────────────────────────────────
     // Accept requests to /api/v1/* and silently rewrite the pathname to the
@@ -447,7 +448,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
     // reachable even after a client exhausts its quota — otherwise callers
     // can't read the very metrics that explain why they are being throttled.
     const isRateLimitExempt =
-      req.method === 'GET' && url.pathname === '/api/rate-limit/metrics';
+      req.method === 'GET' && (pathname === '/api/rate-limit/metrics' || pathname === '/health');
 
     if (rateLimiter && !isRateLimitExempt) {
       const allowed = await rateLimiter.handle(req, res as any);
