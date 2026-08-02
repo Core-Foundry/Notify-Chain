@@ -1,6 +1,9 @@
 import { Database } from '../database/database';
 import logger from '../utils/logger';
 import {
+  CreateNotificationTemplateInput,
+  AuditedNotificationTemplate,
+  AuditedNotificationTemplateRow,
   CreateNotificationTemplateInputOld,
   NotificationTemplateOld,
   NotificationTemplateRowOld,
@@ -34,6 +37,7 @@ export class NotificationTemplateRepository {
     private readonly cache?: NotificationTemplateCache,
   ) {}
 
+  async create(input: CreateNotificationTemplateInput): Promise<AuditedNotificationTemplate> {
   async create(input: CreateNotificationTemplateInputOld): Promise<NotificationTemplateOld> {
     this.validateTemplateInput(input.id, input.name, input.body);
 
@@ -66,6 +70,8 @@ export class NotificationTemplateRepository {
     return template;
   }
 
+  async getById(templateId: string): Promise<AuditedNotificationTemplate | undefined> {
+    const row = await this.db.get<AuditedNotificationTemplateRow>(
   async getById(templateId: string): Promise<NotificationTemplateOld | undefined> {
     const row = await this.db.get<NotificationTemplateRowOld>(
       'SELECT * FROM notification_templates WHERE id = ?',
@@ -78,6 +84,7 @@ export class NotificationTemplateRepository {
     templateId: string,
     input: UpdateNotificationTemplateInputOld,
     actor: string,
+  ): Promise<AuditedNotificationTemplate> {
   ): Promise<NotificationTemplateOld> {
     const trimmedActor = actor?.trim();
     if (!trimmedActor) {
@@ -93,6 +100,7 @@ export class NotificationTemplateRepository {
     const nextBody = input.body ?? existing.body;
     this.validateTemplateInput(templateId, nextName, nextBody);
 
+    const updated: AuditedNotificationTemplate = {
     const updated: NotificationTemplateOld = {
       ...existing,
       ...input,
@@ -149,6 +157,13 @@ export class NotificationTemplateRepository {
     return persisted;
   }
 
+  async getAll(): Promise<AuditedNotificationTemplate[]> {
+    const rows = await this.db.all<AuditedNotificationTemplateRow>(
+      'SELECT * FROM notification_templates',
+    );
+    return rows.map(row => this.rowToModel(row));
+  async listAll(): Promise<AuditedNotificationTemplate[]> {
+    const rows = await this.db.all<AuditedNotificationTemplateRow>(
   async getAll(): Promise<NotificationTemplateOld[]> {
     const rows = await this.db.all<NotificationTemplateRowOld>(
       'SELECT * FROM notification_templates',
@@ -193,6 +208,8 @@ export class NotificationTemplateRepository {
   }
 
   private hasTemplateChanges(
+    previous: AuditedNotificationTemplate,
+    next: AuditedNotificationTemplate,
     previous: NotificationTemplateOld,
     next: NotificationTemplateOld,
   ): boolean {
@@ -200,6 +217,7 @@ export class NotificationTemplateRepository {
       !== JSON.stringify(this.snapshotForComparison(next));
   }
 
+  private snapshotForComparison(template: AuditedNotificationTemplate): Record<string, unknown> {
   private snapshotForComparison(template: NotificationTemplateOld): Record<string, unknown> {
     return {
       id: template.id,
@@ -213,6 +231,7 @@ export class NotificationTemplateRepository {
     };
   }
 
+  private rowToModel(row: AuditedNotificationTemplateRow): AuditedNotificationTemplate {
   private rowToModel(row: NotificationTemplateRowOld): NotificationTemplateOld {
     return {
       id: row.id,

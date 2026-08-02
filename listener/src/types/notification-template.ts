@@ -97,6 +97,7 @@ export interface ChannelNotificationTemplateRow {
   updated_by: string | null;
 }
 
+export interface AuditedNotificationTemplate {
 export interface NotificationTemplateOld {
   id: string;
   name: string;
@@ -148,11 +149,11 @@ export interface TemplateAuditRecord {
   actor: string;
   action: TemplateAuditAction;
   changedAt: Date;
-  previousSnapshot: NotificationTemplate;
-  newSnapshot: NotificationTemplate;
+  previousSnapshot: AuditedNotificationTemplate;
+  newSnapshot: AuditedNotificationTemplate;
 }
 
-export interface NotificationTemplateRow {
+export interface AuditedNotificationTemplateRow {
   id: string;
   name: string;
   type: string;

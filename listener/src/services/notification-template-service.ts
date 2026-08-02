@@ -1,4 +1,6 @@
 import {
+  CreateNotificationTemplateInput,
+  AuditedNotificationTemplate,
   CreateNotificationTemplateInputOld,
   NotificationTemplateOld,
   TemplateAuditRecord,
@@ -24,12 +26,14 @@ export class NotificationTemplateService {
     private readonly cache: NotificationTemplateCache = getTemplateCache(),
   ) {}
 
+  async create(input: CreateNotificationTemplateInput): Promise<AuditedNotificationTemplate> {
   async create(input: CreateNotificationTemplateInputOld): Promise<NotificationTemplateOld> {
     const template = await this.repository.create(input);
     this.cache.set(String(template.id ?? ''), template);
     return template;
   }
 
+  async listAll(): Promise<AuditedNotificationTemplate[]> {
   async listAll(): Promise<NotificationTemplateOld[]> {
     return this.repository.listAll();
   }
@@ -44,6 +48,7 @@ export class NotificationTemplateService {
    * Returns the rendered subject and body, or throws if required variables are missing.
    */
   renderTemplate(
+    template: AuditedNotificationTemplate,
     template: NotificationTemplateOld,
     variables: Record<string, string>,
   ): { subject?: string; body: string } {
@@ -65,6 +70,7 @@ export class NotificationTemplateService {
     };
   }
 
+  async getById(templateId: string): Promise<AuditedNotificationTemplate | undefined> {
   async getById(templateId: string): Promise<NotificationTemplateOld | undefined> {
     return this.cache.getOrLoad(templateId, () => this.repository.getById(templateId));
   }
@@ -73,6 +79,11 @@ export class NotificationTemplateService {
     templateId: string,
     input: UpdateNotificationTemplateInputOld,
     actor: string,
+  ): Promise<AuditedNotificationTemplate> {
+    return this.repository.update(templateId, input, actor);
+  }
+
+  async getAll(): Promise<AuditedNotificationTemplate[]> {
   ): Promise<NotificationTemplateOld> {
     return this.repository.update(templateId, input, actor);
   }

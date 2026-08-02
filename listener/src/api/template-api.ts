@@ -220,12 +220,12 @@ export function createTemplateAPIHandler(options: TemplateAPIOptions) {
 }
 import { resolveRequestActor } from '../utils/request-actor';
 import {
-  NotificationTemplate,
+  AuditedNotificationTemplate,
   TemplateAuditRecord,
   UpdateNotificationTemplateInput,
 } from '../types/notification-template';
 
-export function serializeTemplate(template: NotificationTemplate): Record<string, unknown> {
+export function serializeTemplate(template: AuditedNotificationTemplate): Record<string, unknown> {
   return {
     ...template,
     createdAt: template.createdAt ? template.createdAt.toISOString() : new Date().toISOString(),
@@ -245,7 +245,7 @@ export function serializeAuditRecord(record: TemplateAuditRecord): Record<string
   };
 }
 
-function normalizeSnapshot(snapshot: NotificationTemplate): NotificationTemplate {
+function normalizeSnapshot(snapshot: AuditedNotificationTemplate): AuditedNotificationTemplate {
   return {
     ...snapshot,
     createdAt: snapshot.createdAt instanceof Date
