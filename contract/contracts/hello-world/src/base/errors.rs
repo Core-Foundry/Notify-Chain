@@ -77,6 +77,10 @@ pub enum Error {
     InvalidLimit = 34,
     /// Triggered when a notification has already been delivered and cannot be recalled.
     NotificationDelivered = 35,
+    /// Triggered when an invalid limit configuration is provided.
+    InvalidLimit = 34,
+    /// Triggered when a notification has already been delivered and cannot be recalled.
+    NotificationDelivered = 35,
     /// Triggered when a notification category is not registered.
     CategoryNotRegistered = 36,
     /// Triggered when an invalid limit configuration is provided.

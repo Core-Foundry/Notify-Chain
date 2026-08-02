@@ -456,6 +456,19 @@ pub struct BatchProcessingCompleted {
     pub processed_count: u32,
 }
 
+/// Emitted when an off-chain batch of notifications finishes processing.
+#[contractevent(data_format = "single-value")]
+#[derive(Clone)]
+pub struct BatchProcessingCompleted {
+    #[topic]
+    pub batch_id: BytesN<32>,
+    #[topic]
+    pub category: NotificationCategory,
+    #[topic]
+    pub priority: NotificationPriority,
+    pub processed_count: u32,
+}
+
 /// Emitted when a scheduled notification's expiry period is extended by an authorized sender.
 #[contractevent(data_format = "single-value")]
 #[derive(Clone)]
@@ -474,7 +487,7 @@ pub struct OwnershipTransferred {
 // ============================================================================
 /// Emitted when a sender's reputation score is updated.
 /// Triggered by successful or failed notification delivery.
-#[contractevent(data_format = "single-value")]
+#[contractevent]
 #[derive(Clone)]
 pub struct ReputationUpdated {
     #[topic]
@@ -505,7 +518,7 @@ pub struct NotificationLimitsConfigured {
 }
 
 /// Emitted when a sender's reputation tier changes (e.g., from Bronze to Silver).
-#[contractevent(data_format = "single-value")]
+#[contractevent]
 #[derive(Clone)]
 pub struct ReputationTierChanged {
     #[topic]
@@ -619,4 +632,35 @@ pub struct ReputationTierChanged {
     pub new_tier: u32,
     pub reputation_score: i64,
     pub new_owner: Address,
+}
+
+/// Emitted when an authorized user updates a channel's description or metadata.
+///
+/// Existing subscribers / members are unaffected — only descriptive metadata changes.
+#[contractevent]
+#[derive(Clone)]
+pub struct ChannelMetadataUpdated {
+    #[topic]
+    pub channel_id: BytesN<32>,
+    #[topic]
+    pub updater: Address,
+    #[topic]
+    pub category: NotificationCategory,
+    #[topic]
+    pub priority: NotificationPriority,
+    pub updated_at: u64,
+}
+
+/// Emitted when a processed notification is moved into the on-chain archive.
+#[contractevent]
+#[derive(Clone)]
+pub struct NotificationArchived {
+    #[topic]
+    pub notification_id: BytesN<32>,
+    #[topic]
+    pub category: NotificationCategory,
+    #[topic]
+    pub priority: NotificationPriority,
+    pub archived_at: u64,
+    pub archive_reason: String,
 }

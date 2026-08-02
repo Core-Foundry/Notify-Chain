@@ -2,17 +2,23 @@ use crate::base::errors::Error;
 use crate::base::events::{
     AdminTransferred, AuditAction, AuditRecordAppended, AuthorizationFailure, AutoshareCreated,
     AutoshareUpdated, BatchNotificationsCreated, BatchProcessingCompleted, CategoryRegistered,
+    ChannelMetadataUpdated, ContractPaused, ContractUnpaused, GroupActivated, GroupDeactivated,
+    NotificationAccessed, NotificationAcknowledged, NotificationArchived, NotificationCategory,
+    NotificationDelivered, NotificationExpired, NotificationExtended,
+    NotificationLimitsConfigured, NotificationPriority, NotificationRecalled, NotificationRevoked,
+    NotificationScheduled, OwnershipTransferInitiated, OwnershipTransferred,
     ContractPaused, ContractUnpaused, GroupActivated, GroupDeactivated, NotificationAccessed,
     NotificationAcknowledged, NotificationCategory, NotificationDelivered, NotificationExpired,
     NotificationExtended, NotificationLimitsConfigured, NotificationPriority, NotificationRecalled,
     NotificationRevoked, NotificationScheduled, OwnershipTransferInitiated, OwnershipTransferred,
     ScheduledNotificationCancelled, SchemaVersionSet, SubscriptionCancelled, Withdrawal,
 };
+use crate::base::metadata_validation::{validate_metadata, NotificationMetadata};
 use crate::base::types::{
-    AuditRecord, AutoShareDetails, GroupMember, NotificationLimits, PaymentHistory,
-    ScheduledNotification,
+    ArchivedNotification, AuditRecord, AutoShareDetails, ChannelMetadata, GroupMember,
+    NotificationLimits, PaymentHistory, ScheduledNotification, CURRENT_NOTIFICATION_VERSION,
 };
-use soroban_sdk::{contracttype, token, Address, BytesN, Env, String, Vec};
+use soroban_sdk::{contracttype, token, Address, BytesN, Env, Map, String, Vec};
 
 /// Storage key layout (optimized):
 ///
@@ -63,6 +69,10 @@ pub enum DataKey {
     RegisteredCategories,
     /// Stores the current on-chain notification schema version.
     SchemaVersion,
+    /// Descriptive metadata for an AutoShare channel (keyed by group id).
+    ChannelMetadata(BytesN<32>),
+    /// Archived copy of a processed notification (keyed by notification id).
+    ArchivedNotification(BytesN<32>),
 }
 
 // ============================================================================
@@ -294,8 +304,9 @@ pub fn add_group_member(
         return Err(Error::TooManyMembers);
     }
 
-    // Add new member
+    // Add new member (embedded in AutoShareDetails — no separate GroupMembers key)
     details.members.push_back(GroupMember {
+        address,
         address: address.clone(),
         percentage,
     });
@@ -1245,6 +1256,14 @@ pub fn schedule_notification(
         return Err(Error::InvalidExpirationDuration);
     }
 
+    // Validate metadata (title is required; full metadata rules applied)
+    let metadata = NotificationMetadata {
+        title: title.clone(),
+        description: None,
+        data_uri: None,
+        custom_fields: None,
+    };
+    validate_metadata(&metadata)?;
     // Reject lifetimes that exceed the protocol maximum (issue #477).
     if ttl_seconds > MAX_NOTIFICATION_LIFETIME_SECONDS {
         return Err(Error::NotificationLifetimeTooLong);
@@ -1278,6 +1297,7 @@ pub fn schedule_notification(
         recalled_by: None,
         recalled_at: None,
         title,
+        version: CURRENT_NOTIFICATION_VERSION,
     };
     env.storage().persistent().set(&key, &notification);
 
@@ -1339,6 +1359,12 @@ pub fn expire_notification(env: Env, notification_id: BytesN<32>) -> Result<(), 
 
     env.storage().persistent().remove(&key);
 
+    archive_notification(
+        &env,
+        &notification,
+        String::from_str(&env, "expired"),
+    );
+
     append_audit_record(
         &env,
         notification_id.clone(),
@@ -1387,6 +1413,11 @@ pub fn cancel_notification(
         env.storage()
             .persistent()
             .remove(&DataKey::ScheduledNotification(notification_id.clone()));
+        archive_notification(
+            &env,
+            &notification,
+            String::from_str(&env, "cancelled"),
+        );
     }
 
     append_audit_record(
@@ -1505,6 +1536,14 @@ pub fn batch_schedule_notifications(
         let priority = priorities.get(i).unwrap();
         let expires_at = created_at + ttl;
 
+        let metadata = NotificationMetadata {
+            title: title.clone(),
+            description: None,
+            data_uri: None,
+            custom_fields: None,
+        };
+        validate_metadata(&metadata)?;
+
         let notification = ScheduledNotification {
             id: id.clone(),
             creator: creator.clone(),
@@ -1518,6 +1557,7 @@ pub fn batch_schedule_notifications(
             recalled_by: None,
             recalled_at: None,
             title,
+            version: CURRENT_NOTIFICATION_VERSION,
         };
         let key = DataKey::ScheduledNotification(id.clone());
         env.storage().persistent().set(&key, &notification);
@@ -1596,13 +1636,21 @@ pub fn confirm_notification_delivery(
     env.storage().persistent().set(&key, &notification);
 
     NotificationDelivered {
-        notification_id,
+        notification_id: notification_id.clone(),
         delivered_by: caller,
         category: NotificationCategory::Notification,
         priority: NotificationPriority::High,
         delivered_at,
     }
     .publish(&env);
+
+    // Move delivered notifications into the archive to keep active storage lean.
+    env.storage().persistent().remove(&key);
+    archive_notification(
+        &env,
+        &notification,
+        String::from_str(&env, "delivered"),
+    );
 
     Ok(())
 }
@@ -2011,7 +2059,7 @@ pub fn configure_notification_limits(
             caller: admin,
             category: NotificationCategory::Admin,
             priority: NotificationPriority::Critical,
-            action: String::from_bytes(&env, b"configure_notification_limits"),
+            action: String::from_str(&env, "configure_notification_limits"),
         }
         .publish(&env);
         return Err(Error::Unauthorized);
@@ -2167,4 +2215,169 @@ pub fn record_notification_access(
     .publish(&env);
 
     Ok(())
+}
+
+// ============================================================================
+// Channel Metadata Updates
+// ============================================================================
+
+/// Maximum length for a channel description string.
+const MAX_CHANNEL_DESCRIPTION_LENGTH: u32 = 256;
+/// Maximum number of custom metadata fields on a channel.
+const MAX_CHANNEL_CUSTOM_FIELDS: u32 = 20;
+
+/// Updates the description and custom metadata for an AutoShare channel.
+///
+/// Only the channel creator (group owner) may update metadata. Membership,
+/// usage counts, and other subscriber state are never modified.
+///
+/// # Errors
+/// - `NotFound` if the channel / group does not exist
+/// - `Unauthorized` if `caller` is not the creator
+/// - `ContractPaused` if the contract is paused
+/// - `InvalidInput` if description or custom fields fail validation
+pub fn update_channel_metadata(
+    env: Env,
+    channel_id: BytesN<32>,
+    caller: Address,
+    description: String,
+    custom_fields: Map<String, String>,
+) -> Result<(), Error> {
+    caller.require_auth();
+
+    if get_paused_status(&env) {
+        return Err(Error::ContractPaused);
+    }
+
+    let group = get_autoshare(env.clone(), channel_id.clone())?;
+    if caller != group.creator {
+        return Err(Error::Unauthorized);
+    }
+
+    if description.len() > MAX_CHANNEL_DESCRIPTION_LENGTH {
+        return Err(Error::InvalidInput);
+    }
+
+    if custom_fields.len() > MAX_CHANNEL_CUSTOM_FIELDS {
+        return Err(Error::InvalidInput);
+    }
+
+    for key in custom_fields.keys() {
+        if key.len() > 256 {
+            return Err(Error::InvalidInput);
+        }
+        if let Some(value) = custom_fields.get(key.clone()) {
+            if value.len() > 256 {
+                return Err(Error::InvalidInput);
+            }
+        }
+    }
+
+    // Validate via shared metadata rules when a non-empty description is provided.
+    let meta = NotificationMetadata {
+        title: if description.is_empty() {
+            String::from_str(&env, "channel")
+        } else {
+            description.clone()
+        },
+        description: Some(description.clone()),
+        data_uri: None,
+        custom_fields: Some(custom_fields.clone()),
+    };
+    validate_metadata(&meta)?;
+
+    let updated_at = env.ledger().timestamp();
+    let metadata = ChannelMetadata {
+        channel_id: channel_id.clone(),
+        description,
+        custom_fields,
+        updated_at,
+    };
+
+    env.storage()
+        .persistent()
+        .set(&DataKey::ChannelMetadata(channel_id.clone()), &metadata);
+
+    ChannelMetadataUpdated {
+        channel_id,
+        updater: caller,
+        category: NotificationCategory::Group,
+        priority: NotificationPriority::Low,
+        updated_at,
+    }
+    .publish(&env);
+
+    Ok(())
+}
+
+/// Returns channel metadata for `channel_id`, or a default empty record if never set.
+pub fn get_channel_metadata(env: Env, channel_id: BytesN<32>) -> Result<ChannelMetadata, Error> {
+    // Ensure the channel exists.
+    let _group = get_autoshare(env.clone(), channel_id.clone())?;
+
+    if let Some(meta) = env
+        .storage()
+        .persistent()
+        .get::<DataKey, ChannelMetadata>(&DataKey::ChannelMetadata(channel_id.clone()))
+    {
+        return Ok(meta);
+    }
+
+    Ok(ChannelMetadata {
+        channel_id,
+        description: String::from_str(&env, ""),
+        custom_fields: Map::new(&env),
+        updated_at: 0,
+    })
+}
+
+// ============================================================================
+// Notification Archiving
+// ============================================================================
+
+/// Moves a processed notification into immutable archive storage and emits
+/// [`NotificationArchived`]. Active storage must already have been cleared by
+/// the caller.
+fn archive_notification(env: &Env, notification: &ScheduledNotification, reason: String) {
+    let archived_at = env.ledger().timestamp();
+    let archived = ArchivedNotification {
+        id: notification.id.clone(),
+        creator: notification.creator.clone(),
+        created_at: notification.created_at,
+        expires_at: notification.expires_at,
+        title: notification.title.clone(),
+        version: notification.version,
+        archived_at,
+        archive_reason: reason.clone(),
+    };
+
+    env.storage().persistent().set(
+        &DataKey::ArchivedNotification(notification.id.clone()),
+        &archived,
+    );
+
+    NotificationArchived {
+        notification_id: notification.id.clone(),
+        category: NotificationCategory::Notification,
+        priority: NotificationPriority::Low,
+        archived_at,
+        archive_reason: reason,
+    }
+    .publish(env);
+}
+
+/// Returns an archived notification by id.
+pub fn get_archived_notification(
+    env: Env,
+    notification_id: BytesN<32>,
+) -> Result<ArchivedNotification, Error> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::ArchivedNotification(notification_id))
+        .ok_or(Error::NotFound)
+}
+
+/// Returns the current notification protocol version constant.
+pub fn get_notification_version(_env: Env) -> u32 {
+    CURRENT_NOTIFICATION_VERSION
 }
