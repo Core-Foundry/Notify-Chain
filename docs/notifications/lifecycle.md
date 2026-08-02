@@ -8,6 +8,8 @@
 
 ## Overview
 
+See also the root lifecycle guide: [`NOTIFICATION_LIFECYCLE.md`](../../NOTIFICATION_LIFECYCLE.md).
+
 The NotifyChain notification system is a robust, multi-component system designed to capture events from Soroban smart contracts, deliver them to configured destinations, and track their entire lifecycle for auditing and debugging purposes.
 
 This document describes:

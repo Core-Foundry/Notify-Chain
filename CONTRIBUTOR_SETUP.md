@@ -2,6 +2,14 @@
 
 > **Canonical setup guide:** [`docs/ENVIRONMENT_SETUP.md`](docs/ENVIRONMENT_SETUP.md)
 
+This guide walks you through setting up a local development environment for
+NotifyChain. By the end, you will have the listener service, the dashboard,
+the frontend analytics app, and the smart contracts building and running on
+your machine.
+
+For the canonical contribution workflow, start with
+[`CONTRIBUTOR_DEVELOPMENT_WORKFLOW_GUIDE.md`](CONTRIBUTOR_DEVELOPMENT_WORKFLOW_GUIDE.md).
+For a shorter setup path, see [`LOCAL_DEVELOPMENT.md`](LOCAL_DEVELOPMENT.md).
 That document contains step-by-step instructions to install required tools,
 clone the repository, configure the listener and dashboard, build contracts, and
 verify your installation (including CI-parity checks).
@@ -19,6 +27,13 @@ For Git workflow (fork, branch, PR), see
 2. [Clone the Repository](#2-clone-the-repository)
 3. [Listener Service Setup](#3-listener-service-setup)
 4. [Dashboard Setup](#4-dashboard-setup)
+5. [Frontend (Next.js Analytics) Setup](#5-frontend-nextjs-analytics-setup)
+6. [Smart Contracts Setup](#6-smart-contracts-setup)
+7. [Environment Variables Reference](#7-environment-variables-reference)
+8. [Full-Stack Verification Checklist](#8-full-stack-verification-checklist)
+9. [Running Tests](#9-running-tests)
+10. [VS Code Setup (Recommended)](#10-vs-code-setup-recommended)
+11. [Troubleshooting & FAQ](#11-troubleshooting--faq)
 5. [Smart Contracts Setup](#5-smart-contracts-setup)
 6. [Environment Variables Reference](#6-environment-variables-reference)
 7. [Running Tests](#7-running-tests)
@@ -37,6 +52,14 @@ For Git workflow (fork, branch, PR), see
 | Node.js | **22** | [nodejs.org](https://nodejs.org) or `nvm` | Listener, Dashboard |
 | Git | — | your package manager | Version control |
 
+| Dependency     | Minimum Version | Install Method                          | Used By            |
+|----------------|-----------------|-----------------------------------------|--------------------|
+| Rust           | stable          | [rustup.rs](https://rustup.rs)          | Smart contracts    |
+| `wasm32-unknown-unknown` | —       | `rustup target add wasm32-unknown-unknown` | Soroban contracts |
+| Stellar CLI    | latest          | `cargo install --locked stellar-cli --features opt`             | Contract build/deploy |
+| Node.js        | **18** (dashboard), **20** (listener) | [nodejs.org](https://nodejs.org) or `nvm` | Listener, Dashboard |
+| npm            | comes with Node  | —                                       | Package management |
+| Git            | —               | Your package manager or [git-scm.com](https://git-scm.com) | Version control |
 ### Platform notes
 
 - **macOS**: Install Xcode Command Line Tools first: `xcode-select --install`
@@ -98,6 +121,8 @@ docker compose restart listener  # restart one service after env change
 Edit `.env` at the repo root, then:
 
 ```bash
+git clone https://github.com/Core-Foundry/Notify-Chain.git
+cd Notify-Chain
 docker compose restart listener        # for most listener settings
 docker compose up --build dashboard    # required if VITE_* vars changed (baked in at build time)
 ```
@@ -544,6 +569,14 @@ docker compose up --build  # fresh start, migrations run automatically
 
 ### Still stuck?
 
+1. Search [open issues](https://github.com/Core-Foundry/Notify-Chain/issues) — your problem may already be reported.
+1. Search [open issues](https://github.com/Core-Foundry/Notify-Chain/issues) — your problem may already be reported.
+2. Read the detailed [Troubleshooting Guide](TROUBLESHOOTING.md).
+3. Open a new issue with:
+   - Your OS and version
+   - Output of `rustc --version`, `node --version`, `stellar --version`
+   - The full error message and stack trace
+   - Steps you have already tried
 1. Search [open issues](https://github.com/Core-Foundry/Notify-Chain/issues).
 2. Open a new issue with: your OS, output of `rustc --version && node --version && stellar --version`, the full error and stack trace, and steps already tried.
 

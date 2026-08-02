@@ -36,6 +36,7 @@ The project enables developers to build reactive decentralized applications with
 >
 > **Event reference**: [Smart Contract Event Reference Guide](CONTRACT_EVENT_REFERENCE.md) — all emitted events, parameters, data types, and usage recommendations for indexers and listeners.
 >
+> **Dashboard Storybook**: [dashboard/STORYBOOK.md](dashboard/STORYBOOK.md) — component documentation for design and development reviews.
 > **API errors**: [API Error Reference](docs/API_ERROR_REFERENCE.md) — every error response the listener API returns, with causes and resolutions.
 >
 > **Architecture decisions**: [Architecture Decision Records](docs/adr/README.md) — the *why* behind the project's significant technical choices, including the [off-chain listener architecture](docs/adr/0001-off-chain-listener-architecture.md), [Soroban on Stellar](docs/adr/0002-soroban-smart-contracts.md), [SQLite persistence](docs/adr/0003-sqlite-for-local-persistence.md), [TypeScript for the listener](docs/adr/0004-typescript-for-listener-service.md), and the [event deduplication strategy](docs/adr/0005-event-deduplication-strategy.md).
@@ -349,8 +350,8 @@ stellar --version
 
 1. **Clone the repository**:
    ```bash
-   git clone https://github.com/your-org/notify-chain.git
-   cd notify-chain
+   git clone https://github.com/Core-Foundry/Notify-Chain.git
+   cd Notify-Chain
    ```
 
 2. **Building the AutoShare contract**:
@@ -564,7 +565,7 @@ Common Freighter wallet issues and how to resolve them.
 
 ## Wallet UX States
 
-The frontend models four wallet connection states. Every UI that depends on the wallet must handle all of them.
+The frontend (legacy Next.js analytics app under `frontend/`) models four wallet connection states. Every UI that depends on the wallet must handle all of them.
 
 | State | Description | User-facing message |
 |-------|-------------|---------------------|
@@ -668,7 +669,9 @@ Contributions are welcome! Please follow these steps (or start with the canonica
 Please follow the project's coding standards and include tests where applicable.
 
 For more detailed contribution guidelines, check:
-- `Documents/Task Bounty/CONTRIBUTING.md`
+- [`CONTRIBUTING.md`](CONTRIBUTING.md)
+- [`CONTRIBUTOR_DEVELOPMENT_WORKFLOW_GUIDE.md`](CONTRIBUTOR_DEVELOPMENT_WORKFLOW_GUIDE.md)
+- `Documents/Task Bounty/CONTRIBUTING.md` (TaskBounty contract-specific)
 
 ---
 

@@ -2,7 +2,7 @@
 
 ## ⚠️ Critical: Avoiding Double-Counting in Metrics
 
-This guide explains how to integrate with Notify-Chain's notification metrics **without double-counting retries**.
+This guide explains how to integrate with NotifyChain's notification metrics **without double-counting retries**.
 
 ---
 
@@ -39,7 +39,7 @@ Scheduled jobs are also tracked by `JobMonitor`. See **[JOB_MONITORING.md](./JOB
 **Endpoint**: `GET /api/schedule/execution-metrics`
 
 ```bash
-curl http://localhost:3000/api/schedule/execution-metrics
+curl http://localhost:8787/api/schedule/execution-metrics
 ```
 
 **Response**:
@@ -96,7 +96,7 @@ But if you're counting all log entries for that notification, you might count 3 
 scrape_configs:
   - job_name: 'notify-chain'
     static_configs:
-      - targets: ['localhost:3000']
+      - targets: ['localhost:8787']
     metrics_path: '/api/schedule/execution-metrics'
     scrape_interval: 30s
 ```
@@ -206,7 +206,7 @@ import requests
 
 class NotifyChainCheck(AgentCheck):
     def check(self, instance):
-        url = instance.get('url', 'http://localhost:3000/api/schedule/execution-metrics')
+        url = instance.get('url', 'http://localhost:8787/api/schedule/execution-metrics')
         
         try:
             response = requests.get(url, timeout=5)
@@ -238,7 +238,7 @@ class NotifyChainCheck(AgentCheck):
 init_config:
 
 instances:
-  - url: http://localhost:3000/api/schedule/execution-metrics
+  - url: http://localhost:8787/api/schedule/execution-metrics
     min_collection_interval: 30
 ```
 
@@ -254,7 +254,7 @@ const cloudwatch = new AWS.CloudWatch();
 
 exports.handler = async (event) => {
   try {
-    const metrics = await fetchMetrics('http://notify-chain:3000/api/schedule/execution-metrics');
+    const metrics = await fetchMetrics('http://notify-chain:8787/api/schedule/execution-metrics');
     
     const totalSuccess = metrics.successfulFirstAttempt + metrics.successfulAfterRetry;
     const successRate = metrics.totalNotifications > 0 
@@ -328,7 +328,7 @@ function fetchMetrics(url) {
 ```json
 {
   "dashboard": {
-    "title": "Notify-Chain Metrics",
+    "title": "NotifyChain Metrics",
     "panels": [
       {
         "title": "Success Rate",
@@ -535,7 +535,7 @@ index=notify-chain "Notification marked as completed"
 
 ```bash
 # Create a notification that will succeed on first attempt
-curl -X POST http://localhost:3000/api/schedule \
+curl -X POST http://localhost:8787/api/schedule \
   -H "Content-Type: application/json" \
   -d '{
     "notificationType": "discord",
@@ -552,7 +552,7 @@ curl -X POST http://localhost:3000/api/schedule \
 
 ```bash
 # Fetch metrics
-curl http://localhost:3000/api/schedule/execution-metrics | jq
+curl http://localhost:8787/api/schedule/execution-metrics | jq
 
 # Expected output structure:
 # {
@@ -573,7 +573,7 @@ curl http://localhost:3000/api/schedule/execution-metrics | jq
 # Stop Discord service to force failures
 # Then create notification - it will retry and eventually fail
 
-curl -X POST http://localhost:3000/api/schedule \
+curl -X POST http://localhost:8787/api/schedule \
   -H "Content-Type: application/json" \
   -d '{
     "notificationType": "discord",
@@ -588,7 +588,7 @@ curl -X POST http://localhost:3000/api/schedule \
 # Wait for retries to complete (2-3 minutes)
 
 # Check metrics again
-curl http://localhost:3000/api/schedule/execution-metrics | jq
+curl http://localhost:8787/api/schedule/execution-metrics | jq
 
 # Should show:
 # {

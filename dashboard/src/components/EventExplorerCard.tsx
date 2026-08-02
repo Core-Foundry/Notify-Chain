@@ -74,7 +74,7 @@ export function EventExplorerCard({
       aria-label={onSelect ? `View details for ${label} notification` : undefined}
     >
       <div className="event-explorer__cell" data-label="Contract" role="cell">
-        <div>
+        <div className="event-explorer__contract-block">
           <p className="event-explorer__contract" title={event.contractAddress}>
             {shortenAddress(event.contractAddress)}
           </p>

@@ -26,6 +26,21 @@ Welcome, and thanks for your interest in contributing. This document is your sta
 - [`docs/API_ERROR_REFERENCE.md`](docs/API_ERROR_REFERENCE.md) — every error response the listener API returns
 - [`docs/adr/README.md`](docs/adr/README.md) — Architecture Decision Records
 
+## Documentation conventions
+
+Use these names consistently in docs and PRs:
+
+| Concept | Standard form |
+|---------|----------------|
+| Product name (prose/titles) | **NotifyChain** |
+| GitHub repository / clone directory | **Notify-Chain** (`Core-Foundry/Notify-Chain`) |
+| Off-chain service | **Listener** (`listener/`) |
+| React + Vite UI | **Dashboard** (`dashboard/`) |
+| Legacy analytics app | **Frontend** (`frontend/`) |
+| On-chain code | **Smart contracts** (`contract/`, `Documents/Task Bounty/`) |
+
+Canonical setup path: workflow guide → [`LOCAL_DEVELOPMENT.md`](LOCAL_DEVELOPMENT.md) (quick) → [`CONTRIBUTOR_SETUP.md`](CONTRIBUTOR_SETUP.md) (detailed).
+
 ## Code of Conduct
 
 - Be respectful and inclusive
