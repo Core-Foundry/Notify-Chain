@@ -50,8 +50,9 @@ pub enum Error {
     TooManyMembers = 22,
     /// Triggered when interacting with a notification that has already expired.
     NotificationExpired = 23,
-    /// Triggered when an invalid expiration duration is provided (e.g., zero or
-    /// one that overflows the ledger clock).
+    /// Triggered when an invalid expiration duration is provided (e.g., zero,
+    /// one that overflows the ledger clock, or one that exceeds the maximum
+    /// allowed notification lifetime).
     InvalidExpirationDuration = 24,
     /// Triggered when attempting to expire a notification whose lifetime has not
     /// yet elapsed.
@@ -63,13 +64,35 @@ pub enum Error {
     /// Triggered when the caller is not authorized to revoke a notification.
     NotAuthorizedToRevoke = 28,
     /// Triggered when attempting to revoke a notification that is already revoked.
-    AlreadyRevoked = 28,
-    /// Triggered when the caller is not authorized to acknowledge a notification.
-    NotAuthorizedToAcknowledge = 29,
     AlreadyRevoked = 29,
+    /// Triggered when a transfer is attempted to the zero address.
+    ZeroAddressTransfer = 30,
+    /// Triggered when `accept_ownership` is called but no pending transfer is queued.
+    NoPendingOwnershipTransfer = 31,
+    /// Triggered when a caller other than the pending owner calls `accept_ownership`.
+    NotPendingOwner = 32,
+    /// Triggered when the caller is not authorized to acknowledge a notification.
+    NotAuthorizedToAcknowledge = 33,
     /// Triggered when an invalid limit configuration is provided.
-    InvalidLimit = 29,
+    InvalidLimit = 34,
+    /// Triggered when a notification has already been delivered and cannot be recalled.
+    NotificationDelivered = 35,
+    /// Triggered when an invalid limit configuration is provided.
+    InvalidLimit = 34,
+    /// Triggered when a notification has already been delivered and cannot be recalled.
+    NotificationDelivered = 35,
+    /// Triggered when a notification category is not registered.
+    CategoryNotRegistered = 36,
+    /// Triggered when an invalid limit configuration is provided.
+    InvalidLimit = 34,
+    /// Triggered when a notification has already been delivered and cannot be recalled.
+    NotificationDelivered = 35,
+    /// Triggered when a notification lifetime exceeds the protocol maximum.
+    /// See `MAX_NOTIFICATION_LIFETIME_SECONDS` in autoshare_logic.
+    NotificationLifetimeTooLong = 36,
+    NotAuthorizedToAcknowledge = 29,
+    /// Triggered when an invalid limit configuration is provided.
+    InvalidLimit = 32,
     /// Triggered when a notification has already been delivered and cannot be recalled.
     NotificationDelivered = 30,
-    InvalidLimit = 30,
 }
