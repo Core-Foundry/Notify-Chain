@@ -16,7 +16,7 @@
     "build-storybook": "node ./node_modules/storybook/bin/index.cjs build"
   },
   "dependencies": {
-    "@creit.tech/stellar-wallets-kit": "^2.3.0",
+    "@creit.tech/stellar-wallets-kit": "^2.5.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "zustand": "^5.0.6"
