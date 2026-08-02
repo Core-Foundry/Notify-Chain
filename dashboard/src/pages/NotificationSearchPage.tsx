@@ -203,6 +203,28 @@ export function NotificationSearchPage() {
 
   const totalPages = response ? response.totalPages : 0;
 
+  const getVisiblePages = () => {
+    if (totalPages <= 1) return [];
+
+    const pages: number[] = [];
+    const maxVisible = 5;
+    let startPage = Math.max(1, page - Math.floor(maxVisible / 2));
+    let endPage = startPage + maxVisible - 1;
+
+    if (endPage > totalPages) {
+      endPage = totalPages;
+      startPage = Math.max(1, endPage - maxVisible + 1);
+    }
+
+    for (let pageNumber = startPage; pageNumber <= endPage; pageNumber += 1) {
+      pages.push(pageNumber);
+    }
+
+    return pages;
+  };
+
+  const visiblePages = getVisiblePages();
+
   return (
     <main className="notif-search-page">
       <header className="notif-search-page__header">
@@ -435,14 +457,36 @@ export function NotificationSearchPage() {
                   type="button"
                   className="pagination__btn"
                   disabled={page === 1}
+                  onClick={() => setPage(1)}
+                  aria-label="First page"
+                >
+                  «
+                </button>
+                <button
+                  type="button"
+                  className="pagination__btn"
+                  disabled={page === 1}
                   onClick={() => setPage((p) => p - 1)}
                   aria-label="Previous page"
                 >
                   ← Previous
                 </button>
-                <span className="pagination__info">
-                  Page {page} of {totalPages}
-                </span>
+
+                <div className="pagination__pages" role="list" aria-label="Page numbers">
+                  {visiblePages.map((pageNumber) => (
+                    <button
+                      key={pageNumber}
+                      type="button"
+                      className="pagination__page-btn"
+                      onClick={() => setPage(pageNumber)}
+                      aria-current={pageNumber === page ? 'page' : undefined}
+                      aria-label={`Page ${pageNumber}`}
+                    >
+                      {pageNumber}
+                    </button>
+                  ))}
+                </div>
+
                 <button
                   type="button"
                   className="pagination__btn"
@@ -452,6 +496,18 @@ export function NotificationSearchPage() {
                 >
                   Next →
                 </button>
+                <button
+                  type="button"
+                  className="pagination__btn"
+                  disabled={page >= totalPages}
+                  onClick={() => setPage(totalPages)}
+                  aria-label="Last page"
+                >
+                  »
+                </button>
+                <span className="pagination__info">
+                  Page {page} of {totalPages}
+                </span>
               </nav>
             )}
           </>
