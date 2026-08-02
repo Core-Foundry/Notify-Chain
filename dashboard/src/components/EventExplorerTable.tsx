@@ -13,6 +13,10 @@ const COLUMN_LABELS = ['Contract', 'Event', 'Kind', 'Received', 'Ledger', 'Trans
 interface EventExplorerTableProps {
   events: BlockchainEvent[];
   onSelectEvent?: (event: BlockchainEvent) => void;
+  contractStatuses: ContractStatus[];
+}
+
+export function EventExplorerTable({ events, onSelectEvent, contractStatuses }: EventExplorerTableProps) {
   contractStatuses?: ContractStatus[];
 }
 

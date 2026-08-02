@@ -928,7 +928,7 @@ pub fn reduce_usage(env: Env, id: BytesN<32>, caller: Address) -> Result<(), Err
     caller.require_auth();
 
     let key = DataKey::AutoShare(id);
-    let mut details: AutoShareDetails = env
+    let details: AutoShareDetails = env
         .storage()
         .persistent()
         .get(&key)
@@ -946,8 +946,9 @@ pub fn reduce_usage(env: Env, id: BytesN<32>, caller: Address) -> Result<(), Err
         return Err(Error::NoUsagesRemaining);
     }
 
-    details.usage_count -= 1;
-    env.storage().persistent().set(&key, &details);
+    let mut updated = details;
+    updated.usage_count -= 1;
+    env.storage().persistent().set(&key, &updated);
     Ok(())
 }
 
@@ -1387,11 +1388,20 @@ pub fn expire_notification(env: Env, notification_id: BytesN<32>) -> Result<(), 
 /// [`ScheduledNotificationCancelled`] event so off-chain consumers can track the
 /// lifecycle of every scheduled notification in real time.
 ///
+/// # Access Control
+/// For on-chain **tracked** notifications (those currently stored), cancellation is
+/// restricted to the notification **creator** or the contract **admin**. This prevents
+/// a malicious third-party from arbitrarily cancelling another user's scheduled
+/// notifications and removing their on-chain state.
+///
+/// Identifiers that are **not** tracked on-chain are still accepted (and simply emit
+/// the event) so callers can signal cancellation of notifications managed entirely
+/// off-chain — those entries have no on-chain state to destroy, so there is nothing
+/// to gate.
+///
 /// If the notification is tracked on-chain, cancelling reaps its storage entry —
 /// but an **expired** or **revoked** notification is invalid and cannot be cancelled; such an
 /// attempt is rejected with [`Error::NotificationExpired`] or [`Error::NotificationRevoked`].
-/// Identifiers that are not tracked on-chain are accepted (and simply emit the event) so callers can
-/// signal cancellation of notifications managed entirely off-chain.
 pub fn cancel_notification(
     env: Env,
     notification_id: BytesN<32>,
@@ -1410,6 +1420,21 @@ pub fn cancel_notification(
         if is_expired(&env, &notification) {
             return Err(Error::NotificationExpired);
         }
+
+        // ── Access control for tracked on-chain notifications ─────────────
+        // Only the notification creator or the contract admin may remove
+        // another party's stored notification. Without this check, any caller
+        // could invoke cancel_notification repeatedly to wipe every group's
+        // scheduled state.
+        let admin = get_admin(env.clone()).ok();
+        let is_creator = caller == notification.creator;
+        let is_admin = admin.as_ref().map_or(false, |a| caller == *a);
+
+        if !is_creator && !is_admin {
+            publish_authorization_failure(&env, &caller, "cancel_notification");
+            return Err(Error::Unauthorized);
+        }
+
         env.storage()
             .persistent()
             .remove(&DataKey::ScheduledNotification(notification_id.clone()));
@@ -1737,6 +1762,7 @@ pub fn revoke_notification(
     let is_admin = admin.as_ref().map_or(false, |a| caller == *a);
 
     if !is_creator && !is_admin {
+        publish_authorization_failure(&env, &caller, "revoke_notification");
         return Err(Error::NotAuthorizedToRevoke);
     }
 
@@ -2049,8 +2075,8 @@ pub fn configure_notification_limits(
     min_expiration_seconds: u64,
     max_batch_size: u32,
 ) -> Result<(), Error> {
-    // Require authentication
     admin.require_auth();
+    require_admin(&env, &admin)?;
 
     // Verify caller is admin
     let current_admin = get_admin(env.clone())?;

@@ -154,8 +154,14 @@ describe('Preference API endpoints', () => {
   });
 });
 
-function computeSignature(payload: string, secret: string): string {
+function computeSignatureLegacy(payload: string, secret: string): string {
   const sig = crypto.createHmac('sha256', secret).update(payload, 'utf8').digest('hex');
+  return `sha256=${sig}`;
+}
+
+function computeSignatureBound(payload: string, secret: string, timestamp: string): string {
+  const signingInput = `${timestamp}.${payload}`;
+  const sig = crypto.createHmac('sha256', secret).update(signingInput, 'utf8').digest('hex');
   return `sha256=${sig}`;
 }
 
@@ -229,31 +235,109 @@ describe('POST /api/webhooks', () => {
     if (server) await closeServer(server);
   });
 
-  it('accepts a webhook with a valid signature', async () => {
+  it('accepts a webhook with a valid timestamp-bound signature', async () => {
     const payload = JSON.stringify({ event: 'test', data: { foo: 'bar' } });
-    const signature = computeSignature(payload, 'whsec_test_secret');
+    const timestamp = Math.floor(Date.now() / 1000).toString();
+    const signature = computeSignatureBound(payload, 'whsec_test_secret', timestamp);
 
     server = await startServer({ ...BASE_OPTIONS, webhookSecrets: secrets });
     const { status, body } = await makePostRequest(server, '/api/webhooks', payload, {
       'X-Webhook-Signature': signature,
       'X-Webhook-Key-Id': 'key-1',
+      'X-Webhook-Timestamp': timestamp,
     });
 
     expect(status).toBe(202);
+    expect((body as any).status).toBe('accepted');
+    expect((body as any).verified).toBe(true);
+  });
+
+  it('rejects a legacy signature when a timestamp IS provided (anti-replay: timestamp binding)', async () => {
+    // Attacker takes a captured legacy signature (no timestamp) and sends it with a
+    // fresh timestamp header, hoping the server will skip binding. Must reject.
+    const payload = JSON.stringify({ event: 'test' });
+    const legacySignature = computeSignatureLegacy(payload, 'whsec_test_secret');
+    const freshTimestamp = Math.floor(Date.now() / 1000).toString();
+
+    server = await startServer({ ...BASE_OPTIONS, webhookSecrets: secrets });
+    const { status, body } = await makePostRequest(server, '/api/webhooks', payload, {
+      'X-Webhook-Signature': legacySignature,
+      'X-Webhook-Key-Id': 'key-1',
+      'X-Webhook-Timestamp': freshTimestamp,
+    });
+
+    expect(status).toBe(401);
+    expect((body as any).code).toBe('AUTH_INVALID_SIGNATURE');
     expect((body as any).success).toBe(true);
     expect((body as any).data.status).toBe('accepted');
   });
 
-  it('rejects a webhook with an invalid signature', async () => {
+  it('rejects a timestamp-bound signature when the timestamp header is removed (anti-replay)', async () => {
+    // Attacker captures a request with a bound signature, then strips the
+    // timestamp header in order to bypass expiration + reuse it later.
+    // Must reject because signing-input no longer matches.
     const payload = JSON.stringify({ event: 'test' });
+    const timestamp = Math.floor(Date.now() / 1000).toString();
+    const boundSignature = computeSignatureBound(payload, 'whsec_test_secret', timestamp);
 
     server = await startServer({ ...BASE_OPTIONS, webhookSecrets: secrets });
     const { status, body } = await makePostRequest(server, '/api/webhooks', payload, {
-      'X-Webhook-Signature': 'sha256=invalid',
+      'X-Webhook-Signature': boundSignature,
       'X-Webhook-Key-Id': 'key-1',
+      // Deliberately no timestamp header
     });
 
     expect(status).toBe(401);
+    expect((body as any).code).toBe('AUTH_INVALID_SIGNATURE');
+  });
+
+  it('rejects a webhook with an expired timestamp', async () => {
+    const payload = JSON.stringify({ event: 'test' });
+    const oldTimestamp = (Math.floor(Date.now() / 1000) - 600).toString(); // 10 minutes old
+    const signature = computeSignatureBound(payload, 'whsec_test_secret', oldTimestamp);
+
+    server = await startServer({ ...BASE_OPTIONS, webhookSecrets: secrets });
+    const { status, body } = await makePostRequest(server, '/api/webhooks', payload, {
+      'X-Webhook-Signature': signature,
+      'X-Webhook-Key-Id': 'key-1',
+      'X-Webhook-Timestamp': oldTimestamp,
+    });
+
+    expect(status).toBe(401);
+    expect((body as any).code).toBe('AUTH_TIMESTAMP_EXPIRED');
+  });
+
+  it('rejects a webhook with a forged timestamp (signed for ts=A, header claims ts=B)', async () => {
+    const payload = JSON.stringify({ event: 'test' });
+    const realTs = Math.floor(Date.now() / 1000).toString();
+    const forgedTs = (parseInt(realTs, 10) + 5).toString();
+    const signatureForRealTs = computeSignatureBound(payload, 'whsec_test_secret', realTs);
+
+    server = await startServer({ ...BASE_OPTIONS, webhookSecrets: secrets });
+    const { status, body } = await makePostRequest(server, '/api/webhooks', payload, {
+      'X-Webhook-Signature': signatureForRealTs,
+      'X-Webhook-Key-Id': 'key-1',
+      'X-Webhook-Timestamp': forgedTs,
+    });
+
+    expect(status).toBe(401);
+    expect((body as any).code).toBe('AUTH_INVALID_SIGNATURE');
+  });
+
+  it('rejects a webhook with an invalid signature (wrong secret)', async () => {
+    const payload = JSON.stringify({ event: 'test' });
+    const timestamp = Math.floor(Date.now() / 1000).toString();
+    const signature = computeSignatureBound(payload, 'WRONG_SECRET', timestamp);
+
+    server = await startServer({ ...BASE_OPTIONS, webhookSecrets: secrets });
+    const { status, body } = await makePostRequest(server, '/api/webhooks', payload, {
+      'X-Webhook-Signature': signature,
+      'X-Webhook-Key-Id': 'key-1',
+      'X-Webhook-Timestamp': timestamp,
+    });
+
+    expect(status).toBe(401);
+    expect((body as any).code).toBe('AUTH_INVALID_SIGNATURE');
     expect((body as any).success).toBe(false);
     expect((body as any).error.message).toBe('Invalid signature');
   });
@@ -267,50 +351,72 @@ describe('POST /api/webhooks', () => {
     });
 
     expect(status).toBe(401);
+    expect((body as any).code).toBe('AUTH_MISSING_SIGNATURE');
     expect((body as any).success).toBe(false);
     expect((body as any).error.message).toBe('Missing signature header');
   });
 
   it('rejects when key-id header is missing', async () => {
     const payload = JSON.stringify({ event: 'test' });
-    const signature = computeSignature(payload, 'whsec_test_secret');
+    const timestamp = Math.floor(Date.now() / 1000).toString();
+    const signature = computeSignatureBound(payload, 'whsec_test_secret', timestamp);
 
     server = await startServer({ ...BASE_OPTIONS, webhookSecrets: secrets });
     const { status, body } = await makePostRequest(server, '/api/webhooks', payload, {
       'X-Webhook-Signature': signature,
+      'X-Webhook-Timestamp': timestamp,
     });
 
     expect(status).toBe(401);
+    expect((body as any).code).toBe('AUTH_MISSING_KEY_ID');
     expect((body as any).success).toBe(false);
     expect((body as any).error.message).toBe('Missing key-id header');
   });
 
   it('rejects when key-id is unknown', async () => {
     const payload = JSON.stringify({ event: 'test' });
-    const signature = computeSignature(payload, 'whsec_test_secret');
+    const timestamp = Math.floor(Date.now() / 1000).toString();
+    const signature = computeSignatureBound(payload, 'whsec_test_secret', timestamp);
 
     server = await startServer({ ...BASE_OPTIONS, webhookSecrets: secrets });
     const { status, body } = await makePostRequest(server, '/api/webhooks', payload, {
       'X-Webhook-Signature': signature,
       'X-Webhook-Key-Id': 'unknown-key',
+      'X-Webhook-Timestamp': timestamp,
     });
 
     expect(status).toBe(401);
+    expect((body as any).code).toBe('AUTH_UNKNOWN_KEY_ID');
     expect((body as any).success).toBe(false);
     expect((body as any).error.message).toBe('Unknown key-id');
   });
 
   it('rejects when no webhook secrets are configured', async () => {
     const payload = JSON.stringify({ event: 'test' });
-    const signature = computeSignature(payload, 'whsec_test_secret');
+    const timestamp = Math.floor(Date.now() / 1000).toString();
+    const signature = computeSignatureBound(payload, 'whsec_test_secret', timestamp);
 
     server = await startServer(BASE_OPTIONS);
     const { status, body } = await makePostRequest(server, '/api/webhooks', payload, {
       'X-Webhook-Signature': signature,
       'X-Webhook-Key-Id': 'key-1',
+      'X-Webhook-Timestamp': timestamp,
     });
 
     expect(status).toBe(401);
+    expect((body as any).code).toBe('AUTH_UNKNOWN_KEY_ID');
+  });
+
+  it('logs authentication failures with structured context', async () => {
+    const logger = (await import('../utils/logger')).default;
+    const payload = JSON.stringify({ event: 'test' });
+
+    server = await startServer({ ...BASE_OPTIONS, webhookSecrets: secrets });
+    await makePostRequest(server, '/api/webhooks', payload, {
+      'X-Webhook-Key-Id': 'key-1',
+    });
+
+    expect(logger.warn).toHaveBeenCalled();
     expect((body as any).success).toBe(false);
     expect((body as any).error.message).toBe('Unknown key-id');
   });
@@ -469,6 +575,232 @@ describe('POST /api/notifications/validate-batch', () => {
     expect(data.valid).toBe(false);
     expect(data.errors.some((e) => e.code === 'DUPLICATE_RECIPIENT')).toBe(true);
     expect(data.errors.some((e) => e.code === 'MISSING_FIELD' || e.code === 'EMPTY_FIELD')).toBe(true);
+  });
+});
+
+class InMemoryIdempotencyRepo {
+  private store = new Map<
+    string,
+    { requestHash: string; response: any; notificationId: number; expiresAt: number }
+  >();
+
+  getCachedResponse(idempotencyKey: string) {
+    const entry = this.store.get(idempotencyKey);
+    if (!entry) return null;
+    if (entry.expiresAt < Date.now()) {
+      this.store.delete(idempotencyKey);
+      return null;
+    }
+    return {
+      notificationId: entry.notificationId,
+      isDuplicate: true,
+      response: entry.response,
+    };
+  }
+
+  validateRequestHash(idempotencyKey: string, requestBody: any) {
+    const entry = this.store.get(idempotencyKey);
+    if (!entry) return true;
+    const currentHash = crypto
+      .createHash('sha256')
+      .update(JSON.stringify(requestBody))
+      .digest('hex');
+    return currentHash === entry.requestHash;
+  }
+
+  storeResponse(
+    idempotencyKey: string,
+    requestBody: any,
+    notificationId: number,
+    response: any,
+    expirationMinutes: number = 24 * 60
+  ) {
+    const requestHash = crypto
+      .createHash('sha256')
+      .update(JSON.stringify(requestBody))
+      .digest('hex');
+    this.store.set(idempotencyKey, {
+      requestHash,
+      response,
+      notificationId,
+      expiresAt: Date.now() + expirationMinutes * 60 * 1000,
+    });
+    return Promise.resolve(1);
+  }
+
+  cleanupExpiredKeys() {
+    let count = 0;
+    const now = Date.now();
+    for (const [k, v] of this.store.entries()) {
+      if (v.expiresAt < now) {
+        this.store.delete(k);
+        count++;
+      }
+    }
+    return Promise.resolve(count);
+  }
+
+  getStats() {
+    return Promise.resolve({
+      total: this.store.size,
+      processed: this.store.size,
+      expired: 0,
+      oldestKey: this.store.size > 0 ? this.store.keys().next().value : null,
+    });
+  }
+}
+
+describe('REPLAY ATTACK PROTECTION — /api/webhooks with Idempotency-Key', () => {
+  const secrets = [{ id: 'key-replay', secret: 'whsec_replay_abc' }];
+
+  function buildIdempotencyService() {
+    const { IdempotencyKeyService } = require('../services/idempotency-key-service');
+    const repo = new InMemoryIdempotencyRepo();
+    return {
+      service: new IdempotencyKeyService(repo as any),
+      repo,
+    };
+  }
+
+  it('REPLAY #1 — exact same request sent twice returns cached response on second call (200 not 202)', async () => {
+    const { service } = buildIdempotencyService();
+    const server = await startServer({
+      ...BASE_OPTIONS,
+      webhookSecrets: secrets,
+      idempotencyService: service,
+    });
+    try {
+      const body = JSON.stringify({ event: 'delivery', notificationId: 'n-100' });
+      const ts = Math.floor(Date.now() / 1000).toString();
+      const sig = computeSignatureBound(body, secrets[0].secret, ts);
+      const idemKey = 'idem-abc-0001';
+
+      const first = await makePostRequest(server, '/api/webhooks', body, {
+        'X-Webhook-Signature': sig,
+        'X-Webhook-Key-Id': secrets[0].id,
+        'X-Webhook-Timestamp': ts,
+        'Idempotency-Key': idemKey,
+      });
+
+      expect(first.status).toBe(202);
+      expect((first.body as any).replay).toBe(false);
+      expect((first.body as any).verified).toBe(true);
+
+      const second = await makePostRequest(server, '/api/webhooks', body, {
+        'X-Webhook-Signature': sig,
+        'X-Webhook-Key-Id': secrets[0].id,
+        'X-Webhook-Timestamp': ts,
+        'Idempotency-Key': idemKey,
+      });
+
+      expect(second.status).toBe(200);
+      expect((second.body as any).replay).toBe(true);
+      expect((second.body as any).status).toBe('accepted');
+    } finally {
+      await closeServer(server);
+    }
+  });
+
+  it('REPLAY #2 — same Idempotency-Key with DIFFERENT body → 409 IDEMPOTENCY_KEY_MISMATCH', async () => {
+    const { service } = buildIdempotencyService();
+    const server = await startServer({
+      ...BASE_OPTIONS,
+      webhookSecrets: secrets,
+      idempotencyService: service,
+    });
+    try {
+      const body1 = JSON.stringify({ action: 'send', to: 'alice', amount: 10 });
+      const body2 = JSON.stringify({ action: 'send', to: 'attacker', amount: 1000000 });
+      const ts = Math.floor(Date.now() / 1000).toString();
+      const sig1 = computeSignatureBound(body1, secrets[0].secret, ts);
+      const sig2 = computeSignatureBound(body2, secrets[0].secret, ts);
+      const idemKey = 'idem-conflict-0002';
+
+      const first = await makePostRequest(server, '/api/webhooks', body1, {
+        'X-Webhook-Signature': sig1,
+        'X-Webhook-Key-Id': secrets[0].id,
+        'X-Webhook-Timestamp': ts,
+        'Idempotency-Key': idemKey,
+      });
+      expect(first.status).toBe(202);
+
+      const second = await makePostRequest(server, '/api/webhooks', body2, {
+        'X-Webhook-Signature': sig2,
+        'X-Webhook-Key-Id': secrets[0].id,
+        'X-Webhook-Timestamp': ts,
+        'Idempotency-Key': idemKey,
+      });
+
+      expect(second.status).toBe(409);
+      expect((second.body as any).code).toBe('IDEMPOTENCY_KEY_MISMATCH');
+    } finally {
+      await closeServer(server);
+    }
+  });
+
+  it('REPLAY #3 — three identical requests → #1=202, #2=200(replay), #3=200(replay)', async () => {
+    const { service } = buildIdempotencyService();
+    const server = await startServer({
+      ...BASE_OPTIONS,
+      webhookSecrets: secrets,
+      idempotencyService: service,
+    });
+    try {
+      const body = JSON.stringify({ event: 'keepalive', id: 'x-9' });
+      const ts = Math.floor(Date.now() / 1000).toString();
+      const sig = computeSignatureBound(body, secrets[0].secret, ts);
+      const idemKey = 'idem-triple-0003';
+
+      const r1 = await makePostRequest(server, '/api/webhooks', body, {
+        'X-Webhook-Signature': sig, 'X-Webhook-Key-Id': secrets[0].id,
+        'X-Webhook-Timestamp': ts, 'Idempotency-Key': idemKey,
+      });
+      const r2 = await makePostRequest(server, '/api/webhooks', body, {
+        'X-Webhook-Signature': sig, 'X-Webhook-Key-Id': secrets[0].id,
+        'X-Webhook-Timestamp': ts, 'Idempotency-Key': idemKey,
+      });
+      const r3 = await makePostRequest(server, '/api/webhooks', body, {
+        'X-Webhook-Signature': sig, 'X-Webhook-Key-Id': secrets[0].id,
+        'X-Webhook-Timestamp': ts, 'Idempotency-Key': idemKey,
+      });
+
+      expect(r1.status).toBe(202);
+      expect((r1.body as any).replay).toBe(false);
+      expect(r2.status).toBe(200);
+      expect((r2.body as any).replay).toBe(true);
+      expect(r3.status).toBe(200);
+      expect((r3.body as any).replay).toBe(true);
+    } finally {
+      await closeServer(server);
+    }
+  });
+
+  it('REPLAY #4 — Layer 2 timestamp binding rejects a captured request replayed without valid signature', async () => {
+    const { service } = buildIdempotencyService();
+    const server = await startServer({
+      ...BASE_OPTIONS,
+      webhookSecrets: secrets,
+      idempotencyService: service,
+    });
+    try {
+      const capturedBody = JSON.stringify({ event: 'original' });
+      const capturedTs = (Math.floor(Date.now() / 1000) - 1000).toString(); // 1000s old
+      const capturedSig = computeSignatureBound(capturedBody, secrets[0].secret, capturedTs);
+
+      // Replay the captured request — Layer 2 (timestamp expiry) must reject it
+      // BEFORE idempotency is even consulted.
+      const replay = await makePostRequest(server, '/api/webhooks', capturedBody, {
+        'X-Webhook-Signature': capturedSig,
+        'X-Webhook-Key-Id': secrets[0].id,
+        'X-Webhook-Timestamp': capturedTs,
+        'Idempotency-Key': 'any-key-wont-matter',
+      });
+
+      expect(replay.status).toBe(401);
+      expect((replay.body as any).code).toBe('AUTH_TIMESTAMP_EXPIRED');
+    } finally {
+      await closeServer(server);
+    }
   });
 });
 

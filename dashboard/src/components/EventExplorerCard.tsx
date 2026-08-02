@@ -36,6 +36,7 @@ interface EventExplorerCardProps {
   onCopyContract: (contractAddress: string) => void;
   isCopied: boolean;
   onSelect?: (event: BlockchainEvent) => void;
+  contractStatuses: ContractStatus[];
   contractStatuses?: ContractStatus[];
 }
 
@@ -44,6 +45,7 @@ export function EventExplorerCard({
   onCopyContract,
   isCopied,
   onSelect,
+  contractStatuses,
   contractStatuses = [],
 }: EventExplorerCardProps) {
   const contractStatus = contractStatuses.find((c) => c.address === event.contractAddress);
