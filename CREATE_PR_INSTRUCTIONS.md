@@ -21,7 +21,7 @@ You now have a complete, working notification template preview feature ready to 
 
 1. **Go to your fork on GitHub:**
    ```
-   https://github.com/coderolisa/Notify-Chain
+   https://github.com/Core-Foundry/Notify-Chain
    ```
 
 2. **You should see a yellow banner** saying:
@@ -122,7 +122,7 @@ gh pr create \
 
 Click this link (replace YOUR_USERNAME):
 ```
-https://github.com/coderolisa/Notify-Chain/pull/new/feature/notification-template-preview
+https://github.com/Core-Foundry/Notify-Chain/pull/new/feature/notification-template-preview
 ```
 
 ## 📝 PR Checklist
@@ -279,15 +279,15 @@ If you encounter any issues:
 
 ### Branch Info
 ```
-Repository: https://github.com/coderolisa/Notify-Chain
+Repository: https://github.com/Core-Foundry/Notify-Chain
 Branch: feature/notification-template-preview
 Status: ✅ Ready for PR
 ```
 
 ### Key URLs
-- Your Fork: `https://github.com/coderolisa/Notify-Chain`
-- Create PR: `https://github.com/coderolisa/Notify-Chain/pull/new/feature/notification-template-preview`
-- Branch: `https://github.com/coderolisa/Notify-Chain/tree/feature/notification-template-preview`
+- Your Fork: `https://github.com/Core-Foundry/Notify-Chain`
+- Create PR: `https://github.com/Core-Foundry/Notify-Chain/pull/new/feature/notification-template-preview`
+- Branch: `https://github.com/Core-Foundry/Notify-Chain/tree/feature/notification-template-preview`
 
 ## ✨ You're All Set!
 

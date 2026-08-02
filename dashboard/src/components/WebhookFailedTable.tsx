@@ -175,6 +175,12 @@ export const WebhookFailedTable = memo(function WebhookFailedTable({
                   <EmptyState
                     size="inline"
                     message="No failed deliveries for the selected filters. Try widening the date range or clearing filters."
+                <td colSpan={6} style={{ padding: 0, border: 'none' }}>
+                  <EmptyState
+                    className="empty-state--compact"
+                    icon="✅"
+                    title="No failed deliveries"
+                    description="No failed deliveries match the selected filters."
                   />
                 </td>
               </tr>

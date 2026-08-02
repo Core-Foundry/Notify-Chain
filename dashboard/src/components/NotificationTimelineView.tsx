@@ -3,6 +3,7 @@ import type { NotificationTimeline, TimelineEntry, TimelineStatus } from '../typ
 import { fetchTimeline } from '../services/timelineApi';
 import { formatTimestamp } from '../utils/formatTime';
 import { EmptyState } from './EmptyState';
+import { CopyButton } from './CopyButton';
 
 // ─── status helpers ──────────────────────────────────────────────────────────
 
@@ -153,6 +154,15 @@ export function NotificationTimelineView() {
           title={`No history entries found for notification #${timeline.notificationId}`}
           message={`Current status: ${STATUS_LABEL[overallStatus!] ?? overallStatus}`}
         />
+          className="empty-state--compact"
+          icon="📭"
+          title="No history entries"
+          description={`No delivery history found for notification #${timeline.notificationId}.`}
+        >
+          <p className="timeline-view__empty-sub">
+            Current status: <strong>{STATUS_LABEL[overallStatus!] ?? overallStatus}</strong>
+          </p>
+        </EmptyState>
       )}
 
       {/* Timeline entries */}
@@ -162,6 +172,7 @@ export function NotificationTimelineView() {
             <span>
               Notification <strong>#{timeline.notificationId}</strong>
             </span>
+            <CopyButton value={String(timeline.notificationId)} label="notification ID" size="xs" />
             <span
               className={`timeline__dot ${STATUS_CLASS[overallStatus!] ?? ''} timeline__dot--inline`}
               aria-hidden="true"
@@ -200,6 +211,12 @@ export function NotificationTimelineView() {
       {/* Initial empty state — nothing searched yet */}
       {!loading && !timeline && !error && (
         <EmptyState size="inline" message="Enter a notification ID above to view its delivery history." />
+        <EmptyState
+          className="empty-state--compact"
+          icon="🕐"
+          title="View delivery timeline"
+          description="Enter a notification ID above to see the full delivery history, retry attempts, and current status."
+        />
       )}
     </section>
   );

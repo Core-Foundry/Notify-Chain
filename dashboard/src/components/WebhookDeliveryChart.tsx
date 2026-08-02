@@ -154,6 +154,12 @@ export const WebhookDeliveryChart = memo(function WebhookDeliveryChart({
             message="No delivery data for the selected range. Try a wider date range."
           />
         </div>
+        <EmptyState
+          className="empty-state--inline"
+          icon="📊"
+          title="No data"
+          description="No delivery data for the selected range."
+        />
       ) : (
         <svg
           viewBox={`0 0 ${viewBoxWidth} ${viewBoxHeight}`}
