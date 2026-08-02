@@ -8,12 +8,12 @@
     "start": "node dist/index.js",
     "typecheck": "node ./node_modules/typescript/bin/tsc --noEmit",
     "lint": "node ./node_modules/typescript/bin/tsc --noEmit",
+    "format:check": "node ./node_modules/prettier/bin/prettier.cjs --check \"src/**/*.ts\" --config ../.prettierrc",
     "test": "node ./node_modules/jest/bin/jest.js",
     "migrate": "ts-node src/scripts/migrate-db.ts",
-    "migrate:templates": "ts-node src/scripts/migrate-templates.ts"
+    "migrate:templates": "ts-node src/scripts/migrate-templates.ts",
     "typecheck": "node ./node_modules/typescript/bin/tsc --noEmit",
     "lint": "node ./node_modules/typescript/bin/tsc --noEmit",
-    "migrate": "ts-node src/scripts/migrate-db.ts",
     "check-migrations": "ts-node src/scripts/check-migrations.ts",
     "validate:batch": "ts-node src/utils/batch-validator.ts"
   },
@@ -21,12 +21,25 @@
   "author": "",
   "license": "ISC",
   "description": "",
+  "devDependencies": {
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
+    "@types/jest": "^30.0.0",
+    "@types/node": "^26.1.1",
+    "@types/node-cron": "^3.0.11",
+    "@types/winston": "^2.4.4",
+    "jest": "^30.4.2",
+    "ts-jest": "^29.4.12",
+    "ts-node": "^10.9.2",
+    "typescript": "~5.7.2"
+  },
   "dependencies": {
-    "@stellar/stellar-sdk": "^15.1.0",
+    "cors": "^2.8.6",
     "dotenv": "^17.4.2",
-    "node-cache": "^5.1.2",
-    "sqlite3": "^5.1.7",
-    "uuid": "^9.0.1",
+    "express": "^5.2.1",
+    "node-cron": "^4.6.0",
+    "sqlite": "^5.1.1",
+    "sqlite3": "^6.0.1",
     "winston": "^3.19.0"
   },
   "devDependencies": {
@@ -40,6 +53,7 @@
     "@typescript-eslint/parser": "^6.10.0",
     "eslint": "^8.46.0",
     "jest": "^29.7.0",
+    "prettier": "3.3.3",
     "ts-jest": "^29.4.11",
     "ts-node": "^10.9.2",
     "typescript": "~5.4.5"

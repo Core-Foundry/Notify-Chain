@@ -1,8 +1,30 @@
 # Contributing to NotifyChain
 
-Thank you for your interest in contributing to NotifyChain! This document provides guidelines and instructions for contributing to the project.
+Welcome, and thanks for your interest in contributing. This document is your starting point — it covers the contribution workflow, coding standards, and PR guidelines. Deeper references are linked throughout.
 
-**Start here instead (recommended):** [`CONTRIBUTOR_DEVELOPMENT_WORKFLOW_GUIDE.md`](CONTRIBUTOR_DEVELOPMENT_WORKFLOW_GUIDE.md)
+**Start here instead (recommended):**
+
+- Environment setup (tools, clone, verify): [`docs/ENVIRONMENT_SETUP.md`](docs/ENVIRONMENT_SETUP.md)
+- Development workflow (fork, branch, PR): [`CONTRIBUTOR_DEVELOPMENT_WORKFLOW_GUIDE.md`](CONTRIBUTOR_DEVELOPMENT_WORKFLOW_GUIDE.md)
+---
+
+## Documentation Map
+
+| Document | Purpose |
+|---|---|
+| **This file** | Workflow, standards, PR guidelines |
+| [`CONTRIBUTOR_SETUP.md`](CONTRIBUTOR_SETUP.md) | Full local environment setup from scratch |
+| [`CONTRIBUTOR_DEVELOPMENT_WORKFLOW_GUIDE.md`](CONTRIBUTOR_DEVELOPMENT_WORKFLOW_GUIDE.md) | End-to-end workflow reference |
+| [`CONTRIBUTOR_ARCHITECTURE_DEEP_DIVE.md`](CONTRIBUTOR_ARCHITECTURE_DEEP_DIVE.md) | System architecture and component internals |
+| [`ARCHITECTURE_OVERVIEW.md`](ARCHITECTURE_OVERVIEW.md) | High-level architecture walkthrough |
+
+---
+
+**Companion guides:**
+- [`docs/GIT_WORKFLOW.md`](docs/GIT_WORKFLOW.md) — the full branching strategy, commit conventions, and PR process, with a command cheat sheet
+- [`docs/CONTRIBUTOR_TROUBLESHOOTING.md`](docs/CONTRIBUTOR_TROUBLESHOOTING.md) — solutions for common build, test, database, and Git problems
+- [`docs/API_ERROR_REFERENCE.md`](docs/API_ERROR_REFERENCE.md) — every error response the listener API returns
+- [`docs/adr/README.md`](docs/adr/README.md) — Architecture Decision Records
 
 ## Code of Conduct
 
@@ -15,11 +37,12 @@ Thank you for your interest in contributing to NotifyChain! This document provid
 
 ### Prerequisites
 
-To contribute to NotifyChain, make sure you have:
-- [Rust](https://www.rust-lang.org/tools/install) installed with WebAssembly target (`rustup target add wasm32-unknown-unknown`)
-- [Stellar CLI](https://developers.stellar.org/docs/build/sdks-and-libraries/cli/) installed
-- [Node.js](https://nodejs.org/) (for listener and dashboard components)
-- Basic understanding of Soroban smart contracts, Git, and GitHub
+To contribute to NotifyChain, install the tools listed in
+[`docs/ENVIRONMENT_SETUP.md`](docs/ENVIRONMENT_SETUP.md) (Rust, WebAssembly
+target, Stellar CLI, Node.js 22, Git). The guide includes verification steps
+to confirm your machine is ready.
+
+You should also have a basic understanding of Soroban smart contracts, Git, and GitHub.
 
 ### Setup (Fork Workflow)
 
@@ -46,168 +69,315 @@ To set up a local development environment, follow this fork-and-clone workflow:
 ### Syncing Your Fork
 
 Before starting any new work or creating a branch, always pull the latest changes from the upstream `main` branch to prevent merge conflicts:
+- Give constructive, specific feedback
+- Show empathy — everyone is learning
+
+---
+
+## Prerequisites
+
+Before you start, make sure you have:
+
+- **Rust** (stable) + WebAssembly target: `rustup target add wasm32-unknown-unknown`
+- **Stellar CLI**: `cargo install --locked stellar-cli --features opt`
+- **Node.js 22** (used by both listener and dashboard in CI)
+- **Git**
+
+For a detailed walkthrough including platform-specific notes, see [`CONTRIBUTOR_SETUP.md`](CONTRIBUTOR_SETUP.md).
+
+---
+
+## Quick Setup
+
+### With Docker (easiest)
+
+Requires [Docker Desktop](https://www.docker.com/products/docker-desktop/) (or Docker Engine + Compose on Linux). No Node.js install needed.
+
+Verify Stellar CLI:
+```bash
+git clone https://github.com/YOUR-USERNAME/Notify-Chain.git
+cd Notify-Chain
+git remote add upstream https://github.com/Core-Foundry/Notify-Chain.git
+
+cp .env.example .env
+# Edit .env — set CONTRACT_ADDRESSES to your deployed contract ID
+
+docker compose up --build
+```
+
+Dashboard → http://localhost:5173 · Listener API → http://localhost:8787
+
+### Without Docker
+
+```bash
+git clone https://github.com/YOUR-USERNAME/Notify-Chain.git
+cd Notify-Chain
+git remote add upstream https://github.com/Core-Foundry/Notify-Chain.git
+
+cd listener && npm install && cp .env.example .env && npm run migrate
+cd ../dashboard && npm install && cp .env.example .env
+```
+
+Minimum `listener/.env`:
+```bash
+STELLAR_RPC_URL=https://soroban-testnet.stellar.org:443
+CONTRACT_ADDRESSES=[{"address":"YOUR_CONTRACT_ID","events":["*"]}]
+```
+
+Full setup details: [`CONTRIBUTOR_SETUP.md`](CONTRIBUTOR_SETUP.md)
+
+---
+
+## Issue Claiming
+
+1. Browse [open issues](https://github.com/Core-Foundry/Notify-Chain/issues). New? Look for `good first issue`.
+2. Comment: `I would like to work on this issue.`
+3. Wait to be assigned — don't open a PR for unassigned work.
+4. Once assigned, submit a draft PR or progress update within **5 days**. Post an update if you need more time.
+
+---
+
+```bash
+git remote add upstream https://github.com/Core-Foundry/Notify-Chain.git
+git remote -v  # verify: origin = your fork, upstream = main repo
+```
+
+### 1. Sync and branch
+
+Always start from an up-to-date `main`:
 
 ```bash
 git checkout main
 git fetch upstream
 git merge upstream/main
 git push origin main
-```
-
-## Issue Claiming Process
-
-To ensure that efforts are not duplicated and contributors can work on tasks they are interested in, we use the following issue claiming process:
-
-1. **Browse Open Issues**: Explore the [GitHub Issue Tracker](https://github.com/Core-Foundry/Notify-Chain/issues) to find tasks. Look for issues labeled `good first issue` if you are new to the codebase.
-2. **Claim an Issue**:
-   * Comment on the issue stating: `I would like to work on this issue.`
-   * Wait for a maintainer to assign the issue to you. Once assigned, your username will appear under "Assignees" on GitHub.
-   * Do **not** begin working on an issue or open a Pull Request for it unless it has been formally assigned to you. This prevents two developers from working on the same problem.
-3. **Active Work & SLA**:
-   * Once assigned, you are expected to submit a draft PR or progress update within **5 days**.
-   * If there is no activity or communication on the issue after 5 days, the issue may be unassigned and made available for other contributors.
-   * If you need more time, simply post an update on the issue so the maintainers know you are still active.
-
-
-## Development Workflow
-
-### 1. Create a Branch
-
-Always start from an up‑to‑date `main`:
-```bash
-git checkout main
-git pull upstream main
 git checkout -b <branch-name>
 ```
 
-Use descriptive branch names following these conventions:
-- `feature/` for new features
-- `fix/` for bug fixes
-- `docs/` for documentation
-- `refactor/` for code refactoring
-- `test/` for adding or modifying tests
-- `chore/` for maintenance tasks
+Branch naming:
 
-Example:
-- `feature/add-slack-notifications`
-- `fix/resolve-event-deduplication-bug`
-- `docs/update-contributing-guide`
+| Prefix | Use |
+|---|---|
+| `feature/` | New features |
+| `fix/` | Bug fixes |
+| `docs/` | Documentation |
+| `refactor/` | Refactoring |
+| `test/` | Tests only |
+| `chore/` | Maintenance |
+> For the complete branching strategy — including naming rules, what to avoid, and how to recover from common mistakes — see [`docs/GIT_WORKFLOW.md`](docs/GIT_WORKFLOW.md).
 
-### 2. Make Your Changes
-
-- Write clean, readable code
-- Follow existing code style in each directory
-- Add comments for complex logic
-- Update documentation as needed
-
-### 3. Write and Run Tests
-
-All new features and bug fixes must include tests.
-
-#### Contract Tests (Rust)
-```bash
-cd contract/contracts/hello-world
-cargo test
-```
-
-#### Listener Tests (TypeScript)
-```bash
-cd listener
-npm install
-npm test
-```
-
-#### Dashboard Tests (TypeScript)
 ```bash
 cd dashboard
-npm install
+npm ci
+```
+
+### 2. Make changes
+
+- Follow the existing code style in each component directory.
+- Add comments for non-obvious logic.
+- Update docs when behavior changes.
+- Write tests for all new logic and bug fixes.
+**Making a significant architectural change?** Read the [Architecture Decision Records](docs/adr/README.md) first — they document why the current design is what it is. If your change alters one of those decisions, add a new ADR using [`docs/adr/0000-template.md`](docs/adr/0000-template.md) and reference it in your PR.
+
+**Hit a problem?** Check [`docs/CONTRIBUTOR_TROUBLESHOOTING.md`](docs/CONTRIBUTOR_TROUBLESHOOTING.md) before opening an issue.
+
+## Running Tests
+
+### 3. Run tests before pushing
+
+**Contracts (Rust)**
+```bash
+cd contract
+cargo fmt --all                              # format
+cargo fmt --all -- --check                  # verify clean
+cd contracts/hello-world && cargo test      # unit tests
+```
+
+**Listener (TypeScript)**
+```bash
+cd listener
+npm run lint
+npm run typecheck
 npm test
 ```
 
-### 4. Commit Changes
+**Dashboard (TypeScript)**
+```bash
+cd dashboard
+npm run lint
+npm run build    # includes TypeScript check
+npm test
+```
 
-Write clear, descriptive commit messages following [Conventional Commits](https://www.conventionalcommits.org/):
-- `feat:` new feature
-- `fix:` bug fix
-- `docs:` documentation changes
-- `test:` test additions or changes
-- `refactor:` code refactoring
-- `chore:` maintenance tasks
+### 4. Commit
 
-Example:
+Follow [Conventional Commits](https://www.conventionalcommits.org/):
+
+```
+feat:     new feature
+fix:      bug fix
+docs:     documentation only
+test:     tests only
+refactor: no behavior change
+chore:    maintenance
+```
+
+Examples:
 ```bash
 git commit -m "feat: add retry queue for failed notifications"
 git commit -m "fix: resolve event parsing issue in listener"
-git commit -m "docs: update README with setup instructions"
+git commit -m "test: add payload validation edge cases"
 ```
 
-### 5. Push and Create PR
+### 5. Push and open a PR
+
 ```bash
 git push -u origin <branch-name>
 ```
 
-Then create a Pull Request on GitHub!
+Then open a PR on GitHub against `main`. GitHub will pre-fill the PR template — fill it out completely.
 
-## Pull Request Guidelines
+---
 
-### PR Title
-Use the same format as commit messages:
-- `feat: add retry queue for notifications`
-- `fix: standardize error messages across contracts`
+## Coding Standards
 
-### PR Description
-Include:
-1. **Overview**: What changes does this PR introduce?
-2. **Related Issue**: Link to GitHub issue(s) this PR addresses
-3. **Changes**: What was added/removed/modified
-4. **Verification Results**: What tests passed, coverage, etc.
-5. **How to Test**: Instructions for testing your changes
+### Rust (contracts)
 
-### PR Checklist
-- [ ] Code follows project style guidelines
-- [ ] Tests added/updated and passing
-- [ ] Documentation updated
-- [ ] All tests pass locally
-- [ ] Branch is up to date with `main`
-
-## Code Style Guidelines
-
-### Rust (Soroban Contracts)
-Follow existing patterns in `contract/contracts/hello-world/`:
-- Format with `cargo fmt`
-- Add `///` documentation comments for public functions/structs
+- Format with `cargo fmt --all` before every commit
+- Add `///` doc comments on all public functions and structs
 - Use `#[contracterror]` for custom errors
-- Test all functionality
+- Every public function needs a test
 
-### TypeScript (Listener/Dashboard)
-Follow the existing style in `listener/` and `dashboard/`:
-- Run `npm run lint` before committing
-- Use TypeScript for type safety
-- Write unit tests for all new logic
-- Follow existing naming conventions
+### TypeScript (listener + dashboard)
+
+- `npm run lint` must pass with zero warnings
+- Use TypeScript — no `any` unless genuinely unavoidable
+- Unit test all new service logic
+- Follow existing file and naming conventions in the directory you're editing
+
+---
+
+5. **Push your branch** and open a Pull Request on GitHub:
+   ```bash
+   git push -u origin <branch-name>
+   ```
+
+### Title
+
+Match commit convention: `feat: add slack notification channel`
+
+### Description
+
+The PR template will prompt you for:
+1. Overview of what changed and why
+2. Linked issue number
+3. Key files modified
+4. Verification commands you ran
+5. Manual test instructions
+
+### Before submitting
+
+- [ ] Branch is up to date with `main`
+- [ ] All tests pass locally
+- [ ] Lint/format checks pass
+- [ ] Docs updated if behavior changed
+- [ ] PR scope is focused on a single issue
+
+### Review process
+
+- CI runs automatically — wait for green before requesting review.
+- Address feedback promptly and push to the same branch (the PR updates automatically).
+- Keep the scope tight — don't mix unrelated changes in one PR.
+- Reviewers will test locally for significant changes.
+
+---
+
+## Releasing NotifyChain
+
+Maintainers preparing a tagged release should follow the steps in
+[`docs/RELEASE_CHECKLIST.md`](docs/RELEASE_CHECKLIST.md), including CI-parity
+testing, documentation review, and release validation.
 
 ## Review Process
+## Automated Dependency Updates
+
+Review expectations and a per-area checklist live in
+[`docs/CODE_REVIEW_GUIDELINES.md`](docs/CODE_REVIEW_GUIDELINES.md).
 
 ### For Contributors
 1. Ensure all tests pass locally
 2. Address reviewer feedback promptly
 3. Keep PR scope focused on a single issue or feature
 4. Be open to suggestions
+[Dependabot](https://docs.github.com/en/code-security/dependabot) opens PRs weekly (Mondays) for outdated dependencies across all four ecosystems. Config is in [`.github/dependabot.yml`](.github/dependabot.yml).
 
-### For Reviewers
-1. Review code thoroughly
-2. Test locally if needed
-3. Provide constructive feedback
-4. Approve when ready
+When reviewing Dependabot PRs: check the changelog for breaking changes, wait for CI to pass, and review the migration guide for major version bumps.
+
+## Release Process
+
+NotifyChain uses **fully automated releases** powered by
+[semantic-release](https://semantic-release.gitbook.io/). You never need to
+bump version numbers or write changelog entries manually — the tooling derives
+everything from commit messages.
+
+### How it works
+
+1. Every commit merged to `main` is analysed by the release workflow
+   (`.github/workflows/release.yml`).
+2. If any releasable commits exist (see table below), `semantic-release`:
+   - Determines the next [semver](https://semver.org/) version.
+   - Updates `CHANGELOG.md` with structured release notes.
+   - Bumps `version` in `dashboard/package.json`, `listener/package.json`,
+     and `contract/contracts/hello-world/Cargo.toml` via
+     `scripts/bump-versions.js`.
+   - Creates a Git tag `vX.Y.Z` and pushes it.
+   - Publishes a GitHub Release with auto-generated release notes.
+   - Posts a comment on any PR/issue included in the release.
+
+### Commit types → release impact
+
+| Commit prefix | Example | Release bump |
+|---------------|---------|-------------|
+| `feat:` | `feat: add webhook delivery channel` | **minor** (1.x.0) |
+| `fix:` | `fix: retry logic on timeout` | **patch** (1.0.x) |
+| `perf:` | `perf: reduce event polling interval` | **patch** (1.0.x) |
+| `refactor:` | `refactor: extract notification builder` | **patch** (1.0.x) |
+| `BREAKING CHANGE:` footer or `feat!:`/`fix!:` | `feat!: rename schedule_notification params` | **major** (x.0.0) |
+| `docs:`, `test:`, `chore:`, `ci:`, `style:` | any | _no release_ |
+
+> This is why following [Conventional Commits](https://www.conventionalcommits.org/)
+> matters — your commit message directly controls whether a release happens and
+> what kind it is.
+
+### Manual / dry-run trigger
+
+You can trigger the workflow manually from the **Actions** tab:
+
+1. Select **Release** workflow → **Run workflow**.
+2. Set `dry_run` to `true` to preview what *would* be released without
+   creating a tag or GitHub Release.
+3. Leave `dry_run` as `false` (default) to cut a real release on demand
+   (e.g. for hotfixes that need to ship before the next batch of `main` merges).
+
+### Required secrets
+
+The workflow uses the default `GITHUB_TOKEN` — no extra secrets are required
+for tagging and publishing GitHub Releases.
+
+### Viewing releases
+
+- **GitHub Releases**: `https://github.com/Core-Foundry/Notify-Chain/releases`
+- **CHANGELOG**: [`CHANGELOG.md`](CHANGELOG.md) in the repo root.
 
 ## Questions?
+---
 
-- Open an issue for bugs or feature requests
-- Check existing issues and PRs first
-- Join discussions on GitHub
+## Questions
 
-## License
+- Search [existing issues](https://github.com/Core-Foundry/Notify-Chain/issues) first.
+- Open a new issue for bugs or feature requests.
+- Join discussions on GitHub.
 
-By contributing, you agree that your contributions will be licensed under the MIT License.
+---
 
-Thank you for contributing to NotifyChain! 🎉
+By contributing, you agree your work will be licensed under the MIT License.

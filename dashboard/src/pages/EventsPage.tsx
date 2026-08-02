@@ -1,7 +1,9 @@
 import { useEffect } from 'react';
 import { EventFiltersBar } from '../components/EventFiltersBar';
 import { EventListPanel } from '../components/EventListPanel';
+import { EventsListSkeleton } from '../components/EventsListSkeleton';
 import { WalletConnectButton } from '../components/WalletConnectButton';
+import { getEventsApiBaseUrl } from '../config/eventsApiUrl';
 import { useEventLoadingState } from '../hooks/useEventSelectors';
 import { useEventStore } from '../store/eventStore';
 import { fetchEvents } from '../services/eventsApi';
@@ -9,14 +11,15 @@ import { generateMockEvents } from '../utils/eventData';
 import { restoreWalletSession } from '../services/wallet';
 
 const DEFAULT_EVENT_COUNT = 5000;
-const API_URL =
-  import.meta.env.VITE_EVENTS_API_URL ?? 'http://localhost:8787/api/events';
+const API_URL = `${getEventsApiBaseUrl()}/api/events`;
 const POLL_INTERVAL_MS = 15_000;
 
 export function EventsPage() {
   const setEvents = useEventStore((state) => state.setEvents);
   const setLoading = useEventStore((state) => state.setLoading);
   const setError = useEventStore((state) => state.setError);
+  const markSyncSuccess = useEventStore((state) => state.markSyncSuccess);
+  const markSyncFailure = useEventStore((state) => state.markSyncFailure);
   // Re-fetch whenever lastFetchedAt is reset to 0 (via invalidateEvents()) so
   // that a successful blockchain status-change transaction is reflected on the
   // next render cycle without requiring a full hard refresh.
@@ -45,11 +48,13 @@ export function EventsPage() {
         const remoteEvents = await fetchEvents(API_URL);
         if (!cancelled) {
           setEvents(remoteEvents);
+          markSyncSuccess();
         }
       } catch {
         if (!cancelled) {
           setEvents(generateMockEvents(DEFAULT_EVENT_COUNT));
           setError('Listener API unavailable — showing mock events for demo.');
+          markSyncFailure('Initial sync failed');
         }
       } finally {
         if (!cancelled) {
@@ -65,9 +70,12 @@ export function EventsPage() {
         const remoteEvents = await fetchEvents(API_URL);
         if (!cancelled) {
           setEvents(remoteEvents);
+          markSyncSuccess();
         }
       } catch {
-        // Silently ignore background poll errors.
+        if (!cancelled) {
+          markSyncFailure('Background refresh failed');
+        }
       }
     }, POLL_INTERVAL_MS);
 
@@ -75,7 +83,7 @@ export function EventsPage() {
       cancelled = true;
       clearInterval(intervalId);
     };
-  }, [lastFetchedAt, setEvents, setError, setLoading]);
+  }, [lastFetchedAt, markSyncFailure, markSyncSuccess, setEvents, setError, setLoading]);
 
   return (
     <main className="events-page">
@@ -91,14 +99,11 @@ export function EventsPage() {
 
       <EventFiltersBar />
 
-      <div aria-live="polite" role="status">
-        {isLoading && <p className="events-page__status">Loading events...</p>}
-      </div>
       <div aria-live="assertive" role="alert">
         {error && <p className="events-page__status events-page__status--warning">{error}</p>}
       </div>
 
-      <EventListPanel />
+      {isLoading ? <EventsListSkeleton /> : <EventListPanel />}
     </main>
   );
 }

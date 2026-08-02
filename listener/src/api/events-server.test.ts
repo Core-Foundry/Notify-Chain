@@ -11,9 +11,6 @@ import { Database, getDatabase, resetDatabaseSingleton } from '../database/datab
 jest.mock('@stellar/stellar-sdk', () => ({
   rpc: {
     Server: jest.fn().mockImplementation(() => ({
-      getHealth: mockGetHealth,
-      simulateTransaction: mockSimulateTransaction,
-      getAccount: jest.fn<Promise<unknown>, []>().mockRejectedValue(new Error('not found')),
       getHealth: jest.fn(),
       simulateTransaction: jest.fn(),
       getAccount: jest.fn().mockRejectedValue(new Error('not found') as never),
@@ -30,7 +27,7 @@ jest.mock('@stellar/stellar-sdk', () => ({
   })),
   BASE_FEE: '100',
   scValToNative: jest.fn(),
-}));
+}), { virtual: true });
 import { preferenceStore } from '../store/preference-store';
 
 jest.mock('../store/preference-store', () => {
@@ -104,7 +101,8 @@ describe('Preference API endpoints', () => {
       const res = await request(server, 'GET', '/api/preferences/alice');
 
       expect(res.status).toBe(200);
-      expect(res.body).toEqual(prefs);
+      expect((res.body as any).success).toBe(true);
+      expect((res.body as any).data).toEqual(prefs);
       expect(mockStore.get).toHaveBeenCalledWith('alice');
     });
   });
@@ -119,7 +117,8 @@ describe('Preference API endpoints', () => {
       });
 
       expect(res.status).toBe(200);
-      expect(res.body).toEqual(updated);
+      expect((res.body as any).success).toBe(true);
+      expect((res.body as any).data).toEqual(updated);
       expect(mockStore.update).toHaveBeenCalledWith('alice', { categories: { discord: false } });
     });
 
@@ -269,6 +268,8 @@ describe('POST /api/webhooks', () => {
 
     expect(status).toBe(401);
     expect((body as any).code).toBe('AUTH_INVALID_SIGNATURE');
+    expect((body as any).success).toBe(true);
+    expect((body as any).data.status).toBe('accepted');
   });
 
   it('rejects a timestamp-bound signature when the timestamp header is removed (anti-replay)', async () => {
@@ -337,6 +338,8 @@ describe('POST /api/webhooks', () => {
 
     expect(status).toBe(401);
     expect((body as any).code).toBe('AUTH_INVALID_SIGNATURE');
+    expect((body as any).success).toBe(false);
+    expect((body as any).error.message).toBe('Invalid signature');
   });
 
   it('rejects when signature header is missing', async () => {
@@ -349,6 +352,8 @@ describe('POST /api/webhooks', () => {
 
     expect(status).toBe(401);
     expect((body as any).code).toBe('AUTH_MISSING_SIGNATURE');
+    expect((body as any).success).toBe(false);
+    expect((body as any).error.message).toBe('Missing signature header');
   });
 
   it('rejects when key-id header is missing', async () => {
@@ -364,6 +369,8 @@ describe('POST /api/webhooks', () => {
 
     expect(status).toBe(401);
     expect((body as any).code).toBe('AUTH_MISSING_KEY_ID');
+    expect((body as any).success).toBe(false);
+    expect((body as any).error.message).toBe('Missing key-id header');
   });
 
   it('rejects when key-id is unknown', async () => {
@@ -380,6 +387,8 @@ describe('POST /api/webhooks', () => {
 
     expect(status).toBe(401);
     expect((body as any).code).toBe('AUTH_UNKNOWN_KEY_ID');
+    expect((body as any).success).toBe(false);
+    expect((body as any).error.message).toBe('Unknown key-id');
   });
 
   it('rejects when no webhook secrets are configured', async () => {
@@ -408,6 +417,8 @@ describe('POST /api/webhooks', () => {
     });
 
     expect(logger.warn).toHaveBeenCalled();
+    expect((body as any).success).toBe(false);
+    expect((body as any).error.message).toBe('Unknown key-id');
   });
 
   it('returns 404 for POST to other paths', async () => {
@@ -441,24 +452,22 @@ describe('GET /api/analytics', () => {
 
     const res = await request(server, 'GET', '/api/analytics');
     expect(res.status).toBe(200);
-    const body = res.body as Record<string, unknown>;
-    expect(body.totalRecorded).toBe(0);
-    expect(body.windowStart).toBeDefined();
-    expect(body.windowEnd).toBeDefined();
-    expect(body.overall).toBeDefined();
-    expect(body.byType).toEqual([]);
-    expect(body.byContract).toEqual([]);
-    // hourlyBuckets is a fixed-size rolling window: when there are no records
-    // every bucket still exists with zero counters. We assert structure rather
-    // than emptiness so the test is robust to bucket-count changes.
-    expect(Array.isArray(body.hourlyBuckets)).toBe(true);
-    expect((body.hourlyBuckets as unknown[]).length).toBeGreaterThan(0);
-    for (const bucket of body.hourlyBuckets as Array<{ total: number; success: number; failure: number }>) {
+    expect((res.body as any).success).toBe(true);
+    const data = (res.body as any).data as Record<string, unknown>;
+    expect(data.totalRecorded).toBe(0);
+    expect(data.windowStart).toBeDefined();
+    expect(data.windowEnd).toBeDefined();
+    expect(data.overall).toBeDefined();
+    expect(data.byType).toEqual([]);
+    expect(data.byContract).toEqual([]);
+    expect(Array.isArray(data.hourlyBuckets)).toBe(true);
+    expect((data.hourlyBuckets as unknown[]).length).toBeGreaterThan(0);
+    for (const bucket of data.hourlyBuckets as Array<{ total: number; success: number; failure: number }>) {
       expect(bucket.total).toBe(0);
       expect(bucket.success).toBe(0);
       expect(bucket.failure).toBe(0);
     }
-    expect(body.errorBreakdown).toEqual({});
+    expect(data.errorBreakdown).toEqual({});
   });
 
   it('returns aggregated metrics from recorded outcomes', async () => {
@@ -466,70 +475,44 @@ describe('GET /api/analytics', () => {
     aggregator.reset();
     const now = Date.now();
     const baseTs = now;
-    aggregator.record({
-      notificationType: NotificationType.DISCORD,
-      contractAddress: 'CABC',
-      outcome: 'success',
-      durationMs: 120,
-      timestamp: baseTs,
-    });
-    aggregator.record({
-      notificationType: NotificationType.DISCORD,
-      contractAddress: 'CABC',
-      outcome: 'failure',
-      durationMs: 240,
-      errorReason: 'HTTP 500',
-      timestamp: baseTs + 1000,
-    });
-    aggregator.record({
-      notificationType: NotificationType.WEBHOOK,
-      outcome: 'retry',
-      durationMs: 0,
-      timestamp: baseTs + 2000,
-    });
+    aggregator.record({ notificationType: NotificationType.DISCORD, contractAddress: 'CABC', outcome: 'success', durationMs: 120, timestamp: baseTs });
+    aggregator.record({ notificationType: NotificationType.DISCORD, contractAddress: 'CABC', outcome: 'failure', durationMs: 240, errorReason: 'HTTP 500', timestamp: baseTs + 1000 });
+    aggregator.record({ notificationType: NotificationType.WEBHOOK, outcome: 'retry', durationMs: 0, timestamp: baseTs + 2000 });
     server = await startServer({ ...BASE_OPTIONS, analyticsAggregator: aggregator });
 
     const res = await request(server, 'GET', '/api/analytics');
     expect(res.status).toBe(200);
-    const body = res.body as Record<string, any>;
-    expect(body.totalRecorded).toBe(3);
-    expect(body.byType.length).toBeGreaterThan(0);
-    const discordRow = body.byType.find(
-      (r: any) => r.notificationType === NotificationType.DISCORD,
-    );
+    expect((res.body as any).success).toBe(true);
+    const data = (res.body as any).data as Record<string, any>;
+    expect(data.totalRecorded).toBe(3);
+    expect(data.byType.length).toBeGreaterThan(0);
+    const discordRow = data.byType.find((r: any) => r.notificationType === NotificationType.DISCORD);
     expect(discordRow).toBeDefined();
     expect(discordRow.total).toBe(2);
     expect(discordRow.success).toBe(1);
     expect(discordRow.failure).toBe(1);
     expect(discordRow.successRate).toBeCloseTo(0.5);
-    const contractRow = body.byContract.find(
-      (r: any) => r.contractAddress === 'CABC',
-    );
+    const contractRow = data.byContract.find((r: any) => r.contractAddress === 'CABC');
     expect(contractRow).toBeDefined();
     expect(contractRow.total).toBe(2);
-    expect(body.errorBreakdown['HTTP 500']).toBe(1);
+    expect(data.errorBreakdown['HTTP 500']).toBe(1);
   });
 
   it('clears aggregator state when reset=true is supplied', async () => {
     const aggregator = new NotificationAnalyticsAggregator();
     aggregator.reset();
-    aggregator.record({
-      notificationType: NotificationType.DISCORD,
-      outcome: 'success',
-      durationMs: 50,
-      timestamp: Date.now(),
-    });
+    aggregator.record({ notificationType: NotificationType.DISCORD, outcome: 'success', durationMs: 50, timestamp: Date.now() });
     server = await startServer({ ...BASE_OPTIONS, analyticsAggregator: aggregator });
 
     const first = await request(server, 'GET', '/api/analytics');
-    expect((first.body as any).totalRecorded).toBe(1);
+    expect((first.body as any).data.totalRecorded).toBe(1);
 
     const reset = await request(server, 'GET', '/api/analytics?reset=true');
     expect(reset.status).toBe(200);
-    expect((reset.body as any).totalRecorded).toBe(1); // snapshot returned BEFORE reset
+    expect((reset.body as any).data.totalRecorded).toBe(1); // snapshot returned BEFORE reset
 
     const after = await request(server, 'GET', '/api/analytics');
-    expect((after.body as any).totalRecorded).toBe(0);
+    expect((after.body as any).data.totalRecorded).toBe(0);
   });
 
   it('returns persisted historical snapshots via /api/analytics/history', async () => {
@@ -537,23 +520,16 @@ describe('GET /api/analytics', () => {
     aggregator.reset();
     const getHistory = jest.fn() as jest.MockedFunction<NotificationMetricsStore['getHistory']>;
     getHistory.mockResolvedValue([
-      {
-        id: 1,
-        capturedAt: '2026-06-26T00:00:00.000Z',
-        snapshot: aggregator.snapshot(),
-      },
+      { id: 1, capturedAt: '2026-06-26T00:00:00.000Z', snapshot: aggregator.snapshot() },
     ]);
     const metricsStore = { getHistory } as unknown as NotificationMetricsStore;
 
-    server = await startServer({
-      ...BASE_OPTIONS,
-      analyticsAggregator: aggregator,
-      metricsStore,
-    });
+    server = await startServer({ ...BASE_OPTIONS, analyticsAggregator: aggregator, metricsStore });
 
     const res = await request(server, 'GET', '/api/analytics/history?limit=10');
     expect(res.status).toBe(200);
-    expect((res.body as any).snapshots).toHaveLength(1);
+    expect((res.body as any).success).toBe(true);
+    expect((res.body as any).data.snapshots).toHaveLength(1);
     expect(getHistory).toHaveBeenCalledWith(10, undefined);
   });
 });
@@ -583,7 +559,8 @@ describe('POST /api/notifications/validate-batch', () => {
     ]);
 
     expect(res.status).toBe(200);
-    expect(res.body).toMatchObject({ valid: true, processedCount: 2, errors: [] });
+    expect((res.body as any).success).toBe(true);
+    expect((res.body as any).data).toMatchObject({ valid: true, processedCount: 2, errors: [] });
   });
 
   it('rejects batches with duplicate recipients and missing fields', async () => {
@@ -594,10 +571,10 @@ describe('POST /api/notifications/validate-batch', () => {
     ]);
 
     expect(res.status).toBe(400);
-    const body = res.body as { valid: boolean; errors: Array<{ code: string }> };
-    expect(body.valid).toBe(false);
-    expect(body.errors.some((e) => e.code === 'DUPLICATE_RECIPIENT')).toBe(true);
-    expect(body.errors.some((e) => e.code === 'MISSING_FIELD' || e.code === 'EMPTY_FIELD')).toBe(true);
+    const data = (res.body as any).data as { valid: boolean; errors: Array<{ code: string }> };
+    expect(data.valid).toBe(false);
+    expect(data.errors.some((e) => e.code === 'DUPLICATE_RECIPIENT')).toBe(true);
+    expect(data.errors.some((e) => e.code === 'MISSING_FIELD' || e.code === 'EMPTY_FIELD')).toBe(true);
   });
 });
 
@@ -866,8 +843,9 @@ describe('GET /api/search/suggestions API', () => {
 
     const res = await request(server, 'GET', '/api/search/suggestions?q=test');
     expect(res.status).toBe(200);
-    expect(res.body).toHaveProperty('recipients');
-    expect((res.body as any).recipients).toContain('test-user-recipient');
+    expect((res.body as any).success).toBe(true);
+    expect((res.body as any).data).toHaveProperty('recipients');
+    expect((res.body as any).data.recipients).toContain('test-user-recipient');
   });
 
   it('supports limit query parameter', async () => {
@@ -882,6 +860,6 @@ describe('GET /api/search/suggestions API', () => {
 
     const res = await request(server, 'GET', '/api/search/suggestions?q=user&limit=2');
     expect(res.status).toBe(200);
-    expect((res.body as any).recipients.length).toBe(2);
+    expect((res.body as any).data.recipients.length).toBe(2);
   });
 });
