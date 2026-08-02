@@ -11,6 +11,7 @@ import {
   type NotificationSearchResponse,
   type NotificationSearchParams,
 } from '../services/eventsApi';
+import { EmptyState } from '../components/EmptyState';
 import {
   buildNotificationExportBlob,
   downloadBlob,
@@ -422,6 +423,14 @@ export function NotificationSearchPage() {
 
         {!loading && !error && !hasParams && (
           <EmptyState
+            size="compact"
+            title="Start searching"
+            message="Enter a query above to find notifications by sender, transaction hash, event ID, or type."
+          />
+          <div className="notif-search-page__empty" role="status">
+            <h2>Start searching</h2>
+            <p>Choose a type, delivery status, date range, or enter a query to find notifications.</p>
+          </div>
             icon="🔔"
             title="Search notifications"
             description="Choose a type, delivery status, date range, or enter a query to find notifications."
@@ -430,6 +439,9 @@ export function NotificationSearchPage() {
 
         {!loading && !error && hasParams && response?.results.length === 0 && (
           <EmptyState
+            size="compact"
+            title="No results found"
+            message="Try different keywords or clear filters to broaden the search."
             icon="🕵️"
             title="No results found"
             description="No notifications match your current filters. Try different keywords or broaden the search."

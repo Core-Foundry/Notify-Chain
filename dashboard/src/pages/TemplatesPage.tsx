@@ -259,6 +259,9 @@ export function TemplatesPage() {
           ))}
           {templates.length === 0 && (
             <EmptyState
+              title="No templates yet"
+              message="Create a notification template to start sending emails, Discord, Slack, or Telegram alerts."
+              action={{ label: 'Create Template', onClick: handleCreateClick }}
               icon="📝"
               title="No templates yet"
               description="Create reusable notification templates for email, Discord, Slack, and more."

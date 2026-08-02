@@ -216,6 +216,10 @@ export function ExportHistoryPage() {
       {/* ── Table or empty state ─────────────────────────────────── */}
       {!isLoading && displayedExports.length > 0 && (
         <ExportHistoryTable exports={displayedExports} onDownload={handleDownload} />
+      ) : (
+        <EmptyState
+          title="No export records found"
+          message="Try modifying your search query or status filter to locate matching exports."
       )}
 
       {!isLoading && displayedExports.length === 0 && (
