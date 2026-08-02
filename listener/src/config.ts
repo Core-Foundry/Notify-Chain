@@ -1,3 +1,4 @@
+import { Config, ContractConfig, DiscordConfig, WebhookSecret, AppCleanupConfig, EventQueueConfig, RetrySchedulerOptions, AnalyticsConfig, ExpirationConfig, ApiKey } from './types';
 import { Config, ContractConfig, DiscordConfig, WebhookSecret, AppCleanupConfig, EventQueueConfig, RetrySchedulerOptions, AnalyticsConfig } from './types';
 import { Config, ContractConfig, DiscordConfig, WebhookSecret, ApiKey, AppCleanupConfig, EventQueueConfig, RetrySchedulerOptions, AnalyticsConfig } from './types';
 
@@ -190,6 +191,29 @@ function loadRetrySchedulerConfig(): RetrySchedulerOptions {
   };
 }
 
+function loadExpirationConfig(): ExpirationConfig {
+  const defaultExpirationMs = parseIntegerEnv('EXPIRATION_DEFAULT_MS', String(24 * 60 * 60 * 1000));
+  const perEventTypeExpirationJson = trimEnv('EXPIRATION_PER_EVENT_TYPE');
+  let perEventTypeExpiration: Record<string, number> | undefined;
+  
+  if (perEventTypeExpirationJson) {
+    try {
+      perEventTypeExpiration = JSON.parse(perEventTypeExpirationJson);
+      if (typeof perEventTypeExpiration !== 'object' || perEventTypeExpiration === null) {
+        throw new ConfigError('EXPIRATION_PER_EVENT_TYPE must be a valid JSON object');
+      }
+    } catch (e) {
+      throw new ConfigError(`EXPIRATION_PER_EVENT_TYPE must be valid JSON. Received: ${perEventTypeExpirationJson}`);
+    }
+  }
+  
+  return {
+    defaultExpirationMs,
+    perEventTypeExpiration,
+    enabled: trimEnv('EXPIRATION_ENABLED') !== 'false',
+  };
+}
+
 export function loadConfig(): Config {
   validateRequiredEnvVars();
 
@@ -248,6 +272,7 @@ export function loadConfig(): Config {
     },
     cleanup: loadCleanupConfig(),
     analytics: loadAnalyticsConfig(),
+    expiration: loadExpirationConfig(),
   };
 }
 
