@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import type {
   BlockchainEvent,
   EventFilters,
+  NotificationLifecycleStatus,
   NotificationReadFilter,
   NotificationSortOption,
   NotificationStatus,
@@ -30,6 +31,8 @@ interface EventStoreState {
   setSearch: (search: string) => void;
   setContractFilter: (contractAddress: string) => void;
   setEventTypeFilter: (eventType: string) => void;
+  /** Filter by UI read/unread status. Accepts `NotificationStatus` ('all' | 'read' | 'unread'). */
+  setStatusFilter: (status: NotificationStatus) => void;
   setStatusFilter: (status: NotificationReadFilter) => void;
   setDateFrom: (dateFrom: string) => void;
   setDateTo: (dateTo: string) => void;
@@ -50,11 +53,9 @@ interface EventStoreState {
    * `notification_expired` or `notification_revoked` event confirms on-chain)
    * so the UI reflects the new status without requiring a full refetch.
    *
-   * This is the primary fix for the cache–blockchain desynchronization: instead
-   * of leaving the stale status in the store until the next hard refresh, we
-   * update the matching entry in-place the moment the blockchain confirms.
+   * Accepts `NotificationLifecycleStatus` ('active' | 'expired' | 'revoked').
    */
-  updateEventStatus: (targetEventId: string, status: NotificationStatus) => void;
+  updateEventStatus: (targetEventId: string, status: NotificationLifecycleStatus) => void;
   /**
    * Reset `lastFetchedAt` to `0`, forcing the next `loadEvents` call to treat
    * the cache as stale and re-fetch unconditionally. Call this after any
@@ -65,8 +66,6 @@ interface EventStoreState {
 }
 
 function dedupeEventsById(events: BlockchainEvent[]): BlockchainEvent[] {
-  // Use a Map to keep the last-seen record for each eventId so that status
-  // updates (newer entries) overwrite stale cached copies rather than being dropped.
   const byId = new Map<string, BlockchainEvent>();
   for (const event of events) {
     byId.set(event.eventId, event);
@@ -110,8 +109,6 @@ export const useEventStore = create<EventStoreState>((set) => ({
   setEvents: (events) => set({ events: dedupeEventsById(events), lastFetchedAt: Date.now() }),
   appendEvents: (events) =>
     set((state) => ({
-      // Existing events go first so incoming (fresh) events overwrite stale
-      // copies when the Map processes duplicates last-write-wins.
       events: dedupeEventsById([...state.events, ...events]),
     })),
   setSearch: (search) => set((state) => ({ filters: { ...state.filters, search } })),

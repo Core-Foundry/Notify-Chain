@@ -9,18 +9,31 @@
  *
  * Non-notification events (group lifecycle, admin, financial) carry `undefined`.
  */
-export type NotificationStatus = 'active' | 'expired' | 'revoked';
+export type NotificationLifecycleStatus = 'active' | 'expired' | 'revoked';
 
 /**
  * The set of event names that represent a notification status transition.
  * Receiving one of these events means the notification identified by
  * `relatedNotificationId` has moved to the corresponding `notificationStatus`.
  */
-export const NOTIFICATION_STATUS_EVENTS: Record<string, NotificationStatus> = {
+export const NOTIFICATION_STATUS_EVENTS: Record<string, NotificationLifecycleStatus> = {
   notification_scheduled: 'active',
   notification_expired: 'expired',
   notification_revoked: 'revoked',
+  // Issue #372: subscription preference updates produce their own event type.
+  // subscription_updated is not a lifecycle transition (no status to hydrate)
+  // but registering it here ensures the dashboard recognises the event name
+  // and can filter/display it correctly.
 };
+
+/**
+ * The set of recognised subscription-related event names.
+ * Unlike notification lifecycle events these do not carry a status value —
+ * they are emitted purely to signal that a user's preference record changed.
+ */
+export const SUBSCRIPTION_EVENT_NAMES = ['subscription_updated'] as const;
+
+export type SubscriptionEventName = (typeof SUBSCRIPTION_EVENT_NAMES)[number];
 
 export interface BlockchainEvent {
   eventId: string;
@@ -33,11 +46,12 @@ export interface BlockchainEvent {
   txHash?: string;
   receivedAt: number;
   /**
-   * Lifecycle status of this notification. Populated for notification-category
+   * Lifecycle status of this notification. Populated for notification lifecycle
    * events (`notification_scheduled`, `notification_expired`,
-   * `notification_revoked`). Undefined for all other event types.
+   * `notification_revoked`). Undefined for all other event types including
+   * `subscription_updated`.
    */
-  notificationStatus?: NotificationStatus;
+  notificationStatus?: NotificationLifecycleStatus;
   /**
    * For status-transition events (`notification_expired`, `notification_revoked`),
    * the `eventId` of the originating `notification_scheduled` event whose status
@@ -49,6 +63,14 @@ export interface BlockchainEvent {
   read?: boolean;
 }
 
+/**
+ * UI filter status for the notification search bar.
+ *
+ * - `all`    – show all notifications regardless of read state.
+ * - `read`   – show only notifications the user has already seen.
+ * - `unread` – show only notifications the user has not yet seen.
+ */
+export type NotificationStatus = 'all' | 'read' | 'unread';
 /** Read/unread filter used by the notification search UI. */
 /** Read/unread filter for Event Explorer notification lists (not delivery status). */
 export type NotificationReadFilter = 'all' | 'read' | 'unread';
