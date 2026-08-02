@@ -3,6 +3,7 @@
 //! Targets: group member percentages, usage counts, notification TTL bounds,
 //! and pause-state guards. Run via `cargo test fuzz_`.
 
+use crate::base::events::NotificationPriority;
 use crate::base::types::GroupMember;
 use crate::test_utils::{create_test_group, mint_tokens, setup_test_env};
 use crate::AutoShareContractClient;
@@ -103,6 +104,7 @@ proptest! {
             &creator,
             &ttl,
             &notification_title(&test_env.env),
+            &NotificationPriority::Medium,
         );
 
         let stored = client.get_notification(&notification_id);
@@ -122,6 +124,7 @@ proptest! {
             &creator,
             &0,
             &notification_title(&test_env.env),
+            &NotificationPriority::Medium,
         );
         prop_assert!(result.is_err());
     }

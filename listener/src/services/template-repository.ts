@@ -8,8 +8,8 @@
 import { Database } from '../database/database';
 import logger from '../utils/logger';
 import {
-  NotificationTemplate,
-  NotificationTemplateRow,
+  ChannelNotificationTemplate,
+  ChannelNotificationTemplateRow,
   CreateTemplateInput,
   UpdateTemplateInput,
   TemplateChannelType,
@@ -58,9 +58,9 @@ export class TemplateRepository {
   /**
    * Get template by ID
    */
-  async getById(id: number): Promise<NotificationTemplate | null> {
+  async getById(id: number): Promise<ChannelNotificationTemplate | null> {
     const sql = 'SELECT * FROM notification_templates WHERE id = ?';
-    const row = await this.db.get<NotificationTemplateRow>(sql, [id]);
+    const row = await this.db.get<ChannelNotificationTemplateRow>(sql, [id]);
 
     return row ? this.rowToModel(row) : null;
   }
@@ -68,9 +68,9 @@ export class TemplateRepository {
   /**
    * Get template by unique key
    */
-  async getByUniqueKey(uniqueKey: string): Promise<NotificationTemplate | null> {
+  async getByUniqueKey(uniqueKey: string): Promise<ChannelNotificationTemplate | null> {
     const sql = 'SELECT * FROM notification_templates WHERE unique_key = ?';
-    const row = await this.db.get<NotificationTemplateRow>(sql, [uniqueKey]);
+    const row = await this.db.get<ChannelNotificationTemplateRow>(sql, [uniqueKey]);
 
     return row ? this.rowToModel(row) : null;
   }
@@ -83,7 +83,7 @@ export class TemplateRepository {
     isActive?: boolean;
     limit?: number;
     offset?: number;
-  }): Promise<NotificationTemplate[]> {
+  }): Promise<ChannelNotificationTemplate[]> {
     let sql = 'SELECT * FROM notification_templates WHERE 1=1';
     const params: any[] = [];
 
@@ -109,7 +109,7 @@ export class TemplateRepository {
       }
     }
 
-    const rows = await this.db.all<NotificationTemplateRow>(sql, params);
+    const rows = await this.db.all<ChannelNotificationTemplateRow>(sql, params);
     return rows.map(this.rowToModel);
   }
 
@@ -300,7 +300,7 @@ export class TemplateRepository {
   /**
    * Convert database row to model
    */
-  private rowToModel(row: NotificationTemplateRow): NotificationTemplate {
+  private rowToModel(row: ChannelNotificationTemplateRow): ChannelNotificationTemplate {
     return {
       id: row.id,
       uniqueKey: row.unique_key,

@@ -1,17 +1,52 @@
 use crate::base::events::{AuditAction, NotificationPriority};
-use soroban_sdk::{contracttype, Address, BytesN, String, Vec};
+use soroban_sdk::{contracttype, Address, BytesN, Map, String, Vec};
 
+/// Current notification payload protocol version.
+///
+/// Bump this when making breaking changes to the on-chain notification schema.
+/// Off-chain consumers should reject payloads whose `version` they do not support.
+///
+/// | Version | Date       | Notes                                      |
+/// |---------|------------|--------------------------------------------|
+/// | 1       | 2026-07-26 | Initial versioned notification payloads    |
+pub const CURRENT_NOTIFICATION_VERSION: u32 = 1;
+
+/// AutoShare group details.
+///
+/// # Field ordering (storage optimization — issue #371)
+///
+/// Fixed-width scalars are grouped together before the variable-length heap
+/// fields to keep the XDR-encoded representation compact:
+///
+/// 1. Identity       — `id` (BytesN<32>, fixed 32 bytes)
+/// 2. Ownership      — `creator` (Address)
+/// 3. Priority       — `priority` (enum, small discriminant)
+/// 4. Counters       — `usage_count`, `total_usages_paid` (u32 each, 4 bytes)
+/// 5. Flag           — `is_active` (bool, 1 byte — packed next to u32 counters)
+/// 6. Variable-len   — `name` (String), `members` (Vec)
+///
+/// Placing `is_active` adjacent to the u32 counter fields (rather than after
+/// the variable-length `members` Vec) keeps all fixed-width fields together and
+/// avoids a scattered layout in the XDR stream.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AutoShareDetails {
+    /// Unique group identifier.
     pub id: BytesN<32>,
-    pub name: String,
+    /// Address that created and administers this group.
     pub creator: Address,
+    /// Default notification priority for events emitted by this group.
     pub priority: NotificationPriority,
+    /// Remaining usage credits for this group.
     pub usage_count: u32,
+    /// Cumulative usages purchased across all top-ups.
     pub total_usages_paid: u32,
-    pub members: Vec<GroupMember>,
+    /// Whether the group is currently active (can receive usage).
     pub is_active: bool,
+    /// Human-readable name of the group.
+    pub name: String,
+    /// Members and their payout percentages (must sum to 100 when non-empty).
+    pub members: Vec<GroupMember>,
 }
 
 #[contracttype]
@@ -30,19 +65,36 @@ pub struct GroupMember {
 /// sender. Once revoked, the notification becomes inactive and cannot be
 /// interacted with. Revoked notifications maintain their state for auditing
 /// and transparency.
+///
+/// # Field ordering (storage optimization — issue #371)
+///
+/// Fixed-width fields are grouped before the optional heap-allocated fields:
+///
+/// 1. Identity    — `id` (BytesN<32>)
+/// 2. Ownership   — `creator` (Address)
+/// 3. Priority    — `priority` (enum, small discriminant)
+/// 4. Timestamps  — `created_at`, `expires_at` (u64 each, adjacent)
+/// 5. Revocation  — `revoked_at` (Option<u64>), `revoked_by` (Option<Address>)
+///
+/// Keeping both u64 timestamps adjacent avoids interleaving fixed and variable
+/// fields in the XDR stream.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ScheduledNotification {
+    /// Unique notification identifier.
     pub id: BytesN<32>,
+    /// Address that scheduled this notification.
     pub creator: Address,
+    /// Delivery priority assigned at scheduling time; determines processing order.
+    pub priority: NotificationPriority,
     /// Ledger timestamp (seconds) at which the notification was scheduled.
     pub created_at: u64,
     /// Ledger timestamp (seconds) at or after which the notification is expired.
     pub expires_at: u64,
-    /// Address that revoked the notification, or None if not revoked.
-    pub revoked_by: Option<Address>,
     /// Ledger timestamp (seconds) at which the notification was revoked, if revoked.
     pub revoked_at: Option<u64>,
+    /// Address that revoked the notification, or None if not revoked.
+    pub revoked_by: Option<Address>,
     /// Whether the notification has been confirmed as delivered.
     pub delivered: bool,
     /// Ledger timestamp (seconds) at which delivery was confirmed, if any.
@@ -53,16 +105,79 @@ pub struct ScheduledNotification {
     pub recalled_at: Option<u64>,
     /// Notification title (required metadata for off-chain processing)
     pub title: String,
+    /// Protocol version of this notification payload (see [`CURRENT_NOTIFICATION_VERSION`]).
+    pub version: u32,
 }
 
+/// Mutable descriptive metadata for an AutoShare group (notification channel).
+///
+/// Stored separately from [`AutoShareDetails`] so updates never touch membership,
+/// usage counts, or other subscriber-facing state.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ChannelMetadata {
+    /// Channel / group identifier (AutoShare id).
+    pub channel_id: BytesN<32>,
+    /// Human-readable description of the channel.
+    pub description: String,
+    /// Optional custom key-value metadata (validated before storage).
+    pub custom_fields: Map<String, String>,
+    /// Ledger timestamp of the last metadata update.
+    pub updated_at: u64,
+}
+
+/// Immutable archive copy of a processed (expired / cancelled / delivered) notification.
+///
+/// Active storage is cleared after archival; records remain queryable via archive keys
+/// so no payload data is lost.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ArchivedNotification {
+    /// Original notification identifier.
+    pub id: BytesN<32>,
+    /// Address that scheduled this notification.
+    pub creator: Address,
+    /// Original creation timestamp.
+    pub created_at: u64,
+    /// Original expiration timestamp.
+    pub expires_at: u64,
+    /// Notification title.
+    pub title: String,
+    /// Protocol version at archival time.
+    pub version: u32,
+    /// Ledger timestamp when the record was archived.
+    pub archived_at: u64,
+    /// Reason the notification left active storage (`expired`, `cancelled`, `delivered`).
+    pub archive_reason: String,
+}
+
+/// A single on-chain payment record.
+///
+/// # Field ordering (storage optimization — issue #371)
+///
+/// Fixed-width scalars are grouped together to avoid interleaving variable-
+/// length and fixed-width fields in the XDR stream:
+///
+/// 1. Identity    — `user` (Address), `group_id` (BytesN<32>)
+/// 2. Scalars     — `usages_purchased` (u32), `timestamp` (u64),
+///                  `amount_paid` (i128) — ordered narrow → wide
+///
+/// Previously `amount_paid` (i128, 16 bytes) was sandwiched between the u32
+/// and u64 fields.  Ordering narrow → wide keeps all numeric fields together
+/// and is easier to reason about.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PaymentHistory {
+    /// Address of the user who made the payment.
     pub user: Address,
+    /// Identifier of the group the payment was for.
     pub group_id: BytesN<32>,
+    /// Number of usage credits purchased.
     pub usages_purchased: u32,
-    pub amount_paid: i128,
+    /// Ledger timestamp (seconds) at which the payment was made.
     pub timestamp: u64,
+    /// Total amount paid in the token's smallest unit.
+    pub amount_paid: i128,
 }
 
 /// Immutable record of a single notification lifecycle event.

@@ -1,8 +1,8 @@
 import NodeCache from 'node-cache';
 import logger from '../utils/logger';
-import { NotificationTemplate } from '../types/notification-template';
+import { AuditedNotificationTemplate } from '../types/notification-template';
 
-export type { NotificationTemplate } from '../types/notification-template';
+export type { AuditedNotificationTemplate } from '../types/notification-template';
 
 /**
  * Cache statistics for monitoring hit rate
@@ -50,8 +50,8 @@ export class NotificationTemplateCache {
    * @param templateId - The template identifier
    * @returns Cached template or undefined if not found/expired
    */
-  get(templateId: string): NotificationTemplate | undefined {
-    const value = this.cache.get<NotificationTemplate>(templateId);
+  get(templateId: string): AuditedNotificationTemplate | undefined {
+    const value = this.cache.get<AuditedNotificationTemplate>(templateId);
     if (value !== undefined) {
       this.hits++;
       logger.debug('[TemplateCache] Cache hit', { templateId });
@@ -68,7 +68,7 @@ export class NotificationTemplateCache {
    * @param template - Template data to cache
    * @param ttl - Optional custom TTL in seconds
    */
-  set(templateId: string, template: NotificationTemplate, ttl?: number): void {
+  set(templateId: string, template: AuditedNotificationTemplate, ttl?: number): void {
     const success = ttl !== undefined
       ? this.cache.set(templateId, template, ttl)
       : this.cache.set(templateId, template);
@@ -89,9 +89,9 @@ export class NotificationTemplateCache {
    */
   async getOrLoad(
     templateId: string,
-    loader: () => Promise<NotificationTemplate | undefined>,
+    loader: () => Promise<AuditedNotificationTemplate | undefined>,
     ttl?: number,
-  ): Promise<NotificationTemplate | undefined> {
+  ): Promise<AuditedNotificationTemplate | undefined> {
     const cached = this.get(templateId);
     if (cached !== undefined) {
       return cached;
