@@ -1,32 +1,116 @@
 # Notification Lifecycle
 
-This document explains the implemented notification lifecycle in Notify-Chain.
-It covers both:
+> **Canonical documentation** for how Notify-Chain turns on-chain contract events
+> into off-chain deliveries, acknowledgments, retries, and archival.
+>
+> Code paths referenced here live under `listener/src/`. For on-chain event shapes
+> and topic layouts, see [CONTRACT_EVENT_REFERENCE.md](CONTRACT_EVENT_REFERENCE.md).
+> For retry configuration and failure recovery, see
+> [NOTIFICATION_FAILURE_RECOVERY.md](NOTIFICATION_FAILURE_RECOVERY.md).
 
-- Scheduled notifications managed in SQLite and executed by background schedulers.
-- Real-time event notifications sent directly by the event subscriber.
+This document covers:
 
-The focus is accuracy against current code paths in `listener/src`.
+1. End-to-end step-by-step lifecycle (event detection → delivery → ack/archive)
+2. On-chain vs off-chain flow
+3. Roles of each system component
+4. The durable scheduled-notification path (API / SQLite)
+5. Acknowledgment, retry, and archival semantics
+
+---
+
+## Table of Contents
+
+1. [High-Level Overview](#high-level-overview)
+2. [Full Cross-Layer Flow (Diagram)](#full-cross-layer-flow-diagram)
+3. [On-Chain Flow](#on-chain-flow)
+4. [Off-Chain Flow — Real-Time Path](#off-chain-flow--real-time-path)
+5. [Off-Chain Flow — Scheduled Path](#off-chain-flow--scheduled-path)
+6. [Component Roles](#component-roles)
+7. [Acknowledgment](#acknowledgment)
+8. [Retry and Failure Handling](#retry-and-failure-handling)
+9. [Completion and Archival](#completion-and-archival)
+10. [Dashboard Visibility](#dashboard-visibility)
+11. [Developer Notes](#developer-notes)
+12. [Troubleshooting](#troubleshooting)
+
+---
 
 ## High-Level Overview
 
-Notify-Chain currently has two delivery paths:
+Notify-Chain has **two delivery paths** that share Discord delivery and
+preferences, but differ in durability:
 
-1. Scheduled path (durable, DB-backed)
-- Creation via `NotificationAPI.scheduleNotification()` or `POST /api/schedule`.
-- Stored in `scheduled_notifications`.
-- Delivered by `NotificationScheduler`.
-- Retries managed by `RetryScheduler`.
-- Execution history written to `notification_execution_log`.
-- Terminal rows archived by `ArchiveService` into `notification_archive`.
+| Path | Trigger | Durability | Primary code |
+|------|---------|------------|--------------|
+| **Real-time (event-driven)** | Contract event polled from Stellar RPC | In-memory registry + optional in-memory retry; persistent event dedup in SQLite | `EventSubscriber` → `DiscordNotificationService` |
+| **Scheduled (durable)** | `POST /api/schedule` or `NotificationAPI.scheduleNotification()` | SQLite `scheduled_notifications` + execution log + archive | `NotificationScheduler` / `RetryScheduler` / `ArchiveService` |
 
-2. Real-time subscriber path (event-driven)
-- Events polled from Stellar RPC by `EventSubscriber`.
-- Valid events are added to `eventRegistry`.
-- Discord delivery attempted immediately.
-- Optional in-memory retry via `NotificationRetryQueue` for immediate failures.
+Real-time path is the default reaction to blockchain activity. Scheduled path is
+used for deferred or manually scheduled deliveries.
 
-## Lifecycle Stages
+---
+
+## Full Cross-Layer Flow (Diagram)
+
+End-to-end flow from contract emission through listener delivery, provider
+acknowledgment, and (for scheduled rows) archival:
+
+```mermaid
+flowchart TB
+  subgraph OnChain["On-chain (Soroban)"]
+    User["Users / dApps"]
+    Contract["Smart Contracts<br/>(AutoShare / TaskBounty)"]
+    User -->|invoke| Contract
+    Contract -->|emit typed events| Ledger["Stellar ledger events"]
+  end
+
+  subgraph OffChain["Off-chain (listener/src)"]
+    ES["EventSubscriber<br/>poll getEvents"]
+    Filter["Validate + event filter"]
+    EDedup["EventDeduplicationService<br/>(processed_events)"]
+    Registry["eventRegistry<br/>(in-memory)"]
+    Prefs["preferenceStore"]
+    Discord["DiscordNotificationService"]
+    NDedup["NotificationDeduplicator<br/>(in-memory fingerprint)"]
+    RQ["NotificationRetryQueue<br/>(in-memory)"]
+    API["Events HTTP API<br/>/api/events, /api/schedule"]
+    NAPI["NotificationAPI"]
+    Repo["ScheduledNotificationRepository"]
+    Sched["NotificationScheduler"]
+    Retry["RetryScheduler"]
+    Arch["ArchiveService"]
+    DB[("SQLite<br/>scheduled_notifications<br/>notification_execution_log<br/>notification_archive<br/>processed_events")]
+  end
+
+  subgraph Delivery["Delivery & consumers"]
+    WH["Discord webhook"]
+    Dash["React Dashboard"]
+  end
+
+  Ledger --> ES
+  ES --> Filter --> EDedup
+  EDedup -->|new event| Registry
+  Registry --> API
+  API -->|GET /api/events| Dash
+  EDedup -->|duplicate| Skip["Skip / record SKIPPED"]
+  Registry --> Prefs
+  Prefs -->|discord enabled| Discord
+  Discord --> NDedup
+  NDedup -->|unique| WH
+  WH -->|HTTP 2xx = ack| Discord
+  Discord -->|send failed| RQ
+  RQ -->|retry| Discord
+
+  NAPI -->|schedule| Repo --> DB
+  API -->|POST /api/schedule| NAPI
+  Sched --> Repo
+  Sched --> Discord
+  Retry --> Repo
+  Retry --> Discord
+  Arch -->|COMPLETED / FAILED / CANCELLED| DB
+```
+
+Scheduled-notification state machine (durable path only):
 
 ```mermaid
 stateDiagram-v2
@@ -42,26 +126,115 @@ stateDiagram-v2
   ARCHIVED --> PURGED: purge after retention window
 ```
 
-## Notification Creation
+---
 
-### 1) API entrypoint for scheduled notifications
+## On-Chain Flow
 
-`POST /api/schedule` in `listener/src/api/events-server.ts` creates scheduled notifications.
+1. A user or dApp **invokes** a Soroban contract method (AutoShare, TaskBounty, or
+   notification-scheduling helpers on-chain).
+2. The contract updates state and **emits a typed event** via the Soroban event
+   system (topics + data). Examples: `AutoshareCreated`, `TaskCreated`,
+   `NotificationScheduled`, `NotificationExpired`.
+3. Events are recorded on the **Stellar ledger**. They are not delivered to Discord
+   or the dashboard by the contract itself — the off-chain listener must observe them.
+4. Event names, topic layouts, categories, and priorities are documented in
+   [CONTRACT_EVENT_REFERENCE.md](CONTRACT_EVENT_REFERENCE.md) (including the
+   [Notification Lifecycle Events](CONTRACT_EVENT_REFERENCE.md#notification-lifecycle-events)
+   section for on-chain schedule/expire/cancel/revoke events).
 
-Required request fields:
+**Important:** On-chain `NotificationScheduled` (and related) events are
+**ledger signals**. The listener treats them like other contract events for the
+real-time path (registry + optional Discord). They do **not** automatically insert
+rows into `scheduled_notifications`. Durable off-chain scheduling uses the HTTP /
+`NotificationAPI` path below.
 
-- `executeAt`
-- `payload`
-- `targetRecipient`
+---
 
-Optional fields passed through to storage:
+## Off-Chain Flow — Real-Time Path
 
-- `notificationType` (defaults to `discord`)
-- `maxRetries`
-- `priority`
-- `eventId`
-- `contractAddress`
-- `metadata`
+Step-by-step from detection to delivery acknowledgment
+(`listener/src/services/event-subscriber.ts`):
+
+### 1. Poll Stellar RPC
+
+`EventSubscriber` loops on `pollIntervalMs`, calling `server.getEvents()` per
+configured contract address, using a per-contract **cursor** when available
+(otherwise `startLedger: 1`).
+
+### 2. Filter and validate
+
+For each event:
+
+- `validateEventPayload()` — drop malformed payloads
+- `matchesEventFilter(eventName, contractConfig.events)` — honor per-contract
+  event allowlists
+
+### 3. Persistent event deduplication
+
+If `EventDeduplicationService` is wired:
+
+- Optional **reorg detection** via ledger vs stored polling cursor
+- `isDuplicate(event.id, contractAddress)` against `processed_events`
+- Duplicates are recorded as `SKIPPED` and not re-notified
+
+### 4. Optional processing queue
+
+If `config.eventQueue` is set, events are enqueued to `EventProcessingQueue`;
+otherwise `processEvent()` runs inline.
+
+### 5. Register for the events API / dashboard
+
+`eventRegistry.addFromInput(...)` stores a display event in memory (with TTL /
+cleanup when configured). This is what `GET /api/events` serves to the dashboard.
+
+### 6. Preference gate
+
+Before Discord send, `preferenceStore.isCategoryEnabled(userId, 'discord')` is
+checked (`userId` from `contractConfig.userId` or `'global'`). Disabled categories
+skip delivery but the event remains in the registry.
+
+### 7. Discord delivery
+
+`DiscordNotificationService.sendEventNotification()`:
+
+1. Builds a fingerprint `(eventId, contractAddress)` via `NotificationDeduplicator`
+2. Skips if already sent within the in-memory dedup window (returns success)
+3. Formats a Discord embed and POSTs the webhook
+4. Treats `response.ok` as **delivery acknowledgment**
+5. On success, marks the fingerprint as sent
+
+### 8. Immediate failure → in-memory retry
+
+If the initial Discord send returns `false`, `NotificationRetryQueue` enqueues the
+event for exponential-backoff retries (separate from DB-backed scheduled retries).
+
+### 9. Record processed event
+
+`EventDeduplicationService.recordProcessedEvent(...)` persists processing outcome
+(`PROCESSED` / `ERROR`, whether notification was sent).
+
+---
+
+## Off-Chain Flow — Scheduled Path
+
+Durable deferred deliveries (independent of the real-time subscriber path).
+
+### 1. Creation
+
+Entrypoints:
+
+- `POST /api/schedule` in `listener/src/api/events-server.ts`
+- `NotificationAPI.scheduleNotification()` in `listener/src/services/notification-api.ts`
+
+Required fields: `executeAt`, `payload`, `targetRecipient`.
+
+Optional: `notificationType` (default `discord`), `maxRetries`, `priority`,
+`eventId`, `contractAddress`, `metadata`.
+
+Validation: `executeAt` must be a valid **future** `Date`; `payload` must be an
+object; `targetRecipient` required. Failures throw — no DB row is created.
+
+Optional idempotency via `IdempotencyKeyService` when initialized with a key.
 
 Example:
 
@@ -82,46 +255,48 @@ Example:
 }
 ```
 
-### 2) Service-level validation
+### 2. Persist as PENDING
 
-`NotificationAPI.scheduleNotification()` validates:
+`ScheduledNotificationRepository.create()` inserts into `scheduled_notifications`
+with status `PENDING`.
 
-- `executeAt` is a valid `Date`
-- `executeAt` is in the future
-- `payload` is an object
-- `targetRecipient` exists
+### 3. Scheduler poll / lock
 
-If validation fails, the call throws an error and no DB row is created.
+`NotificationScheduler` (when `SCHEDULER_ENABLED`):
 
-### 3) Idempotency (implemented but optional)
+1. `recoverStaleLocks()` — expired `PROCESSING` locks → `PENDING` or `FAILED`
+2. `fetchAndLockPendingNotifications()` — due rows (`execute_at <= now`) locked with
+   `status=PROCESSING`, `processor_id`, `lock_expires_at`
+3. Batch payload validation via `BatchValidationService` / `BatchValidator`
 
-`NotificationAPI` supports idempotency if initialized with `IdempotencyKeyService` and called with an idempotency key.
+### 4. Execute delivery
 
-Behavior:
+For `notificationType === discord`, calls
+`DiscordNotificationService.sendEventNotification(...)`.
 
-- Same key + same request body: returns cached response notification id.
-- Same key + different request body: rejects with `Idempotency key reused with different request body`.
+Declared but not implemented in the scheduler today: `webhook`, `email`, `sms`.
 
-## Validation and Scheduling
+### 5. Outcome
 
-There are two distinct validation layers:
+| Result | Status / log |
+|--------|----------------|
+| Provider ack (`response.ok`) | `COMPLETED` + execution log `SUCCESS` |
+| Failure, retries left | back to `PENDING` + log `RETRY` |
+| Failure, retries exhausted | `FAILED` + log `FAILED` |
 
-1. Schedule input validation
-- Happens in `NotificationAPI.scheduleNotification()` before insert.
+### 6. Delayed retries
 
-2. Batch payload validation
-- `POST /api/notifications/validate-batch` validates batches via `BatchValidationService` and `BatchValidator`.
-- Scheduler also validates fetched notifications as a batch before processing and marks each row retry/failed if the batch is invalid.
+`RetryScheduler` picks rows where `status = PENDING`, `retry_count > 0`, and
+`next_retry_at` is due. Backoff uses
+`calculateBackoffDelay(attempt, baseDelayMs, multiplier, maxDelayMs, jitter)`.
 
-Scheduling behavior:
+### 7. Archive / purge
 
-- New records start as `PENDING` in `scheduled_notifications`.
-- Due records are selected when `execute_at <= now`.
-- Locking is optimistic/distributed via `status=PROCESSING`, `processor_id`, and `lock_expires_at`.
+Terminal rows (`COMPLETED`, `FAILED`, `CANCELLED`) are later moved by
+`ArchiveService` into `notification_archive`, then optionally purged after
+retention. See [Completion and Archival](#completion-and-archival).
 
-## Delivery Pipeline
-
-### Sequence (scheduled path)
+Sequence (scheduled path):
 
 ```mermaid
 sequenceDiagram
@@ -157,121 +332,153 @@ sequenceDiagram
   end
 ```
 
-### Delivery implementation details
+---
 
-- Current production delivery implementation is only `discord`.
-- `webhook`, `email`, and `sms` notification types are declared but not yet implemented in `NotificationScheduler.executeNotification()`.
-- `DiscordNotificationService` does notification deduplication and marks delivery success/failure from webhook HTTP response.
+## Component Roles
+
+| Component | Layer | Role |
+|-----------|-------|------|
+| **Smart contracts** (`contract/`, Task Bounty) | On-chain | Business logic; emit typed Soroban events that the listener observes |
+| **EventSubscriber** | Off-chain | Polls Stellar RPC, filters events, drives registry + Discord, owns reconnect/cursor |
+| **EventDeduplicationService** | Off-chain | Persistent `(event_id, contract_address)` dedup + reorg/cursor helpers (`processed_events`) |
+| **NotificationDeduplicator** | Off-chain | Short-window in-memory fingerprint dedup inside Discord sends |
+| **eventRegistry** | Off-chain | In-memory event feed for `GET /api/events` |
+| **preferenceStore** | Off-chain | Per-user category gates (e.g. disable Discord) |
+| **DiscordNotificationService** | Off-chain | Formats embeds, POSTs webhook, interprets HTTP ack, local retry loop |
+| **NotificationRetryQueue** | Off-chain | In-memory exponential backoff for real-time Discord failures |
+| **NotificationAPI** + **/api/schedule** | Off-chain | Validates and creates durable scheduled notifications |
+| **NotificationScheduler** | Off-chain | Polls due `PENDING` rows, locks, delivers, marks complete/retry/fail |
+| **RetryScheduler** | Off-chain | Processes delayed durable retries (`next_retry_at`) |
+| **ArchiveService** / **ArchiveStore** | Off-chain | Moves terminal scheduled rows to archive; purges after retention |
+| **WorkerManager** | Off-chain | Coordinates graceful shutdown of background workers |
+| **Dashboard** (`dashboard/`) | UI | Polls `/api/events` (and related health/search APIs) to show activity |
+
+---
+
+## Acknowledgment
+
+Acknowledgment is **provider-based**, not end-user/manual.
+
+1. **Provider HTTP acknowledgment** — `DiscordNotificationService` / `sendWebhook()`:
+   `response.ok === true` means delivered. Scheduler marks `COMPLETED` and logs
+   `SUCCESS`.
+2. **Provider failure** — non-2xx or transport error → real-time path may enqueue
+   `NotificationRetryQueue`; scheduled path uses `markAsFailedOrRetry()` and logs
+   `RETRY` / `FAILED`.
+
+Not implemented: no `POST /api/notifications/:id/ack` (or similar) for downstream
+consumer acknowledgment.
+
+---
 
 ## Retry and Failure Handling
 
-### Scheduled-notification retry
+### Scheduled (durable)
 
-Failure path in scheduler:
+- `markAsFailedOrRetry()` increments `retry_count`
+- Retries remaining → `PENDING` with `next_retry_at`
+- Exhausted → `FAILED` + `processing_completed_at`
+- `recoverStaleLocks()` returns expired `PROCESSING` to `PENDING` / `FAILED`
 
-- `NotificationScheduler` calls `markAsFailedOrRetry()`.
-- `retry_count` increments.
-- If retries remain: status returns to `PENDING`.
-- If retries exhausted: status becomes `FAILED` and `processing_completed_at` is set.
+### Real-time (in-memory)
 
-`RetryScheduler` then handles delayed retries for rows where:
+- `NotificationRetryQueue` with exponential backoff + optional jitter
+- Lost on process restart (unlike SQLite-backed scheduled retries)
 
-- `status = PENDING`
-- `retry_count > 0`
-- `next_retry_at IS NULL OR next_retry_at <= now`
+### Discord service internal retries
 
-Backoff:
+`DiscordNotificationService` also retries within a single
+`sendEventNotification()` call (`retryCount` / `backoffBaseSeconds` from config)
+before returning failure to the caller.
 
-- `calculateBackoffDelay(attempt, baseDelayMs, multiplier, maxDelayMs, jitter)`
-- Optional jitter (default enabled) to reduce synchronized retry spikes.
+Details: [NOTIFICATION_FAILURE_RECOVERY.md](NOTIFICATION_FAILURE_RECOVERY.md).
 
-### Lock recovery
-
-`recoverStaleLocks()` returns expired `PROCESSING` rows to `PENDING` (or `FAILED` if max retries reached) and logs execution outcomes.
-
-### Real-time subscriber retry
-
-In the real-time path (`EventSubscriber`), immediate Discord failures can be queued into `NotificationRetryQueue` (in-memory exponential backoff). This path is separate from DB-backed scheduled retries.
-
-## Acknowledgment Flow
-
-Acknowledgment is currently delivery-provider based, not end-user/manual.
-
-Implemented acknowledgment behavior:
-
-1. Provider HTTP acknowledgment
-- `DiscordNotificationService.sendWebhook()` receives an HTTP response.
-- `response.ok === true` is treated as positive delivery acknowledgment.
-- The scheduler marks the notification `COMPLETED` and logs `SUCCESS`.
-
-2. Provider failure / no acknowledgment
-- Non-2xx response or transport error returns false/throws.
-- Scheduler records retry/failure and logs `RETRY` or `FAILED` in `notification_execution_log`.
-
-Not currently implemented:
-
-- There is no dedicated endpoint like `POST /api/notifications/:id/ack` for downstream consumer acknowledgment.
+---
 
 ## Completion and Archival
 
-Once a notification reaches terminal state (`COMPLETED`, `FAILED`, or `CANCELLED`):
+Applies to the **scheduled** path terminal states (`COMPLETED`, `FAILED`,
+`CANCELLED`):
 
-1. It remains in `scheduled_notifications` for an active retention window.
-2. `ArchiveService` periodically moves old terminal rows to `notification_archive`.
-3. Optional purge deletes old archived rows after a second retention window.
+1. Rows remain in `scheduled_notifications` for an active retention window.
+2. `ArchiveService` periodically **moves** old terminal rows to
+   `notification_archive`.
+3. Optional purge deletes archived rows after a second retention window.
 
-Archival defaults from `ArchiveConfig`:
+Defaults from `ArchiveConfig`:
 
-- Archive cycle interval: 6 hours (`ARCHIVE_INTERVAL_MS`)
-- Archive-after threshold: 7 days (`ARCHIVE_AFTER_MS`)
-- Purge-after threshold: 90 days (`ARCHIVE_DELETE_AFTER_MS`)
-- Batch size: 500 (`ARCHIVE_BATCH_SIZE`)
+| Setting | Default | Env |
+|---------|---------|-----|
+| Archive cycle interval | 6 hours | `ARCHIVE_INTERVAL_MS` |
+| Archive-after threshold | 7 days | `ARCHIVE_AFTER_MS` |
+| Purge-after threshold | 90 days | `ARCHIVE_DELETE_AFTER_MS` |
+| Batch size | 500 | `ARCHIVE_BATCH_SIZE` |
 
-Read APIs:
+APIs: `GET /api/archive`, `GET /api/archive/:id`, `POST /api/archive/run`.
 
-- `GET /api/archive`
-- `GET /api/archive/:id`
-- `POST /api/archive/run` (on-demand cycle)
+Real-time path events age out of `eventRegistry` via TTL / `CleanupService`; they
+are not moved into `notification_archive`.
+
+---
+
+## Dashboard Visibility
+
+The React dashboard (`dashboard/`) does not talk to Stellar RPC directly for the
+main feed. It:
+
+1. Calls the listener **Events API** (`VITE_EVENTS_API_URL`, typically
+   `http://localhost:8787/api/events`)
+2. Renders events previously written by `EventSubscriber` into `eventRegistry`
+3. May also surface notification health / search against listener HTTP endpoints
+
+So the dashboard sits **after** off-chain ingestion: contract → listener → API → UI.
+
+---
 
 ## Developer Notes
 
-- Scheduled and subscriber flows are intentionally separate; avoid assuming one substitutes for the other.
+- Scheduled and subscriber flows are intentionally separate; one does not replace
+  the other.
 - Scheduled retries are durable (SQLite). Subscriber retries are in-memory.
-- `notification_execution_log` is the authoritative execution audit trail.
-- Worker shutdown uses `WorkerManager` so schedulers/archive cycles can finish in-flight jobs gracefully.
+- `notification_execution_log` is the authoritative audit trail for scheduled
+  delivery attempts.
+- Two dedup layers exist: persistent event dedup (`EventDeduplicationService`) and
+  short-window notification dedup (`NotificationDeduplicator`).
+- Worker shutdown uses `WorkerManager` so schedulers/archive cycles can finish
+  in-flight work gracefully.
+- Batch validation: `POST /api/notifications/validate-batch` plus scheduler
+  pre-process batch checks.
+
+---
 
 ## Troubleshooting
 
 ### Scheduled notification stays `PENDING`
 
-Check:
-
 - `SCHEDULER_ENABLED=true`
-- `execute_at` is in the past or near-future and valid
+- `execute_at` is due and valid
 - Scheduler logs show polling and lock acquisition
-
-Useful API checks:
-
-- `GET /api/schedule/<id>`
-- `GET /api/schedule/stats`
+- `GET /api/schedule/<id>`, `GET /api/schedule/stats`
 
 ### Notification repeatedly retries
 
-Check:
-
 - Discord webhook validity/reachability
-- `retry_count`, `next_retry_at`, and `last_error` in `scheduled_notifications`
-- Execution log entries in `notification_execution_log`
+- `retry_count`, `next_retry_at`, `last_error` on the row
+- Rows in `notification_execution_log`
 
-### Notification not found in active table
+### Event seen on-chain but no Discord message
 
-If terminal and older than retention window, it may already be archived.
+- Listener running and RPC reachable
+- Contract address + event name in config filters
+- `EventDeduplicationService` / `NotificationDeduplicator` skip (already processed)
+- `preferenceStore` Discord category enabled
+- Discord config present on the listener
 
-Check:
+### Notification not in active table
 
-- `GET /api/archive?status=COMPLETED`
-- `GET /api/archive?status=FAILED`
+Terminal and older than retention may already be archived:
+`GET /api/archive?status=COMPLETED` / `FAILED`.
 
 ### Looking for explicit user acknowledgment
 
-Current implementation does not expose a user-ack endpoint. Delivery acknowledgment is inferred from provider response success/failure.
+Not implemented. Delivery ack is inferred from the Discord webhook HTTP response.
