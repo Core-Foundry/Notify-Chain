@@ -111,6 +111,7 @@ interface ServiceHealth {
 interface HealthResponse {
   status: 'ok' | 'degraded' | 'error';
   timestamp: string;
+  uptimeSeconds: number;
   services: {
     stellarRpc: ServiceHealth;
     discord: ServiceHealth;
@@ -390,6 +391,7 @@ async function buildHealthResponse(options: EventsServerOptions): Promise<Health
   return {
     status: overallStatus,
     timestamp: new Date().toISOString(),
+    uptimeSeconds: process.uptime(),
     services: {
       stellarRpc,
       discord,
