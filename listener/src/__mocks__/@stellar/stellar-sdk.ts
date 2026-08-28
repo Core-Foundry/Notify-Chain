@@ -31,10 +31,20 @@ export const Networks = {
   MAINNET: 'Public Global Stellar Network ; September 2015',
 };
 
+export const xdr = {
+  ScVal: {
+    scvSymbol: (value: string) => ({ type: 'symbol', value: () => value }),
+    scvU32: (value: number) => ({ type: 'u32', value: () => value }),
+  },
+};
+
+export const scValToNative = (value: { value: () => unknown }) => value.value();
+
 export default {
   rpc,
   Contract,
   Keypair,
   Account,
   Networks,
+  xdr,
 };
