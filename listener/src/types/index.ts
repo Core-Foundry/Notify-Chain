@@ -46,6 +46,8 @@ export interface Config {
   stellarNetworkPassphrase: string;
   contractAddresses: ContractConfig[];
   pollIntervalMs: number;
+  /** Maximum number of blockchain events fetched per polling cycle (default: 100). */
+  eventBatchSize: number;
   maxReconnectAttempts: number;
   reconnectDelayMs: number;
   eventsApiPort: number;

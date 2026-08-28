@@ -1,4 +1,4 @@
-import { ConfigError, loadConfig } from './config';
+import { ConfigError, loadConfig, validateConfig } from './config';
 
 describe('Config validation', () => {
   const originalEnv = process.env;
@@ -53,6 +53,36 @@ describe('Config validation', () => {
 
     expect(() => loadConfig()).toThrow(ConfigError);
     expect(() => loadConfig()).toThrow('EVENTS_API_PORT must be a valid integer, got "eighty"');
+  });
+
+  it('loads the default blockchain event batch size', () => {
+    delete process.env.EVENT_BATCH_SIZE;
+
+    expect(loadConfig().eventBatchSize).toBe(100);
+  });
+
+  it('loads a configured blockchain event batch size', () => {
+    process.env.EVENT_BATCH_SIZE = '250';
+
+    expect(loadConfig().eventBatchSize).toBe(250);
+  });
+
+  it('rejects a non-integer blockchain event batch size', () => {
+    process.env.EVENT_BATCH_SIZE = 'many';
+
+    expect(() => loadConfig()).toThrow(
+      'EVENT_BATCH_SIZE must be a valid integer, got "many"'
+    );
+  });
+
+  it('rejects a non-positive blockchain event batch size', () => {
+    process.env.EVENT_BATCH_SIZE = '0';
+
+    const config = loadConfig();
+
+    expect(() => validateConfig(config)).toThrow(
+      'EVENT_BATCH_SIZE must be >= 1 (received: 0).'
+    );
   });
 
   it('loads default values when optional environment variables are omitted', () => {

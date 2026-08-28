@@ -230,7 +230,7 @@ export class EventSubscriber {
             },
           ],
           cursor: lastCursor,
-          limit: 100,
+          limit: this.config.eventBatchSize,
         }
       : {
           filters: [
@@ -240,7 +240,7 @@ export class EventSubscriber {
             },
           ],
           startLedger: 1,
-          limit: 100,
+          limit: this.config.eventBatchSize,
         };
 
     return await this.server.getEvents(request);

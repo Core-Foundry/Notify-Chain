@@ -54,6 +54,7 @@ const testConfig: Config = {
   stellarRpcUrl: 'https://soroban-testnet.stellar.org:443',
   contractAddresses: [contractConfig],
   pollIntervalMs: 30000,
+  eventBatchSize: 100,
   maxReconnectAttempts: 5,
   reconnectDelayMs: 100,
   eventsApiPort: 8787,
@@ -197,6 +198,20 @@ describe('EventSubscriber', () => {
 
       expect(mockGetEvents.mock.calls[0][0]).toMatchObject({ startLedger: 1 });
       expect(mockGetEvents.mock.calls[1][0]).toMatchObject({ cursor: 'cursor-next' });
+    });
+
+    it('uses the configured event batch size for RPC requests', async () => {
+      const configuredBatchSize = 25;
+      const subscriber = new EventSubscriber({
+        ...testConfig,
+        eventBatchSize: configuredBatchSize,
+      });
+
+      await (subscriber as any).checkForEvents();
+
+      expect(mockGetEvents.mock.calls[0][0]).toMatchObject({
+        limit: configuredBatchSize,
+      });
     });
 
     it('tracks cursors independently per contract', async () => {
