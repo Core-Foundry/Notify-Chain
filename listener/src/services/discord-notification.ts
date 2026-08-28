@@ -143,6 +143,7 @@ export class DiscordNotificationService {
         delayMs,
         attempt,
       });
+
       await this.delay(delayMs);
       attempt++;
     }

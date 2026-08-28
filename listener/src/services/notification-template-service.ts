@@ -1,8 +1,10 @@
 import {
   CreateNotificationTemplateInput,
-  NotificationTemplate,
+  AuditedNotificationTemplate,
+  CreateNotificationTemplateInputOld,
+  NotificationTemplateOld,
   TemplateAuditRecord,
-  UpdateNotificationTemplateInput,
+  UpdateNotificationTemplateInputOld,
 } from '../types/notification-template';
 import { NotificationTemplateRepository } from './notification-template-repository';
 import { getTemplateCache, NotificationTemplateCache } from './notification-template-cache';
@@ -24,13 +26,15 @@ export class NotificationTemplateService {
     private readonly cache: NotificationTemplateCache = getTemplateCache(),
   ) {}
 
-  async create(input: CreateNotificationTemplateInput): Promise<NotificationTemplate> {
+  async create(input: CreateNotificationTemplateInput): Promise<AuditedNotificationTemplate> {
+  async create(input: CreateNotificationTemplateInputOld): Promise<NotificationTemplateOld> {
     const template = await this.repository.create(input);
-    this.cache.set(template.id, template);
+    this.cache.set(String(template.id ?? ''), template);
     return template;
   }
 
-  async listAll(): Promise<NotificationTemplate[]> {
+  async listAll(): Promise<AuditedNotificationTemplate[]> {
+  async listAll(): Promise<NotificationTemplateOld[]> {
     return this.repository.listAll();
   }
 
@@ -44,7 +48,8 @@ export class NotificationTemplateService {
    * Returns the rendered subject and body, or throws if required variables are missing.
    */
   renderTemplate(
-    template: NotificationTemplate,
+    template: AuditedNotificationTemplate,
+    template: NotificationTemplateOld,
     variables: Record<string, string>,
   ): { subject?: string; body: string } {
     const declared = template.variables ?? [];
@@ -65,24 +70,26 @@ export class NotificationTemplateService {
     };
   }
 
-  async getById(templateId: string): Promise<NotificationTemplate | undefined> {
+  async getById(templateId: string): Promise<AuditedNotificationTemplate | undefined> {
+  async getById(templateId: string): Promise<NotificationTemplateOld | undefined> {
     return this.cache.getOrLoad(templateId, () => this.repository.getById(templateId));
   }
 
   async update(
     templateId: string,
-    input: UpdateNotificationTemplateInput,
+    input: UpdateNotificationTemplateInputOld,
     actor: string,
-  ): Promise<NotificationTemplate> {
+  ): Promise<AuditedNotificationTemplate> {
     return this.repository.update(templateId, input, actor);
   }
 
-  async getAll(): Promise<NotificationTemplate[]> {
-    return this.repository.getAll();
+  async getAll(): Promise<AuditedNotificationTemplate[]> {
+  ): Promise<NotificationTemplateOld> {
+    return this.repository.update(templateId, input, actor);
   }
 
-  async delete(templateId: string): Promise<void> {
-    return this.repository.delete(templateId);
+  async getAll(): Promise<NotificationTemplateOld[]> {
+    return this.repository.getAll();
   }
 
   async getAuditHistory(templateId: string): Promise<TemplateAuditRecord[]> {

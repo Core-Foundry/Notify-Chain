@@ -69,15 +69,6 @@ export class NotificationRetryQueue {
     processingTimes: [] as number[],
   };
 
-  // Metrics
-  private metrics = {
-    totalEnqueued: 0,
-    totalProcessed: 0,
-    totalSucceeded: 0,
-    totalFailed: 0,
-    processingTimes: [] as number[],
-  };
-
   constructor(notificationFn: NotificationFn, options?: RetryQueueOptions) {
     this.notificationFn = notificationFn;
     this.baseDelayMs = options?.baseDelayMs ?? DEFAULTS.baseDelayMs;
@@ -124,9 +115,8 @@ export class NotificationRetryQueue {
     });
 
     this.queuedFingerprints.add(fingerprint);
-    this.queue.push({ event, contractConfig, retryCount: 0, nextRetryAt, requestId: correlationId });
-    this.metrics.totalEnqueued++;
     this.queue.push({ event, contractConfig, retryCount: 0, nextRetryAt, requestId, priority, enqueuedAt: Date.now() });
+    this.metrics.totalEnqueued++;
   }
 
   start(): void {

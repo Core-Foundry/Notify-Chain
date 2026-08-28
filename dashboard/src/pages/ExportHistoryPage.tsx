@@ -1,6 +1,8 @@
+ 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { generateMockExports, type NotificationExport } from '../utils/exportData';
 import { ExportHistoryTable } from '../components/ExportHistoryTable';
+import { ExportHistorySkeleton } from '../components/ExportHistorySkeleton';
 import { PaginationControls } from '../components/PaginationControls';
 import { WalletConnectButton } from '../components/WalletConnectButton';
 import { EmptyState } from '../components/EmptyState';
@@ -11,6 +13,7 @@ import { EmptyState } from '../components/EmptyState';
 
 const PAGE_SIZE_OPTIONS = [5, 10, 25];
 const DEFAULT_LIMIT = 5;
+const SKELETON_DELAY_MS = 800;
 
 // ──────────────────────────────────────────────────────────────────
 // Download helper — generates a blob file and triggers the browser
@@ -95,14 +98,21 @@ function triggerDownload(blob: Blob, filename: string): void {
 
 export function ExportHistoryPage() {
   const [exports, setExports] = useState<NotificationExport[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [page, setPage] = useState(1);
   const [limit, setLimit] = useState<number>(DEFAULT_LIMIT);
 
-  // Load mock data on mount (replace with real API call as needed)
+  // Simulate async data loading so the skeleton is visible (replace with real API call)
   useEffect(() => {
-    setExports(generateMockExports());
+    setIsLoading(true);
+    const timer = setTimeout(() => {
+      setExports(generateMockExports());
+      setIsLoading(false);
+    }, SKELETON_DELAY_MS);
+
+    return () => clearTimeout(timer);
   }, []);
 
   // ── Filtering ──────────────────────────────────────────────────
@@ -196,13 +206,33 @@ export function ExportHistoryPage() {
         </div>
 
         <p className="event-filters__count" aria-live="polite" aria-atomic="true">
-          {totalCount.toLocaleString()} {totalCount === 1 ? 'record' : 'records'}
+          {isLoading ? '—' : `${totalCount.toLocaleString()} ${totalCount === 1 ? 'record' : 'records'}`}
         </p>
       </section>
 
+      {/* ── Skeleton (loading) ───────────────────────────────────── */}
+      {isLoading && <ExportHistorySkeleton rows={5} />}
+
       {/* ── Table or empty state ─────────────────────────────────── */}
-      {displayedExports.length > 0 ? (
+      {!isLoading && displayedExports.length > 0 && (
         <ExportHistoryTable exports={displayedExports} onDownload={handleDownload} />
+      ) : (
+        <EmptyState
+          title="No export records found"
+          message="Try modifying your search query or status filter to locate matching exports."
+      )}
+
+      {!isLoading && displayedExports.length === 0 && (
+        <section
+          className="event-explorer__empty-state"
+          role="status"
+          aria-live="polite"
+        >
+          <h2>No export records found</h2>
+          <p>
+            Try modifying your search query or status filter to locate matching exports.
+          </p>
+        </section>
       ) : (
         <EmptyState
           icon="📦"
@@ -213,16 +243,18 @@ export function ExportHistoryPage() {
       )}
 
       {/* ── Pagination ───────────────────────────────────────────── */}
-      <PaginationControls
-        page={page}
-        pageCount={pageCount}
-        limit={limit}
-        totalCount={totalCount}
-        onPageChange={setPage}
-        onLimitChange={handleLimitChange}
-        pageSizeOptions={PAGE_SIZE_OPTIONS}
-        summaryLabel="export records"
-      />
+      {!isLoading && (
+        <PaginationControls
+          page={page}
+          pageCount={pageCount}
+          limit={limit}
+          totalCount={totalCount}
+          onPageChange={setPage}
+          onLimitChange={handleLimitChange}
+          pageSizeOptions={PAGE_SIZE_OPTIONS}
+          summaryLabel="export records"
+        />
+      )}
     </main>
   );
 }

@@ -1,8 +1,10 @@
-# Soroban Project
+# AutoShare Contract
+
+AutoShare lives under `contracts/hello-world` (directory name kept for historical Soroban scaffold layout).
 
 ## Project Structure
 
-This repository uses the recommended structure for a Soroban project:
+This package uses the recommended structure for a Soroban project:
 ```text
 .
 ├── contracts

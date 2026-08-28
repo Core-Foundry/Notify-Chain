@@ -10,7 +10,7 @@ export enum TemplateChannelType {
   WEBHOOK = 'WEBHOOK',
 }
 
-export interface NotificationTemplate {
+export interface ChannelNotificationTemplate {
   id?: number;
   uniqueKey: string;
   name: string;
@@ -79,7 +79,7 @@ export interface TemplateUsageLog {
   errorMessage?: string;
 }
 
-export interface NotificationTemplateRow {
+export interface ChannelNotificationTemplateRow {
   id: number;
   unique_key: string;
   name: string;
@@ -95,7 +95,10 @@ export interface NotificationTemplateRow {
   updated_at: string;
   created_by: string | null;
   updated_by: string | null;
-export interface NotificationTemplate {
+}
+
+export interface AuditedNotificationTemplate {
+export interface NotificationTemplateOld {
   id: string;
   name: string;
   type: string;
@@ -128,17 +131,29 @@ export interface UpdateNotificationTemplateInput {
 
 export type TemplateAuditAction = 'UPDATE';
 
+export interface NotificationTemplate {
+  id: string;
+  name: string;
+  type: string;
+  subject?: string;
+  body: string;
+  variables?: string[];
+  metadata?: Record<string, unknown>;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
 export interface TemplateAuditRecord {
   id: number;
   templateId: string;
   actor: string;
   action: TemplateAuditAction;
   changedAt: Date;
-  previousSnapshot: NotificationTemplate;
-  newSnapshot: NotificationTemplate;
+  previousSnapshot: AuditedNotificationTemplate;
+  newSnapshot: AuditedNotificationTemplate;
 }
 
-export interface NotificationTemplateRow {
+export interface AuditedNotificationTemplateRow {
   id: string;
   name: string;
   type: string;

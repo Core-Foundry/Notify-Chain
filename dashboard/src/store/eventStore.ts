@@ -2,7 +2,9 @@ import { create } from 'zustand';
 import type {
   BlockchainEvent,
   EventFilters,
+  NotificationLifecycleStatus,
   NotificationReadFilter,
+  NotificationSortOption,
   NotificationStatus,
 } from '../types/event';
 import { filterEvents } from '../utils/eventData';
@@ -21,17 +23,29 @@ interface EventStoreState {
    * after it completes.
    */
   lastFetchedAt: number;
+  lastSuccessfulSyncAt: number | null;
+  lastSyncFailureAt: number | null;
+  lastSyncError: string | null;
   setEvents: (events: BlockchainEvent[]) => void;
   appendEvents: (events: BlockchainEvent[]) => void;
   setSearch: (search: string) => void;
   setContractFilter: (contractAddress: string) => void;
   setEventTypeFilter: (eventType: string) => void;
+  /** Filter by UI read/unread status. Accepts `NotificationStatus` ('all' | 'read' | 'unread'). */
+  setStatusFilter: (status: NotificationStatus) => void;
   setStatusFilter: (status: NotificationReadFilter) => void;
   setDateFrom: (dateFrom: string) => void;
   setDateTo: (dateTo: string) => void;
   setTxHashFilter: (txHash: string) => void;
+  /**
+   * Set the active sort order (#495).
+   * The selection is persisted to localStorage so it survives page refreshes.
+   */
+  setSortBy: (sortBy: NotificationSortOption) => void;
   setLoading: (isLoading: boolean) => void;
   setError: (error: string | null) => void;
+  markSyncSuccess: () => void;
+  markSyncFailure: (error: string) => void;
   /**
    * Patch the `notificationStatus` of every cached event whose `eventId`
    * matches `targetEventId`. Call this immediately after a successful
@@ -39,11 +53,9 @@ interface EventStoreState {
    * `notification_expired` or `notification_revoked` event confirms on-chain)
    * so the UI reflects the new status without requiring a full refetch.
    *
-   * This is the primary fix for the cache–blockchain desynchronization: instead
-   * of leaving the stale status in the store until the next hard refresh, we
-   * update the matching entry in-place the moment the blockchain confirms.
+   * Accepts `NotificationLifecycleStatus` ('active' | 'expired' | 'revoked').
    */
-  updateEventStatus: (targetEventId: string, status: NotificationStatus) => void;
+  updateEventStatus: (targetEventId: string, status: NotificationLifecycleStatus) => void;
   /**
    * Reset `lastFetchedAt` to `0`, forcing the next `loadEvents` call to treat
    * the cache as stale and re-fetch unconditionally. Call this after any
@@ -54,13 +66,26 @@ interface EventStoreState {
 }
 
 function dedupeEventsById(events: BlockchainEvent[]): BlockchainEvent[] {
-  // Use a Map to keep the last-seen record for each eventId so that status
-  // updates (newer entries) overwrite stale cached copies rather than being dropped.
   const byId = new Map<string, BlockchainEvent>();
   for (const event of events) {
     byId.set(event.eventId, event);
   }
   return Array.from(byId.values());
+}
+
+/** Persist the selected sort order across page refreshes. */
+const SORT_STORAGE_KEY = 'notifychain:sortBy';
+
+function loadPersistedSort(): NotificationSortOption {
+  try {
+    const saved = localStorage.getItem(SORT_STORAGE_KEY) as NotificationSortOption | null;
+    if (saved && ['newest', 'oldest', 'priority', 'delivery_status'].includes(saved)) {
+      return saved;
+    }
+  } catch {
+    // localStorage may be unavailable in some environments
+  }
+  return 'newest';
 }
 
 export const useEventStore = create<EventStoreState>((set) => ({
@@ -73,15 +98,17 @@ export const useEventStore = create<EventStoreState>((set) => ({
     dateFrom: '',
     dateTo: '',
     txHash: '',
+    sortBy: loadPersistedSort(),
   },
   isLoading: false,
   error: null,
   lastFetchedAt: 0,
+  lastSuccessfulSyncAt: null,
+  lastSyncFailureAt: null,
+  lastSyncError: null,
   setEvents: (events) => set({ events: dedupeEventsById(events), lastFetchedAt: Date.now() }),
   appendEvents: (events) =>
     set((state) => ({
-      // Existing events go first so incoming (fresh) events overwrite stale
-      // copies when the Map processes duplicates last-write-wins.
       events: dedupeEventsById([...state.events, ...events]),
     })),
   setSearch: (search) => set((state) => ({ filters: { ...state.filters, search } })),
@@ -97,8 +124,18 @@ export const useEventStore = create<EventStoreState>((set) => ({
     set((state) => ({ filters: { ...state.filters, dateTo } })),
   setTxHashFilter: (txHash) =>
     set((state) => ({ filters: { ...state.filters, txHash } })),
+  setSortBy: (sortBy) => {
+    try {
+      localStorage.setItem(SORT_STORAGE_KEY, sortBy);
+    } catch {
+      // localStorage may be unavailable
+    }
+    set((state) => ({ filters: { ...state.filters, sortBy } }));
+  },
   setLoading: (isLoading) => set({ isLoading }),
   setError: (error) => set({ error }),
+  markSyncSuccess: () => set({ lastSuccessfulSyncAt: Date.now(), lastSyncFailureAt: null, lastSyncError: null }),
+  markSyncFailure: (error) => set({ lastSyncFailureAt: Date.now(), lastSyncError: error }),
   updateEventStatus: (targetEventId, status) =>
     set((state) => ({
       events: state.events.map((event) =>
@@ -120,7 +157,8 @@ export function selectFilteredEvents(state: EventStoreState): BlockchainEvent[] 
     filters.status,
     filters.dateFrom,
     filters.dateTo,
-    filters.txHash
+    filters.txHash,
+    filters.sortBy ?? 'newest',
   );
 }
 

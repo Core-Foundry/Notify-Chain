@@ -36,6 +36,7 @@ interface EventExplorerCardProps {
   onCopyContract: (contractAddress: string) => void;
   isCopied: boolean;
   onSelect?: (event: BlockchainEvent) => void;
+  contractStatuses: ContractStatus[];
   contractStatuses?: ContractStatus[];
 }
 
@@ -44,6 +45,7 @@ export function EventExplorerCard({
   onCopyContract,
   isCopied,
   onSelect,
+  contractStatuses,
   contractStatuses = [],
 }: EventExplorerCardProps) {
   const contractStatus = contractStatuses.find((c) => c.address === event.contractAddress);
@@ -72,7 +74,7 @@ export function EventExplorerCard({
       aria-label={onSelect ? `View details for ${label} notification` : undefined}
     >
       <div className="event-explorer__cell" data-label="Contract" role="cell">
-        <div>
+        <div className="event-explorer__contract-block">
           <p className="event-explorer__contract" title={event.contractAddress}>
             {shortenAddress(event.contractAddress)}
           </p>
