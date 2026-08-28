@@ -32,9 +32,6 @@ export const NOTIFICATION_TYPE_OPTIONS = [
   { value: 'webhook', label: 'Webhook' },
   { value: 'sms', label: 'SMS' },
 ];
-const API_BASE = getEventsApiBaseUrl();
-
-const STATUS_OPTIONS = ['', 'PENDING', 'PROCESSING', 'COMPLETED', 'FAILED', 'CANCELLED', 'PROCESSED'];
 
 export function NotificationSearchPage() {
   const [query, setQuery] = useState('');

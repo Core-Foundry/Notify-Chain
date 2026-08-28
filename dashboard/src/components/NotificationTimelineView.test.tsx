@@ -83,7 +83,7 @@ describe('NotificationTimelineView', () => {
     fireEvent.submit(screen.getByRole('search'));
 
     await waitFor(() =>
-      expect(screen.getByText(/no history entries found/i)).toBeInTheDocument()
+      expect(screen.getByText(/no history entries/i)).toBeInTheDocument()
     );
   });
 

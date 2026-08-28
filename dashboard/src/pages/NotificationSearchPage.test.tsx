@@ -1,20 +1,19 @@
-import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
+import '@testing-library/jest-dom';
+import { render, screen, waitFor, fireEvent, act } from '@testing-library/react';
 import { NotificationSearchPage } from './NotificationSearchPage';
 import * as eventsApi from '../services/eventsApi';
+import type { NotificationSearchResponse } from '../services/eventsApi';
 
-jest.mock('../services/eventsApi', () => {
-  const actual = jest.requireActual('../services/eventsApi') as typeof import('../services/eventsApi');
-  return {
-    ...actual,
-    searchNotifications: jest.fn(),
-  };
-});
+jest.mock('../services/eventsApi', () => ({
+  searchNotifications: jest.fn(),
+}));
 
 const searchNotifications = eventsApi.searchNotifications as jest.MockedFunction<
   typeof eventsApi.searchNotifications
 >;
+const mockedSearch = searchNotifications;
 
-function emptyResponse(): eventsApi.NotificationSearchResponse {
+function emptyResponse(): NotificationSearchResponse {
   return {
     results: [],
     total: 0,
@@ -24,23 +23,6 @@ function emptyResponse(): eventsApi.NotificationSearchResponse {
     totalPages: 0,
   };
 }
-
-describe('NotificationSearchPage filters', () => {
-  beforeEach(() => {
-    jest.useFakeTimers();
-    searchNotifications.mockReset();
-    searchNotifications.mockResolvedValue(emptyResponse());
-import '@testing-library/jest-dom';
-import { render, screen, waitFor, fireEvent, act } from '@testing-library/react';
-import { NotificationSearchPage } from './NotificationSearchPage';
-import { searchNotifications } from '../services/eventsApi';
-import type { NotificationSearchResponse } from '../services/eventsApi';
-
-jest.mock('../services/eventsApi', () => ({
-  searchNotifications: jest.fn(),
-}));
-
-const mockedSearch = searchNotifications as jest.MockedFunction<typeof searchNotifications>;
 
 const mockResult: NotificationSearchResponse = {
   results: [
@@ -218,6 +200,8 @@ describe('searchNotifications query params', () => {
     expect(calledUrl).toContain('status=COMPLETED');
     expect(calledUrl).toContain('startDate=2026-01-01');
     expect(calledUrl).toContain('endDate=2026-01-31');
+  });
+
   it('shows result-card skeletons while searching and hides Searching text', async () => {
     mockedSearch.mockReturnValue(new Promise(() => {}));
 
