@@ -32,6 +32,8 @@ export interface HealthReport {
   queue: QueueHealth;
   workers: WorkerHealth;
   registry: RegistryHealth;
+  /** Process uptime in milliseconds since startup. */
+  uptimeMs: number;
 }
 
 export interface NotificationHealthMonitorOptions {
@@ -45,6 +47,8 @@ export interface NotificationHealthMonitorOptions {
   now?: () => number;
   /** Optional repository used to surface DLQ depth in the health report. */
   repository?: ScheduledNotificationRepository | null;
+  /** Function to calculate uptime in milliseconds. */
+  getUptimeMs?: () => number;
 }
 
 /**
@@ -59,6 +63,7 @@ export class NotificationHealthMonitor {
   private readonly stallThresholdCycles: number;
   private readonly maxProcessingDelayMs: number;
   private readonly now: () => number;
+  private readonly getUptimeMs: () => number;
 
   private queue: EventProcessingQueue | null;
   private workerManager: WorkerManager | null;
@@ -84,6 +89,7 @@ export class NotificationHealthMonitor {
     this.stallThresholdCycles = options.stallThresholdCycles ?? 3;
     this.maxProcessingDelayMs = options.maxProcessingDelayMs ?? 60_000;
     this.now = options.now ?? Date.now;
+    this.getUptimeMs = options.getUptimeMs ?? (() => 0);
   }
 
   start(): void {
@@ -129,6 +135,7 @@ export class NotificationHealthMonitor {
       queue: queueHealth,
       workers: workerHealth,
       registry: registryHealth,
+      uptimeMs: this.getUptimeMs(),
     };
 
     this.lastReport = report;

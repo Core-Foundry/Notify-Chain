@@ -33,10 +33,11 @@ import { EventDeduplicationService } from './services/event-deduplication-servic
 
 dotenv.config();
 
+// Track process startup time for uptime calculation
+const PROCESS_START_TIME = Date.now();
+
 async function main() {
   const config = loadConfig();
-  // Validate all config values before starting any services (#494).
-  // This throws a descriptive ConfigError listing every problem found.
   validateConfig(config);
 
   let scheduler: NotificationScheduler | null = null;
@@ -44,12 +45,8 @@ async function main() {
   let notificationAPI: NotificationAPI | null = null;
   let templateService: TemplateService | null = null;
   let healthMonitor: NotificationHealthMonitor | null = null;
+  let subscriber: EventSubscriber | null = null;
 
-  if (config.scheduler?.enabled) {
-    try {
-      logger.info('Initializing database for scheduled notifications and templates');
-      const db = await initializeDatabase(config.databasePath);
-  let templateService: NotificationTemplateService | null = null;
   let legacyTemplateService: TemplateService | null = null;
   let cleanupService: CleanupService | null = null;
   let repository: ScheduledNotificationRepository | null = null;
@@ -60,11 +57,6 @@ async function main() {
   let metricsStore: NotificationMetricsStore | null = null;
   let deduplicationService: EventDeduplicationService | null = null;
 
-  repository = new ScheduledNotificationRepository(db);
-  healthMonitor = new NotificationHealthMonitor(null, getWorkerManager(), {
-    repository,
-  });
-
   if (config.analytics?.enabled) {
     initNotificationAnalyticsAggregator(config.analytics);
   }
@@ -73,7 +65,13 @@ async function main() {
     logger.info('Initializing database');
     const db = await initializeDatabase(config.databasePath);
 
-    // Rebuild registry with configured event TTL
+    repository = new ScheduledNotificationRepository(db);
+    
+    healthMonitor = new NotificationHealthMonitor(null, getWorkerManager(), {
+      repository,
+      getUptimeMs: () => Date.now() - PROCESS_START_TIME,
+    });
+
     if (config.cleanup) {
       eventRegistry.setTtlMs(config.cleanup.eventRetentionMs);
     }
@@ -96,7 +94,6 @@ async function main() {
       logger.info('Notification metrics runner started successfully');
     }
 
-    // Archive service: moves old notifications to the archive table.
     const archiveCfg = loadArchiveConfig();
     archiveStore = new ArchiveStore(db);
     archiveService = new ArchiveService(db, archiveCfg);
@@ -114,16 +111,13 @@ async function main() {
     templateService = new NotificationTemplateService(templateRepository);
 
     if (config.scheduler?.enabled) {
-      repository = new ScheduledNotificationRepository(db);
       notificationAPI = new NotificationAPI(repository);
 
-      // Initialize legacy template service
       const legacyTemplateRepo = new TemplateRepository(db);
       legacyTemplateService = new TemplateService(legacyTemplateRepo);
 
       logger.info('Template service initialized successfully');
 
-      // Initialize scheduler with Discord service if available
       let discordService: DiscordNotificationService | null = null;
       if (config.discord) {
         discordService = new DiscordNotificationService(config.discord);
@@ -167,7 +161,7 @@ async function main() {
     healthMonitor.start();
   }
 
-  const subscriber = new EventSubscriber(config, deduplicationService);
+  subscriber = new EventSubscriber(config, deduplicationService);
   await subscriber.start();
 
   const shutdown = async () => {
@@ -201,7 +195,10 @@ async function main() {
       await retryScheduler.stop();
     }
 
-    await subscriber.stop();
+    if (subscriber) {
+      await subscriber.stop();
+    }
+
     eventsServer.close();
 
     logger.info('All services stopped successfully');
