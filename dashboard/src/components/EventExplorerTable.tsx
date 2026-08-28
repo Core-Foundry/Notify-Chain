@@ -16,10 +16,6 @@ interface EventExplorerTableProps {
   contractStatuses: ContractStatus[];
 }
 
-export function EventExplorerTable({ events, onSelectEvent, contractStatuses }: EventExplorerTableProps) {
-  contractStatuses?: ContractStatus[];
-}
-
 export function loadColumnWidths(): number[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);

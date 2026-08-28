@@ -1,6 +1,6 @@
 import type { BlockchainEvent } from '../types/event';
 import type { ContractStatus } from '../services/eventsApi';
-import { formatTimestamp } from '../utils/formatTime';
+import { formatTimestamp, parseToDate } from '../utils/formatTime';
 import { CopyButton } from './CopyButton';
 
 const EVENT_KIND_STYLES: Record<string, string> = {
@@ -37,7 +37,6 @@ interface EventExplorerCardProps {
   isCopied: boolean;
   onSelect?: (event: BlockchainEvent) => void;
   contractStatuses: ContractStatus[];
-  contractStatuses?: ContractStatus[];
 }
 
 export function EventExplorerCard({
@@ -45,7 +44,6 @@ export function EventExplorerCard({
   onCopyContract,
   isCopied,
   onSelect,
-  contractStatuses,
   contractStatuses = [],
 }: EventExplorerCardProps) {
   const contractStatus = contractStatuses.find((c) => c.address === event.contractAddress);
@@ -53,6 +51,7 @@ export function EventExplorerCard({
   const label = event.eventName ?? event.type;
   const badgeClass = getEventKindClass(event.type);
   const kindLabel = getEventKindLabel(event.type);
+  const receivedAt = parseToDate(event.receivedAt);
 
   return (
     <article
@@ -106,7 +105,7 @@ export function EventExplorerCard({
       </div>
 
       <div className="event-explorer__cell" data-label="Received" role="cell">
-        <time dateTime={new Date(event.receivedAt).toISOString()}>
+        <time dateTime={receivedAt?.toISOString()}>
           {formatTimestamp(event.receivedAt)}
         </time>
       </div>
