@@ -26,13 +26,13 @@ export class EventSubscriber {
   private deduplicationService: EventDeduplicationService | null = null;
   private eventQueue: EventProcessingQueue | null = null;
   private expirationService: NotificationExpirationService | null = null;
+  private lastSuccessfulPollAt: number | null = null;
 
   constructor(config: Config, deduplicationService?: EventDeduplicationService) {
     this.config = config;
     this.server = new StellarSDK.rpc.Server(config.stellarRpcUrl);
     this.deduplicationService = deduplicationService ?? null;
     
-    // Initialize expiration service if configured
     if (config.expiration) {
       this.expirationService = new NotificationExpirationService(config.expiration);
     }
@@ -82,6 +82,9 @@ export class EventSubscriber {
       try {
         await this.checkForEvents(requestId);
         this.reconnectAttempts = 0;
+        
+        // Record successful poll timestamp
+        this.lastSuccessfulPollAt = Date.now();
 
         logger.info('Poll cycle complete', {
           requestId,
@@ -109,7 +112,6 @@ export class EventSubscriber {
         const response = await this.getContractEvents(contractConfig);
         const events = response.events || [];
         
-        // Detect potential reorg if events exist and we have previous state
         if (this.deduplicationService && events.length > 0) {
           const firstEventLedger = events[0]?.ledger;
           if (firstEventLedger) {
@@ -151,7 +153,6 @@ export class EventSubscriber {
         if (response.cursor) {
           this.lastCursors.set(contractConfig.address, response.cursor);
           
-          // Update cursor in deduplication service if available
           if (this.deduplicationService) {
             const lastEventLedger = events.length > 0 ? events[events.length - 1].ledger : 0;
             await this.deduplicationService.updatePollingCursor(
@@ -183,7 +184,6 @@ export class EventSubscriber {
     contractConfig: ContractConfig,
     requestId: string = ''
   ): boolean {
-    // Check if event has expired
     if (this.expirationService && !this.expirationService.shouldProcess(event)) {
       const eventName = getEventName(event.topic);
       logger.warn('Skipping expired notification', {
@@ -254,7 +254,6 @@ export class EventSubscriber {
     const eventStart = Date.now();
     const eventName = getEventName(event.topic);
 
-    // Check persistent deduplication first (to catch reorg duplicates)
     if (this.deduplicationService) {
       const duplicate = await this.deduplicationService.isDuplicate(event.id, contractConfig.address);
       if (duplicate.isDuplicate) {
@@ -265,14 +264,13 @@ export class EventSubscriber {
           isReorgDuplicate: duplicate.isReorgDuplicate,
         });
         
-        // Record that we detected this duplicate
         await this.deduplicationService.recordProcessedEvent(
           event.id,
           contractConfig.address,
           event.ledger,
           event.txHash,
           event.type,
-          false, // No notification sent
+          false,
           'SKIPPED'
         );
         
@@ -340,7 +338,6 @@ export class EventSubscriber {
       }
     }
 
-    // Record the processed event for persistent deduplication
     if (this.deduplicationService) {
       await this.deduplicationService.recordProcessedEvent(
         event.id,
@@ -393,5 +390,9 @@ export class EventSubscriber {
       eventQueue: this.eventQueue?.getMetrics() || null,
       retryQueue: this.retryQueue?.getMetrics() || null,
     };
+  }
+
+  getLastSuccessfulPoll(): number | null {
+    return this.lastSuccessfulPollAt;
   }
 }

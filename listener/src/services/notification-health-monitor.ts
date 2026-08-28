@@ -32,33 +32,24 @@ export interface HealthReport {
   queue: QueueHealth;
   workers: WorkerHealth;
   registry: RegistryHealth;
+  lastSuccessfulPollAt: string | null;
 }
 
 export interface NotificationHealthMonitorOptions {
-  /** How often to run a health check cycle in ms (default: 30_000). */
   intervalMs?: number;
-  /** Number of consecutive poll cycles with queue depth unchanged before marking stalled (default: 3). */
   stallThresholdCycles?: number;
-  /** Max processing delay before registry is considered degraded in ms (default: 60_000). */
   maxProcessingDelayMs?: number;
-  /** Injected clock for tests. */
   now?: () => number;
-  /** Optional repository used to surface DLQ depth in the health report. */
   repository?: ScheduledNotificationRepository | null;
+  getLastSuccessfulPoll?: () => number | null;
 }
 
-/**
- * Continuously monitors the health of notification processing components:
- * queue depth, worker availability, stalled-job detection, and event registry lag.
- *
- * Call `start()` once and consume reports via `getLastReport()` or the
- * `'report'` event. Call `stop()` for graceful shutdown.
- */
 export class NotificationHealthMonitor {
   private readonly intervalMs: number;
   private readonly stallThresholdCycles: number;
   private readonly maxProcessingDelayMs: number;
   private readonly now: () => number;
+  private readonly getLastSuccessfulPoll: () => number | null;
 
   private queue: EventProcessingQueue | null;
   private workerManager: WorkerManager | null;
@@ -67,7 +58,6 @@ export class NotificationHealthMonitor {
   private timer: ReturnType<typeof setInterval> | null = null;
   private lastReport: HealthReport | null = null;
 
-  // Stall detection: track last observed queue depth and how many cycles it hasn't changed.
   private lastQueueDepth = -1;
   private stalledCycles = 0;
   private stalledSince: number | null = null;
@@ -84,6 +74,7 @@ export class NotificationHealthMonitor {
     this.stallThresholdCycles = options.stallThresholdCycles ?? 3;
     this.maxProcessingDelayMs = options.maxProcessingDelayMs ?? 60_000;
     this.now = options.now ?? Date.now;
+    this.getLastSuccessfulPoll = options.getLastSuccessfulPoll ?? (() => null);
   }
 
   start(): void {
@@ -91,7 +82,6 @@ export class NotificationHealthMonitor {
     this.timer = setInterval(() => {
       this.runCheck();
     }, this.intervalMs);
-    // Run immediately so first report is available without waiting one interval.
     this.runCheck();
     logger.info('NotificationHealthMonitor started', { intervalMs: this.intervalMs });
   }
@@ -108,10 +98,6 @@ export class NotificationHealthMonitor {
     return this.lastReport;
   }
 
-  // ---------------------------------------------------------------------------
-  // Private helpers
-  // ---------------------------------------------------------------------------
-
   private runCheck(): void {
     const queueHealth = this.checkQueue();
     const workerHealth = this.checkWorkers();
@@ -123,12 +109,16 @@ export class NotificationHealthMonitor {
       registryHealth.status,
     );
 
+    const lastSuccessfulPollMs = this.getLastSuccessfulPoll();
+    const lastSuccessfulPollAt = lastSuccessfulPollMs !== null ? new Date(lastSuccessfulPollMs).toISOString() : null;
+
     const report: HealthReport = {
       status: overallStatus,
       timestamp: new Date(this.now()).toISOString(),
       queue: queueHealth,
       workers: workerHealth,
       registry: registryHealth,
+      lastSuccessfulPollAt,
     };
 
     this.lastReport = report;
