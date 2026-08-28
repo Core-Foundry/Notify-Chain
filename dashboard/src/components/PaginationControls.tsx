@@ -1,3 +1,5 @@
+import { memo, useCallback } from 'react';
+
 interface PaginationControlsProps {
   page: number;
   pageCount: number;
@@ -9,7 +11,7 @@ interface PaginationControlsProps {
 
 const LIMIT_OPTIONS = [8, 12, 20, 40];
 
-export function PaginationControls({
+export const PaginationControls = memo(function PaginationControls({
   page,
   pageCount,
   limit,
@@ -17,13 +19,19 @@ export function PaginationControls({
   onPageChange,
   onLimitChange,
 }: PaginationControlsProps) {
-  const handlePrevious = () => {
+  const handlePrevious = useCallback(() => {
     onPageChange(Math.max(1, page - 1));
-  };
+  }, [page, onPageChange]);
 
-  const handleNext = () => {
+  const handleNext = useCallback(() => {
     onPageChange(Math.min(pageCount, page + 1));
-  };
+  }, [page, pageCount, onPageChange]);
+
+  const handleLimitChange = useCallback((event: React.ChangeEvent<HTMLSelectElement>) => {
+    onLimitChange(Number(event.target.value));
+  }, [onLimitChange]);
+
+  const formattedTotal = totalCount.toLocaleString();
 
   return (
     <section className="pagination-controls" aria-label="Pagination controls">
@@ -31,7 +39,7 @@ export function PaginationControls({
         <span>
           Page {page} of {pageCount}
         </span>
-        <span>{totalCount.toLocaleString()} total events</span>
+        <span>{formattedTotal} total events</span>
       </div>
 
       <div className="pagination-controls__actions">
@@ -51,7 +59,7 @@ export function PaginationControls({
           id="items-per-page"
           className="pagination-controls__select"
           value={limit}
-          onChange={(event) => onLimitChange(Number(event.target.value))}
+          onChange={handleLimitChange}
         >
           {LIMIT_OPTIONS.map((option) => (
             <option key={option} value={option}>
@@ -71,4 +79,4 @@ export function PaginationControls({
       </div>
     </section>
   );
-}
+});

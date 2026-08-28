@@ -1,41 +1,36 @@
-import { useState } from 'react';
+import { useState, useCallback, memo, useMemo } from 'react';
 import type { BlockchainEvent } from '../types/event';
-import type { ContractStatus } from '../services/eventsApi';
 import { EventExplorerCard } from './EventExplorerCard';
 
 interface EventExplorerTableProps {
   events: BlockchainEvent[];
-  contractStatuses: ContractStatus[];
 }
 
-export function EventExplorerTable({ events, contractStatuses }: EventExplorerTableProps) {
-}
-
-export function EventExplorerTable({ events }: EventExplorerTableProps) {
-  const [copiedAddress, setCopiedAddress] = useState<string | null>(null);
-
-  async function syncCopyText(text: string) {
-    if (navigator.clipboard?.writeText) {
-      return navigator.clipboard.writeText(text);
-    }
-
-    const fallback = document.createElement('textarea');
-    fallback.value = text;
-    fallback.setAttribute('readonly', '');
-    fallback.style.position = 'absolute';
-    fallback.style.left = '-9999px';
-    document.body.appendChild(fallback);
-    fallback.select();
-
-    const successful = document.execCommand('copy');
-    document.body.removeChild(fallback);
-
-    if (!successful) {
-      throw new Error('Clipboard copy failed.');
-    }
+async function syncCopyText(text: string) {
+  if (navigator.clipboard?.writeText) {
+    return navigator.clipboard.writeText(text);
   }
 
-  const handleCopyContract = async (address: string) => {
+  const fallback = document.createElement('textarea');
+  fallback.value = text;
+  fallback.setAttribute('readonly', '');
+  fallback.style.position = 'absolute';
+  fallback.style.left = '-9999px';
+  document.body.appendChild(fallback);
+  fallback.select();
+
+  const successful = document.execCommand('copy');
+  document.body.removeChild(fallback);
+
+  if (!successful) {
+    throw new Error('Clipboard copy failed.');
+  }
+}
+
+export const EventExplorerTable = memo(function EventExplorerTable({ events }: EventExplorerTableProps) {
+  const [copiedAddress, setCopiedAddress] = useState<string | null>(null);
+
+  const handleCopyContract = useCallback(async (address: string) => {
     try {
       await syncCopyText(address);
       setCopiedAddress(address);
@@ -43,7 +38,9 @@ export function EventExplorerTable({ events }: EventExplorerTableProps) {
     } catch {
       setCopiedAddress(null);
     }
-  };
+  }, []);
+
+  const isCopied = useMemo(() => (address: string) => copiedAddress === address, [copiedAddress]);
 
   return (
     <section className="event-explorer__table-wrapper">
@@ -62,11 +59,10 @@ export function EventExplorerTable({ events }: EventExplorerTableProps) {
             key={event.eventId}
             event={event}
             onCopyContract={handleCopyContract}
-            isCopied={copiedAddress === event.contractAddress}
-            contractStatuses={contractStatuses}
+            isCopied={isCopied(event.contractAddress)}
           />
         ))}
       </div>
     </section>
   );
-}
+});

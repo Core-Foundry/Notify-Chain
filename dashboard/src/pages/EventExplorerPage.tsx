@@ -9,7 +9,6 @@ import { IndexingHealthPanel } from '../components/IndexingHealthPanel';
 import { useEventFilters, useEventLoadingState, useFilteredEvents } from '../hooks/useEventSelectors';
 import { useEventStore } from '../store/eventStore';
 import { fetchEvents, fetchStatus, type ContractStatus } from '../services/eventsApi';
-import { fetchEvents } from '../services/eventsApi';
 import { resolveIndexingHealthUrl } from '../services/indexingHealthApi';
 import { generateMockEvents } from '../utils/eventData';
 import { restoreWalletSession } from '../services/wallet';
@@ -87,7 +86,6 @@ export function EventExplorerPage() {
 
     loadEvents();
     loadStatus();
-    loadEvents();
 
     return () => {
       cancelled = true;
@@ -205,7 +203,6 @@ export function EventExplorerPage() {
       {isLoading ? (
         <EventExplorerSkeleton rows={Math.min(limit, 8)} />
       ) : currentPageEvents.length > 0 ? (
-        <EventExplorerTable events={currentPageEvents} contractStatuses={contractStatuses} />
         <EventExplorerTable events={currentPageEvents} />
       ) : (
         <section className="event-explorer__empty-state" role="status" aria-live="polite">
