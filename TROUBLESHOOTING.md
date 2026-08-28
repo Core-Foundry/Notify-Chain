@@ -1,6 +1,6 @@
 # Troubleshooting Guide — Local Development
 
-This guide documents the most common setup issues contributors encounter and how to fix them. If your problem is not listed here, please open a [GitHub Issue](https://github.com/CollinsC1O/Notify-Chain/issues).
+This guide documents the most common setup issues contributors encounter and how to fix them. If your problem is not listed here, please open a [GitHub Issue](https://github.com/Core-Foundry/Notify-Chain/issues).
 
 ---
 
@@ -415,7 +415,7 @@ cd ../dashboard && npm install
 
 ### Still stuck?
 
-1. Search [open issues](https://github.com/CollinsC1O/Notify-Chain/issues) — your problem may already be reported.
+1. Search [open issues](https://github.com/Core-Foundry/Notify-Chain/issues) — your problem may already be reported.
 2. Open a new issue with:
    - Your OS and version
    - Output of `rustc --version`, `node --version`, `stellar --version`
