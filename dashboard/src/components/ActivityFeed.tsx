@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { fetchActivityFeed, generateMockActivityEvents } from '../services/activityApi';
 import type { ActivityEvent, ActivityType } from '../types/activity';
-import { formatTimestamp } from '../utils/formatTime';
+import { formatRelativeTimestamp, formatTimestamp, parseToDate } from '../utils/formatTime';
 import { PaginationControls } from './PaginationControls';
 import { useWalletAccountSync } from '../hooks/useWalletAccountSync';
 import { EmptyState } from './EmptyState';
@@ -9,14 +9,14 @@ import { EmptyState } from './EmptyState';
 // Helper to get icon/color based on activity type
 const getActivityTypeStyle = (type: ActivityType) => {
   const styles: Record<ActivityType, { color: string; icon: string; bg: string }> = {
-    'notification_sent': { color: '#34d399', icon: '✓', bg: 'rgba(52, 211, 153, 0.12)' },
-    'notification_failed': { color: '#f87171', icon: '✕', bg: 'rgba(248, 113, 113, 0.12)' },
-    'notification_retried': { color: '#f4b400', icon: '↻', bg: 'rgba(244, 180, 0, 0.12)' },
-    'contract_event_received': { color: '#60a5fa', icon: '📡', bg: 'rgba(96, 165, 250, 0.12)' },
-    'preference_updated': { color: '#a78bfa', icon: '⚙', bg: 'rgba(167, 139, 250, 0.12)' },
-    'template_created': { color: '#38bdf8', icon: '📄', bg: 'rgba(56, 189, 248, 0.12)' },
-    'template_updated': { color: '#22d3ee', icon: '📝', bg: 'rgba(34, 211, 238, 0.12)' },
-    'webhook_received': { color: '#fb923c', icon: '🔗', bg: 'rgba(251, 146, 60, 0.12)' },
+    notification_sent: { color: '#34d399', icon: '✓', bg: 'rgba(52, 211, 153, 0.12)' },
+    notification_failed: { color: '#f87171', icon: '✕', bg: 'rgba(248, 113, 113, 0.12)' },
+    notification_retried: { color: '#f4b400', icon: '↻', bg: 'rgba(244, 180, 0, 0.12)' },
+    contract_event_received: { color: '#60a5fa', icon: '📡', bg: 'rgba(96, 165, 250, 0.12)' },
+    preference_updated: { color: '#a78bfa', icon: '⚙', bg: 'rgba(167, 139, 250, 0.12)' },
+    template_created: { color: '#38bdf8', icon: '📄', bg: 'rgba(56, 189, 248, 0.12)' },
+    template_updated: { color: '#22d3ee', icon: '📝', bg: 'rgba(34, 211, 238, 0.12)' },
+    webhook_received: { color: '#fb923c', icon: '🔗', bg: 'rgba(251, 146, 60, 0.12)' },
   };
   return styles[type] || styles['contract_event_received'];
 };
@@ -24,6 +24,7 @@ const getActivityTypeStyle = (type: ActivityType) => {
 // Individual activity event card
 const ActivityEventCard = ({ event }: { event: ActivityEvent }) => {
   const style = getActivityTypeStyle(event.type);
+  const timestamp = parseToDate(event.timestamp);
   return (
     <div
       className={`activity-event ${!event.read ? 'activity-event--unread' : ''}`}
@@ -42,21 +43,27 @@ const ActivityEventCard = ({ event }: { event: ActivityEvent }) => {
           <span className="activity-event__type" style={{ color: style.color }}>
             {event.type.replace(/_/g, ' ')}
           </span>
-          <time className="activity-event__time" dateTime={new Date(event.timestamp).toISOString()}>
-            {formatTimestamp(event.timestamp)}
+          <time
+            className="activity-event__time"
+            dateTime={timestamp?.toISOString()}
+            title={formatTimestamp(event.timestamp)}
+          >
+            {formatRelativeTimestamp(event.timestamp)}
           </time>
         </div>
         <p className="activity-event__message">{event.message}</p>
         {Object.keys(event.metadata).length > 0 && (
           <div className="activity-event__metadata">
-            {Object.entries(event.metadata).map(([key, value]) => (
-              value !== undefined && value !== null && (
-                <span key={key} className="activity-event__metadata-item">
-                  <span className="activity-event__metadata-key">{key}:</span>
-                  <span className="activity-event__metadata-value">{String(value)}</span>
-                </span>
-              )
-            ))}
+            {Object.entries(event.metadata).map(
+              ([key, value]) =>
+                value !== undefined &&
+                value !== null && (
+                  <span key={key} className="activity-event__metadata-item">
+                    <span className="activity-event__metadata-key">{key}:</span>
+                    <span className="activity-event__metadata-value">{String(value)}</span>
+                  </span>
+                ),
+            )}
           </div>
         )}
       </div>
@@ -131,8 +138,8 @@ export function ActivityFeed() {
 
     const interval = setInterval(() => {
       const [newEvent] = generateMockActivityEvents(1);
-      setLiveEvents(prev => [newEvent, ...prev]);
-      setTotal(prev => prev + 1);
+      setLiveEvents((prev) => [newEvent, ...prev]);
+      setTotal((prev) => prev + 1);
     }, 15000);
 
     return () => clearInterval(interval);
@@ -211,9 +218,7 @@ export function ActivityFeed() {
             description="System events, notification deliveries, and contract activity will appear here as they occur."
           />
         ) : (
-          displayedEvents.map(event => (
-            <ActivityEventCard key={event.id} event={event} />
-          ))
+          displayedEvents.map((event) => <ActivityEventCard key={event.id} event={event} />)
         )}
       </div>
 
