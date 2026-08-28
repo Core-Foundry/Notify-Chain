@@ -36,14 +36,26 @@ export interface HealthReport {
 }
 
 export interface NotificationHealthMonitorOptions {
+  /** How often to run a health check cycle in ms (default: 30_000). */
   intervalMs?: number;
+  /** Number of consecutive poll cycles with queue depth unchanged before marking stalled (default: 3). */
   stallThresholdCycles?: number;
+  /** Max processing delay before registry is considered degraded in ms (default: 60_000). */
   maxProcessingDelayMs?: number;
+  /** Injected clock for tests. */
   now?: () => number;
+  /** Optional repository used to surface DLQ depth in the health report. */
   repository?: ScheduledNotificationRepository | null;
   getLastSuccessfulPoll?: () => number | null;
 }
 
+/**
+ * Continuously monitors the health of notification processing components:
+ * queue depth, worker availability, stalled-job detection, and event registry lag.
+ *
+ * Call `start()` once and consume reports via `getLastReport()` or the
+ * `'report'` event. Call `stop()` for graceful shutdown.
+ */
 export class NotificationHealthMonitor {
   private readonly intervalMs: number;
   private readonly stallThresholdCycles: number;
@@ -58,6 +70,7 @@ export class NotificationHealthMonitor {
   private timer: ReturnType<typeof setInterval> | null = null;
   private lastReport: HealthReport | null = null;
 
+  // Stall detection: track last observed queue depth and how many cycles it hasn't changed.
   private lastQueueDepth = -1;
   private stalledCycles = 0;
   private stalledSince: number | null = null;
@@ -82,6 +95,7 @@ export class NotificationHealthMonitor {
     this.timer = setInterval(() => {
       this.runCheck();
     }, this.intervalMs);
+    // Run immediately so first report is available without waiting one interval.
     this.runCheck();
     logger.info('NotificationHealthMonitor started', { intervalMs: this.intervalMs });
   }
@@ -97,6 +111,10 @@ export class NotificationHealthMonitor {
   getLastReport(): HealthReport | null {
     return this.lastReport;
   }
+
+  // ---------------------------------------------------------------------------
+  // Private helpers
+  // ---------------------------------------------------------------------------
 
   private runCheck(): void {
     const queueHealth = this.checkQueue();

@@ -40,7 +40,10 @@ async function main() {
   let scheduler: NotificationScheduler | null = null;
   let retryScheduler: RetryScheduler | null = null;
   let notificationAPI: NotificationAPI | null = null;
-  let templateService: NotificationTemplateService | null = null;
+  let templateService: TemplateService | null = null;
+  let healthMonitor: NotificationHealthMonitor | null = null;
+  let subscriber: EventSubscriber | null = null;
+
   let legacyTemplateService: TemplateService | null = null;
   let cleanupService: CleanupService | null = null;
   let repository: ScheduledNotificationRepository | null = null;
@@ -50,12 +53,21 @@ async function main() {
   let metricsRunner: NotificationMetricsRunner | null = null;
   let metricsStore: NotificationMetricsStore | null = null;
   let deduplicationService: EventDeduplicationService | null = null;
-  let healthMonitor: NotificationHealthMonitor | null = null;
-  let subscriber: EventSubscriber | null = null;
+
+  if (config.analytics?.enabled) {
+    initNotificationAnalyticsAggregator(config.analytics);
+  }
 
   try {
     logger.info('Initializing database');
     const db = await initializeDatabase(config.databasePath);
+
+    repository = new ScheduledNotificationRepository(db);
+    
+    healthMonitor = new NotificationHealthMonitor(null, getWorkerManager(), {
+      repository,
+      getLastSuccessfulPoll: () => subscriber?.getLastSuccessfulPoll() ?? null,
+    });
 
     if (config.cleanup) {
       eventRegistry.setTtlMs(config.cleanup.eventRetentionMs);
@@ -96,7 +108,6 @@ async function main() {
     templateService = new NotificationTemplateService(templateRepository);
 
     if (config.scheduler?.enabled) {
-      repository = new ScheduledNotificationRepository(db);
       notificationAPI = new NotificationAPI(repository);
 
       const legacyTemplateRepo = new TemplateRepository(db);
@@ -124,11 +135,6 @@ async function main() {
     logger.error('Failed to initialize database or scheduler', { error });
     throw error;
   }
-
-  healthMonitor = new NotificationHealthMonitor(null, getWorkerManager(), {
-    repository,
-    getLastSuccessfulPoll: () => subscriber?.getLastSuccessfulPoll() ?? null,
-  });
 
   const eventsServer = startEventsServer({
     port: config.eventsApiPort,
