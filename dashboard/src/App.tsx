@@ -22,6 +22,7 @@ import { NotificationSearchPage } from './pages/NotificationSearchPage';
 import { NotificationPreferencesPage } from './pages/NotificationPreferencesPage';
 import { TemplatesPage } from './pages/TemplatesPage';
 import { ChannelDetailsPage } from './pages/ChannelDetailsPage';
+import { RpcBenchmarkPage } from './pages/RpcBenchmarkPage';
 import { ThemeToggle } from './components/ThemeToggle';
 import { MobileNavDrawer, NAV_ITEMS, type Tab } from './components/MobileNavDrawer';
 import { ToastProvider } from './context/ToastContext';
@@ -219,6 +220,8 @@ function renderPanel(tab: Tab, events: any[]) {
       return <TemplatesPage />;
     case 'channels':
       return <ChannelDetailsPage />;
+    case 'rpc-benchmark':
+      return <RpcBenchmarkPage />;
     default:
       return null;
   }

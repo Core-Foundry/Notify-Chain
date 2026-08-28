@@ -21,7 +21,8 @@ export type Tab =
   | 'export-history'
   | 'search'
   | 'preferences'
-  | 'templates';
+  | 'templates'
+  | 'rpc-benchmark';
 
 export interface NavItem {
   id: Tab;
@@ -40,6 +41,7 @@ export const NAV_ITEMS: NavItem[] = [
   { id: 'search',         label: 'Notification Search',  group: 'Search & Config' },
   { id: 'preferences',    label: 'Preferences',          group: 'Search & Config' },
   { id: 'templates',      label: 'Templates',            group: 'Search & Config' },
+  { id: 'rpc-benchmark',  label: 'RPC Benchmark',        group: 'Diagnostics' },
 ];
 
 const FOCUSABLE_SELECTOR = [
