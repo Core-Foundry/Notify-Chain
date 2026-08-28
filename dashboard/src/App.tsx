@@ -1,5 +1,3 @@
-import { useState } from 'react';
-import { useState, useRef, useEffect } from 'react';
 /**
  * App.tsx
  *
@@ -9,6 +7,7 @@ import { useState, useRef, useEffect } from 'react';
  *  - #396 Navigation Redesign: grouped tabs, active-route highlighting,
  *    mobile hamburger + off-canvas drawer
  *  - #397 Toast: ToastProvider wraps the whole app
+ *  - #505 Keyboard Shortcuts: number keys for tabs, T for theme, ? for help
  */
 
 import { useState, useRef, useCallback, type KeyboardEvent } from 'react';
@@ -30,228 +29,27 @@ import { useTheme } from './hooks/useTheme';
 import { DeliveryHeatmap } from './components/DeliveryHeatmap';
 import { useEventStore } from './store/eventStore';
 import { SyncStatus } from './components/SyncStatus';
+import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
+import { KeyboardShortcutsHelp } from './components/KeyboardShortcutsHelp';
 
-type Tab = 'explorer' | 'preferences';
-
-export function App() {
-  const [activeTab, setActiveTab] = useState<Tab>('explorer');
-type Tab =
-  | 'explorer'
-  | 'timeline'
-  | 'activity'
-  | 'webhooks'
-  | 'export-history'
-  | 'search'
-  | 'preferences'
-  | 'templates'
-  | 'channels';
-
-const TAB_ITEMS: { id: Tab; label: string }[] = [
-  { id: 'explorer', label: 'Event Explorer' },
-  { id: 'timeline', label: 'Delivery Timeline' },
-  { id: 'activity', label: 'Activity Feed' },
-  { id: 'webhooks', label: 'Webhook Performance' },
-  { id: 'export-history', label: 'Export History' },
-  { id: 'search', label: 'Notification Search' },
-  { id: 'preferences', label: 'Preferences' },
-  { id: 'templates', label: 'Templates' },
-];
-
-export function App() {
-  const [tab, setTab] = useState<Tab>('explorer');
-  const [menuOpen, setMenuOpen] = useState(false);
-  const { theme, toggleTheme } = useTheme();
-  const events = useEventStore((state) => state.events);
-  const menuRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    function handleClickOutside(event: MouseEvent) {
-      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
-        setMenuOpen(false);
-      }
-    }
-
-    function handleEscape(event: KeyboardEvent) {
-      if (event.key === 'Escape') {
-        setMenuOpen(false);
-      }
-    }
-
-    if (menuOpen) {
-      document.addEventListener('mousedown', handleClickOutside);
-      document.addEventListener('keydown', handleEscape);
-    }
-
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside);
-      document.removeEventListener('keydown', handleEscape);
-    };
-  }, [menuOpen]);
-
-  const handleTabChange = (newTab: Tab) => {
-    setTab(newTab);
-    setMenuOpen(false);
-  };
-
-  return (
-    <div className="app">
-      <div className="app__topbar">
-        <div className="app__brand">
-          <p className="app__brand-eyebrow">Notify Chain</p>
-          <h1>{activeTab === 'preferences' ? 'Notification Preferences' : 'Event Explorer'}</h1>
-        </div>
-
-        <nav className="app__nav" aria-label="Dashboard tabs">
-          <button
-            type="button"
-            className={`app__tab ${activeTab === 'explorer' ? 'app__tab--active' : ''}`}
-            onClick={() => setActiveTab('explorer')}
-          >
-            Event Explorer
-          </button>
-          <button
-            type="button"
-            className={`app__tab ${activeTab === 'preferences' ? 'app__tab--active' : ''}`}
-            onClick={() => setActiveTab('preferences')}
-          >
-            Notification Preferences
-          </button>
-        </nav>
-      </header>
-
-      {activeTab === 'explorer' ? <EventExplorerPage /> : <NotificationPreferencesPage />}
-    </div>
-          <h1 className="app__brand-name">NotifyChain</h1>
-          <p className="app__brand-eyebrow">Dashboard</p>
-        </div>
-        <div className="app__topbar-actions">
-          <ThemeToggle theme={theme} onToggle={toggleTheme} />
-          <div className="app__nav-wrapper" ref={menuRef}>
-            <button
-              type="button"
-              className="app-nav__toggle"
-              onClick={() => setMenuOpen((prev) => !prev)}
-              aria-expanded={menuOpen}
-              aria-controls="app-nav-menu"
-              aria-label="Toggle navigation menu"
-            >
-              <span className="app-nav__toggle-icon">{menuOpen ? '✕' : '☰'}</span>
-              <span className="app-nav__toggle-label">{menuOpen ? 'Close' : 'Menu'}</span>
-            </button>
-            <nav
-              id="app-nav-menu"
-              className={`app-nav${menuOpen ? ' app-nav--open' : ''}`}
-              role="tablist"
-              aria-label="Main navigation"
-            >
-              {TAB_ITEMS.map((item) => (
-                <button
-                  key={item.id}
-                  type="button"
-                  role="tab"
-                  aria-selected={tab === item.id}
-                  className={`app-nav__button${tab === item.id ? ' app-nav__button--active' : ''}`}
-                  onClick={() => handleTabChange(item.id)}
-                >
-                  {item.label}
-                </button>
-              ))}
-            </nav>
-          </div>
-        </div>
-      </div>
-      <nav className="app-tabs" role="tablist" aria-label="Main navigation">
-        <button
-          type="button"
-          role="tab"
-          aria-selected={tab === 'explorer'}
-          className={`app-tabs__btn${tab === 'explorer' ? ' app-tabs__btn--active' : ''}`}
-          onClick={() => setTab('explorer')}
-        >
-          Event Explorer
-        </button>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={tab === 'timeline'}
-          className={`app-tabs__btn${tab === 'timeline' ? ' app-tabs__btn--active' : ''}`}
-          onClick={() => setTab('timeline')}
-        >
-          Delivery Timeline
-        </button>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={tab === 'activity'}
-          className={`app-tabs__btn${tab === 'activity' ? ' app-tabs__btn--active' : ''}`}
-          onClick={() => setTab('activity')}
-        >
-          Activity Feed
-        </button>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={tab === 'webhooks'}
-          className={`app-tabs__btn${tab === 'webhooks' ? ' app-tabs__btn--active' : ''}`}
-          onClick={() => setTab('webhooks')}
-        >
-          Webhook Performance
-        </button>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={tab === 'export-history'}
-          className={`app-tabs__btn${tab === 'export-history' ? ' app-tabs__btn--active' : ''}`}
-          onClick={() => setTab('export-history')}
-        >
-          Export History
-        </button>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={tab === 'search'}
-          className={`app-tabs__btn${tab === 'search' ? ' app-tabs__btn--active' : ''}`}
-          onClick={() => setTab('search')}
-        >
-          Notification Search
-        </button>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={tab === 'preferences'}
-          className={`app-tabs__btn${tab === 'preferences' ? ' app-tabs__btn--active' : ''}`}
-          onClick={() => setTab('preferences')}
-        >
-          Preferences
-        </button>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={tab === 'templates'}
-          className={`app-tabs__btn${tab === 'templates' ? ' app-tabs__btn--active' : ''}`}
-          onClick={() => setTab('templates')}
-        >
-          Templates
-        </button>
-        <button
-          role="tab"
-          type="button"
-          aria-selected={tab === 'channels'}
-          className={`app-tabs__btn${tab === 'channels' ? ' app-tabs__btn--active' : ''}`}
-          onClick={() => setTab('channels')}
-        >
-          Channel Details
-        </button>
-      </nav>
-
-      {tab === 'explorer' && (
 export function App() {
   const [tab, setTab] = useState<Tab>('explorer');
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
   const { theme, toggleTheme } = useTheme();
   const events = useEventStore((state) => state.events);
   const tabListRef = useRef<HTMLDivElement>(null);
   const hamburgerRef = useRef<HTMLButtonElement>(null);
+
+  // ── Keyboard shortcuts (#505) ───────────────────────────────────────────
+  useKeyboardShortcuts({
+    activeTab: tab,
+    onTabChange: setTab,
+    onToggleTheme: toggleTheme,
+    helpOpen,
+    onToggleHelp: useCallback(() => setHelpOpen((prev) => !prev), []),
+    onCloseHelp: useCallback(() => setHelpOpen(false), []),
+  });
 
   // ── Keyboard navigation inside tablist (arrow keys) ──────────────────────
   const handleTabKeyDown = useCallback(
@@ -296,6 +94,9 @@ export function App() {
         Skip to main content
       </a>
 
+      {/* Keyboard shortcuts help overlay (#505) */}
+      <KeyboardShortcutsHelp isOpen={helpOpen} onClose={() => setHelpOpen(false)} />
+
       <div className="app">
         {/* Top bar */}
         <header className="app__header" role="banner">
@@ -333,7 +134,7 @@ export function App() {
             className="app-tabs__list"
             onKeyDown={handleTabKeyDown}
           >
-            {NAV_ITEMS.map((item) => (
+            {NAV_ITEMS.map((item, index) => (
               <button
                 key={item.id}
                 type="button"
@@ -344,7 +145,11 @@ export function App() {
                 tabIndex={tab === item.id ? 0 : -1}
                 className={`app-tabs__btn${tab === item.id ? ' app-tabs__btn--active' : ''}`}
                 onClick={() => setTab(item.id)}
+                title={index < 9 ? `Press ${index + 1} to switch` : undefined}
               >
+                {index < 9 && (
+                  <kbd className="app-tabs__shortcut">{index + 1}</kbd>
+                )}
                 {item.label}
               </button>
             ))}
@@ -393,17 +198,6 @@ function renderPanel(tab: Tab, events: any[]) {
           <EventExplorerPage />
           <DeliveryHeatmap events={events} />
         </>
-      )}
-      {tab === 'timeline' && <NotificationTimelineView />}
-      {tab === 'activity' && <ActivityFeed />}
-      {tab === 'webhooks' && <WebhookDashboardPage />}
-      {tab === 'export-history' && <ExportHistoryPage />}
-      {tab === 'search' && <NotificationSearchPage />}
-      {tab === 'preferences' && <NotificationPreferencesPage />}
-      {tab === 'templates' && <TemplatesPage />}
-      {tab === 'channels' && <ChannelDetailsPage />}
-    </div>
-  );
       );
     case 'timeline':
       return <NotificationTimelineView />;
@@ -423,6 +217,8 @@ function renderPanel(tab: Tab, events: any[]) {
       return <NotificationPreferencesPage />;
     case 'templates':
       return <TemplatesPage />;
+    case 'channels':
+      return <ChannelDetailsPage />;
     default:
       return null;
   }
