@@ -1,4 +1,4 @@
-import { ConfigError, loadConfig } from './config';
+import { ConfigError, loadConfig, validateConfig } from './config';
 
 describe('Config validation', () => {
   const originalEnv = process.env;
@@ -98,9 +98,34 @@ describe('Config validation', () => {
         notificationRetentionMs: 604800000,
         rateLimitEventRetentionMs: 86400000,
         eventRetentionMs: 86400000,
+        processedEventRetentionMs: 2592000000,
         executionLogRetentionMs: 7776000000,
       },
     });
+  });
+
+  it('loads a configured processed event retention duration', () => {
+    process.env.PROCESSED_EVENT_RETENTION_MS = '3600000';
+
+    expect(loadConfig().cleanup?.processedEventRetentionMs).toBe(3600000);
+  });
+
+  it('rejects invalid processed event retention configuration', () => {
+    process.env.PROCESSED_EVENT_RETENTION_MS = 'not-a-duration';
+
+    expect(() => loadConfig()).toThrow(
+      'PROCESSED_EVENT_RETENTION_MS must be a valid integer, got "not-a-duration"'
+    );
+  });
+
+  it('rejects processed event retention shorter than one minute', () => {
+    process.env.PROCESSED_EVENT_RETENTION_MS = '59999';
+
+    const config = loadConfig();
+
+    expect(() => validateConfig(config)).toThrow(
+      'PROCESSED_EVENT_RETENTION_MS must be >= 60000 ms (received: 59999).'
+    );
   });
 
   it('loads notification deduplication settings when Discord is configured', () => {
