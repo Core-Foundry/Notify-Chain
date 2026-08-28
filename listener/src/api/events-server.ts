@@ -53,6 +53,7 @@ export interface EventsServerOptions {
   port: number;
   corsOrigin?: string;
   stellarRpcUrl: string;
+  stellarNetwork?: string;
   stellarNetworkPassphrase?: string;
   contractAddresses?: ContractConfig[];
   discordWebhookUrl?: string;
@@ -91,6 +92,7 @@ interface ServiceHealth {
 interface HealthResponse {
   status: 'ok' | 'degraded' | 'error';
   timestamp: string;
+  network: string;
   services: {
     stellarRpc: ServiceHealth;
     discord: ServiceHealth;
@@ -356,6 +358,7 @@ async function buildHealthResponse(options: EventsServerOptions): Promise<Health
   return {
     status: overallStatus,
     timestamp: new Date().toISOString(),
+    network: options.stellarNetwork ?? 'unknown',
     services: {
       stellarRpc,
       discord,

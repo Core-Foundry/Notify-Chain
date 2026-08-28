@@ -155,6 +155,39 @@ describe('Preference API endpoints', () => {
   });
 });
 
+describe('GET /health', () => {
+  let server: http.Server;
+
+  beforeEach((done) => {
+    server = createEventsServer({
+      port: 0,
+      stellarRpcUrl: 'https://rpc.example.test',
+      stellarNetwork: 'testnet',
+      stellarNetworkPassphrase: 'secret passphrase',
+      discordWebhookUrl: 'https://discord.example.test/webhook/secret',
+      contractAddresses: [],
+    });
+    server.listen(0, '127.0.0.1', done);
+  });
+
+  afterEach((done) => {
+    server.close(done);
+  });
+
+  it('returns the configured network without exposing sensitive configuration', async () => {
+    const res = await request(server, 'GET', '/health');
+    const body = res.body as Record<string, unknown>;
+
+    expect(res.status).toBe(200);
+    expect(body.network).toBe('testnet');
+    expect(body).not.toHaveProperty('stellarNetworkPassphrase');
+    expect(JSON.stringify(body)).not.toContain('secret passphrase');
+    expect(JSON.stringify(body)).not.toContain('rpc.example.test');
+    expect(JSON.stringify(body)).not.toContain('discord.example.test');
+    expect(body).toEqual(expect.objectContaining({ status: 'ok', timestamp: expect.any(String), services: expect.any(Object) }));
+  });
+});
+
 function computeSignature(payload: string, secret: string): string {
   const sig = crypto.createHmac('sha256', secret).update(payload, 'utf8').digest('hex');
   return `sha256=${sig}`;
