@@ -114,7 +114,7 @@ function CompactCard({
       className={`event-card event-card--compact${onClick ? ' event-card--clickable' : ''}`}
       data-event-id={event.eventId}
       onClick={onClick ? () => onClick(event) : undefined}
-      role={onClick ? 'button' : undefined}
+      role={onClick ? 'group' : undefined}
       tabIndex={onClick ? 0 : undefined}
       aria-label={onClick ? `View details for ${displayName} event` : undefined}
       onKeyDown={onClick ? handleActivationKey(onClick, event) : undefined}
@@ -133,7 +133,12 @@ function CompactCard({
       </div>
       <div className="event-card__details">
         <span>Value: {event.value}</span>
-        {event.txHash && <span title={event.txHash}>Tx: {shortenAddress(event.txHash)}</span>}
+        {event.txHash && (
+          <span title={event.txHash}>
+            Tx: {shortenAddress(event.txHash)}{' '}
+            <CopyButton value={event.txHash} label="transaction hash" size="xs" />
+          </span>
+        )}
       </div>
     </Wrapper>
   );
@@ -155,7 +160,7 @@ function ExpandedCard({
       className={`event-card event-card--expanded${onClick ? ' event-card--clickable' : ''}`}
       data-event-id={event.eventId}
       onClick={onClick ? () => onClick(event) : undefined}
-      role={onClick ? 'button' : undefined}
+      role={onClick ? 'group' : undefined}
       tabIndex={onClick ? 0 : undefined}
       aria-label={onClick ? `View details for ${displayName} event` : undefined}
       onKeyDown={onClick ? handleActivationKey(onClick, event) : undefined}
@@ -175,7 +180,10 @@ function ExpandedCard({
           {event.txHash && (
             <div className="event-card__field">
               <dt>Tx Hash</dt>
-              <dd title={event.txHash}>{event.txHash}</dd>
+              <dd title={event.txHash}>
+                {event.txHash}
+                <CopyButton value={event.txHash} label="transaction hash" size="xs" />
+              </dd>
             </div>
           )}
 

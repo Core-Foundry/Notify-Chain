@@ -42,9 +42,10 @@ export const EventRow = memo(function EventRow({ event }: EventRowProps) {
       <div className="event-row__details">
         <span>Value: {event.value}</span>
         {event.txHash && (
-          <span>
+          <span title={event.txHash}>
             <span className="sr-only">Transaction: </span>
-            Tx: {shortenAddress(event.txHash)}
+            Tx: {shortenAddress(event.txHash)}{' '}
+            <CopyButton value={event.txHash} label="transaction hash" size="xs" />
           </span>
         )}
       </div>
