@@ -6,6 +6,7 @@ import { NotificationDeduplicator, generateFingerprint } from './notification-de
 import { getNotificationAnalyticsAggregator, NotificationAnalyticsAggregator } from './notification-analytics-aggregator';
 import { sendWebhook } from './webhook-sender';
 import { NotificationType } from '../types/scheduled-notification';
+import { generateCorrelationId } from '../utils/request-id';
 
 export interface DiscordMessage {
   content?: string;
@@ -47,6 +48,7 @@ export class DiscordNotificationService {
     contractConfig: ContractConfig,
     requestId?: string
   ): Promise<boolean> {
+    const correlationId = requestId ?? generateCorrelationId();
     const fingerprint = generateFingerprint(event.id, contractConfig.address);
 
     if (this.deduplicator.isDuplicate(fingerprint)) {
@@ -60,13 +62,16 @@ export class DiscordNotificationService {
       logger.info('Skipping duplicate notification', {
         eventId: event.id,
         contractAddress: contractConfig.address,
+        requestId: correlationId,
+        correlationId,
         fingerprint,
         deduplication: this.deduplicator.getMetrics(),
       });
       return true;
     }
     const logContext = {
-      requestId,
+      requestId: correlationId,
+      correlationId,
       eventId: event.id,
       contractAddress: contractConfig.address,
       webhookId: this.config.webhookId,
@@ -90,6 +95,8 @@ export class DiscordNotificationService {
           logger.info('Discord notification sent successfully', {
             eventId: event.id,
             contractAddress: contractConfig.address,
+            requestId: correlationId,
+            correlationId,
           });
           logger.info('Discord notification delivered', {
             ...logContext,
@@ -132,35 +139,9 @@ export class DiscordNotificationService {
       // Exponential backoff: base * 2^attempt (seconds)
       const delayMs = Math.pow(2, attempt) * backoffBaseSeconds * 1000;
       logger.warn('Retrying Discord webhook', {
-      this.deduplicator.markSent(fingerprint);
-      this.analytics?.record({
-        notificationType: NotificationType.DISCORD,
-        contractAddress: contractConfig.address,
-        outcome: 'success',
-        durationMs,
-        timestamp: Date.now(),
-      });
-      logger.info('Discord notification delivered', {
         ...logContext,
-        durationMs,
-        deduplication: this.deduplicator.getMetrics(),
-      });
-      return true;
-    } catch (error) {
-      const durationMs = Date.now() - startTime;
-      this.analytics?.record({
-        notificationType: NotificationType.DISCORD,
-        contractAddress: contractConfig.address,
-        outcome: 'failure',
-        durationMs,
-        errorReason: error instanceof Error ? error.message : String(error),
-        timestamp: Date.now(),
-      });
-      logger.error('Error sending Discord notification', {
-        ...logContext,
-        attempt: attempt + 1,
-        nextDelayMs: delayMs,
-        maxRetries,
+        delayMs,
+        attempt,
       });
       await this.delay(delayMs);
       attempt++;

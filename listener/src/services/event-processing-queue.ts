@@ -1,6 +1,7 @@
 import * as StellarSDK from '@stellar/stellar-sdk';
 import { ContractConfig } from '../types';
 import logger from '../utils/logger';
+import { generateCorrelationId } from '../utils/request-id';
 
 export enum Priority {
   Low = 0,
@@ -87,11 +88,13 @@ export class EventProcessingQueue {
     requestId?: string,
     priority: Priority = Priority.Medium
   ): boolean {
+    const correlationId = requestId ?? generateCorrelationId();
     const fingerprint = buildEventFingerprint(event, contractConfig.address);
 
     if (this.queuedFingerprints.has(fingerprint)) {
       logger.info('Skipping duplicate event queue entry', {
-        requestId,
+        requestId: correlationId,
+        correlationId,
         eventId: event.id,
         contractAddress: contractConfig.address,
         fingerprint,
@@ -103,7 +106,8 @@ export class EventProcessingQueue {
     const nextRetryAt = Date.now() + delayMs;
 
     logger.info('Event queued for processing', {
-      requestId,
+      requestId: correlationId,
+      correlationId,
       eventId: event.id,
       contractAddress: contractConfig.address,
       delayMs,
@@ -116,7 +120,7 @@ export class EventProcessingQueue {
     this.queue.push({
       event,
       contractConfig,
-      requestId: requestId ?? '',
+      requestId: correlationId,
       retryCount: 0,
       nextRetryAt,
       fingerprint,
@@ -225,6 +229,7 @@ export class EventProcessingQueue {
         this.metrics.processingTimes.push(duration);
         logger.info('Event processing succeeded', {
           requestId: item.requestId,
+          correlationId: item.requestId,
           eventId: item.event.id,
           contractAddress: item.contractConfig.address,
         });
@@ -241,6 +246,7 @@ export class EventProcessingQueue {
         this.metrics.processingTimes.push(duration);
         logger.error('Event processing permanently failed after max retries', {
           requestId: item.requestId,
+          correlationId: item.requestId,
           eventId: item.event.id,
           contractAddress: item.contractConfig.address,
           totalAttempts: attempt,
@@ -253,6 +259,7 @@ export class EventProcessingQueue {
 
       logger.warn('Event processing failed, scheduling retry', {
         requestId: item.requestId,
+        correlationId: item.requestId,
         eventId: item.event.id,
         contractAddress: item.contractConfig.address,
         attempt,
@@ -275,6 +282,7 @@ export class EventProcessingQueue {
         this.metrics.processingTimes.push(duration);
         logger.error('Event processing crashed after max retries', {
           requestId: item.requestId,
+          correlationId: item.requestId,
           eventId: item.event.id,
           contractAddress: item.contractConfig.address,
           totalAttempts: attempt,
@@ -288,6 +296,7 @@ export class EventProcessingQueue {
 
       logger.error('Event processing crashed, scheduling retry', {
         requestId: item.requestId,
+      correlationId: item.requestId,
         eventId: item.event.id,
         contractAddress: item.contractConfig.address,
         attempt,

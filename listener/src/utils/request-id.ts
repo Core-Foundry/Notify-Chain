@@ -9,6 +9,13 @@ export function generateRequestId(): string {
 }
 
 /**
+ * Generates a non-sensitive identifier for tracing one notification workflow.
+ */
+export function generateCorrelationId(): string {
+  return randomUUID();
+}
+
+/**
  * Resolves a correlation ID for a request.
  * Honours an incoming X-Correlation-Id header if present, otherwise generates a new UUID.
  */
