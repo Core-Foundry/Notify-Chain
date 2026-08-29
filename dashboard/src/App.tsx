@@ -2,7 +2,7 @@
  * App.tsx — root shell; layout delegated to DashboardLayout (#676).
  */
 
-import { useState, useRef, useCallback, type KeyboardEvent } from 'react';
+import { useState, useRef, useCallback, useEffect, type KeyboardEvent } from 'react';
 import { EventExplorerPage } from './pages/EventExplorerPage';
 import { NotificationTimelineView } from './components/NotificationTimelineView';
 import { ActivityFeed } from './components/ActivityFeed';
@@ -23,12 +23,35 @@ import { SyncStatus } from './components/SyncStatus';
 import { DashboardLayout } from './layouts/DashboardLayout';
 
 export function App() {
-  const [tab, setTab] = useState<Tab>('explorer');
+  const [tab, setTab] = useState<Tab>(() => {
+    const hash = window.location.hash.slice(1);
+    if (NAV_ITEMS.some((item) => item.id === hash)) {
+      return hash as Tab;
+    }
+    return 'explorer';
+  });
   const [drawerOpen, setDrawerOpen] = useState(false);
   const { theme, toggleTheme } = useTheme();
   const events = useEventStore((state) => state.events);
   const tabListRef = useRef<HTMLDivElement>(null);
   const hamburgerRef = useRef<HTMLButtonElement>(null);
+
+  // Sync URL hash with tab state
+  useEffect(() => {
+    window.location.hash = tab;
+  }, [tab]);
+
+  // Sync tab state with URL hash changes
+  useEffect(() => {
+    const handleHashChange = () => {
+      const hash = window.location.hash.slice(1);
+      if (NAV_ITEMS.some((item) => item.id === hash)) {
+        setTab(hash as Tab);
+      }
+    };
+    window.addEventListener('hashchange', handleHashChange);
+    return () => window.removeEventListener('hashchange', handleHashChange);
+  }, []);
 
   const handleTabKeyDown = useCallback((e: KeyboardEvent<HTMLDivElement>) => {
     const tabs = Array.from(
