@@ -50,7 +50,13 @@ Canonical setup path: workflow guide → [`LOCAL_DEVELOPMENT.md`](LOCAL_DEVELOPM
 
 ## Getting Started
 
-### Prerequisites
+### Prerequisites & Environment Doctor
+
+Run the automated repository health check to verify your local toolchain before starting:
+
+```bash
+./scripts/doctor.sh
+```
 
 To contribute to NotifyChain, install the tools listed in
 [`docs/ENVIRONMENT_SETUP.md`](docs/ENVIRONMENT_SETUP.md) (Rust, WebAssembly
