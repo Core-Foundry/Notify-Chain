@@ -150,10 +150,6 @@ export function NotificationTimelineView() {
       {/* Empty state — searched but no entries */}
       {!loading && timeline && timeline.entries.length === 0 && (
         <EmptyState
-          size="inline"
-          title={`No history entries found for notification #${timeline.notificationId}`}
-          message={`Current status: ${STATUS_LABEL[overallStatus!] ?? overallStatus}`}
-        />
           className="empty-state--compact"
           icon="📭"
           title="No history entries"
@@ -210,7 +206,6 @@ export function NotificationTimelineView() {
 
       {/* Initial empty state — nothing searched yet */}
       {!loading && !timeline && !error && (
-        <EmptyState size="inline" message="Enter a notification ID above to view its delivery history." />
         <EmptyState
           className="empty-state--compact"
           icon="🕐"
