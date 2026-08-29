@@ -1,5 +1,7 @@
 import http from 'http';
 import * as StellarSDK from '@stellar/stellar-sdk';
+export { getAppVersion } from '../utils/app-version';
+import { APP_VERSION } from '../utils/app-version';
 import { eventRegistry } from '../store/event-registry';
 import { preferenceStore } from '../store/preference-store';
 import { PreferencesUpdateInput } from '../types/preferences';
@@ -110,6 +112,8 @@ interface ServiceHealth {
 
 interface HealthResponse {
   status: 'ok' | 'degraded' | 'error';
+  /** Semver string sourced from listener/package.json, e.g. "1.0.0". */
+  version: string;
   timestamp: string;
   services: {
     stellarRpc: ServiceHealth;
@@ -389,6 +393,7 @@ async function buildHealthResponse(options: EventsServerOptions): Promise<Health
 
   return {
     status: overallStatus,
+    version: APP_VERSION,
     timestamp: new Date().toISOString(),
     services: {
       stellarRpc,
