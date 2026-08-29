@@ -1,4 +1,8 @@
 import { Config, ContractConfig, DiscordConfig, WebhookSecret, AppCleanupConfig, EventQueueConfig, RetrySchedulerOptions, AnalyticsConfig, ExpirationConfig, ApiKey } from './types';
+import { validateSecrets, SecretValidationError } from './config/validate-secrets';
+
+// Re-export so that index.ts and tests can import everything from one place.
+export { validateSecrets, SecretValidationError } from './config/validate-secrets';
 
 export class ConfigError extends Error {
   constructor(message: string) {
@@ -470,5 +474,34 @@ export function validateConfig(config: Config): void {
         errors.map((e, i) => `  ${i + 1}. ${e}`).join('\n'),
     );
   }
+
+  // ── Secret validation (#692) ───────────────────────────────────────────────
+  // Run after structural checks so operators see both structural and secret
+  // problems in a single pass.  Errors are reported by field name only; the
+  // actual secret values are never included in any message.
+  validateSecrets([
+    {
+      fieldName: 'DISCORD_WEBHOOK_URL',
+      value: config.discord?.webhookUrl,
+      required: false,
+    },
+    {
+      fieldName: 'DISCORD_WEBHOOK_ID',
+      value: config.discord?.webhookId,
+      required: false,
+    },
+    // Webhook signing secrets
+    ...((config.webhookSecrets ?? []).map((ws, i) => ({
+      fieldName: `WEBHOOK_SECRETS[${i}].secret`,
+      value: ws.secret,
+      required: true,
+    }))),
+    // API keys
+    ...((config.apiKeys ?? []).map((ak, i) => ({
+      fieldName: `API_KEYS[${i}].key`,
+      value: ak.key,
+      required: true,
+    }))),
+  ]);
 }
 
