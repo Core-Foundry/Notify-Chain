@@ -10,6 +10,7 @@
     "lint": "node ./node_modules/typescript/bin/tsc --noEmit",
     "format:check": "node ./node_modules/prettier/bin/prettier.cjs --check \"src/**/*.ts\" --config ../.prettierrc",
     "test": "node ./node_modules/jest/bin/jest.js",
+    "test:smoke": "node ./node_modules/jest/bin/jest.js src/__tests__/local-notification-smoke.test.ts",
     "test:stress": "node ./node_modules/jest/bin/jest.js src/__tests__/stress.test.ts --runInBand --detectOpenHandles",
     "stress-test": "ts-node src/scripts/run-stress-tests.ts",
     "migrate": "ts-node src/scripts/migrate-db.ts",
