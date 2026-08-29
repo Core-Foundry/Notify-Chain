@@ -42,13 +42,7 @@ async function main() {
   let scheduler: NotificationScheduler | null = null;
   let retryScheduler: RetryScheduler | null = null;
   let notificationAPI: NotificationAPI | null = null;
-  let templateService: TemplateService | null = null;
   let healthMonitor: NotificationHealthMonitor | null = null;
-
-  if (config.scheduler?.enabled) {
-    try {
-      logger.info('Initializing database for scheduled notifications and templates');
-      const db = await initializeDatabase(config.databasePath);
   let templateService: NotificationTemplateService | null = null;
   let legacyTemplateService: TemplateService | null = null;
   let cleanupService: CleanupService | null = null;
@@ -60,11 +54,6 @@ async function main() {
   let metricsStore: NotificationMetricsStore | null = null;
   let deduplicationService: EventDeduplicationService | null = null;
 
-  repository = new ScheduledNotificationRepository(db);
-  healthMonitor = new NotificationHealthMonitor(null, getWorkerManager(), {
-    repository,
-  });
-
   if (config.analytics?.enabled) {
     initNotificationAnalyticsAggregator(config.analytics);
   }
@@ -72,6 +61,11 @@ async function main() {
   try {
     logger.info('Initializing database');
     const db = await initializeDatabase(config.databasePath);
+
+    repository = new ScheduledNotificationRepository(db);
+    healthMonitor = new NotificationHealthMonitor(null, getWorkerManager(), {
+      repository,
+    });
 
     // Rebuild registry with configured event TTL
     if (config.cleanup) {
@@ -153,7 +147,8 @@ async function main() {
     contractAddresses: config.contractAddresses,
     discordWebhookUrl: config.discord?.webhookUrl,
     notificationAPI,
-    templateService: legacyTemplateService,
+    templateService,
+    schedulerTemplateService: legacyTemplateService,
     webhookSecrets: config.webhookSecrets,
     apiKeys: config.apiKeys,
     rateLimit: config.rateLimit,
@@ -167,7 +162,7 @@ async function main() {
     healthMonitor.start();
   }
 
-  const subscriber = new EventSubscriber(config, deduplicationService);
+  const subscriber = new EventSubscriber(config, deduplicationService ?? undefined);
   await subscriber.start();
 
   let isShuttingDown = false;

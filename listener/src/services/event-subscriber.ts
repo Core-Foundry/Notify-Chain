@@ -127,7 +127,7 @@ export class EventSubscriber {
           }
         }
 
-        const processableEvents = events.filter((event) =>
+        const processableEvents = events.filter((event: StellarSDK.rpc.Api.EventResponse) =>
           this.shouldProcessEvent(event, contractConfig, requestId)
         );
 
