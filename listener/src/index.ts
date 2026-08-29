@@ -170,52 +170,64 @@ async function main() {
   const subscriber = new EventSubscriber(config, deduplicationService);
   await subscriber.start();
 
-  const shutdown = async () => {
-    logger.info('Shutting down services...');
+  let isShuttingDown = false;
 
-    if (healthMonitor) {
-      healthMonitor.stop();
+  const shutdown = async (signal: string) => {
+    // Idempotency: prevent duplicate shutdown if multiple signals arrive
+    if (isShuttingDown) {
+      logger.warn('Shutdown already in progress, ignoring signal', { signal });
+      return;
     }
 
-    if (cleanupService) {
-      await cleanupService.stop();
+    isShuttingDown = true;
+    logger.info('Graceful shutdown initiated', { signal });
+
+    try {
+      if (healthMonitor) {
+        healthMonitor.stop();
+      }
+
+      if (cleanupService) {
+        await cleanupService.stop();
+      }
+
+      if (reconciliationEngine) {
+        reconciliationEngine.stop();
+      }
+
+      if (metricsRunner) {
+        await metricsRunner.stop();
+      }
+
+      if (archiveService) {
+        await archiveService.stop();
+      }
+
+      if (scheduler) {
+        await scheduler.stop();
+      }
+
+      if (retryScheduler) {
+        await retryScheduler.stop();
+      }
+
+      await subscriber.stop();
+      eventsServer.close();
+
+      logger.info('Graceful shutdown completed successfully', { signal });
+      process.exit(0);
+    } catch (error) {
+      logger.error('Error during graceful shutdown', { signal, error });
+      process.exit(1);
     }
-
-    if (reconciliationEngine) {
-      reconciliationEngine.stop();
-    }
-
-    if (metricsRunner) {
-      await metricsRunner.stop();
-    }
-
-    if (archiveService) {
-      await archiveService.stop();
-    }
-
-    if (scheduler) {
-      await scheduler.stop();
-    }
-
-    if (retryScheduler) {
-      await retryScheduler.stop();
-    }
-
-    await subscriber.stop();
-    eventsServer.close();
-
-    logger.info('All services stopped successfully');
-    process.exit(0);
   };
 
   process.on('SIGINT', async () => {
-    logger.info('Received SIGINT, shutting down');
-    await shutdown();
+    await shutdown('SIGINT');
   });
 
   process.on('SIGTERM', async () => {
-    logger.info('Received SIGTERM, shutting down');
-    await shutdown();
+    await shutdown('SIGTERM');
   });
 }
 
