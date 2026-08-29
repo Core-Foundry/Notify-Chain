@@ -79,19 +79,18 @@ export function formatError(error: unknown): FormattedError | string {
   return String(error);
 }
 
-// ---------------------------------------------------------------------------
-// Internal helpers
-// ---------------------------------------------------------------------------
+import { redactSensitiveData, redactString } from './redact';
 
 function formatMeta(meta: LogContext): LogContext {
   if (!('error' in meta) || meta.error === undefined) {
-    return meta;
+    return redactSensitiveData(meta) as LogContext;
   }
 
-  return {
+  const formatted = {
     ...meta,
     error: formatError(meta.error),
   };
+  return redactSensitiveData(formatted) as LogContext;
 }
 
 function logWithMeta(
@@ -99,10 +98,11 @@ function logWithMeta(
   message: string,
   meta?: LogContext
 ): void {
+  const sanitizedMessage = redactString(message);
   if (meta && Object.keys(meta).length > 0) {
-    baseLogger[level](message, formatMeta(meta));
+    baseLogger[level](sanitizedMessage, formatMeta(meta));
   } else {
-    baseLogger[level](message);
+    baseLogger[level](sanitizedMessage);
   }
 }
 
