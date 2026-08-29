@@ -18,7 +18,7 @@ This document defines the structure, required fields, validation rules, and exam
 
 When scheduling a notification via the REST API, the caller provides a `CreateScheduledNotificationInput` object. The listener stores this, then delivers it at the specified time through the chosen channel (Discord, email, webhook, or SMS).
 
-**Endpoint:** `POST /api/notifications/schedule`
+**Endpoint:** `POST /api/schedule`
 
 ---
 
@@ -207,7 +207,7 @@ Arbitrary key-value object stored alongside the notification. Not sent to the re
 | `eventId`         | Optional. If provided, used for deduplication. ≤ 255 chars.        |
 | `contractAddress` | Optional. If provided, must be a valid Stellar strkey (56 chars).  |
 | `priority`        | Integer between 0 and 100 (inclusive). Defaults to 0.              |
-| `metadata`        | Optional. Must be a valid JSON object if provided.                  |
+| `metadata`        | Optional. Must be a valid JSON object if provided. When present, `source` (non-empty string) is required. Nested objects/arrays are rejected. |
 
 ### Channel-specific validation
 
@@ -224,8 +224,21 @@ If `eventId` is provided, the system checks for an existing `PENDING` or `COMPLE
 
 ## Versioning
 
+Every notification payload carries a protocol `version` field so consumers can
+gate parsing logic across future schema changes.
+
 | Version | Date       | Changes                                                   |
 |---------|------------|-----------------------------------------------------------|
+| v1      | 2026-07-26 | Initial versioned payloads (`version: 1` stamped by API)  |
 | v1.0    | 2025-12-01 | Initial schema — four channel types, priority, metadata   |
 
-Breaking changes to this schema (removing or renaming required fields) will be communicated with a major version bump and a minimum 30-day deprecation notice in the changelog.
+**Current version:** `1` (`CURRENT_NOTIFICATION_VERSION` in
+`listener/src/utils/notification-version.ts` and
+`CURRENT_NOTIFICATION_VERSION` in the Soroban contract).
+
+When scheduling via the REST API, if `payload.version` is omitted the listener
+stamps the current version automatically. Explicit future versions are rejected.
+
+Breaking changes to this schema (removing or renaming required fields) will be
+communicated with a major version bump and a minimum 30-day deprecation notice
+in the changelog.

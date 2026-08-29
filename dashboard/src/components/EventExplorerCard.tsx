@@ -1,6 +1,7 @@
 import { memo, useMemo } from 'react';
 import type { BlockchainEvent } from '../types/event';
 import { formatTimestamp } from '../utils/formatTime';
+import { CopyButton } from './CopyButton';
 
 const EVENT_KIND_STYLES: Record<string, string> = {
   contract: 'event-explorer__badge--blue',
@@ -34,22 +35,44 @@ interface EventExplorerCardProps {
   event: BlockchainEvent;
   onCopyContract: (contractAddress: string) => void;
   isCopied: boolean;
+  onSelect?: (event: BlockchainEvent) => void;
+  contractStatuses?: ContractStatus[];
 }
 
-export const EventExplorerCard = memo(function EventExplorerCard({ event, onCopyContract, isCopied }: EventExplorerCardProps) {
-  const label = useMemo(() => event.eventName ?? event.type, [event.eventName, event.type]);
-  const badgeClass = useMemo(() => getEventKindClass(event.type), [event.type]);
-  const kindLabel = useMemo(() => getEventKindLabel(event.type), [event.type]);
-  const shortenedContract = useMemo(() => shortenAddress(event.contractAddress), [event.contractAddress]);
-  const shortenedTxHash = useMemo(() => event.txHash ? shortenAddress(event.txHash) : '—', [event.txHash]);
-  const formattedTime = useMemo(() => formatTimestamp(event.receivedAt), [event.receivedAt]);
-  const formattedLedger = useMemo(() => event.ledger.toLocaleString(), [event.ledger]);
-  const handleCopyClick = useMemo(() => () => onCopyContract(event.contractAddress), [onCopyContract, event.contractAddress]);
+export function EventExplorerCard({
+  event,
+  onCopyContract,
+  isCopied,
+  onSelect,
+  contractStatuses = [],
+}: EventExplorerCardProps) {
+  const contractStatus = contractStatuses.find((c) => c.address === event.contractAddress);
+  const isPaused = contractStatus?.paused ?? false;
+  const label = event.eventName ?? event.type;
+  const badgeClass = getEventKindClass(event.type);
+  const kindLabel = getEventKindLabel(event.type);
 
   return (
-    <article className="event-explorer__row" role="row" data-event-id={event.eventId}>
+    <article
+      className={`event-explorer__row${onSelect ? ' event-card--clickable' : ''}`}
+      role={onSelect ? 'button' : 'row'}
+      tabIndex={onSelect ? 0 : undefined}
+      data-event-id={event.eventId}
+      onClick={onSelect ? () => onSelect(event) : undefined}
+      onKeyDown={
+        onSelect
+          ? (e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                onSelect(event);
+              }
+            }
+          : undefined
+      }
+      aria-label={onSelect ? `View details for ${label} notification` : undefined}
+    >
       <div className="event-explorer__cell" data-label="Contract" role="cell">
-        <div>
+        <div className="event-explorer__contract-block">
           <p className="event-explorer__contract" title={event.contractAddress}>
             {shortenedContract}
           </p>
@@ -79,13 +102,21 @@ export const EventExplorerCard = memo(function EventExplorerCard({ event, onCopy
       </div>
 
       <div className="event-explorer__cell" data-label="Ledger" role="cell">
-        <span>{formattedLedger}</span>
+        <div className="event-explorer__id-cell">
+          <span>{event.ledger.toLocaleString()}</span>
+          <CopyButton value={event.eventId} label="event ID" size="xs" />
+        </div>
       </div>
 
       <div className="event-explorer__cell" data-label="Transaction" role="cell">
-        <span title={event.txHash ?? 'No transaction hash'}>
-          {shortenedTxHash}
-        </span>
+        {event.txHash ? (
+          <div className="event-explorer__id-cell">
+            <span title={event.txHash}>{shortenAddress(event.txHash)}</span>
+            <CopyButton value={event.txHash} label="tx hash" size="xs" />
+          </div>
+        ) : (
+          <span>—</span>
+        )}
       </div>
     </article>
   );

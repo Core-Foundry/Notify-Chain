@@ -1,7 +1,7 @@
 import { Database } from '../database/database';
 import logger from '../utils/logger';
 import {
-  NotificationTemplate,
+  AuditedNotificationTemplate,
   TemplateAuditAction,
   TemplateAuditRecord,
   TemplateAuditRecordRow,
@@ -11,8 +11,8 @@ export interface RecordTemplateAuditInput {
   templateId: string;
   actor: string;
   action?: TemplateAuditAction;
-  previousSnapshot: NotificationTemplate;
-  newSnapshot: NotificationTemplate;
+  previousSnapshot: AuditedNotificationTemplate;
+  newSnapshot: AuditedNotificationTemplate;
 }
 
 /**
@@ -78,8 +78,8 @@ export class TemplateAuditTrail {
       actor: row.actor,
       action: row.action as TemplateAuditAction,
       changedAt: new Date(row.changed_at),
-      previousSnapshot: JSON.parse(row.previous_snapshot) as NotificationTemplate,
-      newSnapshot: JSON.parse(row.new_snapshot) as NotificationTemplate,
+      previousSnapshot: JSON.parse(row.previous_snapshot) as AuditedNotificationTemplate,
+      newSnapshot: JSON.parse(row.new_snapshot) as AuditedNotificationTemplate,
     };
   }
 }

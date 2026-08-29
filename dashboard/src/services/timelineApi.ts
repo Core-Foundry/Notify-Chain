@@ -1,8 +1,7 @@
 import type { NotificationTimeline } from '../types/timeline';
+import { getEventsApiBaseUrl } from '../config/eventsApiUrl';
 
-const BASE_URL =
-  (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_EVENTS_API_URL) ||
-  'http://localhost:8787';
+const BASE_URL = getEventsApiBaseUrl();
 
 export async function fetchTimeline(notificationId: number): Promise<NotificationTimeline> {
   const res = await fetch(`${BASE_URL}/api/notifications/${notificationId}/timeline`);

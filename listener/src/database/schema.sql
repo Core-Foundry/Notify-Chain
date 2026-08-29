@@ -6,7 +6,8 @@ CREATE TABLE IF NOT EXISTS scheduled_notifications (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   
   -- Notification content and metadata
-  payload TEXT NOT NULL,                    -- JSON payload of the notification
+  payload TEXT NOT NULL,                    -- JSON payload of the notification (compressed when large)
+  payload_hash TEXT,                        -- HMAC hash of the raw JSON payload for integrity checks
   notification_type VARCHAR(50) NOT NULL,   -- Type: 'discord', 'email', 'webhook', etc.
   target_recipient TEXT NOT NULL,           -- User ID, webhook URL, or recipient identifier
   
@@ -34,7 +35,8 @@ CREATE TABLE IF NOT EXISTS scheduled_notifications (
   event_id TEXT,                            -- Reference to the original event (if applicable)
   contract_address TEXT,                    -- Stellar contract address (if applicable)
   priority INTEGER NOT NULL DEFAULT 5,      -- 1-10, lower = higher priority
-  metadata TEXT                             -- Additional JSON metadata
+  metadata TEXT,                            -- Additional JSON metadata
+  next_retry_at DATETIME                    -- When the next retry should be attempted
 );
 
 -- Indexes for performance optimization
@@ -42,12 +44,13 @@ CREATE INDEX IF NOT EXISTS idx_scheduled_notifications_status
   ON scheduled_notifications(status);
 
 CREATE INDEX IF NOT EXISTS idx_scheduled_notifications_status_execute_at 
-  ON scheduled_notifications(status, execute_at) 
-  WHERE status = 'PENDING';
+  ON scheduled_notifications(status, execute_at);
 
 CREATE INDEX IF NOT EXISTS idx_scheduled_notifications_lock_expires 
-  ON scheduled_notifications(lock_expires_at, status) 
-  WHERE status = 'PROCESSING';
+  ON scheduled_notifications(lock_expires_at, status);
+
+-- Migration: add next_retry_at for explicit retry scheduling
+
 
 CREATE INDEX IF NOT EXISTS idx_scheduled_notifications_next_retry_at
   ON scheduled_notifications(next_retry_at, status)
@@ -57,11 +60,33 @@ CREATE INDEX IF NOT EXISTS idx_scheduled_notifications_created_at
   ON scheduled_notifications(created_at);
 
 CREATE INDEX IF NOT EXISTS idx_scheduled_notifications_event_id 
-  ON scheduled_notifications(event_id) 
-  WHERE event_id IS NOT NULL;
+  ON scheduled_notifications(event_id);
 
 CREATE INDEX IF NOT EXISTS idx_scheduled_notifications_target 
   ON scheduled_notifications(target_recipient, status);
+
+-- Migration: add next_retry_at for explicit retry scheduling (no-op when column exists in CREATE TABLE)
+-- SQLite does not support IF NOT EXISTS for ADD COLUMN; runMigrations tolerates duplicate-column errors.
+-- Dead-letter queue for permanently failed notifications
+CREATE TABLE IF NOT EXISTS dead_letter_queue (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  scheduled_notification_id INTEGER NOT NULL UNIQUE,
+  notification_type VARCHAR(50) NOT NULL,
+  target_recipient TEXT NOT NULL,
+  payload TEXT NOT NULL,
+  failure_reason TEXT NOT NULL,
+  error_details TEXT,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  last_retried_at DATETIME,
+  retry_count INTEGER NOT NULL DEFAULT 0,
+  FOREIGN KEY (scheduled_notification_id) REFERENCES scheduled_notifications(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_dead_letter_queue_created_at
+  ON dead_letter_queue(created_at);
+
+CREATE INDEX IF NOT EXISTS idx_dead_letter_queue_notification_type
+  ON dead_letter_queue(notification_type);
 
 -- Notification execution history for auditing
 CREATE TABLE IF NOT EXISTS notification_execution_log (
@@ -86,9 +111,8 @@ CREATE INDEX IF NOT EXISTS idx_execution_log_execution_time
 CREATE INDEX IF NOT EXISTS idx_execution_log_status_execution_time 
   ON notification_execution_log(status, execution_time);
 
--- Migration: add next_retry_at for explicit retry scheduling
-ALTER TABLE scheduled_notifications ADD COLUMN next_retry_at DATETIME;
-
+-- Migration: add next_retry_at for explicit retry scheduling (no-op when column exists in CREATE TABLE)
+-- SQLite does not support IF NOT EXISTS for ADD COLUMN; runMigrations tolerates duplicate-column errors.
 -- Trigger to update updated_at timestamp
 CREATE TRIGGER IF NOT EXISTS update_scheduled_notifications_timestamp 
 AFTER UPDATE ON scheduled_notifications
@@ -238,6 +262,125 @@ CREATE TABLE IF NOT EXISTS polling_cursors (
 CREATE INDEX IF NOT EXISTS idx_polling_cursors_contract 
   ON polling_cursors(contract_address);
 
-CREATE INDEX IF NOT EXISTS idx_polling_cursors_updated_at 
+CREATE INDEX IF NOT EXISTS idx_polling_cursors_updated_at
   ON polling_cursors(updated_at);
+
+-- Idempotency keys table for request deduplication
+CREATE TABLE IF NOT EXISTS idempotency_keys (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+  -- Key identification
+  idempotency_key TEXT NOT NULL UNIQUE,      -- Client-provided idempotency key
+
+  -- Request and response tracking
+  request_hash TEXT NOT NULL,                -- Hash of request body for validation
+  response_notification_id INTEGER NOT NULL, -- ID of the created notification
+  response_data TEXT NOT NULL,               -- JSON response to return on duplicate
+
+  -- Lifecycle management
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  expires_at DATETIME NOT NULL,              -- When this key should be purged
+
+  -- Status tracking
+  status VARCHAR(20) NOT NULL DEFAULT 'PROCESSED', -- PROCESSED, EXPIRED
+
+  FOREIGN KEY (response_notification_id) REFERENCES scheduled_notifications(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_idempotency_keys_key
+  ON idempotency_keys(idempotency_key);
+
+CREATE INDEX IF NOT EXISTS idx_idempotency_keys_expires_at
+  ON idempotency_keys(expires_at);
+
+CREATE INDEX IF NOT EXISTS idx_idempotency_keys_created_at
+  ON idempotency_keys(created_at);
+
+-- Backpressure events table for tracking queue saturation and recovery
+CREATE TABLE IF NOT EXISTS backpressure_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+  -- Event tracking
+  event_type VARCHAR(20) NOT NULL,            -- ACTIVATED or DEACTIVATED
+  queue_size INTEGER NOT NULL,                -- Queue size when event occurred
+  target_throughput_per_sec INTEGER NOT NULL, -- Target throughput limit during this event
+
+  -- Duration tracking (for deactivation events)
+  duration_ms INTEGER,                        -- How long backpressure was active
+
+  -- Additional metadata
+  reason TEXT,                                -- Optional reason/context for the event
+  timestamp DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_backpressure_events_type
+  ON backpressure_events(event_type);
+
+CREATE INDEX IF NOT EXISTS idx_backpressure_events_timestamp
+  ON backpressure_events(timestamp);
+
+CREATE INDEX IF NOT EXISTS idx_backpressure_events_type_timestamp
+  ON backpressure_events(event_type, timestamp);
+
+-- Persisted notification delivery metrics snapshots for historical analytics
+CREATE TABLE IF NOT EXISTS notification_metrics_snapshots (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  captured_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  window_start INTEGER NOT NULL,
+  window_end INTEGER NOT NULL,
+  total_recorded INTEGER NOT NULL,
+  snapshot_json TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_metrics_snapshots_captured_at
+  ON notification_metrics_snapshots(captured_at);
+
+-- ===============================================
+-- QUERY PERFORMANCE INDEXES (migration 002)
+-- See docs/DATABASE_QUERY_PERFORMANCE.md
+-- ===============================================
+
+-- Scheduler claim: status + priority + execute_at for pending jobs
+CREATE INDEX IF NOT EXISTS idx_scheduled_notifications_claim
+  ON scheduled_notifications(status, priority, execute_at)
+  WHERE status = 'PENDING';
+
+-- Post-claim fetch by processor lock
+CREATE INDEX IF NOT EXISTS idx_scheduled_notifications_processor_lock
+  ON scheduled_notifications(processor_id, status, lock_expires_at);
+
+-- Search: status filter + created_at sort
+CREATE INDEX IF NOT EXISTS idx_scheduled_notifications_status_created
+  ON scheduled_notifications(status, created_at);
+
+-- Search: notification type / channel filter
+CREATE INDEX IF NOT EXISTS idx_scheduled_notifications_type_status
+  ON scheduled_notifications(notification_type, status);
+
+-- Contract address lookups
+CREATE INDEX IF NOT EXISTS idx_scheduled_notifications_contract
+  ON scheduled_notifications(contract_address)
+  WHERE contract_address IS NOT NULL;
+
+-- Processed events: status + time range
+CREATE INDEX IF NOT EXISTS idx_processed_events_status_processed
+  ON processed_events(status, processed_at);
+
+-- Processed events: type filter
+CREATE INDEX IF NOT EXISTS idx_processed_events_event_type_status
+  ON processed_events(event_type, status);
+
+-- Processed events: tx hash search
+CREATE INDEX IF NOT EXISTS idx_processed_events_tx_hash
+  ON processed_events(tx_hash)
+  WHERE tx_hash IS NOT NULL;
+
+-- Execution log join for metrics (latest attempt per notification)
+CREATE INDEX IF NOT EXISTS idx_execution_log_notification_attempt
+  ON notification_execution_log(scheduled_notification_id, execution_attempt);
+
+-- Rate-limit audit by client + time
+CREATE INDEX IF NOT EXISTS idx_rate_limit_events_client_timestamp
+  ON rate_limit_events(client_id, timestamp);
+
 

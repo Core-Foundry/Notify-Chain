@@ -4,6 +4,10 @@ import { generateRequestId } from '../utils/request-id';
 import { ScheduledNotificationRepository } from './scheduled-notification-repository';
 import { SchedulerConfig, ScheduledNotification } from '../types/scheduled-notification';
 import { DiscordNotificationService } from './discord-notification';
+import { BatchValidationService } from './batch-validation-service';
+import { NotificationChannel } from '../utils/batch-validator';
+import { getWorkerManager } from './worker-manager';
+import { getJobMonitor } from './job-monitor';
 
 /**
  * Background scheduler that processes scheduled notifications
@@ -20,16 +24,19 @@ export class NotificationScheduler {
   private timer: NodeJS.Timeout | null = null;
   private isRunning: boolean = false;
   private processorId: string;
+  private batchValidator: BatchValidationService;
 
   constructor(
     repository: ScheduledNotificationRepository,
     config: SchedulerConfig,
-    discordService?: DiscordNotificationService | null
+    discordService?: DiscordNotificationService | null,
+    batchValidator?: BatchValidationService
   ) {
     this.repository = repository;
-    this.config = config;
+    this.config = { retryDelayMs: 5_000, ...config };
     this.discordService = discordService ?? null;
     this.processorId = config.processorId || uuidv4();
+    this.batchValidator = batchValidator ?? new BatchValidationService();
   }
 
   /**
@@ -62,6 +69,7 @@ export class NotificationScheduler {
 
   /**
    * Stop the scheduler gracefully
+   * Waits for all in-flight jobs to complete before returning
    */
   async stop(): Promise<void> {
     if (!this.isRunning) {
@@ -75,6 +83,10 @@ export class NotificationScheduler {
       clearTimeout(this.timer);
       this.timer = null;
     }
+
+    // Wait for all active jobs to complete
+    const workerManager = getWorkerManager();
+    await workerManager.initiateGracefulShutdown();
   }
 
   /**
@@ -118,15 +130,80 @@ export class NotificationScheduler {
         return;
       }
 
+      const batchRejection = this.batchValidator.rejectIfInvalid(
+        this.toValidationBatch(notifications)
+      );
+
+      if (batchRejection) {
+        logger.error('Scheduled notification batch rejected by validation', {
+          requestId,
+          processorId: this.processorId,
+          errors: batchRejection.errors,
+        });
+
+        for (const notification of notifications) {
+          await this.repository.markAsFailedOrRetry(
+            notification.id!,
+            new Error(`Batch validation failed: ${batchRejection.errors.map((e) => e.message).join('; ')}`),
+            notification.retryCount,
+            notification.maxRetries
+          );
+        }
+        return;
+      }
+
       logger.info('Processing batch of scheduled notifications', {
         requestId,
         count: notifications.length,
         processorId: this.processorId,
       });
 
-      // Process each notification
+      // Check if shutdown is in progress - don't accept new jobs
+      const workerManager = getWorkerManager();
+      if (workerManager.isShutdownInProgress()) {
+        logger.info('Shutdown in progress - releasing unprocessed notifications', {
+          requestId,
+          count: notifications.length,
+        });
+        // Release locks on unprocessed notifications
+        for (const notification of notifications) {
+          await this.repository.markAsFailedOrRetry(
+            notification.id!,
+            new Error('Scheduler shutting down'),
+            notification.retryCount,
+            notification.maxRetries
+          );
+        }
+        return;
+      }
+
+      // Process each notification with job tracking + monitoring
+      const jobMonitor = getJobMonitor();
       for (const notification of notifications) {
-        await this.processNotification(notification, requestId);
+        const jobId = `notification-${notification.id}`;
+        if (!workerManager.startJob(jobId)) {
+          // Shutdown is in progress, don't process new jobs
+          logger.info('Job rejected - scheduler shutting down', { jobId });
+          await this.repository.markAsFailedOrRetry(
+            notification.id!,
+            new Error('Scheduler shutting down'),
+            notification.retryCount,
+            notification.maxRetries
+          );
+          continue;
+        }
+
+        jobMonitor.startJob(jobId, 'scheduled-notification', {
+          notificationId: notification.id,
+          type: notification.notificationType,
+          requestId,
+        });
+
+        try {
+          await this.processNotification(notification, requestId, jobId);
+        } finally {
+          workerManager.completeJob(jobId);
+        }
       }
 
       logger.info('Scheduler batch complete', {
@@ -150,10 +227,12 @@ export class NotificationScheduler {
    */
   private async processNotification(
     notification: ScheduledNotification,
-    requestId: string
+    requestId: string,
+    jobId?: string
   ): Promise<void> {
     const startTime = Date.now();
     const executionAttempt = notification.retryCount + 1;
+    const jobMonitor = getJobMonitor();
 
     try {
       logger.info('Processing scheduled notification', {
@@ -182,7 +261,51 @@ export class NotificationScheduler {
           notification.retryCount,
           notification.maxRetries
         );
+        if (jobId) {
+          jobMonitor.failJob(jobId, 'Not yet due for execution', {
+            notificationId: notification.id,
+          });
+        }
         return;
+      }
+
+      if (timeDiff > this.config.timingBufferMs) {
+        logger.warn('Missed scheduled notification detected; dispatching catch-up delivery', {
+          requestId,
+          id: notification.id,
+          executeAt: notification.executeAt,
+          now,
+          missedByMs: timeDiff,
+        });
+      }
+
+      // Verify payload integrity before executing
+      const secret = process.env.PAYLOAD_INTEGRITY_SECRET;
+      if (secret) {
+        if (!notification.payloadHash) {
+          logger.warn('Payload integrity check skipped — no hash stored', {
+            requestId,
+            id: notification.id,
+          });
+        } else if (!verifyPayloadIntegrity(notification.payload, notification.payloadHash, secret)) {
+          logger.error('Payload integrity verification failed — rejecting notification', {
+            requestId,
+            id: notification.id,
+            type: notification.notificationType,
+          });
+          await this.repository.markAsFailedOrRetry(
+            notification.id!,
+            new Error('Payload integrity check failed: hash mismatch'),
+            notification.maxRetries, // exhaust retries — don't retry a tampered payload
+            notification.maxRetries
+          );
+          if (jobId) {
+            jobMonitor.failJob(jobId, 'Payload integrity check failed: hash mismatch', {
+              notificationId: notification.id,
+            });
+          }
+          return;
+        }
       }
 
       // Execute notification based on type
@@ -199,6 +322,13 @@ export class NotificationScheduler {
           status: 'SUCCESS',
           durationMs,
         });
+
+        if (jobId) {
+          jobMonitor.completeJob(jobId, {
+            notificationId: notification.id,
+            durationMs,
+          });
+        }
 
         logger.info('Notification delivered successfully', {
           requestId,
@@ -219,18 +349,31 @@ export class NotificationScheduler {
         durationMs,
       });
 
+      if (jobId) {
+        jobMonitor.failJob(jobId, (error as Error).message, {
+          notificationId: notification.id,
+          attempt: executionAttempt,
+        });
+      }
+
+      const willRetry = notification.retryCount + 1 < notification.maxRetries;
+      const nextRetryAt = willRetry
+        ? new Date(Date.now() + (this.config.retryDelayMs ?? 5_000))
+        : undefined;
+
       await this.repository.markAsFailedOrRetry(
         notification.id!,
         error as Error,
         notification.retryCount,
-        notification.maxRetries
+        notification.maxRetries,
+        nextRetryAt
       );
 
       await this.repository.logExecution({
         scheduledNotificationId: notification.id!,
         executionAttempt,
         executionTime: new Date(),
-        status: notification.retryCount >= notification.maxRetries ? 'FAILED' : 'RETRY',
+        status: willRetry ? 'RETRY' : 'FAILED',
         errorMessage: (error as Error).message,
         durationMs,
       });
@@ -279,5 +422,29 @@ export class NotificationScheduler {
    */
   async getStats() {
     return await this.repository.getStats();
+  }
+
+  private toValidationBatch(notifications: ScheduledNotification[]) {
+    return notifications.map((notification) => ({
+      id: String(notification.id),
+      recipient: notification.targetRecipient,
+      channel: notification.notificationType as NotificationChannel,
+      message: this.extractValidationMessage(notification.payload),
+    }));
+  }
+
+  private extractValidationMessage(payloadJson: string): string {
+    try {
+      const payload = JSON.parse(payloadJson);
+      if (typeof payload.message === 'string' && payload.message.trim()) {
+        return payload.message;
+      }
+      if (typeof payload.content === 'string' && payload.content.trim()) {
+        return payload.content;
+      }
+      return JSON.stringify(payload).slice(0, 200);
+    } catch {
+      return payloadJson.slice(0, 200) || 'scheduled-notification';
+    }
   }
 }

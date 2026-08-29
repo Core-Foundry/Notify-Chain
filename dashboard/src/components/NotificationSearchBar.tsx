@@ -2,9 +2,9 @@ import { useState, useEffect, memo } from 'react';
 import { useEventStore } from '../store/eventStore';
 import { useEventFilters } from '../hooks/useEventSelectors';
 import { useDebounce } from '../hooks/useDebounce';
-import type { NotificationStatus } from '../types/event';
+import type { NotificationReadFilter } from '../types/event';
 
-const STATUS_OPTIONS: { value: NotificationStatus; label: string }[] = [
+const STATUS_OPTIONS: { value: NotificationReadFilter; label: string }[] = [
   { value: 'all', label: 'All' },
   { value: 'unread', label: 'Unread' },
   { value: 'read', label: 'Read' },
@@ -16,21 +16,35 @@ export const NotificationSearchBar = memo(function NotificationSearchBar() {
   const setStatusFilter = useEventStore((s) => s.setStatusFilter);
   const setDateFrom = useEventStore((s) => s.setDateFrom);
   const setDateTo = useEventStore((s) => s.setDateTo);
+  const setTxHashFilter = useEventStore((s) => s.setTxHashFilter);
 
   // Local state for the text input so debounce doesn't block typing
   const [inputValue, setInputValue] = useState(filters.search);
   const debouncedSearch = useDebounce(inputValue, 250);
 
+  // Local state for txHash input with debounce
+  const [txHashInput, setTxHashInput] = useState(filters.txHash ?? '');
+  const debouncedTxHash = useDebounce(txHashInput, 250);
+
   useEffect(() => {
     setSearch(debouncedSearch);
   }, [debouncedSearch, setSearch]);
 
+  useEffect(() => {
+    setTxHashFilter(debouncedTxHash);
+  }, [debouncedTxHash, setTxHashFilter]);
+
   // Keep local value in sync if store is cleared externally
   useEffect(() => {
     if (filters.search === '' && inputValue !== '') setInputValue('');
-    // intentionally only react to store reset, not every keystroke
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filters.search]);
+
+  // Sync txHash input if store is cleared externally
+  useEffect(() => {
+    if ((filters.txHash === '' || filters.txHash === undefined) && txHashInput !== '') {
+      setTxHashInput('');
+    }
+  }, [filters.txHash]);
 
   return (
     <section className="notif-search" aria-label="Notification search and filters">
@@ -47,6 +61,22 @@ export const NotificationSearchBar = memo(function NotificationSearchBar() {
           value={inputValue}
           onChange={(e) => setInputValue(e.target.value)}
           aria-label="Search notifications"
+        />
+      </div>
+
+      {/* Transaction hash filter */}
+      <div className="notif-search__group notif-search__group--wide">
+        <label htmlFor="notif-txhash-input" className="notif-search__label">
+          Transaction hash
+        </label>
+        <input
+          id="notif-txhash-input"
+          type="search"
+          className="notif-search__input"
+          placeholder="0x... or partial hash"
+          value={txHashInput}
+          onChange={(e) => setTxHashInput(e.target.value)}
+          aria-label="Filter by transaction hash"
         />
       </div>
 
@@ -106,12 +136,14 @@ export const NotificationSearchBar = memo(function NotificationSearchBar() {
       </div>
 
       {/* Clear all */}
-      {(inputValue || filters.status !== 'all' || filters.dateFrom || filters.dateTo) && (
+      {(inputValue || txHashInput || filters.status !== 'all' || filters.dateFrom || filters.dateTo) && (
         <button
           type="button"
           className="notif-search__clear"
           onClick={() => {
             setInputValue('');
+            setTxHashInput('');
+            setTxHashFilter('');
             setStatusFilter('all');
             setDateFrom('');
             setDateTo('');

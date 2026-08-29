@@ -13,6 +13,7 @@ import { DiscordNotificationService } from './discord-notification';
 import { NotificationRetryQueue } from './notification-retry-queue';
 import { EventDeduplicationService } from './event-deduplication-service';
 import { EventProcessingQueue } from './event-processing-queue';
+import { NotificationExpirationService } from './notification-expiration';
 
 export class EventSubscriber {
   private config: Config;
@@ -24,11 +25,18 @@ export class EventSubscriber {
   private retryQueue: NotificationRetryQueue | null = null;
   private deduplicationService: EventDeduplicationService | null = null;
   private eventQueue: EventProcessingQueue | null = null;
+  private expirationService: NotificationExpirationService | null = null;
 
   constructor(config: Config, deduplicationService?: EventDeduplicationService) {
     this.config = config;
     this.server = new StellarSDK.rpc.Server(config.stellarRpcUrl);
     this.deduplicationService = deduplicationService ?? null;
+    
+    // Initialize expiration service if configured
+    if (config.expiration) {
+      this.expirationService = new NotificationExpirationService(config.expiration);
+    }
+    
     if (config.discord) {
       this.discordService = new DiscordNotificationService(config.discord);
       this.retryQueue = new NotificationRetryQueue(
@@ -175,6 +183,21 @@ export class EventSubscriber {
     contractConfig: ContractConfig,
     requestId: string = ''
   ): boolean {
+    // Check if event has expired
+    if (this.expirationService && !this.expirationService.shouldProcess(event)) {
+      const eventName = getEventName(event.topic);
+      logger.warn('Skipping expired notification', {
+        requestId,
+        contractAddress: contractConfig.address,
+        eventId: event.id,
+        eventName,
+        receivedAt: event.receivedAt,
+        currentTime: Date.now(),
+        reason: 'expired',
+      });
+      return false;
+    }
+
     const validation = validateEventPayload(event);
     if (!validation.valid) {
       logger.warn('Skipping invalid event payload', {
@@ -363,5 +386,12 @@ export class EventSubscriber {
 
   private delay(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  getQueueMetrics() {
+    return {
+      eventQueue: this.eventQueue?.getMetrics() || null,
+      retryQueue: this.retryQueue?.getMetrics() || null,
+    };
   }
 }

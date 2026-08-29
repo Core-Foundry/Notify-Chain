@@ -12,18 +12,21 @@
 //! - Dispute resolution
 //! - Multi-token support (XLM and SAC tokens)
 
-mod types;
-mod storage;
-mod task;
-mod submission;
 mod dispute;
 mod events;
+mod api_keys;
+mod storage;
+mod submission;
+mod task;
+mod types;
 
 #[cfg(test)]
 mod test;
 
-use soroban_sdk::{contract, contractimpl, Address, Env, String, Vec};
+use soroban_sdk::{contract, contractimpl, Address, BytesN, Env, String, Vec};
 use types::{Task, Submission, TaskStatus, SubmissionStatus};
+use soroban_sdk::{contract, contractimpl, Address, Env, String, Vec};
+use types::{Submission, SubmissionStatus, Task, TaskStatus};
 
 #[contract]
 pub struct TaskBountyContract;
@@ -107,12 +110,7 @@ impl TaskBountyContract {
     /// * `task_id` - ID of the task
     /// * `submission_id` - ID of the submission to approve
     /// * `poster` - Address of the task poster (for auth)
-    pub fn approve_submission(
-        env: Env,
-        task_id: u64,
-        submission_id: u64,
-        poster: Address,
-    ) {
+    pub fn approve_submission(env: Env, task_id: u64, submission_id: u64, poster: Address) {
         poster.require_auth();
 
         submission::approve_submission(&env, task_id, submission_id, poster)
@@ -226,5 +224,56 @@ impl TaskBountyContract {
     /// True if contributor has submitted
     pub fn has_submitted(env: Env, task_id: u64, contributor: Address) -> bool {
         storage::has_contributor_submitted(&env, task_id, &contributor)
+    }
+
+    // ========================================================================
+    // API Credential Management
+    // ========================================================================
+
+    pub fn register_api_key(
+        env: Env,
+        organization: Address,
+        label: String,
+        fingerprint: BytesN<32>,
+    ) -> u64 {
+        api_keys::register_api_key(env, organization, label, fingerprint).unwrap()
+    }
+
+    pub fn rotate_api_key(
+        env: Env,
+        organization: Address,
+        current_credential_id: u64,
+        new_label: String,
+        new_fingerprint: BytesN<32>,
+        reason: String,
+    ) -> u64 {
+        api_keys::rotate_api_key(
+            env,
+            organization,
+            current_credential_id,
+            new_label,
+            new_fingerprint,
+            reason,
+        )
+        .unwrap()
+    }
+
+    pub fn revoke_api_key(env: Env, organization: Address, credential_id: u64) {
+        api_keys::revoke_api_key(env, organization, credential_id).unwrap();
+    }
+
+    pub fn get_active_api_keys(env: Env, organization: Address) -> Vec<types::ApiCredential> {
+        api_keys::get_active_api_keys(env, organization)
+    }
+
+    pub fn get_api_key_rotation_history(
+        env: Env,
+        organization: Address,
+    ) -> Vec<types::ApiCredentialRotation> {
+        api_keys::get_api_key_rotation_history(env, organization)
+    }
+
+    pub fn is_api_key_active(env: Env, organization: Address, fingerprint: BytesN<32>) -> bool {
+        api_keys::is_api_key_active(env, organization, fingerprint)
     }
 }

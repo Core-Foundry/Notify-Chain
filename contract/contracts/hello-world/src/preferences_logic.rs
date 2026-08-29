@@ -3,9 +3,12 @@
 /// Provides get/set/reset operations for per-user notification preferences.
 /// Preferences are stored in persistent storage keyed by recipient address.
 use crate::base::errors::Error;
+use crate::base::events::{
+    ChannelPreferenceUpdated, NotificationCategory as EventCategory, NotificationPriority,
+};
 use crate::base::preferences::{
-    CategoryPreference, ChannelPreference, DeliveryChannel, NotificationCategory,
-    RecipientPreferences, default_categories, default_channels, load_preferences, save_preferences,
+    default_categories, default_channels, load_preferences, save_preferences, CategoryPreference,
+    ChannelPreference, DeliveryChannel, NotificationCategory, RecipientPreferences,
 };
 use soroban_sdk::{Address, Env, Vec};
 
@@ -43,6 +46,12 @@ pub fn set_preferences(
     };
 
     save_preferences(&env, &prefs);
+
+    // Emit one event per channel so consumers see the updated fields.
+    for ch in prefs.channels.iter() {
+        emit_channel_preference_updated(&env, &recipient, &ch.channel, ch.enabled, prefs.updated_at);
+    }
+
     Ok(())
 }
 
@@ -76,11 +85,17 @@ pub fn set_channel_preference(
     }
 
     if !found {
-        prefs.channels.push_back(ChannelPreference { channel, enabled });
+        prefs.channels.push_back(ChannelPreference {
+            channel: channel.clone(),
+            enabled,
+        });
     }
 
     prefs.updated_at = env.ledger().timestamp();
     save_preferences(&env, &prefs);
+
+    emit_channel_preference_updated(&env, &recipient, &channel, enabled, prefs.updated_at);
+
     Ok(())
 }
 
@@ -136,6 +151,11 @@ pub fn reset_preferences(env: Env, recipient: Address) -> Result<(), Error> {
     };
 
     save_preferences(&env, &prefs);
+
+    for ch in prefs.channels.iter() {
+        emit_channel_preference_updated(&env, &recipient, &ch.channel, ch.enabled, prefs.updated_at);
+    }
+
     Ok(())
 }
 
@@ -218,4 +238,22 @@ fn category_discriminant(category: &NotificationCategory) -> u32 {
         NotificationCategory::SystemAlerts => 3,
         NotificationCategory::General => 4,
     }
+}
+
+fn emit_channel_preference_updated(
+    env: &Env,
+    recipient: &Address,
+    channel: &DeliveryChannel,
+    enabled: bool,
+    updated_at: u64,
+) {
+    ChannelPreferenceUpdated {
+        recipient: recipient.clone(),
+        category: EventCategory::Notification,
+        priority: NotificationPriority::Medium,
+        channel: channel_discriminant(channel),
+        enabled,
+        updated_at,
+    }
+    .publish(env);
 }

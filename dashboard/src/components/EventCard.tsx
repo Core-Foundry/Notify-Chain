@@ -1,6 +1,7 @@
 import { memo, type KeyboardEvent } from 'react';
 import type { BlockchainEvent } from '../types/event';
 import { formatTimestamp, formatTimestampShort } from '../utils/formatTime';
+import { CopyButton } from './CopyButton';
 
 export type EventCardVariant = 'compact' | 'expanded';
 
@@ -204,7 +205,10 @@ function ExpandedCard({ event, onClick }: { event: BlockchainEvent; onClick?: (e
 
           <div className="event-card__field">
             <dt>Event ID</dt>
-            <dd className="event-card__id">{event.eventId}</dd>
+            <dd className="event-card__id">
+              {event.eventId}
+              <CopyButton value={event.eventId} label="event ID" size="xs" />
+            </dd>
           </div>
         </dl>
       </div>

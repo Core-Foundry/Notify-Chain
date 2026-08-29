@@ -15,23 +15,59 @@ import { ArchiveStore } from './services/archive-store';
 import { loadArchiveConfig } from './services/archive-config';
 import { initializeDatabase } from './database/database';
 import { DiscordNotificationService } from './services/discord-notification';
+import { TemplateService } from './services/template-service';
+import { TemplateRepository } from './services/template-repository';
+import {
+  IndexingReconciliationEngine,
+  createDefaultAlertSink,
+} from './services/indexing-reconciliation-engine';
+import { initNotificationAnalyticsAggregator } from './services/notification-analytics-aggregator';
+import { NotificationMetricsStore } from './services/notification-metrics-store';
+import { NotificationMetricsRunner } from './services/notification-metrics-runner';
 import { eventRegistry } from './store/event-registry';
 import logger from './utils/logger';
-import { loadConfig, ConfigError } from './config';
+import { loadConfig, validateConfig, ConfigError } from './config';
+import { NotificationHealthMonitor } from './services/notification-health-monitor';
+import { getWorkerManager } from './services/worker-manager';
+import { EventDeduplicationService } from './services/event-deduplication-service';
 
 dotenv.config();
 
 async function main() {
   const config = loadConfig();
+  // Validate all config values before starting any services (#494).
+  // This throws a descriptive ConfigError listing every problem found.
+  validateConfig(config);
 
-  // Initialize database for templates, scheduler, and rate limiting
   let scheduler: NotificationScheduler | null = null;
   let retryScheduler: RetryScheduler | null = null;
   let notificationAPI: NotificationAPI | null = null;
+  let templateService: TemplateService | null = null;
+  let healthMonitor: NotificationHealthMonitor | null = null;
+
+  if (config.scheduler?.enabled) {
+    try {
+      logger.info('Initializing database for scheduled notifications and templates');
+      const db = await initializeDatabase(config.databasePath);
   let templateService: NotificationTemplateService | null = null;
+  let legacyTemplateService: TemplateService | null = null;
   let cleanupService: CleanupService | null = null;
+  let repository: ScheduledNotificationRepository | null = null;
+  let reconciliationEngine: IndexingReconciliationEngine | null = null;
   let archiveService: ArchiveService | null = null;
   let archiveStore: ArchiveStore | null = null;
+  let metricsRunner: NotificationMetricsRunner | null = null;
+  let metricsStore: NotificationMetricsStore | null = null;
+  let deduplicationService: EventDeduplicationService | null = null;
+
+  repository = new ScheduledNotificationRepository(db);
+  healthMonitor = new NotificationHealthMonitor(null, getWorkerManager(), {
+    repository,
+  });
+
+  if (config.analytics?.enabled) {
+    initNotificationAnalyticsAggregator(config.analytics);
+  }
 
   try {
     logger.info('Initializing database');
@@ -39,12 +75,26 @@ async function main() {
 
     // Rebuild registry with configured event TTL
     if (config.cleanup) {
-      (eventRegistry as any).ttlMs = config.cleanup.eventRetentionMs;
       eventRegistry.setTtlMs(config.cleanup.eventRetentionMs);
     }
 
     cleanupService = new CleanupService(db, eventRegistry, config.cleanup);
     cleanupService.start();
+
+    reconciliationEngine = new IndexingReconciliationEngine({
+      db,
+      rpcUrl: config.stellarRpcUrl,
+      contractAddresses: config.contractAddresses.map((c) => c.address),
+      alertSink: createDefaultAlertSink(config.discord?.webhookUrl),
+    });
+    reconciliationEngine.start();
+
+    if (config.analytics?.enabled) {
+      metricsStore = new NotificationMetricsStore(db);
+      metricsRunner = new NotificationMetricsRunner(config.analytics, metricsStore);
+      await metricsRunner.start();
+      logger.info('Notification metrics runner started successfully');
+    }
 
     // Archive service: moves old notifications to the archive table.
     const archiveCfg = loadArchiveConfig();
@@ -64,8 +114,14 @@ async function main() {
     templateService = new NotificationTemplateService(templateRepository);
 
     if (config.scheduler?.enabled) {
-      const repository = new ScheduledNotificationRepository(db);
+      repository = new ScheduledNotificationRepository(db);
       notificationAPI = new NotificationAPI(repository);
+
+      // Initialize legacy template service
+      const legacyTemplateRepo = new TemplateRepository(db);
+      legacyTemplateService = new TemplateService(legacyTemplateRepo);
+
+      logger.info('Template service initialized successfully');
 
       // Initialize scheduler with Discord service if available
       let discordService: DiscordNotificationService | null = null;
@@ -89,7 +145,6 @@ async function main() {
     throw error;
   }
 
-  // Start events server and subscriber
   const eventsServer = startEventsServer({
     port: config.eventsApiPort,
     corsOrigin: config.eventsApiCorsOrigin,
@@ -98,24 +153,44 @@ async function main() {
     contractAddresses: config.contractAddresses,
     discordWebhookUrl: config.discord?.webhookUrl,
     notificationAPI,
-    templateService,
+    templateService: legacyTemplateService,
+    webhookSecrets: config.webhookSecrets,
+    apiKeys: config.apiKeys,
     rateLimit: config.rateLimit,
     archiveStore,
     archiveService,
+    metricsStore,
+    healthMonitor,
   });
 
-  const subscriber = new EventSubscriber(config);
+  if (healthMonitor) {
+    healthMonitor.start();
+  }
+
+  const subscriber = new EventSubscriber(config, deduplicationService);
   await subscriber.start();
 
   const shutdown = async () => {
     logger.info('Shutting down services...');
 
+    if (healthMonitor) {
+      healthMonitor.stop();
+    }
+
     if (cleanupService) {
       await cleanupService.stop();
     }
 
+    if (reconciliationEngine) {
+      reconciliationEngine.stop();
+    }
+
+    if (metricsRunner) {
+      await metricsRunner.stop();
+    }
+
     if (archiveService) {
-      archiveService.stop();
+      await archiveService.stop();
     }
 
     if (scheduler) {

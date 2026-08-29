@@ -5,6 +5,9 @@ describe('Config validation', () => {
 
   beforeEach(() => {
     process.env = { ...originalEnv };
+    // CONTRACT_ADDRESSES is a required variable; give it a valid default so
+    // tests unrelated to required-variable validation aren't affected.
+    process.env.CONTRACT_ADDRESSES = JSON.stringify([{ address: 'CTEST', events: ['*'] }]);
   });
 
   afterEach(() => {
@@ -36,6 +39,15 @@ describe('Config validation', () => {
     expect(() => loadConfig()).toThrow('CONTRACT_ADDRESSES must be valid JSON. Received: not-json');
   });
 
+  it('throws a descriptive error when a required environment variable is missing', () => {
+    delete process.env.CONTRACT_ADDRESSES;
+
+    expect(() => loadConfig()).toThrow(ConfigError);
+    expect(() => loadConfig()).toThrow(
+      'Missing required environment variable(s): CONTRACT_ADDRESSES.'
+    );
+  });
+
   it('throws a descriptive error for invalid integer variables', () => {
     process.env.EVENTS_API_PORT = 'eighty';
 
@@ -44,9 +56,9 @@ describe('Config validation', () => {
   });
 
   it('loads default values when optional environment variables are omitted', () => {
+    process.env.CONTRACT_ADDRESSES = JSON.stringify([{ address: 'CTEST', events: ['*'] }]);
     delete process.env.STELLAR_NETWORK;
     delete process.env.STELLAR_RPC_URL;
-    delete process.env.CONTRACT_ADDRESSES;
     delete process.env.POLL_INTERVAL_MS;
     delete process.env.MAX_RECONNECT_ATTEMPTS;
     delete process.env.RECONNECT_DELAY_MS;
@@ -64,7 +76,7 @@ describe('Config validation', () => {
     expect(config).toMatchObject({
       stellarNetwork: 'testnet',
       stellarRpcUrl: 'https://soroban-testnet.stellar.org:443',
-      contractAddresses: [],
+      contractAddresses: [{ address: 'CTEST', events: ['*'] }],
       pollIntervalMs: 30000,
       maxReconnectAttempts: 5,
       reconnectDelayMs: 5000,
@@ -73,6 +85,20 @@ describe('Config validation', () => {
       retryQueue: {
         baseDelayMs: 5000,
         maxRetries: 5,
+      },
+      analytics: {
+        enabled: true,
+        maxRecords: 10000,
+        maxBuckets: 168,
+        persistIntervalMs: 300000,
+        snapshotRetentionDays: 30,
+      },
+      cleanup: {
+        intervalMs: 3600000,
+        notificationRetentionMs: 604800000,
+        rateLimitEventRetentionMs: 86400000,
+        eventRetentionMs: 86400000,
+        executionLogRetentionMs: 7776000000,
       },
     });
   });
@@ -90,6 +116,83 @@ describe('Config validation', () => {
       webhookId: '123',
       deduplicationWindowMs: 15000,
       deduplicationMaxSize: 250,
+    });
+  });
+
+  describe('EXPIRATION_CONFIG', () => {
+    it('loads default expiration settings when not specified', () => {
+      delete process.env.EXPIRATION_ENABLED;
+      delete process.env.EXPIRATION_DEFAULT_MS;
+      delete process.env.EXPIRATION_PER_EVENT_TYPE;
+
+      const config = loadConfig();
+
+      expect(config.expiration).toMatchObject({
+        enabled: true,
+        defaultExpirationMs: 86400000, // 24 hours
+        perEventTypeExpiration: undefined,
+      });
+    });
+
+    it('loads custom default expiration time', () => {
+      process.env.EXPIRATION_DEFAULT_MS = '3600000'; // 1 hour
+      delete process.env.EXPIRATION_PER_EVENT_TYPE;
+
+      const config = loadConfig();
+
+      expect(config.expiration).toMatchObject({
+        enabled: true,
+        defaultExpirationMs: 3600000,
+      });
+    });
+
+    it('loads per-event-type expiration settings', () => {
+      process.env.EXPIRATION_PER_EVENT_TYPE = JSON.stringify({
+        notification_scheduled: 3600000,
+        alert: 604800000,
+      });
+
+      const config = loadConfig();
+
+      expect(config.expiration?.perEventTypeExpiration).toEqual({
+        notification_scheduled: 3600000,
+        alert: 604800000,
+      });
+    });
+
+    it('disables expiration when EXPIRATION_ENABLED is false', () => {
+      process.env.EXPIRATION_ENABLED = 'false';
+
+      const config = loadConfig();
+
+      expect(config.expiration?.enabled).toBe(false);
+    });
+
+    it('throws ConfigError for invalid EXPIRATION_DEFAULT_MS', () => {
+      process.env.EXPIRATION_DEFAULT_MS = 'not-a-number';
+
+      expect(() => loadConfig()).toThrow(ConfigError);
+      expect(() => loadConfig()).toThrow(
+        'EXPIRATION_DEFAULT_MS must be a valid integer, got "not-a-number"'
+      );
+    });
+
+    it('throws ConfigError for invalid EXPIRATION_PER_EVENT_TYPE JSON', () => {
+      process.env.EXPIRATION_PER_EVENT_TYPE = 'not-json';
+
+      expect(() => loadConfig()).toThrow(ConfigError);
+      expect(() => loadConfig()).toThrow(
+        'EXPIRATION_PER_EVENT_TYPE must be valid JSON. Received: not-json'
+      );
+    });
+
+    it('throws ConfigError when EXPIRATION_PER_EVENT_TYPE is not an object', () => {
+      process.env.EXPIRATION_PER_EVENT_TYPE = '["array", "value"]';
+
+      expect(() => loadConfig()).toThrow(ConfigError);
+      expect(() => loadConfig()).toThrow(
+        'EXPIRATION_PER_EVENT_TYPE must be a valid JSON object'
+      );
     });
   });
 

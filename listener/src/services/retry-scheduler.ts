@@ -4,6 +4,8 @@ import { generateRequestId } from '../utils/request-id';
 import { ScheduledNotificationRepository } from './scheduled-notification-repository';
 import { ScheduledNotification, NotificationStatus } from '../types/scheduled-notification';
 import { DiscordNotificationService } from './discord-notification';
+import { WebhookDeliveryService } from './webhook-delivery-service';
+import { getWorkerManager } from './worker-manager';
 
 export interface RetrySchedulerConfig {
   /** Whether the scheduler is enabled. */
@@ -73,18 +75,21 @@ export class RetryScheduler {
   private readonly processorId: string;
   private repository: ScheduledNotificationRepository;
   private discordService: DiscordNotificationService | null;
+  private webhookDeliveryService: WebhookDeliveryService;
   private timer: NodeJS.Timeout | null = null;
   private running = false;
 
   constructor(
     repository: ScheduledNotificationRepository,
     config: Partial<RetrySchedulerConfig> = {},
-    discordService?: DiscordNotificationService | null
+    discordService?: DiscordNotificationService | null,
+    webhookDeliveryService?: WebhookDeliveryService,
   ) {
     this.config = { ...RETRY_SCHEDULER_DEFAULTS, ...config };
     this.processorId = this.config.processorId ?? `retry-${uuidv4()}`;
     this.repository = repository;
     this.discordService = discordService ?? null;
+    this.webhookDeliveryService = webhookDeliveryService ?? new WebhookDeliveryService();
   }
 
   async start(): Promise<void> {
@@ -118,6 +123,11 @@ export class RetryScheduler {
       clearTimeout(this.timer);
       this.timer = null;
     }
+
+    // Wait for all active jobs to complete
+    const workerManager = getWorkerManager();
+    await workerManager.initiateGracefulShutdown();
+
     logger.info('RetryScheduler stopped', { processorId: this.processorId });
   }
 
@@ -149,6 +159,25 @@ export class RetryScheduler {
 
       if (notifications.length === 0) return;
 
+      // Check if shutdown is in progress - don't accept new jobs
+      const workerManager = getWorkerManager();
+      if (workerManager.isShutdownInProgress()) {
+        logger.info('Shutdown in progress - releasing unprocessed retries', {
+          requestId,
+          count: notifications.length,
+        });
+        // Release locks on unprocessed retries
+        for (const notification of notifications) {
+          await this.repository.markAsFailedOrRetry(
+            notification.id!,
+            new Error('Retry scheduler shutting down'),
+            notification.retryCount,
+            notification.maxRetries
+          );
+        }
+        return;
+      }
+
       logger.info('RetryScheduler processing batch', {
         requestId,
         processorId: this.processorId,
@@ -156,7 +185,24 @@ export class RetryScheduler {
       });
 
       for (const notification of notifications) {
-        await this.processRetry(notification, requestId);
+        const jobId = `retry-${notification.id}`;
+        if (!workerManager.startJob(jobId)) {
+          // Shutdown is in progress, don't process new jobs
+          logger.info('Job rejected - retry scheduler shutting down', { jobId });
+          await this.repository.markAsFailedOrRetry(
+            notification.id!,
+            new Error('Retry scheduler shutting down'),
+            notification.retryCount,
+            notification.maxRetries
+          );
+          continue;
+        }
+
+        try {
+          await this.processRetry(notification, requestId);
+        } finally {
+          workerManager.completeJob(jobId);
+        }
       }
     } catch (err) {
       logger.error('RetryScheduler poll error', { requestId, error: err });
@@ -167,14 +213,15 @@ export class RetryScheduler {
     notification: ScheduledNotification,
     requestId: string
   ): Promise<void> {
-    const attempt = notification.retryCount; // already incremented on prior failure
+    const priorFailures = notification.retryCount;
+    const executionAttempt = priorFailures + 1;
     const startMs = Date.now();
 
     logger.info('Retrying notification', {
       requestId,
       id: notification.id,
       type: notification.notificationType,
-      attempt,
+      attempt: executionAttempt,
       maxRetries: notification.maxRetries,
     });
 
@@ -186,12 +233,12 @@ export class RetryScheduler {
         await this.repository.markAsCompleted(notification.id!, requestId);
         await this.repository.logExecution({
           scheduledNotificationId: notification.id!,
-          executionAttempt: attempt,
+          executionAttempt,
           executionTime: new Date(),
           status: 'SUCCESS',
           durationMs,
         });
-        logger.info('Retry succeeded', { requestId, id: notification.id, attempt });
+        logger.info('Retry succeeded', { requestId, id: notification.id, attempt: executionAttempt });
         return;
       }
 
@@ -199,14 +246,14 @@ export class RetryScheduler {
     } catch (err) {
       const durationMs = Date.now() - startMs;
       const error = err as Error;
-      const isFinalAttempt = attempt >= notification.maxRetries;
+      const isFinalAttempt = priorFailures + 1 >= notification.maxRetries;
 
       const nextRetryAt = isFinalAttempt
         ? undefined
         : new Date(
             Date.now() +
               calculateBackoffDelay(
-                attempt,
+                priorFailures,
                 this.config.baseDelayMs,
                 this.config.multiplier,
                 this.config.maxDelayMs,
@@ -217,14 +264,14 @@ export class RetryScheduler {
       await this.repository.markAsFailedOrRetry(
         notification.id!,
         error,
-        attempt,
+        priorFailures,
         notification.maxRetries,
         nextRetryAt
       );
 
       await this.repository.logExecution({
         scheduledNotificationId: notification.id!,
-        executionAttempt: attempt,
+        executionAttempt,
         executionTime: new Date(),
         status: isFinalAttempt ? 'FAILED' : 'RETRY',
         errorMessage: error.message,
@@ -235,13 +282,13 @@ export class RetryScheduler {
         logger.error('Notification permanently failed after max retries', {
           requestId,
           id: notification.id,
-          totalAttempts: attempt,
+          totalAttempts: executionAttempt,
         });
       } else {
         logger.warn('Retry failed, scheduling next attempt', {
           requestId,
           id: notification.id,
-          attempt,
+          attempt: executionAttempt,
           nextRetryAt: nextRetryAt?.toISOString(),
         });
       }
@@ -262,6 +309,21 @@ export class RetryScheduler {
           payload.contractConfig,
           `retry-${notification.id}-${requestId}`
         );
+
+      case 'webhook': {
+        const targetUrl: string = notification.targetRecipient;
+        if (!targetUrl) throw new Error('Webhook notification missing targetRecipient URL');
+        const result = await this.webhookDeliveryService.deliver(
+          targetUrl,
+          payload,
+          `retry-${notification.id}-${requestId}`,
+        );
+        if (!result.success) {
+          // Surface the specific reason so it lands in markAsFailedOrRetry's error details
+          throw new Error(result.errorReason ?? `Webhook delivery failed (HTTP ${result.statusCode ?? 'unknown'})`);
+        }
+        return true;
+      }
 
       default:
         throw new Error(`Unsupported notification type: ${notification.notificationType}`);

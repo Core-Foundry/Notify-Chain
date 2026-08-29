@@ -7,9 +7,13 @@ interface PaginationControlsProps {
   totalCount: number;
   onPageChange: (page: number) => void;
   onLimitChange: (limit: number) => void;
+  /** Override the page-size dropdown options. Defaults to [8, 12, 20, 40]. */
+  pageSizeOptions?: number[];
+  /** Override the label shown after the total count. Defaults to "events". */
+  summaryLabel?: string;
 }
 
-const LIMIT_OPTIONS = [8, 12, 20, 40];
+const DEFAULT_LIMIT_OPTIONS = [8, 12, 20, 40];
 
 export const PaginationControls = memo(function PaginationControls({
   page,
@@ -18,6 +22,8 @@ export const PaginationControls = memo(function PaginationControls({
   totalCount,
   onPageChange,
   onLimitChange,
+  pageSizeOptions = DEFAULT_LIMIT_OPTIONS,
+  summaryLabel = 'events',
 }: PaginationControlsProps) {
   const handlePrevious = useCallback(() => {
     onPageChange(Math.max(1, page - 1));
@@ -61,7 +67,7 @@ export const PaginationControls = memo(function PaginationControls({
           value={limit}
           onChange={handleLimitChange}
         >
-          {LIMIT_OPTIONS.map((option) => (
+          {pageSizeOptions.map((option) => (
             <option key={option} value={option}>
               {option}
             </option>

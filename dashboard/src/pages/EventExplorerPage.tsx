@@ -5,20 +5,29 @@ import { WalletConnectButton } from '../components/WalletConnectButton';
 import { EventExplorerTable } from '../components/EventExplorerTable';
 import { EventExplorerSkeleton } from '../components/EventExplorerSkeleton';
 import { PaginationControls } from '../components/PaginationControls';
+import { NotificationDetailsDrawer } from '../components/NotificationDetailsDrawer';
 import { IndexingHealthPanel } from '../components/IndexingHealthPanel';
+import { NotificationHealthPanel } from '../components/NotificationHealthPanel';
+import { EmptyState } from '../components/EmptyState';
 import { useEventFilters, useEventLoadingState, useFilteredEvents } from '../hooks/useEventSelectors';
 import { useEventStore } from '../store/eventStore';
 import { fetchEvents, fetchStatus, type ContractStatus } from '../services/eventsApi';
 import { resolveIndexingHealthUrl } from '../services/indexingHealthApi';
+import { resolveNotificationHealthUrl } from '../services/notificationHealthApi';
 import { generateMockEvents } from '../utils/eventData';
 import { restoreWalletSession } from '../services/wallet';
+import type { BlockchainEvent } from '../types/event';
+import { useWalletAccountSync } from '../hooks/useWalletAccountSync';
 
 const DEFAULT_EVENT_COUNT = 5000;
 const DEFAULT_LIMIT = 12;
 const API_URL = import.meta.env.VITE_EVENTS_API_URL ?? 'http://localhost:8787/api/events';
+const POLL_INTERVAL_MS = 15_000;
 const LISTENER_BASE_URL = API_URL.replace('/api/events', '');
 const INDEXING_HEALTH_URL =
   import.meta.env.VITE_INDEXING_HEALTH_URL ?? resolveIndexingHealthUrl(API_URL);
+const NOTIFICATION_HEALTH_URL =
+  import.meta.env.VITE_NOTIFICATION_HEALTH_URL ?? resolveNotificationHealthUrl(API_URL);
 
 function parsePageParam(search: string) {
   const params = new URLSearchParams(search);
@@ -36,11 +45,24 @@ export function EventExplorerPage() {
   const initialSearch = typeof window !== 'undefined' ? window.location.search : '';
   const [page, setPage] = useState(() => parsePageParam(initialSearch));
   const [limit, setLimit] = useState(() => parseLimitParam(initialSearch));
+  const [selectedNotification, setSelectedNotification] = useState<BlockchainEvent | null>(null);
   const [contractStatuses, setContractStatuses] = useState<ContractStatus[]>([]);
 
   const setEvents = useEventStore((state) => state.setEvents);
   const setLoading = useEventStore((state) => state.setLoading);
   const setError = useEventStore((state) => state.setError);
+  const markSyncSuccess = useEventStore((state) => state.markSyncSuccess);
+  const markSyncFailure = useEventStore((state) => state.markSyncFailure);
+  const setSearch = useEventStore((state) => state.setSearch);
+  const setContractFilter = useEventStore((state) => state.setContractFilter);
+  const setEventTypeFilter = useEventStore((state) => state.setEventTypeFilter);
+  const setStatusFilter = useEventStore((state) => state.setStatusFilter);
+  const setDateFrom = useEventStore((state) => state.setDateFrom);
+  const setDateTo = useEventStore((state) => state.setDateTo);
+  // Re-fetch whenever lastFetchedAt is reset to 0 (via invalidateEvents()) so
+  // that a successful blockchain status-change transaction is reflected on the
+  // next render cycle without requiring a full hard refresh.
+  const lastFetchedAt = useEventStore((state) => state.lastFetchedAt);
   const { isLoading, error } = useEventLoadingState();
   const filters = useEventFilters();
   const filteredEvents = useFilteredEvents();
@@ -50,6 +72,13 @@ export function EventExplorerPage() {
   }, []);
 
   useEffect(() => {
+    // Guard: skip the re-fetch if we already have fresh data from this session.
+    // lastFetchedAt === 0 means either first load or an explicit cache
+    // invalidation (e.g. after a blockchain transaction mutated notification state).
+    if (lastFetchedAt !== 0) {
+      return;
+    }
+
     let cancelled = false;
 
     async function loadEvents() {
@@ -60,11 +89,13 @@ export function EventExplorerPage() {
         const remoteEvents = await fetchEvents(API_URL);
         if (!cancelled) {
           setEvents(remoteEvents);
+          markSyncSuccess();
         }
       } catch {
         if (!cancelled) {
           setEvents(generateMockEvents(DEFAULT_EVENT_COUNT));
           setError('Listener API unavailable — showing mock events for demo.');
+          markSyncFailure('Initial sync failed');
         }
       } finally {
         if (!cancelled) {
@@ -87,10 +118,50 @@ export function EventExplorerPage() {
     loadEvents();
     loadStatus();
 
+    // Poll for status updates so delivered/failed notifications are reflected
+    // without requiring a manual page refresh.
+    const intervalId = setInterval(async () => {
+      try {
+        const remoteEvents = await fetchEvents(API_URL);
+        if (!cancelled) {
+          setEvents(remoteEvents);
+          markSyncSuccess();
+        }
+      } catch {
+        if (!cancelled) {
+          markSyncFailure('Background refresh failed');
+        }
+      }
+    }, POLL_INTERVAL_MS);
+
     return () => {
       cancelled = true;
+      clearInterval(intervalId);
     };
-  }, [setEvents, setError, setLoading]);
+  }, [lastFetchedAt, setEvents, setError, setLoading]);
+
+  // Clear stale events and re-fetch whenever the connected wallet address
+  // changes (switch or disconnect). This is the fix for issue #175.
+  useWalletAccountSync(() => {
+    setEvents([]);
+    setError(null);
+    setPage(1);
+
+    setLoading(true);
+    fetchEvents(API_URL)
+      .then((remoteEvents) => {
+        setEvents(remoteEvents);
+        markSyncSuccess();
+      })
+      .catch(() => {
+        setEvents(generateMockEvents(DEFAULT_EVENT_COUNT));
+        setError('Listener API unavailable — showing mock events for demo.');
+        markSyncFailure('Wallet refresh failed');
+      })
+      .finally(() => {
+        setLoading(false);
+      });
+  });
 
   const pageCount = useMemo(
     () => Math.max(1, Math.ceil(filteredEvents.length / limit)),
@@ -127,6 +198,16 @@ export function EventExplorerPage() {
   const fromIndex = filteredEvents.length === 0 ? 0 : (page - 1) * limit + 1;
   const toIndex = Math.min(filteredEvents.length, page * limit);
 
+  const handleClearFilters = useCallback(() => {
+    setSearch('');
+    setContractFilter('');
+    setEventTypeFilter('');
+    setStatusFilter('all');
+    setDateFrom('');
+    setDateTo('');
+    setPage(1);
+  }, [setSearch, setContractFilter, setEventTypeFilter, setStatusFilter, setDateFrom, setDateTo]);
+
   const handleRetry = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -134,13 +215,23 @@ export function EventExplorerPage() {
     try {
       const remoteEvents = await fetchEvents(API_URL);
       setEvents(remoteEvents);
+      markSyncSuccess();
     } catch {
       setEvents(generateMockEvents(DEFAULT_EVENT_COUNT));
       setError('Retry failed — still using demo event data.');
+      markSyncFailure('Manual refresh failed');
     } finally {
       setLoading(false);
     }
-  }, [setError, setEvents, setLoading]);
+  }, [markSyncFailure, markSyncSuccess, setError, setEvents, setLoading]);
+
+  const handleSelectEvent = useCallback((event: BlockchainEvent) => {
+    setSelectedNotification(event);
+  }, []);
+
+  const handleCloseDrawer = useCallback(() => {
+    setSelectedNotification(null);
+  }, []);
 
   return (
     <main className="event-explorer-page">
@@ -177,6 +268,7 @@ export function EventExplorerPage() {
         </section>
       )}
       <IndexingHealthPanel healthUrl={INDEXING_HEALTH_URL} />
+      <NotificationHealthPanel healthUrl={NOTIFICATION_HEALTH_URL} />
 
       <EventFiltersBar />
       <NotificationSearchBar />
@@ -203,15 +295,18 @@ export function EventExplorerPage() {
       {isLoading ? (
         <EventExplorerSkeleton rows={Math.min(limit, 8)} />
       ) : currentPageEvents.length > 0 ? (
-        <EventExplorerTable events={currentPageEvents} />
+        <EventExplorerTable
+          events={currentPageEvents}
+          onSelectEvent={handleSelectEvent}
+          contractStatuses={contractStatuses}
+        />
       ) : (
-        <section className="event-explorer__empty-state" role="status" aria-live="polite">
-          <h2>No events found</h2>
-          <p>
-            Update the search, event type, or contract filter to uncover matching Soroban
-            contract events.
-          </p>
-        </section>
+        <EmptyState
+          icon="🔍"
+          title="No events found"
+          description="Update the search, event type, or contract filter to uncover matching Soroban contract events."
+          action={{ label: 'Clear filters', onClick: handleClearFilters }}
+        />
       )}
 
       <PaginationControls
@@ -221,6 +316,12 @@ export function EventExplorerPage() {
         totalCount={filteredEvents.length}
         onPageChange={setPage}
         onLimitChange={setLimit}
+      />
+
+      <NotificationDetailsDrawer
+        isOpen={Boolean(selectedNotification)}
+        notification={selectedNotification}
+        onClose={handleCloseDrawer}
       />
     </main>
   );

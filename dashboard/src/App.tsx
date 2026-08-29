@@ -2,38 +2,94 @@ import { useState, useCallback } from 'react';
 import { EventExplorerPage } from './pages/EventExplorerPage';
 import { NotificationTimelineView } from './components/NotificationTimelineView';
 
-type Tab = 'explorer' | 'timeline';
+    if (next !== current) {
+      tabs[next]?.focus();
+      const navItem = NAV_ITEMS[next];
+      if (navItem) setTab(navItem.id);
+    }
+  }, []);
 
-export function App() {
-  const [tab, setTab] = useState<Tab>('explorer');
+  const handleDrawerOpen = useCallback(() => setDrawerOpen(true), []);
+  const handleDrawerClose = useCallback(() => setDrawerOpen(false), []);
 
   const handleTabChange = useCallback((newTab: Tab) => {
     setTab(newTab);
   }, []);
 
   return (
-    <div className="app">
-      <nav className="app-tabs" role="tablist" aria-label="Main navigation">
-        <button
-          role="tab"
-          aria-selected={tab === 'explorer'}
-          className={`app-tabs__btn${tab === 'explorer' ? ' app-tabs__btn--active' : ''}`}
-          onClick={() => handleTabChange('explorer')}
-        >
-          Event Explorer
-        </button>
-        <button
-          role="tab"
-          aria-selected={tab === 'timeline'}
-          className={`app-tabs__btn${tab === 'timeline' ? ' app-tabs__btn--active' : ''}`}
-          onClick={() => handleTabChange('timeline')}
-        >
-          Delivery Timeline
-        </button>
-      </nav>
+    <ToastProvider>
+      <DashboardLayout
+        activeTab={tab}
+        onSelectTab={setTab}
+        drawerOpen={drawerOpen}
+        onDrawerOpen={handleDrawerOpen}
+        onDrawerClose={handleDrawerClose}
+        tabListRef={tabListRef}
+        hamburgerRef={hamburgerRef}
+        onTabKeyDown={handleTabKeyDown}
+        themeBar={
+          <>
+            <SyncStatus />
+            <ThemeToggle theme={theme} onToggle={toggleTheme} />
+          </>
+        }
+      >
+        {NAV_ITEMS.map((item) => (
+          <div
+            key={item.id}
+            role="tabpanel"
+            id={`panel-${item.id}`}
+            aria-labelledby={`tab-${item.id}`}
+            hidden={tab !== item.id}
+            className="app__panel"
+          >
+            {tab === item.id && renderPanel(item.id, events)}
+          </div>
+        ))}
+      </DashboardLayout>
 
-      {tab === 'explorer' && <EventExplorerPage />}
-      {tab === 'timeline' && <NotificationTimelineView />}
-    </div>
+      <MobileNavDrawer
+        isOpen={drawerOpen}
+        onClose={handleDrawerClose}
+        activeTab={tab}
+        onSelectTab={(t) => {
+          setTab(t);
+          handleDrawerClose();
+        }}
+      />
+    </ToastProvider>
   );
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function renderPanel(tab: Tab, events: any[]) {
+  switch (tab) {
+    case 'explorer':
+      return (
+        <>
+          <EventExplorerPage />
+          <DeliveryHeatmap events={events} />
+        </>
+      );
+    case 'timeline':
+      return <NotificationTimelineView />;
+    case 'activity':
+      return <ActivityFeed />;
+    case 'user-activity':
+      return <UserActivityTimeline />;
+    case 'retry-stats':
+      return <RetryStatisticsPanel />;
+    case 'webhooks':
+      return <WebhookDashboardPage />;
+    case 'export-history':
+      return <ExportHistoryPage />;
+    case 'search':
+      return <NotificationSearchPage />;
+    case 'preferences':
+      return <NotificationPreferencesPage />;
+    case 'templates':
+      return <TemplatesPage />;
+    default:
+      return null;
+  }
 }

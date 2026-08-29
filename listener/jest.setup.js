@@ -1,17 +1,7 @@
-
-beforeEach(() => {
-  jest.useFakeTimers({ legacyFakeTimers: false });
-  jest.clearAllTimers();
-});
+const { resetWorkerManager } = require('./src/services/worker-manager');
 
 afterEach(() => {
-  try {
-    jest.runOnlyPendingTimers();
-    jest.runAllTimers();
-  } finally {
-    jest.clearAllTimers();
-    jest.useRealTimers();
-    jest.restoreAllMocks();
-    jest.resetAllMocks();
-  }
+  jest.clearAllTimers();
+  jest.useRealTimers();
+  resetWorkerManager();
 });
