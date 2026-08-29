@@ -1,6 +1,4 @@
 import { Config, ContractConfig, DiscordConfig, WebhookSecret, AppCleanupConfig, EventQueueConfig, RetrySchedulerOptions, AnalyticsConfig, ExpirationConfig, ApiKey } from './types';
-import { Config, ContractConfig, DiscordConfig, WebhookSecret, AppCleanupConfig, EventQueueConfig, RetrySchedulerOptions, AnalyticsConfig } from './types';
-import { Config, ContractConfig, DiscordConfig, WebhookSecret, ApiKey, AppCleanupConfig, EventQueueConfig, RetrySchedulerOptions, AnalyticsConfig } from './types';
 
 export class ConfigError extends Error {
   constructor(message: string) {
@@ -225,7 +223,6 @@ export function loadConfig(): Config {
     'RATE_LIMIT_CLIENT_OVERRIDES',
     '{}'
   );
-  const rawApiKeys = parseJsonEnv<unknown>('API_KEYS', '[]');
 
   return {
     stellarNetwork: trimEnv('STELLAR_NETWORK') || 'testnet',
