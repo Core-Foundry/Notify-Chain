@@ -1,4 +1,4 @@
-use soroban_sdk::{contracttype, Address, Env};
+use soroban_sdk::{contracttype, Address};
 
 /// Sender reputation score and metrics.
 ///
@@ -130,6 +130,7 @@ impl SenderReputation {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use soroban_sdk::Env;
 
     #[test]
     fn test_reputation_tier_classification() {

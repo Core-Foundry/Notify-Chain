@@ -9,7 +9,6 @@
 #[cfg(test)]
 mod template_registry_tests {
     use crate::base::events::{NotificationCategory, NotificationPriority};
-    use crate::base::errors::Error;
     use crate::test_utils::setup_test_env;
     use crate::{AutoShareContract, AutoShareContractClient};
     use soroban_sdk::{

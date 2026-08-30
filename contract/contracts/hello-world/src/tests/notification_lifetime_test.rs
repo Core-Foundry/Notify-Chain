@@ -18,7 +18,7 @@ use crate::base::events::NotificationPriority;
 use crate::test_utils::setup_test_env;
 use crate::AutoShareContractClient;
 
-use soroban_sdk::testutils::{Address as _, Ledger};
+use soroban_sdk::testutils::Ledger;
 use soroban_sdk::{BytesN, Env, String};
 
 /// 30 days in seconds — must stay in sync with `MAX_NOTIFICATION_LIFETIME_SECONDS`

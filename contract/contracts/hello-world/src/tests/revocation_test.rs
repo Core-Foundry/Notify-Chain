@@ -52,24 +52,6 @@ fn topics_of(env: &Env, event_name: &str) -> Option<Vec<Val>> {
     found
 }
 
-/// Returns the data payload of the latest event named `event_name`.
-fn data_of(env: &Env, event_name: &str) -> Option<Val> {
-    let target = Symbol::new(env, event_name);
-    let mut found: Option<Val> = None;
-    for (_addr, topics, data) in env.events().all().iter() {
-        if topics.is_empty() {
-            continue;
-        }
-        let first = topics.get(0).unwrap();
-        if let Ok(name) = Symbol::try_from_val(env, &first) {
-            if name == target {
-                found = Some(data);
-            }
-        }
-    }
-    found
-}
-
 #[test]
 fn test_revoke_notification_by_creator() {
     let test_env = setup_test_env();
@@ -240,6 +222,7 @@ fn test_cannot_expire_revoked_notification() {
     client.expire_notification(&id);
 }
 
+#[test]
 #[should_panic]
 fn test_revoke_notification_while_contract_paused_fails() {
     let test_env = setup_test_env();

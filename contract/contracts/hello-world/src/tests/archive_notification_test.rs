@@ -10,8 +10,8 @@ use crate::AutoShareContractClient;
 
 extern crate std;
 
-use soroban_sdk::testutils::{Events, Ledger};
-use soroban_sdk::{BytesN, Env, String, Symbol, TryFromVal, Val, Vec};
+use soroban_sdk::testutils::Ledger;
+use soroban_sdk::{BytesN, Env, String};
 
 const ONE_HOUR: u64 = 3_600;
 
@@ -23,23 +23,6 @@ fn make_id(env: &Env, tag: u8) -> BytesN<32> {
 
 fn set_now(env: &Env, timestamp: u64) {
     env.ledger().set_timestamp(timestamp);
-}
-
-fn topics_of(env: &Env, event_name: &str) -> Option<Vec<Val>> {
-    let target = Symbol::new(env, event_name);
-    let mut found: Option<Vec<Val>> = None;
-    for (_addr, topics, _data) in env.events().all().iter() {
-        if topics.is_empty() {
-            continue;
-        }
-        let first = topics.get(0).unwrap();
-        if let Ok(name) = Symbol::try_from_val(env, &first) {
-            if name == target {
-                found = Some(topics);
-            }
-        }
-    }
-    found
 }
 
 #[test]

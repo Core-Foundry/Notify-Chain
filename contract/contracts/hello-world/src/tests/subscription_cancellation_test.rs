@@ -7,12 +7,11 @@
 //! 3. Edge cases: non-member cannot cancel, already-inactive group is rejected,
 //!    paused contract blocks cancellation, member (non-creator) can cancel.
 
-use crate::base::errors::Error;
 use crate::base::events::{NotificationCategory, NotificationPriority};
 use crate::test_utils::{create_test_group, setup_test_env};
 use crate::AutoShareContractClient;
 
-use soroban_sdk::testutils::{Address as _, Events};
+use soroban_sdk::testutils::Events;
 use soroban_sdk::{Address, BytesN, Symbol, TryFromVal, Val, Vec};
 
 // ---------------------------------------------------------------------------

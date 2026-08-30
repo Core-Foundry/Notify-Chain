@@ -893,6 +893,7 @@ mod tests {
     mod pause_test;
     mod payload_validation_test;
     mod preferences_test;
+    mod reputation_test;
     mod revocation_test;
     mod schema_version_test;
     mod storage_optimization_test;

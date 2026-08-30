@@ -12,7 +12,7 @@ use crate::base::events::{NotificationCategory, NotificationPriority};
 use crate::test_utils::setup_test_env;
 use crate::AutoShareContractClient;
 
-use soroban_sdk::testutils::{Address as _, Events, Ledger};
+use soroban_sdk::testutils::{Events, Ledger};
 use soroban_sdk::{BytesN, Env, String, Symbol, TryFromVal, Val, Vec};
 
 const ONE_HOUR: u64 = 3_600;

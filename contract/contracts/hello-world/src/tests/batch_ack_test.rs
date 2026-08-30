@@ -6,12 +6,12 @@
 //! - Correct `NotificationAcknowledged` events are emitted.
 //! - Gas benchmarking to prove batching is more efficient than individual calls.
 
-use crate::base::events::{NotificationCategory, NotificationPriority};
+use crate::base::events::NotificationPriority;
 use crate::test_utils::setup_test_env;
 use crate::AutoShareContractClient;
 
 use soroban_sdk::testutils::{Address as _, Events, Ledger};
-use soroban_sdk::{Address, BytesN, Env, Symbol, TryFromVal, Val, Vec};
+use soroban_sdk::{Address, BytesN, Env, Symbol, TryFromVal, Vec};
 
 const ONE_HOUR: u64 = 3_600;
 

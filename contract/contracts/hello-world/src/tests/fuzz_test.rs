@@ -11,8 +11,6 @@ use proptest::prelude::*;
 use soroban_sdk::testutils::Address as _;
 use soroban_sdk::{Address, BytesN, Env, String, Vec};
 
-const ONE_HOUR: u64 = 3_600;
-
 fn notification_title(env: &Env) -> String {
     String::from_str(env, "Test notification")
 }
