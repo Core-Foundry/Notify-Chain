@@ -1,4 +1,4 @@
-import { Config, ContractConfig, DiscordConfig, WebhookSecret, AppCleanupConfig, EventQueueConfig, RetrySchedulerOptions, AnalyticsConfig, ExpirationConfig, ApiKey } from './types';
+import { Config, ContractConfig, DiscordConfig, WebhookSecret, AppCleanupConfig, EventQueueConfig, RetrySchedulerOptions, AnalyticsConfig, ExpirationConfig, ApiKey, BackfillConfig } from './types';
 
 export class ConfigError extends Error {
   constructor(message: string) {
@@ -215,6 +215,21 @@ function loadExpirationConfig(): ExpirationConfig {
   };
 }
 
+/**
+ * Load backfill safety configuration.
+ *
+ * BACKFILL_MAX_LEDGERS controls how many ledgers behind the network tip the
+ * listener will start from when it has no persisted cursor (cold start or
+ * after downtime).  Setting it to 0 restores the original unlimited behaviour.
+ *
+ * Default: 10 000 ledgers (~14 hours at ~5 s/ledger on Stellar).
+ */
+function loadBackfillConfig(): BackfillConfig {
+  return {
+    maxLedgers: parseIntegerEnv('BACKFILL_MAX_LEDGERS', '10000'),
+  };
+}
+
 export function loadConfig(): Config {
   validateRequiredEnvVars();
 
@@ -273,6 +288,7 @@ export function loadConfig(): Config {
     cleanup: loadCleanupConfig(),
     analytics: loadAnalyticsConfig(),
     expiration: loadExpirationConfig(),
+    backfill: loadBackfillConfig(),
   };
 }
 
@@ -529,6 +545,16 @@ export function validateConfig(config: Config): void {
       errors.push(
         `NOTIFICATION_RETENTION_MS must be >= 60000 ms ` +
           `(received: ${config.cleanup.notificationRetentionMs}).`,
+      );
+    }
+  }
+
+  // ── Backfill ───────────────────────────────────────────────────────────────
+  if (config.backfill) {
+    if (config.backfill.maxLedgers < 0) {
+      errors.push(
+        `BACKFILL_MAX_LEDGERS must be >= 0 (0 = unlimited). ` +
+          `(received: ${config.backfill.maxLedgers}).`,
       );
     }
   }
