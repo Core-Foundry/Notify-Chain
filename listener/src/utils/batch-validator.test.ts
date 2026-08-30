@@ -76,4 +76,21 @@ describe('BatchValidationService', () => {
       message: expect.stringContaining('at least one'),
     });
   });
+
+  it('handles edge case invalid payloads in BatchValidator', () => {
+    // null item in batch
+    const resNull = BatchValidator.validateBatch([null]);
+    expect(resNull.isValid).toBe(false);
+    expect(resNull.errors[0].code).toBe('INVALID_ITEM');
+
+    // non-string id / recipient / message
+    const resTypes = BatchValidator.validateBatch([{ id: 123, recipient: 456, channel: 'discord', message: true }]);
+    expect(resTypes.isValid).toBe(false);
+    expect(resTypes.errors.some(e => e.code === 'INVALID_TYPE')).toBe(true);
+
+    // malformed channel string
+    const resChannel = BatchValidator.validateBatch([{ id: '1', recipient: 'r', channel: 'invalid_chan', message: 'msg' }]);
+    expect(resChannel.isValid).toBe(false);
+    expect(resChannel.errors.some(e => e.code === 'INVALID_CHANNEL')).toBe(true);
+  });
 });

@@ -108,5 +108,21 @@ describe('validatePayloadSize', () => {
       const largePayload = { d: '🚀'.repeat(12) };
       expect(() => validatePayloadSize(largePayload, 50)).toThrow(PayloadTooLargeError);
     });
+
+    it('handles nested complex structures and deep objects', () => {
+      const nestedPayload = {
+        level1: {
+          level2: {
+            array: [1, 2, 3, 'test', { nested: 'value' }],
+          },
+        },
+      };
+      expect(() => validatePayloadSize(nestedPayload, 1000)).not.toThrow();
+      expect(() => validatePayloadSize(nestedPayload, 20)).toThrow(PayloadTooLargeError);
+    });
+
+    it('handles zero limit edge case', () => {
+      expect(() => validatePayloadSize({}, 0)).toThrow(PayloadTooLargeError);
+    });
   });
 });

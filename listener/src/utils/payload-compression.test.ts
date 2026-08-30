@@ -49,10 +49,16 @@ describe('payload compression utilities', () => {
     expect(decompressPayload(corruptedPayload)).toEqual(corruptedPayload);
   });
 
-  it('passes unsupported payload formats through safely', () => {
-    const unsupportedPayload = 42 as unknown;
+    it('handles null and undefined payload gracefully in compressPayload and decompressPayload', () => {
+      expect(compressPayload(null)).toBe('null');
+      expect(compressPayload(undefined)).toBe('undefined');
+      expect(decompressPayload(null as any)).toBe('');
+      expect(decompressPayload(undefined as any)).toBe('');
+    });
 
-    expect(compressPayload(unsupportedPayload)).toBe('42');
-    expect(decompressPayload(unsupportedPayload)).toBe('42');
+    it('handles empty string and non-string decompress safely', () => {
+      expect(decompressPayload('')).toBe('');
+      expect(decompressPayload({} as any)).toBe('');
+    });
   });
 });

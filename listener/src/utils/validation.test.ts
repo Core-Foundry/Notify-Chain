@@ -164,4 +164,10 @@ describe('validationErrorBody', () => {
       details: [{ field: 'name', message: 'is required' }],
     });
   });
+
+  it('handles single issue constructor for ValidationError', () => {
+    const single = new ValidationError({ field: 'channel', message: 'is invalid' });
+    expect(single.issues).toHaveLength(1);
+    expect(single.message).toBe('channel: is invalid');
+  });
 });
