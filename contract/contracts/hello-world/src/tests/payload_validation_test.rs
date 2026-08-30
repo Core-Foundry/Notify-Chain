@@ -654,3 +654,34 @@ fn test_consumer_can_filter_by_category() {
     assert!(notification_events >= 1, "at least one Notification event");
     assert_eq!(financial_events, 1, "one Financial event expected");
 }
+
+#[test]
+fn test_additional_payload_validation_edge_cases() {
+    let test_env = setup_test_env();
+    let client = AutoShareContractClient::new(&test_env.env, &test_env.autoshare_contract);
+    let creator = test_env.users.get(0).unwrap().clone();
+
+    // Schedule notification with empty title
+    let id1 = make_id(&test_env.env, 91);
+    let empty_title = String::from_str(&test_env.env, "");
+    let res_empty_title = client.try_schedule_notification(
+        &id1,
+        &creator,
+        &3600u64,
+        &empty_title,
+        &NotificationPriority::Low,
+    );
+    assert!(res_empty_title.is_err(), "empty title should be rejected");
+
+    // Schedule notification with zero expiration duration
+    let id2 = make_id(&test_env.env, 92);
+    let res_zero_exp = client.try_schedule_notification(
+        &id2,
+        &creator,
+        &0u64,
+        &make_title(&test_env.env),
+        &NotificationPriority::Low,
+    );
+    assert!(res_zero_exp.is_err(), "zero expiration duration should be rejected");
+}
+
