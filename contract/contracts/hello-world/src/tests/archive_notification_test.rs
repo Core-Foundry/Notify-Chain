@@ -4,6 +4,7 @@
 //! active storage into an immutable archive. Archived records remain queryable
 //! via `get_archived_notification` so no data is lost.
 
+use crate::base::events::NotificationPriority;
 use crate::test_utils::setup_test_env;
 use crate::AutoShareContractClient;
 
@@ -53,8 +54,7 @@ fn test_expire_archives_notification() {
         &id,
         &creator,
         &ONE_HOUR,
-        &String::from_str(&test_env.env, "Will expire"),
-    );
+        &String::from_str(&test_env.env, "Will expire"), &NotificationPriority::Medium);
 
     set_now(&test_env.env, 1_000 + ONE_HOUR + 1);
     client.expire_notification(&id);
@@ -88,8 +88,7 @@ fn test_cancel_archives_notification() {
         &id,
         &creator,
         &ONE_HOUR,
-        &String::from_str(&test_env.env, "Will cancel"),
-    );
+        &String::from_str(&test_env.env, "Will cancel"), &NotificationPriority::Medium);
 
     client.cancel_notification(&id, &creator);
 
@@ -115,8 +114,7 @@ fn test_delivery_archives_notification() {
         &id,
         &creator,
         &ONE_HOUR,
-        &String::from_str(&test_env.env, "Will deliver"),
-    );
+        &String::from_str(&test_env.env, "Will deliver"), &NotificationPriority::Medium);
 
     client.confirm_notification_delivery(&id, &creator);
 

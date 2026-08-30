@@ -7,10 +7,6 @@ use crate::base::events::{
     NotificationDelivered, NotificationExpired, NotificationExtended,
     NotificationLimitsConfigured, NotificationPriority, NotificationRecalled, NotificationRevoked,
     NotificationScheduled, OwnershipTransferInitiated, OwnershipTransferred,
-    ContractPaused, ContractUnpaused, GroupActivated, GroupDeactivated, NotificationAccessed,
-    NotificationAcknowledged, NotificationCategory, NotificationDelivered, NotificationExpired,
-    NotificationExtended, NotificationLimitsConfigured, NotificationPriority, NotificationRecalled,
-    NotificationRevoked, NotificationScheduled, OwnershipTransferInitiated, OwnershipTransferred,
     ScheduledNotificationCancelled, SchemaVersionSet, SubscriptionCancelled, Withdrawal,
 };
 use crate::base::metadata_validation::{validate_metadata, NotificationMetadata};
@@ -307,7 +303,6 @@ pub fn add_group_member(
     // Add new member (embedded in AutoShareDetails — no separate GroupMembers key)
     details.members.push_back(GroupMember {
         address,
-        address: address.clone(),
         percentage,
     });
 
@@ -1878,6 +1873,8 @@ pub fn record_delivery_attempt(
         return Err(Error::ContractPaused);
     }
 
+    guard_auditable_notification(&env, &notification_id)?;
+
     append_audit_record(&env, notification_id, AuditAction::DeliveryAttempt, actor);
     Ok(())
 }
@@ -1893,6 +1890,8 @@ pub fn record_delivery_failure(
     if get_paused_status(&env) {
         return Err(Error::ContractPaused);
     }
+
+    guard_auditable_notification(&env, &notification_id)?;
 
     append_audit_record(&env, notification_id, AuditAction::DeliveryFailed, actor);
     Ok(())
@@ -1910,7 +1909,24 @@ pub fn record_acknowledgment(
         return Err(Error::ContractPaused);
     }
 
+    guard_auditable_notification(&env, &notification_id)?;
+
     append_audit_record(&env, notification_id, AuditAction::Acknowledged, actor);
+    Ok(())
+}
+
+/// Shared precondition check for the audit-log helpers
+/// ([`record_delivery_attempt`], [`record_delivery_failure`],
+/// [`record_acknowledgment`]): the referenced notification must exist, must not
+/// have been revoked, and must not have expired.
+fn guard_auditable_notification(env: &Env, notification_id: &BytesN<32>) -> Result<(), Error> {
+    let notification = load_notification(env, notification_id).ok_or(Error::NotFound)?;
+    if is_revoked(&notification) {
+        return Err(Error::NotificationRevoked);
+    }
+    if is_expired(env, &notification) {
+        return Err(Error::NotificationExpired);
+    }
     Ok(())
 }
 
@@ -1974,7 +1990,6 @@ pub fn emit_batch_completed(
     batch_id: BytesN<32>,
     processed_count: u32,
 ) -> Result<(), Error> {
-pub fn emit_batch_completed(env: Env, batch_id: BytesN<32>, processed_count: u32) -> Result<(), Error> {
     BatchProcessingCompleted {
         batch_id,
         category: NotificationCategory::Notification,

@@ -325,9 +325,12 @@ impl AutoShareContract {
         autoshare_logic::get_total_usages_paid(env, id).unwrap()
     }
 
-    /// Reduces the usage count by 1.
-    pub fn reduce_usage(env: Env, id: BytesN<32>) {
-        let caller = env.current_contract_address();
+    /// Consumes one paid usage from a group's subscription.
+    ///
+    /// Only the group's creator may call this (they must authorize the call).
+    /// Reverts with `NoUsagesRemaining` once the balance reaches zero, and with
+    /// `GroupInactive` if the group has been deactivated.
+    pub fn reduce_usage(env: Env, id: BytesN<32>, caller: Address) {
         autoshare_logic::reduce_usage(env, id, caller).unwrap();
     }
 
@@ -778,63 +781,43 @@ impl AutoShareContract {
     ) -> base::types::ArchivedNotification {
         autoshare_logic::get_archived_notification(env, notification_id).unwrap()
     }
-}
-
-#[cfg(test)]
-#[path = "tests/test_utils.rs"]
-pub mod test_utils;
-
-#[cfg(test)]
-mod tests {
-    // Preexisting broken suites temporarily excluded so new feature tests can compile.
-    // mod test_utils_test;
-    // mod storage_optimization_test;
-    // mod preferences_test;
-    // mod autoshare_test;
-    // mod pause_test;
-    // mod mock_token_test;
-    mod version_test;
-    // mod notification_test;
-    // mod expiration_test;
-    // mod revocation_test;
-    // mod ownership_transfer_test;
-    // mod notification_validation_test;
-    // mod category_registry_test;
-    // mod batch_notification_test;
-    // mod audit_log_test;
-    // mod payload_validation_test;
-    // mod batch_ack_test;
-    // mod fuzz_test;
-    mod schema_version_test;
-    // mod access_log_test;
-    // mod subscription_cancellation_test;
-    mod channel_metadata_test;
-    mod notification_version_test;
-    mod metadata_validation_test;
-    mod archive_notification_test;
 
     // ============================================================================
     // Notification Channel Subscriptions
     // ============================================================================
 
     /// Creates a notification channel and permanently stores the creator address.
-    pub fn create_channel(env: Env, id: BytesN<32>, name: String, creator: Address) {
-        channel_logic::create_channel(env, id, name, creator).unwrap();
+    pub fn create_channel(
+        env: Env,
+        id: BytesN<32>,
+        name: String,
+        creator: Address,
+    ) -> Result<(), base::errors::Error> {
+        channel_logic::create_channel(env, id, name, creator)
     }
 
     /// Returns full channel metadata (creator, name, subscriber_count, etc.).
-    pub fn get_channel(env: Env, id: BytesN<32>) -> base::channel::NotificationChannel {
-        channel_logic::get_channel(env, id).unwrap()
+    pub fn get_channel(
+        env: Env,
+        id: BytesN<32>,
+    ) -> Result<base::channel::NotificationChannel, base::errors::Error> {
+        channel_logic::get_channel(env, id)
     }
 
     /// Returns the wallet address that originally created the channel.
-    pub fn get_channel_creator(env: Env, id: BytesN<32>) -> Address {
-        channel_logic::get_channel_creator(env, id).unwrap()
+    pub fn get_channel_creator(
+        env: Env,
+        id: BytesN<32>,
+    ) -> Result<Address, base::errors::Error> {
+        channel_logic::get_channel_creator(env, id)
     }
 
     /// Read-only view of the active subscriber count for a channel.
-    pub fn get_subscriber_count(env: Env, id: BytesN<32>) -> u32 {
-        channel_logic::get_subscriber_count(env, id).unwrap()
+    pub fn get_subscriber_count(
+        env: Env,
+        id: BytesN<32>,
+    ) -> Result<u32, base::errors::Error> {
+        channel_logic::get_subscriber_count(env, id)
     }
 
     /// Returns whether `subscriber` is currently subscribed to the channel.
@@ -843,13 +826,21 @@ mod tests {
     }
 
     /// Subscribe to a single notification channel.
-    pub fn subscribe(env: Env, channel_id: BytesN<32>, subscriber: Address) {
-        channel_logic::subscribe(env, channel_id, subscriber).unwrap();
+    pub fn subscribe(
+        env: Env,
+        channel_id: BytesN<32>,
+        subscriber: Address,
+    ) -> Result<(), base::errors::Error> {
+        channel_logic::subscribe(env, channel_id, subscriber)
     }
 
     /// Unsubscribe from a notification channel.
-    pub fn unsubscribe(env: Env, channel_id: BytesN<32>, subscriber: Address) {
-        channel_logic::unsubscribe(env, channel_id, subscriber).unwrap();
+    pub fn unsubscribe(
+        env: Env,
+        channel_id: BytesN<32>,
+        subscriber: Address,
+    ) -> Result<(), base::errors::Error> {
+        channel_logic::unsubscribe(env, channel_id, subscriber)
     }
 
     /// Subscribe to multiple channels in one transaction.
@@ -860,102 +851,53 @@ mod tests {
         env: Env,
         channel_ids: Vec<BytesN<32>>,
         subscriber: Address,
-    ) -> base::channel::BatchSubscribeResult {
-        channel_logic::batch_subscribe(env, channel_ids, subscriber).unwrap()
+    ) -> Result<base::channel::BatchSubscribeResult, base::errors::Error> {
+        channel_logic::batch_subscribe(env, channel_ids, subscriber)
     }
 }
 
 #[cfg(test)]
-pub mod test_utils {
-    #[path = "../tests/test_utils.rs"]
-    mod inner;
-    pub use inner::*;
-}
+#[path = "tests/test_utils.rs"]
+pub mod test_utils;
 
 #[cfg(test)]
 mod tests {
-    #[path = "tests/test_utils_test.rs"]
-    mod test_utils_test;
-    #[path = "tests/storage_optimization_test.rs"]
-    mod storage_optimization_test;
-    #[path = "tests/preferences_test.rs"]
-    mod preferences_test;
-    #[path = "tests/autoshare_test.rs"]
+    // Every suite below is compiled from `src/tests/<name>.rs`. A bare `mod`
+    // declaration inside this inline module resolves there automatically, so no
+    // `#[path]` attributes are needed.
+    // `access_control_test` targets an older contract API (std-only helpers,
+    // `NotificationCategory::Alert`, 4-arg `schedule_notification`) and was never
+    // wired into the crate. Excluded until it is ported to the current API.
+    // mod access_control_test;
+    mod access_log_test;
+    mod archive_notification_test;
+    mod audit_log_test;
     mod autoshare_test;
-    #[path = "tests/pause_test.rs"]
-    mod pause_test;
-    #[path = "tests/mock_token_test.rs"]
-    mod mock_token_test;
-    #[path = "tests/version_test.rs"]
-    mod version_test;
-    #[path = "tests/notification_test.rs"]
-    mod notification_test;
-    #[path = "tests/expiration_test.rs"]
-    mod expiration_test;
-    #[path = "tests/revocation_test.rs"]
-    mod revocation_test;
-    #[path = "tests/ownership_transfer_test.rs"]
-    mod ownership_transfer_test;
-    #[path = "tests/notification_validation_test.rs"]
-    mod notification_validation_test;
-    #[path = "tests/category_registry_test.rs"]
-    mod category_registry_test;
-    #[path = "tests/batch_notification_test.rs"]
-    mod batch_notification_test;
-    #[path = "tests/audit_log_test.rs"]
-    mod audit_log_test;
-    #[path = "tests/payload_validation_test.rs"]
-    mod payload_validation_test;
-    #[path = "tests/batch_ack_test.rs"]
     mod batch_ack_test;
-    #[path = "tests/fuzz_test.rs"]
-    mod fuzz_test;
-    #[path = "tests/schema_version_test.rs"]
-    mod schema_version_test;
-    #[path = "tests/access_log_test.rs"]
-    mod access_log_test;
-    #[path = "tests/subscription_cancellation_test.rs"]
-    mod subscription_cancellation_test;
-    #[path = "tests/extended_coverage_test.rs"]
-    mod extended_coverage_test;
-
-    #[path = "tests/notification_validation_test.rs"]
-    mod notification_validation_test;
-
-    #[path = "tests/category_registry_test.rs"]
-    mod category_registry_test;
-
-    #[path = "tests/batch_notification_test.rs"]
-    mod batch_notification_test;
-
-    #[path = "tests/batch_event_test.rs"]
     mod batch_event_test;
-
-    #[path = "tests/audit_log_test.rs"]
-    mod audit_log_test;
-
-    #[path = "tests/payload_validation_test.rs"]
-    mod payload_validation_test;
-
-    #[path = "tests/batch_ack_test.rs"]
-    mod batch_ack_test;
-
-    #[path = "tests/fuzz_test.rs"]
-    mod fuzz_test;
-
-    #[path = "tests/schema_version_test.rs"]
-    mod schema_version_test;
-
-    #[path = "tests/access_log_test.rs"]
-    mod access_log_test;
-
-    #[path = "../tests/template_registry_test.rs"]
-    mod template_registry_test;
-    #[path = "tests/subscription_cancellation_test.rs"]
-    mod subscription_cancellation_test;
-
-    #[path = "../tests/channel_subscription_test.rs"]
+    mod batch_notification_test;
+    mod category_registry_test;
+    mod channel_metadata_test;
     mod channel_subscription_test;
-    #[path = "tests/notification_lifetime_test.rs"]
+    mod edge_case_coverage_test;
+    mod expiration_test;
+    mod extended_coverage_test;
+    mod fuzz_test;
+    mod metadata_validation_test;
+    mod mock_token_test;
     mod notification_lifetime_test;
+    mod notification_test;
+    mod notification_validation_test;
+    mod notification_version_test;
+    mod ownership_transfer_test;
+    mod pause_test;
+    mod payload_validation_test;
+    mod preferences_test;
+    mod revocation_test;
+    mod schema_version_test;
+    mod storage_optimization_test;
+    mod subscription_cancellation_test;
+    mod template_registry_test;
+    mod test_utils_test;
+    mod version_test;
 }

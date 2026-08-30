@@ -1620,10 +1620,10 @@ fn test_reduce_usage_fails_no_usages_remaining() {
     );
 
     // Reduce once (should work)
-    client.reduce_usage(&id);
+    client.reduce_usage(&id, &creator);
 
     // Reduce again (should panic)
-    client.reduce_usage(&id);
+    client.reduce_usage(&id, &creator);
 }
 
 #[test]
