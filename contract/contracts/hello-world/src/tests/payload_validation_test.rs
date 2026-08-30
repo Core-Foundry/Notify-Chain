@@ -597,7 +597,6 @@ fn test_consumer_can_filter_by_category() {
 
     // Helper: get the category of the most recently emitted event (any event).
     let latest_category = |env: &Env| -> Option<NotificationCategory> {
-        use soroban_sdk::Val;
         let (_addr, topics, _data) = env.events().all().last()?;
         let n = topics.len();
         if n < 2 {
@@ -616,6 +615,7 @@ fn test_consumer_can_filter_by_category() {
         Some(NotificationCategory::Admin) => admin_events += 1,
         Some(NotificationCategory::Notification) => notification_events += 1,
         Some(NotificationCategory::Financial) => financial_events += 1,
+        Some(NotificationCategory::System) => {}
         None => {}
     };
 

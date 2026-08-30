@@ -9,7 +9,6 @@
 #[cfg(test)]
 mod template_registry_tests {
     use crate::base::events::{NotificationCategory, NotificationPriority};
-    use crate::base::errors::Error;
     use crate::test_utils::setup_test_env;
     use crate::{AutoShareContract, AutoShareContractClient};
     use soroban_sdk::{
@@ -196,10 +195,10 @@ mod template_registry_tests {
 
         let owner = test_env.users.get(0).unwrap();
         let id = make_id(&test_env.env, 6);
-        // 101-character name — exceeds the 100-byte limit.
+        // 110-character name — exceeds the 100-byte limit.
         let long_name = String::from_str(
             &test_env.env,
-            "aaaaaaaaaabbbbbbbbbbccccccccccddddddddddeeeeeeeeeeaaaaaaaaaabbbbbbbbbbccccccccccdddddddddde1",
+            "aaaaaaaaaabbbbbbbbbbccccccccccddddddddddeeeeeeeeeeffffffffffgggggggggghhhhhhhhhhiiiiiiiiiijjjjjjjjjjkkkkkkkkkk",
         );
         let content = String::from_str(&test_env.env, "Some content.");
 

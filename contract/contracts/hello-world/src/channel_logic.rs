@@ -105,7 +105,7 @@ pub fn unsubscribe(env: Env, channel_id: BytesN<32>, subscriber: Address) -> Res
 
     set_subscribed(&env, &channel_id, &subscriber, false);
 
-    let mut subscribers = load_subscribers(&env, &channel_id);
+    let subscribers = load_subscribers(&env, &channel_id);
     let mut next = Vec::new(&env);
     for addr in subscribers.iter() {
         if addr != subscriber {

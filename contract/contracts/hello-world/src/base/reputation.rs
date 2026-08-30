@@ -1,4 +1,4 @@
-use soroban_sdk::{contracttype, Address, Env};
+use soroban_sdk::{contracttype, Address};
 
 /// Sender reputation score and metrics.
 ///
@@ -52,23 +52,27 @@ pub fn reputation_tier_from_score(score: i64) -> ReputationTier {
 }
 
 /// Calculate reputation score based on delivery history.
+///
+/// The score maps the sender's success rate onto `[MIN_REPUTATION_SCORE,
+/// MAX_REPUTATION_SCORE]` using a convex (squared) curve, so that a perfect
+/// record earns the maximum, an all-failure record earns the minimum, and a
+/// mixed record is penalised more heavily than a linear map would (a 50%
+/// success rate scores ~25, not 50). A sender with no delivery history yet
+/// starts at `INITIAL_REPUTATION_SCORE`.
+///
+/// Integer arithmetic only — the contract must not depend on floating point.
 pub fn calculate_reputation_score(successful: u32, failed: u32) -> i64 {
     let total = successful.saturating_add(failed);
     if total == 0 {
         return INITIAL_REPUTATION_SCORE;
     }
 
-    let success_rate = (successful as f64 / total as f64) * 100.0;
-    let score = (success_rate / 2.0) as i64 + 25;
+    // Success rate as a whole percentage in `0..=100`.
+    let success_rate = (successful as u64).saturating_mul(100) / total as u64;
+    // Convex map onto the score range: rate² / 100.
+    let score = (success_rate.saturating_mul(success_rate) / 100) as i64;
 
-    // Clamp score to valid range
-    if score > MAX_REPUTATION_SCORE {
-        MAX_REPUTATION_SCORE
-    } else if score < MIN_REPUTATION_SCORE {
-        MIN_REPUTATION_SCORE
-    } else {
-        score
-    }
+    score.clamp(MIN_REPUTATION_SCORE, MAX_REPUTATION_SCORE)
 }
 
 impl SenderReputation {
@@ -126,6 +130,7 @@ impl SenderReputation {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use soroban_sdk::Env;
 
     #[test]
     fn test_reputation_tier_classification() {

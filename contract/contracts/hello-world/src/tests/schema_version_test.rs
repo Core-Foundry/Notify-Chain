@@ -1,7 +1,7 @@
 use crate::{AutoShareContract, AutoShareContractClient};
 use soroban_sdk::{testutils::Address as _, Address, Env};
 
-fn setup(env: &Env) -> (Address, AutoShareContractClient) {
+fn setup(env: &Env) -> (Address, AutoShareContractClient<'_>) {
     let id = env.register(AutoShareContract, ());
     let client = AutoShareContractClient::new(env, &id);
     let admin = Address::generate(env);

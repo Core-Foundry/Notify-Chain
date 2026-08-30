@@ -14,10 +14,11 @@
 //! - Extension that keeps total lifetime exactly at max → succeeds.
 //! - Batch with one entry over max → entire batch rejected.
 
+use crate::base::events::NotificationPriority;
 use crate::test_utils::setup_test_env;
 use crate::AutoShareContractClient;
 
-use soroban_sdk::testutils::{Address as _, Ledger};
+use soroban_sdk::testutils::Ledger;
 use soroban_sdk::{BytesN, Env, String};
 
 /// 30 days in seconds — must stay in sync with `MAX_NOTIFICATION_LIFETIME_SECONDS`
@@ -29,6 +30,15 @@ const ONE_HOUR: u64 = 3_600;
 
 fn notification_title(env: &Env) -> String {
     String::from_str(env, "Lifetime test notification")
+}
+
+/// Builds a `priorities` vector of length `n` for `batch_schedule_notifications`.
+fn batch_priorities(env: &Env, n: u32) -> soroban_sdk::Vec<NotificationPriority> {
+    let mut priorities = soroban_sdk::Vec::new(env);
+    for _ in 0..n {
+        priorities.push_back(NotificationPriority::Medium);
+    }
+    priorities
 }
 
 fn make_id(env: &Env, tag: u8) -> BytesN<32> {
@@ -54,8 +64,7 @@ fn test_schedule_at_max_lifetime_succeeds() {
         &id,
         &creator,
         &MAX_LIFETIME,
-        &notification_title(&test_env.env),
-    );
+        &notification_title(&test_env.env), &NotificationPriority::Medium);
     assert!(
         result.is_ok(),
         "scheduling at exactly the max lifetime must succeed"
@@ -77,8 +86,7 @@ fn test_schedule_one_second_over_max_lifetime_rejected() {
         &id,
         &creator,
         &(MAX_LIFETIME + 1),
-        &notification_title(&test_env.env),
-    );
+        &notification_title(&test_env.env), &NotificationPriority::Medium);
     assert!(
         result.is_err(),
         "a ttl_seconds value one second over the max must be rejected"
@@ -94,7 +102,7 @@ fn test_schedule_minimum_valid_lifetime_succeeds() {
 
     let id = make_id(&test_env.env, 3);
     let result =
-        client.try_schedule_notification(&id, &creator, &1u64, &notification_title(&test_env.env));
+        client.try_schedule_notification(&id, &creator, &1u64, &notification_title(&test_env.env), &NotificationPriority::Medium);
     assert!(
         result.is_ok(),
         "scheduling with the minimum valid ttl (1 second) must succeed"
@@ -110,7 +118,7 @@ fn test_schedule_zero_lifetime_rejected() {
 
     let id = make_id(&test_env.env, 4);
     let result =
-        client.try_schedule_notification(&id, &creator, &0u64, &notification_title(&test_env.env));
+        client.try_schedule_notification(&id, &creator, &0u64, &notification_title(&test_env.env), &NotificationPriority::Medium);
     assert!(result.is_err(), "zero ttl_seconds must be rejected");
 }
 
@@ -126,8 +134,7 @@ fn test_schedule_absurd_lifetime_rejected() {
         &id,
         &creator,
         &u64::MAX,
-        &notification_title(&test_env.env),
-    );
+        &notification_title(&test_env.env), &NotificationPriority::Medium);
     assert!(result.is_err(), "u64::MAX ttl_seconds must be rejected");
 }
 
@@ -143,8 +150,7 @@ fn test_schedule_typical_one_hour_lifetime_succeeds() {
         &id,
         &creator,
         &ONE_HOUR,
-        &notification_title(&test_env.env),
-    );
+        &notification_title(&test_env.env), &NotificationPriority::Medium);
     assert!(
         result.is_ok(),
         "scheduling with a typical 1-hour TTL must succeed"
@@ -165,7 +171,7 @@ fn test_extend_to_exactly_max_lifetime_succeeds() {
     // Schedule at created_at=1000 with ONE_HOUR TTL.
     test_env.env.ledger().set_timestamp(1_000);
     let id = make_id(&test_env.env, 10);
-    client.schedule_notification(&id, &creator, &ONE_HOUR, &notification_title(&test_env.env));
+    client.schedule_notification(&id, &creator, &ONE_HOUR, &notification_title(&test_env.env), &NotificationPriority::Medium);
 
     // Extend so that total lifetime = MAX_LIFETIME exactly.
     let extension = MAX_LIFETIME - ONE_HOUR;
@@ -188,7 +194,7 @@ fn test_extend_one_second_over_max_lifetime_rejected() {
 
     test_env.env.ledger().set_timestamp(1_000);
     let id = make_id(&test_env.env, 11);
-    client.schedule_notification(&id, &creator, &ONE_HOUR, &notification_title(&test_env.env));
+    client.schedule_notification(&id, &creator, &ONE_HOUR, &notification_title(&test_env.env), &NotificationPriority::Medium);
 
     // Extension that would make total lifetime = MAX_LIFETIME + 1.
     let extension = MAX_LIFETIME - ONE_HOUR + 1;
@@ -208,7 +214,7 @@ fn test_extend_by_zero_seconds_rejected() {
 
     test_env.env.ledger().set_timestamp(1_000);
     let id = make_id(&test_env.env, 12);
-    client.schedule_notification(&id, &creator, &ONE_HOUR, &notification_title(&test_env.env));
+    client.schedule_notification(&id, &creator, &ONE_HOUR, &notification_title(&test_env.env), &NotificationPriority::Medium);
 
     let result = client.try_extend_notification_expiry(&id, &creator, &0u64);
     assert!(
@@ -226,7 +232,7 @@ fn test_extend_by_absurd_seconds_rejected() {
 
     test_env.env.ledger().set_timestamp(1_000);
     let id = make_id(&test_env.env, 13);
-    client.schedule_notification(&id, &creator, &ONE_HOUR, &notification_title(&test_env.env));
+    client.schedule_notification(&id, &creator, &ONE_HOUR, &notification_title(&test_env.env), &NotificationPriority::Medium);
 
     let result = client.try_extend_notification_expiry(&id, &creator, &u64::MAX);
     assert!(result.is_err(), "extending by u64::MAX must be rejected");
@@ -251,7 +257,9 @@ fn test_batch_schedule_at_max_lifetime_succeeds() {
     ttls.push_back(MAX_LIFETIME);
     titles.push_back(notification_title(&test_env.env));
 
-    let result = client.try_batch_schedule_notifications(&ids, &creator, &ttls, &titles);
+    let priorities = batch_priorities(&test_env.env, ttls.len());
+    let result =
+        client.try_batch_schedule_notifications(&ids, &creator, &ttls, &titles, &priorities);
     assert!(
         result.is_ok(),
         "a batch entry at exactly the max TTL must succeed"
@@ -279,7 +287,9 @@ fn test_batch_schedule_one_second_over_max_rejected() {
     ttls.push_back(MAX_LIFETIME + 1);
     titles.push_back(notification_title(&test_env.env));
 
-    let result = client.try_batch_schedule_notifications(&ids, &creator, &ttls, &titles);
+    let priorities = batch_priorities(&test_env.env, ttls.len());
+    let result =
+        client.try_batch_schedule_notifications(&ids, &creator, &ttls, &titles, &priorities);
     assert!(
         result.is_err(),
         "a batch containing an over-max TTL must reject the entire batch"
@@ -309,6 +319,8 @@ fn test_batch_schedule_zero_lifetime_rejected() {
     ttls.push_back(0u64);
     titles.push_back(notification_title(&test_env.env));
 
-    let result = client.try_batch_schedule_notifications(&ids, &creator, &ttls, &titles);
+    let priorities = batch_priorities(&test_env.env, ttls.len());
+    let result =
+        client.try_batch_schedule_notifications(&ids, &creator, &ttls, &titles, &priorities);
     assert!(result.is_err(), "a batch with a zero TTL must be rejected");
 }

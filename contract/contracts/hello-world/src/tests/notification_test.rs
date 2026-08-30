@@ -12,7 +12,6 @@
 //! - the change is backward compatible: the event name remains the first topic
 //!   and the previously defined topics/data are unchanged.
 
-use crate::base::errors::Error;
 use crate::base::events::{NotificationCategory, NotificationPriority};
 use crate::test_utils::{create_test_group, setup_test_env};
 use crate::AutoShareContractClient;
