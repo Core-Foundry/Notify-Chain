@@ -9,7 +9,11 @@ import { NotificationDetailsDrawer } from '../components/NotificationDetailsDraw
 import { IndexingHealthPanel } from '../components/IndexingHealthPanel';
 import { NotificationHealthPanel } from '../components/NotificationHealthPanel';
 import { EmptyState } from '../components/EmptyState';
-import { useEventFilters, useEventLoadingState, useFilteredEvents } from '../hooks/useEventSelectors';
+import {
+  useEventFilters,
+  useEventLoadingState,
+  useFilteredEvents,
+} from '../hooks/useEventSelectors';
 import { useEventStore } from '../store/eventStore';
 import { fetchEvents, fetchStatus, type ContractStatus } from '../services/eventsApi';
 import { resolveIndexingHealthUrl } from '../services/indexingHealthApi';
@@ -18,9 +22,11 @@ import { generateMockEvents } from '../utils/eventData';
 import { restoreWalletSession } from '../services/wallet';
 import type { BlockchainEvent } from '../types/event';
 import { useWalletAccountSync } from '../hooks/useWalletAccountSync';
+import { parseSelectedEventId } from '../utils/eventUrlState';
 
 const DEFAULT_EVENT_COUNT = 5000;
 const DEFAULT_LIMIT = 12;
+const EVENT_ID_PARAM = 'eventId';
 const API_URL = import.meta.env.VITE_EVENTS_API_URL ?? 'http://localhost:8787/api/events';
 const POLL_INTERVAL_MS = 15_000;
 const LISTENER_BASE_URL = API_URL.replace('/api/events', '');
@@ -41,6 +47,16 @@ function parseLimitParam(search: string) {
   return Number.isInteger(value) && value > 0 ? value : DEFAULT_LIMIT;
 }
 
+function replaceSelectedEventInUrl(eventId: string | null) {
+  const url = new URL(window.location.href);
+  if (eventId) {
+    url.searchParams.set(EVENT_ID_PARAM, eventId);
+  } else {
+    url.searchParams.delete(EVENT_ID_PARAM);
+  }
+  window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`);
+}
+
 export function EventExplorerPage() {
   const initialSearch = typeof window !== 'undefined' ? window.location.search : '';
   const [page, setPage] = useState(() => parsePageParam(initialSearch));
@@ -48,6 +64,7 @@ export function EventExplorerPage() {
   const [selectedNotification, setSelectedNotification] = useState<BlockchainEvent | null>(null);
   const [contractStatuses, setContractStatuses] = useState<ContractStatus[]>([]);
 
+  const events = useEventStore((state) => state.events);
   const setEvents = useEventStore((state) => state.setEvents);
   const setLoading = useEventStore((state) => state.setLoading);
   const setError = useEventStore((state) => state.setError);
@@ -165,7 +182,7 @@ export function EventExplorerPage() {
 
   const pageCount = useMemo(
     () => Math.max(1, Math.ceil(filteredEvents.length / limit)),
-    [filteredEvents.length, limit]
+    [filteredEvents.length, limit],
   );
 
   useEffect(() => {
@@ -176,7 +193,14 @@ export function EventExplorerPage() {
 
   useEffect(() => {
     setPage(1);
-  }, [filters.search, filters.contractAddress, filters.eventType, filters.status, filters.dateFrom, filters.dateTo]);
+  }, [
+    filters.search,
+    filters.contractAddress,
+    filters.eventType,
+    filters.status,
+    filters.dateFrom,
+    filters.dateTo,
+  ]);
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -189,6 +213,36 @@ export function EventExplorerPage() {
 
     window.history.replaceState({}, '', `${window.location.pathname}?${params.toString()}`);
   }, [page, limit]);
+
+  useEffect(() => {
+    if (lastFetchedAt === 0) {
+      return;
+    }
+
+    const eventId = parseSelectedEventId(window.location.search);
+    if (!eventId) {
+      setSelectedNotification(null);
+      return;
+    }
+
+    const event = events.find((candidate) => candidate.eventId === eventId) ?? null;
+    setSelectedNotification(event);
+    if (!event) {
+      replaceSelectedEventInUrl(null);
+    }
+  }, [events, lastFetchedAt]);
+
+  useEffect(() => {
+    const handlePopState = () => {
+      const eventId = parseSelectedEventId(window.location.search);
+      setSelectedNotification(
+        eventId ? (events.find((event) => event.eventId === eventId) ?? null) : null,
+      );
+    };
+
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, [events]);
 
   const currentPageEvents = useMemo(() => {
     const startIndex = (page - 1) * limit;
@@ -227,10 +281,12 @@ export function EventExplorerPage() {
 
   const handleSelectEvent = useCallback((event: BlockchainEvent) => {
     setSelectedNotification(event);
+    replaceSelectedEventInUrl(event.eventId);
   }, []);
 
   const handleCloseDrawer = useCallback(() => {
     setSelectedNotification(null);
+    replaceSelectedEventInUrl(null);
   }, []);
 
   return (
@@ -240,8 +296,8 @@ export function EventExplorerPage() {
           <p className="event-explorer__eyebrow">Event Explorer</p>
           <h1>Smart Contract Event Log</h1>
           <p className="event-explorer__lead">
-            Browse Soroban contract events across registered contracts with filters,
-            pagination, and copy-to-clipboard contract metadata.
+            Browse Soroban contract events across registered contracts with filters, pagination, and
+            copy-to-clipboard contract metadata.
           </p>
         </div>
         <WalletConnectButton />
@@ -254,13 +310,13 @@ export function EventExplorerPage() {
             {contractStatuses.map((contract) => (
               <div key={contract.address} className="contract-status-card">
                 <div className="contract-status-card__address">{contract.address}</div>
-                <div className={`contract-status-card__badge ${contract.paused ? 'contract-status-card__badge--paused' : 'contract-status-card__badge--active'}`}>
+                <div
+                  className={`contract-status-card__badge ${contract.paused ? 'contract-status-card__badge--paused' : 'contract-status-card__badge--active'}`}
+                >
                   {contract.paused ? 'PAUSED' : 'ACTIVE'}
                 </div>
                 {contract.error && (
-                  <div className="contract-status-card__error">
-                    Error: {contract.error}
-                  </div>
+                  <div className="contract-status-card__error">Error: {contract.error}</div>
                 )}
               </div>
             ))}

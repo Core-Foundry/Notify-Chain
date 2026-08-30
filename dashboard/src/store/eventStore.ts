@@ -112,16 +112,11 @@ export const useEventStore = create<EventStoreState>((set) => ({
   setSearch: (search) => set((state) => ({ filters: { ...state.filters, search } })),
   setContractFilter: (contractAddress) =>
     set((state) => ({ filters: { ...state.filters, contractAddress } })),
-  setEventTypeFilter: (eventType) =>
-    set((state) => ({ filters: { ...state.filters, eventType } })),
-  setStatusFilter: (status) =>
-    set((state) => ({ filters: { ...state.filters, status } })),
-  setDateFrom: (dateFrom) =>
-    set((state) => ({ filters: { ...state.filters, dateFrom } })),
-  setDateTo: (dateTo) =>
-    set((state) => ({ filters: { ...state.filters, dateTo } })),
-  setTxHashFilter: (txHash) =>
-    set((state) => ({ filters: { ...state.filters, txHash } })),
+  setEventTypeFilter: (eventType) => set((state) => ({ filters: { ...state.filters, eventType } })),
+  setStatusFilter: (status) => set((state) => ({ filters: { ...state.filters, status } })),
+  setDateFrom: (dateFrom) => set((state) => ({ filters: { ...state.filters, dateFrom } })),
+  setDateTo: (dateTo) => set((state) => ({ filters: { ...state.filters, dateTo } })),
+  setTxHashFilter: (txHash) => set((state) => ({ filters: { ...state.filters, txHash } })),
   setSortBy: (sortBy) => {
     try {
       localStorage.setItem(SORT_STORAGE_KEY, sortBy);
@@ -132,14 +127,15 @@ export const useEventStore = create<EventStoreState>((set) => ({
   },
   setLoading: (isLoading) => set({ isLoading }),
   setError: (error) => set({ error }),
-  markSyncSuccess: () => set({ lastSuccessfulSyncAt: Date.now(), lastSyncFailureAt: null, lastSyncError: null }),
+  markSyncSuccess: () =>
+    set({ lastSuccessfulSyncAt: Date.now(), lastSyncFailureAt: null, lastSyncError: null }),
   markSyncFailure: (error) => set({ lastSyncFailureAt: Date.now(), lastSyncError: error }),
   updateEventStatus: (targetEventId, status) =>
     set((state) => ({
       events: state.events.map((event) =>
         event.eventId === targetEventId || event.relatedNotificationId === targetEventId
           ? { ...event, notificationStatus: status }
-          : event
+          : event,
       ),
     })),
   invalidateEvents: () => set({ lastFetchedAt: 0 }),
@@ -175,9 +171,7 @@ export function selectContractOptions(state: EventStoreState): string[] {
 export function selectEventTypeOptions(state: EventStoreState): string[] {
   return Array.from(
     new Set(
-      state.events
-        .map((event) => event.eventName)
-        .filter((name): name is string => Boolean(name))
-    )
+      state.events.map((event) => event.eventName).filter((name): name is string => Boolean(name)),
+    ),
   );
 }

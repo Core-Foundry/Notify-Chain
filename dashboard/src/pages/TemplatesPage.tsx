@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import {
   NotificationTemplate,
   CreateNotificationTemplateInput,
-  UpdateNotificationTemplateInput
+  UpdateNotificationTemplateInput,
 } from '../types/notificationTemplate';
 import { templatesApi } from '../services/templatesApi';
 import { EmptyState } from '../components/EmptyState';
@@ -16,7 +16,7 @@ export function TemplatesPage() {
   const [selectedTemplate, setSelectedTemplate] = useState<NotificationTemplate | null>(null);
   const [formData, setFormData] = useState<Partial<CreateNotificationTemplateInput>>({
     type: 'email',
-    variables: []
+    variables: [],
   });
   const [previewVariables, setPreviewVariables] = useState<Record<string, string>>({});
 
@@ -81,18 +81,21 @@ export function TemplatesPage() {
   function renderPreview() {
     if (!selectedTemplate) return null;
     const renderedSubject = selectedTemplate.subject
-      ? selectedTemplate.subject.replace(/\{\{(\w+)\}\}/g, (_, key) => previewVariables[key] || `{{${key}}}`)
+      ? selectedTemplate.subject.replace(
+          /\{\{(\w+)\}\}/g,
+          (_, key) => previewVariables[key] || `{{${key}}}`,
+        )
       : '';
-    const renderedBody = selectedTemplate.body.replace(/\{\{(\w+)\}\}/g, (_, key) => previewVariables[key] || `{{${key}}}`);
+    const renderedBody = selectedTemplate.body.replace(
+      /\{\{(\w+)\}\}/g,
+      (_, key) => previewVariables[key] || `{{${key}}}`,
+    );
 
     return (
       <div className="templates-preview">
         <div className="templates-preview__header">
           <h3>Preview: {selectedTemplate.name}</h3>
-          <button
-            type="button"
-            onClick={() => setViewMode('list')}
-          >
+          <button type="button" onClick={() => setViewMode('list')}>
             Back to List
           </button>
         </div>
@@ -104,7 +107,9 @@ export function TemplatesPage() {
               <input
                 type="text"
                 value={previewVariables[varName] || ''}
-                onChange={(e) => setPreviewVariables({ ...previewVariables, [varName]: e.target.value })}
+                onChange={(e) =>
+                  setPreviewVariables({ ...previewVariables, [varName]: e.target.value })
+                }
               />
             </div>
           ))}
@@ -191,10 +196,15 @@ export function TemplatesPage() {
             <input
               type="text"
               value={(formData.variables || []).join(', ')}
-              onChange={(e) => setFormData({
-                ...formData,
-                variables: e.target.value.split(',').map((v) => v.trim()).filter(Boolean)
-              })}
+              onChange={(e) =>
+                setFormData({
+                  ...formData,
+                  variables: e.target.value
+                    .split(',')
+                    .map((v) => v.trim())
+                    .filter(Boolean),
+                })
+              }
             />
           </div>
         </div>

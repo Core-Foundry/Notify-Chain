@@ -29,10 +29,7 @@ function TimelineEntryItem({ entry }: { entry: TimelineEntry }) {
   const ts = new Date(entry.executionTime).getTime();
   return (
     <li className="timeline__entry">
-      <span
-        className={`timeline__dot ${STATUS_CLASS[entry.status] ?? ''}`}
-        aria-hidden="true"
-      />
+      <span className={`timeline__dot ${STATUS_CLASS[entry.status] ?? ''}`} aria-hidden="true" />
       <div className="timeline__entry-body">
         <div className="timeline__entry-header">
           <span className="timeline__entry-label">
@@ -45,9 +42,7 @@ function TimelineEntryItem({ entry }: { entry: TimelineEntry }) {
             {formatTimestamp(ts)}
           </time>
         </div>
-        {entry.errorMessage && (
-          <p className="timeline__entry-error">{entry.errorMessage}</p>
-        )}
+        {entry.errorMessage && <p className="timeline__entry-error">{entry.errorMessage}</p>}
         {entry.durationMs != null && (
           <span className="timeline__entry-duration">{entry.durationMs} ms</span>
         )}
@@ -97,7 +92,7 @@ export function NotificationTimelineView() {
         const data = await fetchTimeline(id);
         // Sort entries chronologically
         const sorted = [...data.entries].sort(
-          (a, b) => new Date(a.executionTime).getTime() - new Date(b.executionTime).getTime()
+          (a, b) => new Date(a.executionTime).getTime() - new Date(b.executionTime).getTime(),
         );
         setTimeline({ ...data, entries: sorted });
       } catch (err) {
@@ -106,7 +101,7 @@ export function NotificationTimelineView() {
         setLoading(false);
       }
     },
-    [inputValue]
+    [inputValue],
   );
 
   const overallStatus = timeline?.status;
@@ -197,9 +192,7 @@ export function NotificationTimelineView() {
           )}
 
           {timeline.lastError && overallStatus === 'FAILED' && (
-            <p className="timeline-view__last-error">
-              Last error: {timeline.lastError}
-            </p>
+            <p className="timeline-view__last-error">Last error: {timeline.lastError}</p>
           )}
         </div>
       )}

@@ -35,6 +35,8 @@ describe('EventRow notification ID copy action', () => {
     fireEvent.click(screen.getByRole('button', { name: /copy notification id/i }));
 
     expect(navigator.clipboard.writeText).toHaveBeenCalledWith('notif-42');
-    expect(await screen.findByRole('button', { name: /notification id copied/i })).toBeInTheDocument();
+    expect(
+      await screen.findByRole('button', { name: /notification id copied/i }),
+    ).toBeInTheDocument();
   });
 });

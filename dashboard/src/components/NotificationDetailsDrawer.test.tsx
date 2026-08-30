@@ -24,11 +24,7 @@ describe('NotificationDetailsDrawer', () => {
     const onClose = jest.fn();
 
     render(
-      <NotificationDetailsDrawer
-        isOpen={true}
-        notification={notification}
-        onClose={onClose}
-      />
+      <NotificationDetailsDrawer isOpen={true} notification={notification} onClose={onClose} />,
     );
 
     expect(screen.getByRole('dialog', { name: 'Notification details' })).toBeInTheDocument();
@@ -46,11 +42,7 @@ describe('NotificationDetailsDrawer', () => {
     const onClose = jest.fn();
 
     render(
-      <NotificationDetailsDrawer
-        isOpen={true}
-        notification={notification}
-        onClose={onClose}
-      />
+      <NotificationDetailsDrawer isOpen={true} notification={notification} onClose={onClose} />,
     );
 
     fireEvent.click(screen.getByRole('button', { name: 'Close drawer' }));
@@ -79,7 +71,7 @@ describe('NotificationDetailsDrawer', () => {
             { label: 'Delivered', timestampMs: 2, detail: 'Sent successfully' },
           ],
         })}
-      />
+      />,
     );
 
     expect(await screen.findByText('Queued')).toBeInTheDocument();
@@ -102,7 +94,7 @@ describe('NotificationDetailsDrawer', () => {
         fetchMetadata={async () => {
           throw new Error('boom');
         }}
-      />
+      />,
     );
 
     expect(await screen.findByText(/Failed to load details: boom/i)).toBeInTheDocument();
@@ -113,11 +105,7 @@ describe('NotificationDetailsDrawer', () => {
     const onClose = jest.fn();
 
     render(
-      <NotificationDetailsDrawer
-        isOpen={true}
-        notification={notification}
-        onClose={onClose}
-      />
+      <NotificationDetailsDrawer isOpen={true} notification={notification} onClose={onClose} />,
     );
 
     expect(screen.getByText('Notification ID')).toBeInTheDocument();
@@ -133,11 +121,7 @@ describe('NotificationDetailsDrawer', () => {
     const onClose = jest.fn();
 
     render(
-      <NotificationDetailsDrawer
-        isOpen={true}
-        notification={notification}
-        onClose={onClose}
-      />
+      <NotificationDetailsDrawer isOpen={true} notification={notification} onClose={onClose} />,
     );
 
     expect(screen.queryByText('Notification ID')).not.toBeInTheDocument();
@@ -154,11 +138,7 @@ describe('NotificationDetailsDrawer', () => {
     const onClose = jest.fn();
 
     render(
-      <NotificationDetailsDrawer
-        isOpen={true}
-        notification={notification}
-        onClose={onClose}
-      />
+      <NotificationDetailsDrawer isOpen={true} notification={notification} onClose={onClose} />,
     );
 
     // Find the Notification ID row's copy button (first copy button in Blockchain Context)
@@ -171,4 +151,3 @@ describe('NotificationDetailsDrawer', () => {
     expect(await screen.findByText('Notification ID copied')).toBeInTheDocument();
   });
 });
-

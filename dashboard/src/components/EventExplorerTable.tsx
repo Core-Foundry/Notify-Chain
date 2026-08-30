@@ -87,14 +87,17 @@ export function EventExplorerTable({
     };
   }, []);
 
-  const startResize = useCallback((index: number, clientX: number) => {
-    dragRef.current = {
-      index,
-      startX: clientX,
-      startWidth: columnWidths[index],
-    };
-    document.body.classList.add('event-explorer--resizing');
-  }, [columnWidths]);
+  const startResize = useCallback(
+    (index: number, clientX: number) => {
+      dragRef.current = {
+        index,
+        startX: clientX,
+        startWidth: columnWidths[index],
+      };
+      document.body.classList.add('event-explorer--resizing');
+    },
+    [columnWidths],
+  );
 
   async function syncCopyText(text: string) {
     if (navigator.clipboard?.writeText) {

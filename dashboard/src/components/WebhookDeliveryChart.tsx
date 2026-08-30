@@ -10,7 +10,7 @@ interface WebhookDeliveryChartProps {
 const CHART_HEIGHT = 180;
 const CHART_PADDING_TOP = 16;
 const CHART_PADDING_BOTTOM = 36; // space for x-axis labels
-const CHART_PADDING_LEFT = 48;   // space for y-axis labels
+const CHART_PADDING_LEFT = 48; // space for y-axis labels
 const CHART_PADDING_RIGHT = 16;
 
 const SKELETON_BUCKET_COUNT = 24;
@@ -20,7 +20,7 @@ function buildPolylinePoints(
   values: number[],
   maxValue: number,
   chartWidth: number,
-  chartHeight: number
+  chartHeight: number,
 ): string {
   if (values.length < 2) return '';
   const drawWidth = chartWidth - CHART_PADDING_LEFT - CHART_PADDING_RIGHT;
@@ -41,7 +41,7 @@ function buildAreaPath(
   values: number[],
   maxValue: number,
   chartWidth: number,
-  chartHeight: number
+  chartHeight: number,
 ): string {
   if (values.length < 2) return '';
   const drawWidth = chartWidth - CHART_PADDING_LEFT - CHART_PADDING_RIGHT;
@@ -232,9 +232,7 @@ export const WebhookDeliveryChart = memo(function WebhookDeliveryChart({
             const bucket = buckets[idx];
             const x =
               CHART_PADDING_LEFT +
-              (buckets.length > 1
-                ? (idx / (buckets.length - 1)) * drawWidth
-                : drawWidth / 2);
+              (buckets.length > 1 ? (idx / (buckets.length - 1)) * drawWidth : drawWidth / 2);
             return (
               <text
                 key={idx}

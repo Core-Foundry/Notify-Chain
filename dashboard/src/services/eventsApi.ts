@@ -95,7 +95,7 @@ export async function fetchStatus(apiUrl: string): Promise<StatusResponse> {
 
 export async function searchNotifications(
   baseUrl: string,
-  params: NotificationSearchParams
+  params: NotificationSearchParams,
 ): Promise<NotificationSearchResponse> {
   const url = new URL(`${baseUrl}/api/notifications/search`);
   if (params.q) url.searchParams.set('q', params.q);

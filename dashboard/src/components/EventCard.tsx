@@ -34,13 +34,7 @@ function getEventBadgeClass(name: string | null): string {
 }
 
 function SkeletonLine({ width = '100%', height = '14px' }: { width?: string; height?: string }) {
-  return (
-    <span
-      className="event-card__skeleton"
-      style={{ width, height }}
-      aria-hidden="true"
-    />
-  );
+  return <span className="event-card__skeleton" style={{ width, height }} aria-hidden="true" />;
 }
 
 function LoadingCard({ variant }: { variant: EventCardVariant }) {
@@ -104,7 +98,13 @@ function handleActivationKey(onClick: (e: BlockchainEvent) => void, event: Block
   };
 }
 
-function CompactCard({ event, onClick }: { event: BlockchainEvent; onClick?: (e: BlockchainEvent) => void }) {
+function CompactCard({
+  event,
+  onClick,
+}: {
+  event: BlockchainEvent;
+  onClick?: (e: BlockchainEvent) => void;
+}) {
   const displayName = event.eventName ?? event.type;
   const badgeClass = getEventBadgeClass(event.eventName);
   const Wrapper = onClick ? 'div' : 'article';
@@ -133,15 +133,19 @@ function CompactCard({ event, onClick }: { event: BlockchainEvent; onClick?: (e:
       </div>
       <div className="event-card__details">
         <span>Value: {event.value}</span>
-        {event.txHash && (
-          <span title={event.txHash}>Tx: {shortenAddress(event.txHash)}</span>
-        )}
+        {event.txHash && <span title={event.txHash}>Tx: {shortenAddress(event.txHash)}</span>}
       </div>
     </Wrapper>
   );
 }
 
-function ExpandedCard({ event, onClick }: { event: BlockchainEvent; onClick?: (e: BlockchainEvent) => void }) {
+function ExpandedCard({
+  event,
+  onClick,
+}: {
+  event: BlockchainEvent;
+  onClick?: (e: BlockchainEvent) => void;
+}) {
   const displayName = event.eventName ?? event.type;
   const badgeClass = getEventBadgeClass(event.eventName);
   const Wrapper = onClick ? 'div' : 'article';
@@ -191,7 +195,9 @@ function ExpandedCard({ event, onClick }: { event: BlockchainEvent; onClick?: (e
               <dd>
                 <ul className="event-card__topics">
                   {event.topic.map((t, i) => (
-                    <li key={i} className="event-card__topic-item">{t}</li>
+                    <li key={i} className="event-card__topic-item">
+                      {t}
+                    </li>
                   ))}
                 </ul>
               </dd>

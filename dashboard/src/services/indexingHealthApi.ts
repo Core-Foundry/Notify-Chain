@@ -3,7 +3,7 @@ import { parseIndexingHealth } from '../types/indexingHealth';
 
 export async function fetchIndexingHealth(
   healthUrl: string,
-  options?: { signal?: AbortSignal }
+  options?: { signal?: AbortSignal },
 ): Promise<IndexingHealth> {
   const response = await fetch(healthUrl, { signal: options?.signal });
   if (!response.ok) {
@@ -26,4 +26,3 @@ export function resolveIndexingHealthUrl(eventsApiUrl: string): string {
     return 'http://localhost:8787/api/indexing/health';
   }
 }
-

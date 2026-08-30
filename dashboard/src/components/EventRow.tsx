@@ -18,7 +18,11 @@ export const EventRow = memo(function EventRow({ event }: EventRowProps) {
   const label = event.eventName ?? event.type;
 
   return (
-    <article className="event-row" data-event-id={event.eventId} aria-label={`${label}, ledger ${event.ledger}`}>
+    <article
+      className="event-row"
+      data-event-id={event.eventId}
+      aria-label={`${label}, ledger ${event.ledger}`}
+    >
       <div className="event-row__primary">
         <span className="event-row__name">{label}</span>
         <span className="event-row__ledger">Ledger {event.ledger}</span>

@@ -18,9 +18,7 @@ const mockEvent: BlockchainEvent = {
 } as BlockchainEvent;
 
 test('clickable EventCard has no accessibility violations', async () => {
-  const { container } = render(
-    <EventCard event={mockEvent} onClick={() => {}} />
-  );
+  const { container } = render(<EventCard event={mockEvent} onClick={() => {}} />);
   const results = await axe(container);
   expect(results).toHaveNoViolations();
 });
