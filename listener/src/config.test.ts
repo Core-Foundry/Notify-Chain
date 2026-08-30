@@ -240,4 +240,26 @@ describe('Config validation', () => {
       expect(() => loadConfig()).toThrow('WEBHOOK_SECRETS must be a JSON array');
     });
   });
+
+  describe('CORS and Schema Validation integration (#689, #694)', () => {
+    it('rejects wildcard CORS origin in production environment', () => {
+      process.env.NODE_ENV = 'production';
+      process.env.EVENTS_API_CORS_ORIGIN = '*';
+
+      const config = loadConfig();
+      expect(() => {
+        const { validateConfig } = require('./config');
+        validateConfig(config);
+      }).toThrow(ConfigError);
+    });
+
+    it('accepts valid HTTPS CORS origin in production environment', () => {
+      process.env.NODE_ENV = 'production';
+      process.env.EVENTS_API_CORS_ORIGIN = 'https://dashboard.notifychain.io';
+
+      const config = loadConfig();
+      const { validateConfig } = require('./config');
+      expect(() => validateConfig(config)).not.toThrow();
+    });
+  });
 });

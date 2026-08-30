@@ -1,4 +1,6 @@
 import { Config, ContractConfig, DiscordConfig, WebhookSecret, AppCleanupConfig, EventQueueConfig, RetrySchedulerOptions, AnalyticsConfig, ExpirationConfig, ApiKey } from './types';
+import { validateCorsOrigin, CorsValidationError } from './utils/cors-validator';
+import { ConfigurationSchemaValidator, APP_CONFIG_SCHEMA } from './config-schema';
 
 export class ConfigError extends Error {
   constructor(message: string) {
@@ -323,6 +325,22 @@ export function validateConfig(config: Config): void {
     );
   }
 
+  // Validate CORS configuration during startup (#689)
+  if (config.eventsApiCorsOrigin) {
+    try {
+      validateCorsOrigin({
+        corsOrigin: config.eventsApiCorsOrigin,
+        nodeEnv: process.env.NODE_ENV,
+      });
+    } catch (corsErr) {
+      if (corsErr instanceof CorsValidationError) {
+        errors.push(`EVENTS_API_CORS_ORIGIN: ${corsErr.message}`);
+      } else {
+        errors.push(`EVENTS_API_CORS_ORIGIN invalid: ${String(corsErr)}`);
+      }
+    }
+  }
+
   // ── Contract addresses ─────────────────────────────────────────────────────
   if (!Array.isArray(config.contractAddresses)) {
     errors.push('CONTRACT_ADDRESSES must be a JSON array.');
@@ -468,6 +486,15 @@ export function validateConfig(config: Config): void {
     throw new ConfigError(
       `Configuration validation failed with ${errors.length} error(s):\n` +
         errors.map((e, i) => `  ${i + 1}. ${e}`).join('\n'),
+    );
+  }
+
+  // Schema-based validation check (#694)
+  const schemaErrors = ConfigurationSchemaValidator.validate(config as any, APP_CONFIG_SCHEMA);
+  if (schemaErrors.length > 0) {
+    throw new ConfigError(
+      `Configuration schema validation failed with ${schemaErrors.length} error(s):\n` +
+        schemaErrors.map((e, i) => `  ${i + 1}. [${e.field}] ${e.message}`).join('\n'),
     );
   }
 }
