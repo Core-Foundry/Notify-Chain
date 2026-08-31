@@ -62,6 +62,7 @@ export interface Config {
   cleanup?: AppCleanupConfig;
   analytics?: AnalyticsConfig;
   expiration?: ExpirationConfig;
+  backfill?: BackfillConfig;
 }
 
 export interface SchedulerConfig {
@@ -127,5 +128,24 @@ export interface ExpirationConfig {
   perEventTypeExpiration?: Record<string, number>;
   /** Whether expiration checking is enabled (default: true). */
   enabled: boolean;
+}
+
+/**
+ * Safety limits for the historical backfill that runs when the listener
+ * starts without a stored cursor (first boot or after downtime).
+ */
+export interface BackfillConfig {
+  /**
+   * Maximum number of ledgers to replay from the network tip on a cold start.
+   *
+   * When the subscriber has no persisted cursor for a contract it would
+   * normally request events from ledger 1, which can be an arbitrarily large
+   * range after downtime or a configuration change.  This limit caps the
+   * range to the most recent `maxLedgers` ledgers instead.
+   *
+   * Set to `0` to disable the limit and allow full historical replay
+   * (the previous default behaviour).  Default: 10 000.
+   */
+  maxLedgers: number;
 }
 
