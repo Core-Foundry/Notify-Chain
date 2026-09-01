@@ -691,4 +691,4 @@ Built on [Stellar](https://www.stellar.org/) and [Soroban](https://soroban.stell
 To run the staging environment locally:
 1. Export environment variables: `export $(cat listener/.env.staging | xargs)`
 2. Build and run listener: `cd listener && npm ci && npm run build && npm start`
-3. Run health check: `./scripts/health-check.sh`
+3. Verify the service is up: `curl http://localhost:8787/health`

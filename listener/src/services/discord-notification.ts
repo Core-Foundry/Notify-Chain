@@ -30,6 +30,35 @@ export function createDiscordService(config: DiscordConfig): DiscordNotification
   return new DiscordNotificationService(config);
 }
 
+// ---------------------------------------------------------------------------
+// Discord content safety
+// ---------------------------------------------------------------------------
+
+// Matches @everyone, @here, and all mention syntaxes: <@123>, <@!123>, <@&123>
+const MENTION_PATTERN = /@(everyone|here)|<@[!&]?\d+>/g;
+
+// Discord markdown characters that produce unintended formatting in embed content.
+// Underscores are intentionally excluded — they are common in Soroban event names
+// (e.g. task_created) and only trigger italics in matched-pair contexts.
+const MARKDOWN_CHARS = /([*`~|\\])/g;
+
+/**
+ * Sanitize user-controlled content before embedding it in a Discord message.
+ *
+ * - Strips @everyone / @here and all user/role mention syntax so on-chain
+ *   string data cannot trigger live Discord pings.
+ * - Escapes markdown control characters so the output renders as plain text
+ *   rather than accidentally producing bold, code, spoilers, etc.
+ *
+ * Only needed for content derived from on-chain data. Developer-controlled
+ * static strings (embed titles, field labels) don't require it.
+ */
+export function sanitizeForDiscord(text: string): string {
+  return text
+    .replace(MENTION_PATTERN, '[mention removed]')
+    .replace(MARKDOWN_CHARS, '\\$1');
+}
+
 export class DiscordNotificationService {
   private config: DiscordConfig;
   private deduplicator: NotificationDeduplicator;
@@ -232,7 +261,7 @@ export class DiscordNotificationService {
     event: StellarSDK.rpc.Api.EventResponse,
     contractConfig: ContractConfig
   ): DiscordMessage {
-    const eventName = getEventName(event.topic) ?? 'Unknown Event';
+    const eventName = sanitizeForDiscord(getEventName(event.topic) ?? 'Unknown Event');
     const embed = this.createEventEmbed(event, contractConfig, eventName);
     const sanitizedEmbed = this.sanitizeEmbed(embed);
 
@@ -259,7 +288,7 @@ export class DiscordNotificationService {
       },
       {
         name: 'Type',
-        value: event.type,
+        value: sanitizeForDiscord(event.type),
         inline: true,
       },
     ];
@@ -384,9 +413,11 @@ export class DiscordNotificationService {
         case StellarSDK.xdr.ScValType.scvString(): {
           const strVal = value.str().toString();
           return strVal.length > MAX_DISCORD_FIELD_VALUE_LENGTH ? strVal.slice(0, MAX_DISCORD_FIELD_VALUE_LENGTH) + '...' : strVal;
+          const truncated = strVal.length > 500 ? strVal.slice(0, 500) + '...' : strVal;
+          return sanitizeForDiscord(truncated);
         }
         case StellarSDK.xdr.ScValType.scvSymbol():
-          return `🔹 ${value.sym().toString()}`;
+          return `🔹 ${sanitizeForDiscord(value.sym().toString())}`;
         case StellarSDK.xdr.ScValType.scvAddress():
           return this.formatAddress(value.address().toString());
         default:

@@ -1314,6 +1314,7 @@ pub fn schedule_notification(
         category: NotificationCategory::Notification,
         priority,
         notification_id,
+        payload_version: CURRENT_NOTIFICATION_VERSION,
     }
     .publish(&env);
 
@@ -1594,6 +1595,7 @@ pub fn batch_schedule_notifications(
             category: NotificationCategory::Notification,
             priority,
             notification_id: id.clone(),
+            payload_version: CURRENT_NOTIFICATION_VERSION,
         }
         .publish(&env);
     }
@@ -1974,7 +1976,6 @@ pub fn emit_batch_completed(
     batch_id: BytesN<32>,
     processed_count: u32,
 ) -> Result<(), Error> {
-pub fn emit_batch_completed(env: Env, batch_id: BytesN<32>, processed_count: u32) -> Result<(), Error> {
     BatchProcessingCompleted {
         batch_id,
         category: NotificationCategory::Notification,
