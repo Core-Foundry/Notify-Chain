@@ -23,11 +23,18 @@ For secrets-handling guidance (what must not be committed), also see [ENVIRONMEN
 2. [How configuration is loaded](#how-configuration-is-loaded)
 3. [Required vs optional](#required-vs-optional)
 4. [Configuration reference](#configuration-reference)
-5. [Examples](#examples)
-6. [Environment differences](#environment-differences)
-7. [Recommended values (operational guidance)](#recommended-values-operational-guidance)
-8. [Troubleshooting](#troubleshooting)
-9. [Related documentation](#related-documentation)
+5. [Environment configuration matrix](#environment-configuration-matrix)
+6. [Examples](#examples)
+7. [Environment differences](#environment-differences)
+8. [Recommended values (operational guidance)](#recommended-values-operational-guidance)
+9. [Troubleshooting](#troubleshooting)
+10. [Related documentation](#related-documentation)
+
+---
+
+## Environment configuration matrix
+
+For a single consolidated master table specifying all environment variables, their types, required/optional status, defaults, sensitivity classifications, and environment applicability, consult [docs/ENVIRONMENT_MATRIX.md](ENVIRONMENT_MATRIX.md).
 
 ---
 

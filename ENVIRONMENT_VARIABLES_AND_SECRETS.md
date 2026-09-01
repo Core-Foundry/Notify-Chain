@@ -86,8 +86,10 @@ Use `"*"` as the sole event entry to subscribe to all events from a contract.
 
 | Variable | Default | Required | Description |
 |---|---|---|---|
-| `EVENTS_API_PORT` | `8787` | No | Port the listener HTTP server binds to. |
-| `EVENTS_API_CORS_ORIGIN` | `http://localhost:5173` | No | Allowed CORS origin. Set to your dashboard URL in production. Avoid `*`. |
+| `EVENTS_API_PORT` | `8787` | No | Port the listener HTTP server binds to (1–65535). |
+| `EVENTS_API_CORS_ORIGIN` | `http://localhost:5173` | No | Allowed CORS origin(s). Explicit URI or comma-separated list in Production/Staging (e.g. `https://dashboard.notifychain.io`). Wildcard `*` is only allowed in local Development/Test environments. |
+
+For a complete reference table across all environments, see [docs/ENVIRONMENT_MATRIX.md](docs/ENVIRONMENT_MATRIX.md).
 
 ### 2.5 Database
 
