@@ -31,6 +31,7 @@ export function createDiscordService(config: DiscordConfig): DiscordNotification
 }
 
 // ---------------------------------------------------------------------------
+<<<<<<< HEAD
 // Discord content safety
 // ---------------------------------------------------------------------------
 
@@ -57,6 +58,35 @@ export function sanitizeForDiscord(text: string): string {
   return text
     .replace(MENTION_PATTERN, '[mention removed]')
     .replace(MARKDOWN_CHARS, '\\$1');
+=======
+// Internal helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Classify an HTTP status code into a readable diagnostic category.
+ * This keeps log fields actionable without leaking raw status text verbatim.
+ */
+function classifyHttpStatus(status: number): string {
+  if (status === 429) return 'rate_limited';
+  if (status === 401 || status === 403) return 'auth_error';
+  if (status === 404) return 'not_found';
+  if (status >= 400 && status < 500) return 'client_error';
+  if (status >= 500) return 'server_error';
+  return 'unexpected';
+}
+
+/**
+ * Read the response body safely, truncating to avoid bloated logs.
+ * Returns null on read failure so callers always get a loggable value.
+ */
+async function safeReadResponseBody(response: Response, maxLength = 300): Promise<string | null> {
+  try {
+    const text = await response.text();
+    return text.length > maxLength ? `${text.slice(0, maxLength)}…` : text;
+  } catch {
+    return null;
+  }
+>>>>>>> 5bc550e (fix(listener): improve Discord delivery failure logging)
 }
 
 export class DiscordNotificationService {
@@ -116,15 +146,11 @@ export class DiscordNotificationService {
     while (attempt <= maxRetries) {
       const attemptStart = Date.now();
       try {
-        const response = await this.sendWebhook(message);
+        const response = await this.sendWebhook(message, logContext);
         const durationMs = Date.now() - attemptStart;
 
         if (response.ok) {
           this.deduplicator.markSent(fingerprint);
-          logger.info('Discord notification sent successfully', {
-            eventId: event.id,
-            contractAddress: contractConfig.address,
-          });
           logger.info('Discord notification delivered', {
             ...logContext,
             durationMs,
@@ -133,7 +159,8 @@ export class DiscordNotificationService {
           return true;
         }
 
-        const errorText = await response.text();
+        const responseCategory = classifyHttpStatus(response.status);
+        const errorBody = await safeReadResponseBody(response);
         this.analytics?.record({
           notificationType: NotificationType.DISCORD,
           contractAddress: contractConfig.address,
@@ -142,17 +169,18 @@ export class DiscordNotificationService {
           errorReason: `HTTP ${response.status}`,
           timestamp: Date.now(),
         });
-        logger.error('Discord webhook failed', {
+        logger.error('Discord webhook delivery failed', {
           ...logContext,
-          status: response.status,
-          statusText: response.statusText,
-          error: errorText,
+          httpStatus: response.status,
+          httpCategory: responseCategory,
+          ...(responseCategory === 'rate_limited' && { retryAfter: response.headers?.get('retry-after') }),
+          errorSummary: errorBody,
           durationMs,
           attempt,
         });
       } catch (error) {
         const durationMs = Date.now() - attemptStart;
-        logger.error('Error sending Discord notification', {
+        logger.error('Discord webhook request error', {
           ...logContext,
           error,
           durationMs,
@@ -206,28 +234,32 @@ export class DiscordNotificationService {
       ],
     };
 
-    logger.info('Sending Discord test message', {
-      requestId,
-      webhookId: this.config.webhookId,
-    });
+    const logContext = { requestId, webhookId: this.config.webhookId };
+    logger.info('Sending Discord test message', logContext);
 
     const startTime = Date.now();
 
     try {
-      const response = await this.sendWebhook(message);
+      const response = await this.sendWebhook(message, logContext);
       const durationMs = Date.now() - startTime;
 
-      logger.info('Discord test message delivered', {
-        requestId,
-        webhookId: this.config.webhookId,
-        ok: response.ok,
+      if (response.ok) {
+        logger.info('Discord test message delivered', { ...logContext, durationMs });
+        return true;
+      }
+
+      const errorBody = await safeReadResponseBody(response);
+      logger.error('Discord test message failed', {
+        ...logContext,
+        httpStatus: response.status,
+        httpCategory: classifyHttpStatus(response.status),
+        errorSummary: errorBody,
         durationMs,
       });
-
-      return response.ok;
+      return false;
     } catch (error) {
-      logger.error('Error sending test message', {
-        requestId,
+      logger.error('Discord test message request error', {
+        ...logContext,
         error,
         durationMs: Date.now() - startTime,
       });
@@ -239,7 +271,7 @@ export class DiscordNotificationService {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
-  private async sendWebhook(message: DiscordMessage): Promise<Response> {
+  private async sendWebhook(message: DiscordMessage, logContext?: Record<string, unknown>): Promise<Response> {
     try {
       const response = await sendWebhook(this.config.webhookUrl, message, {
         timeoutMs: this.config.timeoutMs,
@@ -249,6 +281,7 @@ export class DiscordNotificationService {
       if (error && error.name === 'AbortError') {
         this.timeoutCount++;
         logger.error('Discord webhook request timed out', {
+          ...logContext,
           webhookId: this.config.webhookId,
           timeoutMs: this.config.timeoutMs ?? 5000,
         });
