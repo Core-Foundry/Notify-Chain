@@ -268,8 +268,7 @@ describe('POST /api/webhooks', () => {
 
     expect(status).toBe(401);
     expect((body as any).code).toBe('AUTH_INVALID_SIGNATURE');
-    expect((body as any).success).toBe(true);
-    expect((body as any).data.status).toBe('accepted');
+    expect((body as any).success).toBe(false);
   });
 
   it('rejects a timestamp-bound signature when the timestamp header is removed (anti-replay)', async () => {
@@ -412,13 +411,13 @@ describe('POST /api/webhooks', () => {
     const payload = JSON.stringify({ event: 'test' });
 
     server = await startServer({ ...BASE_OPTIONS, webhookSecrets: secrets });
-    await makePostRequest(server, '/api/webhooks', payload, {
+    const { body } = await makePostRequest(server, '/api/webhooks', payload, {
       'X-Webhook-Key-Id': 'key-1',
     });
 
     expect(logger.warn).toHaveBeenCalled();
     expect((body as any).success).toBe(false);
-    expect((body as any).error.message).toBe('Unknown key-id');
+    expect((body as any).error.message).toBe('Missing signature header');
   });
 
   it('returns 404 for POST to other paths', async () => {

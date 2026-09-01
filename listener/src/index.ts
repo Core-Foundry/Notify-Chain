@@ -27,28 +27,26 @@ import { NotificationMetricsRunner } from './services/notification-metrics-runne
 import { eventRegistry } from './store/event-registry';
 import logger from './utils/logger';
 import { loadConfig, validateConfig, ConfigError } from './config';
+import { SecretValidationError } from './config/validate-secrets';
 import { NotificationHealthMonitor } from './services/notification-health-monitor';
 import { getWorkerManager } from './services/worker-manager';
 import { EventDeduplicationService } from './services/event-deduplication-service';
 
 dotenv.config();
 
+// Track process startup time for uptime calculation
+const PROCESS_START_TIME = Date.now();
+
 async function main() {
   const config = loadConfig();
-  // Validate all config values before starting any services (#494).
-  // This throws a descriptive ConfigError listing every problem found.
   validateConfig(config);
 
   let scheduler: NotificationScheduler | null = null;
   let retryScheduler: RetryScheduler | null = null;
   let notificationAPI: NotificationAPI | null = null;
-  let templateService: TemplateService | null = null;
   let healthMonitor: NotificationHealthMonitor | null = null;
+  let subscriber: EventSubscriber | null = null;
 
-  if (config.scheduler?.enabled) {
-    try {
-      logger.info('Initializing database for scheduled notifications and templates');
-      const db = await initializeDatabase(config.databasePath);
   let templateService: NotificationTemplateService | null = null;
   let legacyTemplateService: TemplateService | null = null;
   let cleanupService: CleanupService | null = null;
@@ -60,11 +58,6 @@ async function main() {
   let metricsStore: NotificationMetricsStore | null = null;
   let deduplicationService: EventDeduplicationService | null = null;
 
-  repository = new ScheduledNotificationRepository(db);
-  healthMonitor = new NotificationHealthMonitor(null, getWorkerManager(), {
-    repository,
-  });
-
   if (config.analytics?.enabled) {
     initNotificationAnalyticsAggregator(config.analytics);
   }
@@ -72,6 +65,17 @@ async function main() {
   try {
     logger.info('Initializing database');
     const db = await initializeDatabase(config.databasePath);
+
+    repository = new ScheduledNotificationRepository(db);
+    
+    healthMonitor = new NotificationHealthMonitor(null, getWorkerManager(), {
+      repository,
+      getUptimeMs: () => Date.now() - PROCESS_START_TIME,
+    });
+
+    healthMonitor = new NotificationHealthMonitor(null, getWorkerManager(), {
+      repository,
+    });
 
     // Rebuild registry with configured event TTL
     if (config.cleanup) {
@@ -96,7 +100,6 @@ async function main() {
       logger.info('Notification metrics runner started successfully');
     }
 
-    // Archive service: moves old notifications to the archive table.
     const archiveCfg = loadArchiveConfig();
     archiveStore = new ArchiveStore(db);
     archiveService = new ArchiveService(db, archiveCfg);
@@ -114,16 +117,13 @@ async function main() {
     templateService = new NotificationTemplateService(templateRepository);
 
     if (config.scheduler?.enabled) {
-      repository = new ScheduledNotificationRepository(db);
       notificationAPI = new NotificationAPI(repository);
 
-      // Initialize legacy template service
       const legacyTemplateRepo = new TemplateRepository(db);
       legacyTemplateService = new TemplateService(legacyTemplateRepo);
 
       logger.info('Template service initialized successfully');
 
-      // Initialize scheduler with Discord service if available
       let discordService: DiscordNotificationService | null = null;
       if (config.discord) {
         discordService = new DiscordNotificationService(config.discord);
@@ -153,7 +153,8 @@ async function main() {
     contractAddresses: config.contractAddresses,
     discordWebhookUrl: config.discord?.webhookUrl,
     notificationAPI,
-    templateService: legacyTemplateService,
+    templateService,
+    schedulerTemplateService: legacyTemplateService,
     webhookSecrets: config.webhookSecrets,
     apiKeys: config.apiKeys,
     rateLimit: config.rateLimit,
@@ -167,60 +168,82 @@ async function main() {
     healthMonitor.start();
   }
 
-  const subscriber = new EventSubscriber(config, deduplicationService);
+  subscriber = new EventSubscriber(config, deduplicationService);
+  const subscriber = new EventSubscriber(config, deduplicationService ?? undefined);
   await subscriber.start();
 
-  const shutdown = async () => {
-    logger.info('Shutting down services...');
+  let isShuttingDown = false;
 
-    if (healthMonitor) {
-      healthMonitor.stop();
+  const shutdown = async (signal: string) => {
+    // Idempotency: prevent duplicate shutdown if multiple signals arrive
+    if (isShuttingDown) {
+      logger.warn('Shutdown already in progress, ignoring signal', { signal });
+      return;
     }
 
-    if (cleanupService) {
-      await cleanupService.stop();
+    isShuttingDown = true;
+    logger.info('Graceful shutdown initiated', { signal });
+
+    try {
+      if (healthMonitor) {
+        healthMonitor.stop();
+      }
+
+      if (cleanupService) {
+        await cleanupService.stop();
+      }
+
+      if (reconciliationEngine) {
+        reconciliationEngine.stop();
+      }
+
+      if (metricsRunner) {
+        await metricsRunner.stop();
+      }
+
+      if (archiveService) {
+        await archiveService.stop();
+      }
+
+      if (scheduler) {
+        await scheduler.stop();
+      }
+
+      if (retryScheduler) {
+        await retryScheduler.stop();
+      }
+
+    if (subscriber) {
+      await subscriber.stop();
     }
 
-    if (reconciliationEngine) {
-      reconciliationEngine.stop();
-    }
-
-    if (metricsRunner) {
-      await metricsRunner.stop();
-    }
-
-    if (archiveService) {
-      await archiveService.stop();
-    }
-
-    if (scheduler) {
-      await scheduler.stop();
-    }
-
-    if (retryScheduler) {
-      await retryScheduler.stop();
-    }
-
-    await subscriber.stop();
     eventsServer.close();
 
-    logger.info('All services stopped successfully');
-    process.exit(0);
+      logger.info('Graceful shutdown completed successfully', { signal });
+      process.exit(0);
+    } catch (error) {
+      logger.error('Error during graceful shutdown', { signal, error });
+      process.exit(1);
+    }
   };
 
   process.on('SIGINT', async () => {
-    logger.info('Received SIGINT, shutting down');
-    await shutdown();
+    await shutdown('SIGINT');
   });
 
   process.on('SIGTERM', async () => {
-    logger.info('Received SIGTERM, shutting down');
-    await shutdown();
+    await shutdown('SIGTERM');
   });
 }
 
 main().catch((err) => {
-  if (err instanceof ConfigError) {
+  if (err instanceof SecretValidationError) {
+    // Secret validation failures are reported field-by-field without echoing
+    // actual secret values (#692).
+    logger.error('Startup secret validation failed — service will not start', {
+      error: err.message,
+    });
+  } else if (err instanceof ConfigError) {
     logger.error('Configuration error', { error: err.message });
   } else {
     logger.error('Error starting service', { error: err });

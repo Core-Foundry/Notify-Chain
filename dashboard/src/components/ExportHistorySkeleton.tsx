@@ -1,4 +1,4 @@
-cliinterface ExportHistorySkeletonProps {
+interface ExportHistorySkeletonProps {
   rows?: number;
 }
 

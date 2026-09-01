@@ -1,5 +1,7 @@
 import http from 'http';
 import * as StellarSDK from '@stellar/stellar-sdk';
+export { getAppVersion } from '../utils/app-version';
+import { APP_VERSION } from '../utils/app-version';
 import { eventRegistry } from '../store/event-registry';
 import { preferenceStore } from '../store/preference-store';
 import { PreferencesUpdateInput } from '../types/preferences';
@@ -12,20 +14,14 @@ import { handleTemplateRoutes } from './template-routes';
 import { sendOk, sendErr, sendJson, ErrorCode } from '../utils/response';
 import { handleApiError, ApiError } from './error-handler';
 import { applyRequestContext } from '../utils/request-id';
+import { applyRequestIdMiddleware } from '../middleware/request-id';
 import { TemplateService } from '../services/template-service';
 import { handleTemplateRoutes } from './template-routes';
 import { NotificationHistoryService } from '../services/notification-history';
 import { SearchSuggestionService } from '../services/search-suggestion';
 import { NotificationSearchService } from '../services/notification-search-service';
-import {
-  verifySignature,
-  extractSignature,
-  extractKeyId,
-  getSecretForKey,
-  collectRawBody,
-  extractTimestamp,
-  verifyWebhookRequest,
-} from '../services/webhook-verifier';
+import { collectRawBody, verifyWebhookRequest } from '../services/webhook-verifier';
+import { IdempotencyKeyService, IdempotencyKeyReuseError } from '../services/idempotency-key-service';
 import { WebhookSecret, RateLimitConfig, ContractConfig } from '../types';
 import { RateLimiter } from './rate-limiter';
 import { getDatabase } from '../database/database';
@@ -47,7 +43,7 @@ import {
   serializeAuditRecord,
   serializeTemplate,
 } from './template-api';
-import { CreateNotificationTemplateInputOld } from '../types/notification-template';
+import { CreateNotificationTemplateInput } from '../types/notification-template';
 import { BatchValidationService } from '../services/batch-validation-service';
 import { handleArchiveRequest } from './archive-api';
 import { ArchiveStore } from '../services/archive-store';
@@ -57,6 +53,8 @@ import { NotificationHealthMonitor } from '../services/notification-health-monit
 import { getJobMonitor } from '../services/job-monitor';
 import { NotificationImportService } from '../services/notification-import-service';
 import { ResponseTimeMiddleware } from '../middleware/response-time';
+import { DEFAULT_MAX_BODY_BYTES, enforceBodyLimit } from '../middleware/body-limit';
+import { sanitizeUrl } from '../utils/logger';
 
 export interface EventsServerOptions {
   port: number;
@@ -68,6 +66,8 @@ export interface EventsServerOptions {
   webhookSecrets?: WebhookSecret[];
   apiKeys?: Array<{ key: string; name?: string }>;
   notificationAPI?: NotificationAPI | null;
+  /** Idempotency-Key replay protection for mutating endpoints (webhooks, schedule). */
+  idempotencyService?: IdempotencyKeyService | null;
   templateService?: NotificationTemplateService | null;
   /** Scheduler-scoped template service, used to render templates for scheduled notifications. */
   schedulerTemplateService?: TemplateService | null;
@@ -98,6 +98,11 @@ export interface EventsServerOptions {
    * When omitted a new instance is created using `slowRequestThresholdMs`.
    */
   responseTimeMiddleware?: ResponseTimeMiddleware | null;
+  /**
+   * Largest request body accepted, in bytes. Oversized requests get a 413 and
+   * are never parsed. Defaults to {@link DEFAULT_MAX_BODY_BYTES}.
+   */
+  maxBodyBytes?: number;
 }
 
 type ServiceStatus = 'ok' | 'error' | 'not_configured';
@@ -110,6 +115,8 @@ interface ServiceHealth {
 
 interface HealthResponse {
   status: 'ok' | 'degraded' | 'error';
+  /** Semver string sourced from listener/package.json, e.g. "1.0.0". */
+  version: string;
   timestamp: string;
   services: {
     stellarRpc: ServiceHealth;
@@ -389,6 +396,7 @@ async function buildHealthResponse(options: EventsServerOptions): Promise<Health
 
   return {
     status: overallStatus,
+    version: APP_VERSION,
     timestamp: new Date().toISOString(),
     services: {
       stellarRpc,
@@ -416,18 +424,46 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
       : new ResponseTimeMiddleware({ slowRequestThresholdMs: options.slowRequestThresholdMs });
 
   const server = http.createServer(async (req, res) => {
-    // Correlation-ID middleware: mints a requestId and resolves a correlationId
-    // for every request, and stamps both onto the response headers. See
-    // listener/src/utils/request-id.ts and LOGGING.md for details.
-    const { requestId, correlationId } = applyRequestContext(req, res);
+    // Request-ID middleware (#686): assigns (or validates+reuses) a requestId
+    // and resolves a correlationId for every request, stamping both onto the
+    // response headers. See listener/src/middleware/request-id.ts.
+    const { requestId, correlationId } = applyRequestIdMiddleware(req, res);
     const startTime = Date.now();
 
     // Start response-time tracking for this request (#491)
     responseTime.start(res);
 
+    // Request body size limit.
+    //
+    // Screened here, before routing, so an oversized payload is answered and
+    // the socket destroyed before any route handler attaches its own `data`
+    // listener and starts accumulating the body in memory.
+    const maxBodyBytes = options.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES;
+    const bodyLimit = enforceBodyLimit(req, res, {
+      maxBytes: maxBodyBytes,
+      onRejected: (reason, observedBytes) => {
+        logger.warn('Request body exceeded size limit', {
+          requestId,
+          correlationId,
+          method: req.method,
+          url: sanitizeUrl(req.url ?? '/'),
+          reason,
+          observedBytes,
+          maxBytes: maxBodyBytes,
+        });
+      },
+    });
+    if (!bodyLimit.allowed) {
+      return;
+    }
+
     res.setHeader('Access-Control-Allow-Origin', corsOrigin);
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-API-Key, Authorization, X-Correlation-Id');
+    res.setHeader(
+      'Access-Control-Allow-Headers',
+      'Content-Type, X-API-Key, Authorization, X-Correlation-Id, X-Request-Id',
+    );
+    res.setHeader('Access-Control-Expose-Headers', 'X-Request-Id, X-Correlation-Id, X-Response-Time');
 
     const url = new URL(req.url ?? '/', 'http://localhost');
     const pathname = url.pathname;
@@ -628,25 +664,16 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
     // POST /api/webhooks
     if (req.method === 'POST' && url.pathname === '/api/webhooks') {
       const idempotencyKey = IdempotencyKeyService.extractKey(req.headers) ?? undefined;
+
+      const writeAuthFailure = (statusCode: number, message: string, code: string): void => {
+        res.writeHead(statusCode, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: { code, message }, code }));
+      };
+
       collectRawBody(req).then(async (rawBody) => {
         const sourceIp =
           (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ||
           (req.socket?.remoteAddress as string | undefined);
-      collectRawBody(req).then((rawBody) => {
-        const signatureHeader = extractSignature(req.headers);
-        const keyId = extractKeyId(req.headers);
-
-        if (!signatureHeader) {
-          logger.warn('Webhook missing signature header', { requestId, correlationId });
-          sendErr(res, 401, 'Missing signature header', ErrorCode.UNAUTHORIZED);
-          return;
-        }
-
-        if (!keyId) {
-          logger.warn('Webhook missing key-id header', { requestId, correlationId });
-          sendErr(res, 401, 'Missing key-id header', ErrorCode.UNAUTHORIZED);
-          return;
-        }
 
         const secrets = options.webhookSecrets ?? [];
         const maxAgeSeconds = options.signatureExpirationSeconds ?? 300;
@@ -662,11 +689,12 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
         });
 
         if (!auth.authenticated) {
-          res.writeHead(auth.statusCode, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: auth.message, code: auth.errorCode }));
-        if (!secret) {
-          logger.warn('Webhook unknown key-id', { requestId, correlationId, keyId });
-          sendErr(res, 401, 'Unknown key-id', ErrorCode.UNAUTHORIZED);
+          logger.warn('Webhook authentication failed', {
+            requestId,
+            correlationId,
+            code: auth.errorCode,
+          });
+          writeAuthFailure(auth.statusCode, auth.message, auth.errorCode);
           return;
         }
 
@@ -710,38 +738,16 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
             logger.warn('Webhook rejected: idempotency key reused with different body', {
               requestId, correlationId, idempotencyKey,
             });
-            res.writeHead(err.statusCode, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ error: err.message, code: err.code }));
-        if (timestampHeader) {
-          const timestamp = Array.isArray(timestampHeader) ? timestampHeader[0] : timestampHeader;
-          if (!isTimestampValid(timestamp, maxAgeSeconds)) {
-            logger.warn('Webhook request signature expired', { requestId, correlationId, keyId, timestamp });
-            sendErr(res, 401, 'Request signature expired', ErrorCode.UNAUTHORIZED);
+            writeAuthFailure(err.statusCode, err.message, err.code);
             return;
           }
-          throw err;
+          logger.error('Failed to process webhook', { requestId, correlationId, error: err });
+          sendErr(res, 500, 'Internal server error', ErrorCode.INTERNAL_ERROR);
         }
       }).catch((err) => {
-        if (err instanceof IdempotencyKeyReuseError) {
-          res.writeHead(err.statusCode, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: err.message, code: err.code }));
-          return;
-        }
         logger.error('Failed to read webhook body', { requestId, correlationId, error: err instanceof Error ? err.message : String(err) });
         res.writeHead(400, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'Failed to read request body', code: 'BODY_READ_FAILED' }));
-
-        if (!verifySignature(rawBody, signatureHeader, secret)) {
-          logger.warn('Webhook invalid signature', { requestId, correlationId, keyId });
-          sendErr(res, 401, 'Invalid signature', ErrorCode.UNAUTHORIZED);
-          return;
-        }
-
-        logger.info('Webhook received and verified', { requestId, correlationId, keyId });
-        sendOk(res, 202, { status: 'accepted' });
-      }).catch((err) => {
-        logger.error('Failed to read webhook body', { requestId, correlationId, error: err });
-        sendErr(res, 400, 'Failed to read request body', ErrorCode.BAD_REQUEST);
       });
       return;
     }
@@ -833,7 +839,6 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
           if (!data.executeAt || !data.payload || !data.targetRecipient) {
             res.writeHead(400, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ error: 'Missing required fields: executeAt, payload, targetRecipient', code: 'MISSING_FIELDS' }));
-            sendErr(res, 400, 'Missing required fields: executeAt, payload, targetRecipient', ErrorCode.BAD_REQUEST);
             return;
           }
 
@@ -841,7 +846,6 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
           if (isNaN(executeAt.getTime())) {
             res.writeHead(400, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ error: 'executeAt is not a valid date', code: 'INVALID_DATE' }));
-            sendErr(res, 400, 'executeAt is not a valid date', ErrorCode.BAD_REQUEST);
             return;
           }
 
@@ -894,15 +898,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
             res.end(JSON.stringify({ error: error.message, code: error.code }));
             return;
           }
-          logger.error('Failed to schedule notification', {
-            error: error instanceof Error ? error.message : String(error),
-            requestId, correlationId,
-          });
-          res.writeHead(500, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: (error as Error).message, code: 'SCHEDULE_FAILED' }));
-          sendOk(res, 201, { id: notificationId });
-          logger.info('Notification scheduled via API', { requestId, correlationId, notificationId, executeAt: data.executeAt });
-        } catch (error) {
+
           const anyError = error as any;
           if (anyError?.name === 'PayloadTooLargeError') {
             logger.warn('Payload too large', {
@@ -912,11 +908,17 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
               payloadSizeBytes: anyError.payloadSizeBytes,
               maxSizeBytes: anyError.maxSizeBytes,
             });
-            sendErr(res, 413, anyError.message, ErrorCode.PAYLOAD_TOO_LARGE);
+            res.writeHead(413, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: anyError.message, code: 'PAYLOAD_TOO_LARGE' }));
             return;
           }
-          logger.error('Failed to schedule notification', { error, requestId, correlationId });
-          sendErr(res, 500, (error as Error).message, ErrorCode.INTERNAL_ERROR);
+
+          logger.error('Failed to schedule notification', {
+            error: error instanceof Error ? error.message : String(error),
+            requestId, correlationId,
+          });
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: (error as Error).message, code: 'SCHEDULE_FAILED' }));
         }
       });
       return;
@@ -987,40 +989,6 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
       const limitParam = url.searchParams.get('limit');
       const limit = limitParam ? Math.min(Math.max(parseInt(limitParam, 10) || 50, 1), 200) : 50;
       sendOk(res, 200, { failures: monitor.listFailures(limit), count: monitor.listFailures(limit).length });
-      return;
-    }
-    if (req.method === 'GET' && url.pathname === '/api/schedule/execution-metrics') {
-      if (!options.notificationAPI) {
-        sendErr(res, 503, 'Scheduler not enabled', ErrorCode.SERVICE_UNAVAILABLE);
-        return;
-      }
-
-      options.notificationAPI.getExecutionMetrics()
-        .then((metrics) => {
-          sendOk(res, 200, metrics);
-        })
-        .catch((error) => {
-          logger.error('Failed to get execution metrics', { error, requestId, correlationId });
-          handleApiError(res, error, requestId, correlationId);
-        });
-      return;
-    }
-
-    // GET /api/schedule/retry-distribution
-    if (req.method === 'GET' && url.pathname === '/api/schedule/retry-distribution') {
-      if (!options.notificationAPI) {
-        sendErr(res, 503, 'Scheduler not enabled', ErrorCode.SERVICE_UNAVAILABLE);
-        return;
-      }
-
-      options.notificationAPI.getRetryDistribution()
-        .then((distribution) => {
-          sendOk(res, 200, distribution);
-        })
-        .catch((error) => {
-          logger.error('Failed to get retry distribution', { error, requestId, correlationId });
-          handleApiError(res, error, requestId, correlationId);
-        });
       return;
     }
 
@@ -1140,7 +1108,6 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
         .then((result) => {
           sendJson(res, 200, result);
           logger.info('GET /api/notifications/history complete', {
-            requestId, total: result.total, durationMs: Date.now() - startTime,
             requestId,
             correlationId,
             total: result.total,
@@ -1185,7 +1152,6 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
         sortBy,
       });
 
-      notificationSearchService.search({ q, sender, txHash, eventId, status, type, startDate, endDate, limit, offset })
       notificationSearchService.search({
         q,
         sender,
@@ -1384,7 +1350,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
       req.on('end', () => {
         void (async () => {
           try {
-            const parsed = JSON.parse(body) as CreateNotificationTemplateInputOld;
+            const parsed = JSON.parse(body) as CreateNotificationTemplateInput;
             if (!parsed?.id || !parsed?.name || !parsed?.type || !parsed?.body) {
               sendErr(res, 400, 'Invalid body: id, name, type, and body are required', ErrorCode.BAD_REQUEST);
               return;

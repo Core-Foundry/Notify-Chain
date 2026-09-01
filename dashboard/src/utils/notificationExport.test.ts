@@ -17,6 +17,7 @@ const sample: NotificationSearchResult[] = [
     status: 'COMPLETED',
     createdAt: '2026-07-26T12:00:00.000Z',
     payload: '{"message":"hi"}',
+    failureReason: null,
   },
   {
     id: 2,
@@ -29,6 +30,7 @@ const sample: NotificationSearchResult[] = [
     status: 'FAILED',
     createdAt: '2026-07-26T13:00:00.000Z',
     payload: null,
+    failureReason: 'timeout',
   },
 ];
 

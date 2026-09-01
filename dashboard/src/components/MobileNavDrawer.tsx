@@ -21,7 +21,8 @@ export type Tab =
   | 'export-history'
   | 'search'
   | 'preferences'
-  | 'templates';
+  | 'templates'
+  | 'rpc-benchmark';
 
 export interface NavItem {
   id: Tab;
@@ -40,6 +41,7 @@ export const NAV_ITEMS: NavItem[] = [
   { id: 'search',         label: 'Notification Search',  group: 'Search & Config' },
   { id: 'preferences',    label: 'Preferences',          group: 'Search & Config' },
   { id: 'templates',      label: 'Templates',            group: 'Search & Config' },
+  { id: 'rpc-benchmark',  label: 'RPC Benchmark',        group: 'Diagnostics' },
 ];
 
 const FOCUSABLE_SELECTOR = [
@@ -159,7 +161,7 @@ export function MobileNavDrawer({
           </button>
         </div>
 
-        <nav aria-label="Main navigation" className="mobile-drawer__nav">
+        <nav aria-label="Mobile navigation" className="mobile-drawer__nav">
           {Object.entries(groups).map(([groupLabel, items]) => (
             <div key={groupLabel} className="mobile-drawer__group">
               <p className="mobile-drawer__group-label" aria-hidden="true">
