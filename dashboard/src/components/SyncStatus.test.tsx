@@ -16,4 +16,3 @@ describe('SyncStatus', () => {
     expect(screen.getByText('refresh failed')).toBeInTheDocument();
   });
 });
-

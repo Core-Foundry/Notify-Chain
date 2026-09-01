@@ -54,6 +54,40 @@ async function syncCopyText(text: string) {
 export const EventExplorerTable = memo(function EventExplorerTable({ events }: EventExplorerTableProps) {
   const [copiedAddress, setCopiedAddress] = useState<string | null>(null);
 
+  const startResize = useCallback(
+    (index: number, clientX: number) => {
+      dragRef.current = {
+        index,
+        startX: clientX,
+        startWidth: columnWidths[index],
+      };
+      document.body.classList.add('event-explorer--resizing');
+    },
+    [columnWidths],
+  );
+
+  async function syncCopyText(text: string) {
+    if (navigator.clipboard?.writeText) {
+      return navigator.clipboard.writeText(text);
+    }
+
+    const fallback = document.createElement('textarea');
+    fallback.value = text;
+    fallback.setAttribute('readonly', '');
+    fallback.style.position = 'absolute';
+    fallback.style.left = '-9999px';
+    document.body.appendChild(fallback);
+    fallback.select();
+
+    const successful = document.execCommand('copy');
+    document.body.removeChild(fallback);
+
+    if (!successful) {
+      throw new Error('Clipboard copy failed.');
+    }
+  }
+
+  const handleCopyContract = async (address: string) => {
   const handleCopyContract = useCallback(async (address: string) => {
     try {
       await syncCopyText(address);

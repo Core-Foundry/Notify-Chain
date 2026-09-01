@@ -6,7 +6,14 @@ import { filterEvents } from '../utils/eventData';
 // Reset store between tests
 beforeEach(() => {
   useEventStore.setState({
-    filters: { search: '', contractAddress: 'all', eventType: 'all', status: 'all', dateFrom: '', dateTo: '' },
+    filters: {
+      search: '',
+      contractAddress: 'all',
+      eventType: 'all',
+      status: 'all',
+      dateFrom: '',
+      dateTo: '',
+    },
   });
   jest.useFakeTimers();
 });
@@ -50,7 +57,10 @@ describe('NotificationSearchBar', () => {
     render(<NotificationSearchBar />);
     fireEvent.click(screen.getByRole('button', { name: /^unread$/i }));
     expect(getStore().filters.status).toBe('unread');
-    expect(screen.getByRole('button', { name: /^unread$/i })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('button', { name: /^unread$/i })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
   });
 
   it('sets dateFrom and dateTo', () => {
@@ -128,8 +138,28 @@ describe('NotificationSearchBar', () => {
 describe('filterEvents with new filter fields', () => {
   it('filters by status=unread correctly', () => {
     const events = [
-      { eventId: '1', read: false, contractAddress: 'A', eventName: 'X', receivedAt: Date.now(), ledger: 1, type: 'c', topic: [], value: '' },
-      { eventId: '2', read: true,  contractAddress: 'A', eventName: 'X', receivedAt: Date.now(), ledger: 2, type: 'c', topic: [], value: '' },
+      {
+        eventId: '1',
+        read: false,
+        contractAddress: 'A',
+        eventName: 'X',
+        receivedAt: Date.now(),
+        ledger: 1,
+        type: 'c',
+        topic: [],
+        value: '',
+      },
+      {
+        eventId: '2',
+        read: true,
+        contractAddress: 'A',
+        eventName: 'X',
+        receivedAt: Date.now(),
+        ledger: 2,
+        type: 'c',
+        topic: [],
+        value: '',
+      },
     ];
     const result = filterEvents(events, '', 'all', 'all', 'unread', '', '');
     expect(result).toHaveLength(1);
@@ -138,9 +168,38 @@ describe('filterEvents with new filter fields', () => {
 
   it('filters by txHash — only matching events returned', () => {
     const events = [
-      { eventId: '1', contractAddress: 'A', eventName: 'X', receivedAt: Date.now(), ledger: 1, type: 'c', topic: [], value: '', txHash: 'aabbccdd' },
-      { eventId: '2', contractAddress: 'A', eventName: 'X', receivedAt: Date.now(), ledger: 2, type: 'c', topic: [], value: '', txHash: '11223344' },
-      { eventId: '3', contractAddress: 'A', eventName: 'X', receivedAt: Date.now(), ledger: 3, type: 'c', topic: [], value: '' },
+      {
+        eventId: '1',
+        contractAddress: 'A',
+        eventName: 'X',
+        receivedAt: Date.now(),
+        ledger: 1,
+        type: 'c',
+        topic: [],
+        value: '',
+        txHash: 'aabbccdd',
+      },
+      {
+        eventId: '2',
+        contractAddress: 'A',
+        eventName: 'X',
+        receivedAt: Date.now(),
+        ledger: 2,
+        type: 'c',
+        topic: [],
+        value: '',
+        txHash: '11223344',
+      },
+      {
+        eventId: '3',
+        contractAddress: 'A',
+        eventName: 'X',
+        receivedAt: Date.now(),
+        ledger: 3,
+        type: 'c',
+        topic: [],
+        value: '',
+      },
     ];
     const result = filterEvents(events, '', 'all', 'all', 'all', '', '', 'aabb');
     expect(result).toHaveLength(1);
@@ -149,8 +208,27 @@ describe('filterEvents with new filter fields', () => {
 
   it('filters by txHash — empty txHash returns all events', () => {
     const events = [
-      { eventId: '1', contractAddress: 'A', eventName: 'X', receivedAt: Date.now(), ledger: 1, type: 'c', topic: [], value: '', txHash: 'aabbccdd' },
-      { eventId: '2', contractAddress: 'A', eventName: 'X', receivedAt: Date.now(), ledger: 2, type: 'c', topic: [], value: '' },
+      {
+        eventId: '1',
+        contractAddress: 'A',
+        eventName: 'X',
+        receivedAt: Date.now(),
+        ledger: 1,
+        type: 'c',
+        topic: [],
+        value: '',
+        txHash: 'aabbccdd',
+      },
+      {
+        eventId: '2',
+        contractAddress: 'A',
+        eventName: 'X',
+        receivedAt: Date.now(),
+        ledger: 2,
+        type: 'c',
+        topic: [],
+        value: '',
+      },
     ];
     const result = filterEvents(events, '', 'all', 'all', 'all', '', '', '');
     expect(result).toHaveLength(2);
@@ -161,9 +239,36 @@ describe('filterEvents with new filter fields', () => {
     const jan15 = Date.parse('2026-01-15T12:00:00Z');
     const feb1 = Date.parse('2026-02-01T12:00:00Z');
     const events = [
-      { eventId: '1', contractAddress: 'A', eventName: 'X', receivedAt: jan1, ledger: 1, type: 'c', topic: [], value: '' },
-      { eventId: '2', contractAddress: 'A', eventName: 'X', receivedAt: jan15, ledger: 2, type: 'c', topic: [], value: '' },
-      { eventId: '3', contractAddress: 'A', eventName: 'X', receivedAt: feb1, ledger: 3, type: 'c', topic: [], value: '' },
+      {
+        eventId: '1',
+        contractAddress: 'A',
+        eventName: 'X',
+        receivedAt: jan1,
+        ledger: 1,
+        type: 'c',
+        topic: [],
+        value: '',
+      },
+      {
+        eventId: '2',
+        contractAddress: 'A',
+        eventName: 'X',
+        receivedAt: jan15,
+        ledger: 2,
+        type: 'c',
+        topic: [],
+        value: '',
+      },
+      {
+        eventId: '3',
+        contractAddress: 'A',
+        eventName: 'X',
+        receivedAt: feb1,
+        ledger: 3,
+        type: 'c',
+        topic: [],
+        value: '',
+      },
     ];
     const result = filterEvents(events, '', 'all', 'all', 'all', '2026-01-01', '2026-01-20', '');
     expect(result.map((e: { eventId: string }) => e.eventId).sort()).toEqual(['1', '2']);

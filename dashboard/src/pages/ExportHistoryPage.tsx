@@ -1,4 +1,3 @@
- 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { generateMockExports, type NotificationExport } from '../utils/exportData';
 import { ExportHistoryTable } from '../components/ExportHistoryTable';
@@ -41,9 +40,12 @@ function buildExportBlob(item: NotificationExport): { blob: Blob; filename: stri
         })),
       },
       null,
-      2
+      2,
     );
-    return { blob: new Blob([content], { type: 'application/json' }), filename: `${filename}.json` };
+    return {
+      blob: new Blob([content], { type: 'application/json' }),
+      filename: `${filename}.json`,
+    };
   }
 
   if (item.format === 'CSV') {
@@ -52,10 +54,9 @@ function buildExportBlob(item: NotificationExport): { blob: Blob; filename: stri
       (_, i) =>
         `notif-${2000 + i},CCEMX6Q5V5F5F5F5F5F5F5F5F5F5F5F5F5F5F5F5F5F5F5F5F5F5F5,` +
         `${i % 2 === 0 ? 'NotificationScheduled' : 'NotificationExpired'},` +
-        `${new Date(item.createdAt - i * 15 * 60 * 1000).toISOString()},Delivered`
+        `${new Date(item.createdAt - i * 15 * 60 * 1000).toISOString()},Delivered`,
     );
-    const content =
-      'ID,Contract Address,Event Name,Timestamp,Status\n' + rows.join('\n');
+    const content = 'ID,Contract Address,Event Name,Timestamp,Status\n' + rows.join('\n');
     return { blob: new Blob([content], { type: 'text/csv' }), filename: `${filename}.csv` };
   }
 
@@ -124,8 +125,7 @@ export function ExportHistoryPage() {
         item.id.toLowerCase().includes(q) ||
         item.format.toLowerCase().includes(q);
       const matchesStatus =
-        statusFilter === 'all' ||
-        item.status.toLowerCase() === statusFilter.toLowerCase();
+        statusFilter === 'all' || item.status.toLowerCase() === statusFilter.toLowerCase();
       return matchesSearch && matchesStatus;
     });
   }, [exports, search, statusFilter]);
@@ -171,8 +171,8 @@ export function ExportHistoryPage() {
           <p className="export-history__eyebrow">Export Center</p>
           <h1>Notification Export History</h1>
           <p className="export-history__lead">
-            Manage, filter, and download your previously generated notification and smart
-            contract event export records.
+            Manage, filter, and download your previously generated notification and smart contract
+            event export records.
           </p>
         </div>
         <WalletConnectButton />
@@ -206,7 +206,9 @@ export function ExportHistoryPage() {
         </div>
 
         <p className="event-filters__count" aria-live="polite" aria-atomic="true">
-          {isLoading ? '—' : `${totalCount.toLocaleString()} ${totalCount === 1 ? 'record' : 'records'}`}
+          {isLoading
+            ? '—'
+            : `${totalCount.toLocaleString()} ${totalCount === 1 ? 'record' : 'records'}`}
         </p>
       </section>
 

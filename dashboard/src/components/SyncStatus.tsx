@@ -12,11 +12,13 @@ export function SyncStatus() {
   const isError = Boolean(lastSyncError);
 
   return (
-    <div className={`sync-status${isError ? ' sync-status--error' : ''}`} title={lastSyncError ?? undefined}>
+    <div
+      className={`sync-status${isError ? ' sync-status--error' : ''}`}
+      title={lastSyncError ?? undefined}
+    >
       <span className="sync-status__dot" aria-hidden="true" />
       <span>Last sync: {label}</span>
       {isError && <span className="sync-status__error">refresh failed</span>}
     </div>
   );
 }
-

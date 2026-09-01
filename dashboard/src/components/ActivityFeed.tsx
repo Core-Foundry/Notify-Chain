@@ -186,7 +186,9 @@ export function ActivityFeed() {
           className={`activity-feed__toggle-realtime ${realTimeEnabled ? 'activity-feed__toggle-realtime--active' : ''}`}
           onClick={() => setRealTimeEnabled(!realTimeEnabled)}
           aria-pressed={realTimeEnabled}
-          aria-label={realTimeEnabled ? 'Pause live activity updates' : 'Resume live activity updates'}
+          aria-label={
+            realTimeEnabled ? 'Pause live activity updates' : 'Resume live activity updates'
+          }
         >
           {realTimeEnabled ? '🔴 Live' : '⏸ Paused'}
         </button>

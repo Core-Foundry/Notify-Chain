@@ -41,7 +41,6 @@ export const NOTIFICATION_TYPE_OPTIONS = [
   { value: 'sms', label: 'SMS' },
 ];
 
-
 export function NotificationSearchPage() {
   const [query, setQuery] = useState('');
   const [sender, setSender] = useState('');
@@ -191,7 +190,7 @@ export function NotificationSearchPage() {
       const { blob, filename } = buildNotificationExportBlob(all, exportFormat, filters);
       downloadBlob(blob, filename);
       setExportMessage(
-        `Exported ${all.length} notification${all.length === 1 ? '' : 's'} as ${exportFormat.toUpperCase()}.`
+        `Exported ${all.length} notification${all.length === 1 ? '' : 's'} as ${exportFormat.toUpperCase()}.`,
       );
     } catch (err: unknown) {
       setExportMessage(err instanceof Error ? err.message : 'Export failed');
@@ -230,8 +229,8 @@ export function NotificationSearchPage() {
         <p className="event-explorer__eyebrow">Notifications</p>
         <h1>Notification Search</h1>
         <p className="event-explorer__lead">
-          Filter scheduled and processed notifications by type, delivery status, date range, sender, or free-text.
-          Export respects the filters you apply (JSON or CSV).
+          Filter scheduled and processed notifications by type, delivery status, date range, sender,
+          or free-text. Export respects the filters you apply (JSON or CSV).
         </p>
       </header>
 
@@ -239,7 +238,9 @@ export function NotificationSearchPage() {
       <section className="notif-search-form" aria-label="Notification search filters">
         <div className="notif-search-form__row">
           <div className="notif-search-form__group notif-search-form__group--wide">
-            <label htmlFor="nsf-query" className="notif-search-form__label">Search</label>
+            <label htmlFor="nsf-query" className="notif-search-form__label">
+              Search
+            </label>
             <input
               id="nsf-query"
               type="search"
@@ -252,7 +253,9 @@ export function NotificationSearchPage() {
           </div>
 
           <div className="notif-search-form__group">
-            <label htmlFor="nsf-sender" className="notif-search-form__label">Sender</label>
+            <label htmlFor="nsf-sender" className="notif-search-form__label">
+              Sender
+            </label>
             <input
               id="nsf-sender"
               type="text"
@@ -264,7 +267,9 @@ export function NotificationSearchPage() {
           </div>
 
           <div className="notif-search-form__group">
-            <label htmlFor="nsf-tx" className="notif-search-form__label">Tx Hash</label>
+            <label htmlFor="nsf-tx" className="notif-search-form__label">
+              Tx Hash
+            </label>
             <input
               id="nsf-tx"
               type="text"
@@ -276,7 +281,9 @@ export function NotificationSearchPage() {
           </div>
 
           <div className="notif-search-form__group">
-            <label htmlFor="nsf-event" className="notif-search-form__label">Event ID</label>
+            <label htmlFor="nsf-event" className="notif-search-form__label">
+              Event ID
+            </label>
             <input
               id="nsf-event"
               type="text"
@@ -288,7 +295,9 @@ export function NotificationSearchPage() {
           </div>
 
           <div className="notif-search-form__group">
-            <label htmlFor="nsf-status" className="notif-search-form__label">Delivery status</label>
+            <label htmlFor="nsf-status" className="notif-search-form__label">
+              Delivery status
+            </label>
             <select
               id="nsf-status"
               className="notif-search-form__input"
@@ -297,14 +306,18 @@ export function NotificationSearchPage() {
               aria-label="Filter by delivery status"
             >
               {NOTIFICATION_DELIVERY_STATUS_OPTIONS.map(({ value, label }) => (
-                <option key={value || 'all'} value={value}>{label}</option>
+                <option key={value || 'all'} value={value}>
+                  {label}
+                </option>
               ))}
             </select>
           </div>
 
           {/* Sort control (#495) */}
           <div className="notif-search-form__group">
-            <label htmlFor="nsf-sort" className="notif-search-form__label">Sort by</label>
+            <label htmlFor="nsf-sort" className="notif-search-form__label">
+              Sort by
+            </label>
             <select
               id="nsf-sort"
               className="notif-search-form__input"
@@ -319,7 +332,9 @@ export function NotificationSearchPage() {
           </div>
 
           <div className="notif-search-form__group">
-            <label htmlFor="nsf-type" className="notif-search-form__label">Notification type</label>
+            <label htmlFor="nsf-type" className="notif-search-form__label">
+              Notification type
+            </label>
             <select
               id="nsf-type"
               className="notif-search-form__input"
@@ -328,13 +343,17 @@ export function NotificationSearchPage() {
               aria-label="Filter by notification type"
             >
               {NOTIFICATION_TYPE_OPTIONS.map(({ value, label }) => (
-                <option key={value || 'all'} value={value}>{label}</option>
+                <option key={value || 'all'} value={value}>
+                  {label}
+                </option>
               ))}
             </select>
           </div>
 
           <div className="notif-search-form__group">
-            <label htmlFor="nsf-date-from" className="notif-search-form__label">From</label>
+            <label htmlFor="nsf-date-from" className="notif-search-form__label">
+              From
+            </label>
             <input
               id="nsf-date-from"
               type="date"
@@ -347,7 +366,9 @@ export function NotificationSearchPage() {
           </div>
 
           <div className="notif-search-form__group">
-            <label htmlFor="nsf-date-to" className="notif-search-form__label">To</label>
+            <label htmlFor="nsf-date-to" className="notif-search-form__label">
+              To
+            </label>
             <input
               id="nsf-date-to"
               type="date"
@@ -371,12 +392,21 @@ export function NotificationSearchPage() {
           }}
         >
           {hasParams && (
-            <button type="button" className="notif-search__clear" onClick={clearAll} aria-label="Clear all filters">
+            <button
+              type="button"
+              className="notif-search__clear"
+              onClick={clearAll}
+              aria-label="Clear all filters"
+            >
               Clear filters
             </button>
           )}
 
-          <label htmlFor="nsf-export-format" className="notif-search-form__label" style={{ margin: 0 }}>
+          <label
+            htmlFor="nsf-export-format"
+            className="notif-search-form__label"
+            style={{ margin: 0 }}
+          >
             Export format
           </label>
           <select
@@ -403,7 +433,11 @@ export function NotificationSearchPage() {
         </div>
 
         {exportMessage && (
-          <p className="notif-search-page__export-status" role="status" style={{ marginTop: '0.5rem' }}>
+          <p
+            className="notif-search-page__export-status"
+            role="status"
+            style={{ marginTop: '0.5rem' }}
+          >
             {exportMessage}
           </p>
         )}
@@ -523,7 +557,9 @@ function NotificationResultCard({ result }: { result: NotificationSearchResult }
         <span className={`notif-result-card__source notif-result-card__source--${result.source}`}>
           {result.source}
         </span>
-        <span className={`notif-result-card__status notif-result-card__status--${result.status.toLowerCase()}`}>
+        <span
+          className={`notif-result-card__status notif-result-card__status--${result.status.toLowerCase()}`}
+        >
           {result.status}
         </span>
         {result.notificationType && (
