@@ -811,7 +811,6 @@ export class ScheduledNotificationRepository {
 
     return {
       id: row.id,
-      payload: row.payload,
       payload: decompressPayload(row.payload),
       payloadHash: row.payload_hash,
       notificationType: row.notification_type as any,
