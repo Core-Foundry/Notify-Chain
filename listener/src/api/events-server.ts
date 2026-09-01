@@ -11,7 +11,7 @@ import { TemplateService } from '../services/template-service';
 import { handleTemplateRoutes } from './template-routes';
 import { sendOk, sendErr, sendJson, ErrorCode } from '../utils/response';
 import { handleApiError, ApiError } from './error-handler';
-import { applyRequestContext } from '../utils/request-id';
+import { applyRequestIdMiddleware } from '../middleware/request-id';
 import { TemplateService } from '../services/template-service';
 import { handleTemplateRoutes } from './template-routes';
 import { NotificationHistoryService } from '../services/notification-history';
@@ -57,6 +57,8 @@ import { NotificationHealthMonitor } from '../services/notification-health-monit
 import { getJobMonitor } from '../services/job-monitor';
 import { NotificationImportService } from '../services/notification-import-service';
 import { ResponseTimeMiddleware } from '../middleware/response-time';
+import { DEFAULT_MAX_BODY_BYTES, enforceBodyLimit } from '../middleware/body-limit';
+import { sanitizeUrl } from '../utils/logger';
 
 export interface EventsServerOptions {
   port: number;
@@ -98,6 +100,11 @@ export interface EventsServerOptions {
    * When omitted a new instance is created using `slowRequestThresholdMs`.
    */
   responseTimeMiddleware?: ResponseTimeMiddleware | null;
+  /**
+   * Largest request body accepted, in bytes. Oversized requests get a 413 and
+   * are never parsed. Defaults to {@link DEFAULT_MAX_BODY_BYTES}.
+   */
+  maxBodyBytes?: number;
 }
 
 type ServiceStatus = 'ok' | 'error' | 'not_configured';
@@ -416,18 +423,46 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
       : new ResponseTimeMiddleware({ slowRequestThresholdMs: options.slowRequestThresholdMs });
 
   const server = http.createServer(async (req, res) => {
-    // Correlation-ID middleware: mints a requestId and resolves a correlationId
-    // for every request, and stamps both onto the response headers. See
-    // listener/src/utils/request-id.ts and LOGGING.md for details.
-    const { requestId, correlationId } = applyRequestContext(req, res);
+    // Request-ID middleware (#686): assigns (or validates+reuses) a requestId
+    // and resolves a correlationId for every request, stamping both onto the
+    // response headers. See listener/src/middleware/request-id.ts.
+    const { requestId, correlationId } = applyRequestIdMiddleware(req, res);
     const startTime = Date.now();
 
     // Start response-time tracking for this request (#491)
     responseTime.start(res);
 
+    // Request body size limit.
+    //
+    // Screened here, before routing, so an oversized payload is answered and
+    // the socket destroyed before any route handler attaches its own `data`
+    // listener and starts accumulating the body in memory.
+    const maxBodyBytes = options.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES;
+    const bodyLimit = enforceBodyLimit(req, res, {
+      maxBytes: maxBodyBytes,
+      onRejected: (reason, observedBytes) => {
+        logger.warn('Request body exceeded size limit', {
+          requestId,
+          correlationId,
+          method: req.method,
+          url: sanitizeUrl(req.url ?? '/'),
+          reason,
+          observedBytes,
+          maxBytes: maxBodyBytes,
+        });
+      },
+    });
+    if (!bodyLimit.allowed) {
+      return;
+    }
+
     res.setHeader('Access-Control-Allow-Origin', corsOrigin);
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-API-Key, Authorization, X-Correlation-Id');
+    res.setHeader(
+      'Access-Control-Allow-Headers',
+      'Content-Type, X-API-Key, Authorization, X-Correlation-Id, X-Request-Id',
+    );
+    res.setHeader('Access-Control-Expose-Headers', 'X-Request-Id, X-Correlation-Id, X-Response-Time');
 
     const url = new URL(req.url ?? '/', 'http://localhost');
     const pathname = url.pathname;

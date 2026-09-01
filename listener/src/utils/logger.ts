@@ -41,6 +41,154 @@ export function resolveLogLevel(raw: string | undefined): LogLevel {
   return 'info';
 }
 
+/** The log levels this service accepts, in decreasing severity. */
+export const SUPPORTED_LOG_LEVELS: readonly LogLevel[] = VALID_LOG_LEVELS;
+
+/**
+ * Strict counterpart to {@link resolveLogLevel}: returns null instead of
+ * silently downgrading an unrecognised value.
+ *
+ * `resolveLogLevel` deliberately never throws, so a bad value cannot crash a
+ * running process. But a *misconfigured deployment* should be caught at
+ * startup rather than quietly running at the wrong verbosity, so config
+ * validation uses this and rejects.
+ */
+export function parseLogLevel(raw: string | undefined): LogLevel | null {
+  const normalised = raw?.trim().toLowerCase();
+  if (!normalised) return null;
+  return (VALID_LOG_LEVELS as readonly string[]).includes(normalised)
+    ? (normalised as LogLevel)
+    : null;
+}
+
+// ---------------------------------------------------------------------------
+// Output format
+// ---------------------------------------------------------------------------
+
+const VALID_LOG_FORMATS = ['json', 'pretty'] as const;
+export type LogFormat = (typeof VALID_LOG_FORMATS)[number];
+
+/** The log output formats this service accepts. */
+export const SUPPORTED_LOG_FORMATS: readonly LogFormat[] = VALID_LOG_FORMATS;
+
+/** Strict parse of a raw LOG_FORMAT value; null when unrecognised. */
+export function parseLogFormat(raw: string | undefined): LogFormat | null {
+  const normalised = raw?.trim().toLowerCase();
+  if (!normalised) return null;
+  return (VALID_LOG_FORMATS as readonly string[]).includes(normalised)
+    ? (normalised as LogFormat)
+    : null;
+}
+
+/**
+ * Resolves the active output format.
+ *
+ * An explicit `LOG_FORMAT` always wins, so JSON can be switched on in any
+ * environment — reproducing an aggregator problem locally no longer requires
+ * pretending to be production. With nothing set the previous behaviour is
+ * preserved: JSON in production, human-readable elsewhere.
+ */
+export function resolveLogFormat(
+  rawFormat: string | undefined,
+  nodeEnv: string | undefined = process.env.NODE_ENV
+): LogFormat {
+  return parseLogFormat(rawFormat) ?? (nodeEnv === 'production' ? 'json' : 'pretty');
+}
+
+// ---------------------------------------------------------------------------
+// Secret redaction
+// ---------------------------------------------------------------------------
+
+/**
+ * Field-name fragments whose values are replaced before a record is emitted.
+ *
+ * Matching is substring-based and case-insensitive after stripping `-`, `_`
+ * and spaces, so `apiKey`, `X-API-Key`, `api_key`, `webhookSecret` and
+ * `Authorization` are all caught without enumerating every spelling.
+ */
+const REDACTED_KEY_PATTERNS = [
+  'password',
+  'secret',
+  'token',
+  'apikey',
+  'authorization',
+  'credential',
+  'signature',
+  'cookie',
+  'privatekey',
+] as const;
+
+export const REDACTED_PLACEHOLDER = '[REDACTED]';
+
+/** True when a field name looks like it carries a credential. */
+export function isSensitiveKey(key: string): boolean {
+  const normalised = key.toLowerCase().replace(/[-_\s]/g, '');
+  return REDACTED_KEY_PATTERNS.some((pattern) => normalised.includes(pattern));
+}
+
+/**
+ * Recursively replaces credential-looking values with a placeholder.
+ *
+ * Redaction runs on the way *into* the logger rather than being left to each
+ * caller: a secret only has to be forgotten once to sit permanently in an
+ * aggregator, and the caller is the party most likely to forget.
+ *
+ * Depth is bounded so a deeply nested or cyclic object cannot hang the logging
+ * path — logging must never be the thing that takes the service down.
+ */
+export function redactSensitive(value: unknown, depth = 0): unknown {
+  if (depth > 8) return value;
+
+  if (Array.isArray(value)) {
+    return value.map((item) => redactSensitive(item, depth + 1));
+  }
+
+  if (value !== null && typeof value === 'object') {
+    // Errors are handled by formatError and carry no fields worth redacting.
+    if (value instanceof Error) return value;
+
+    const output: Record<string, unknown> = {};
+    for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
+      output[key] = isSensitiveKey(key)
+        ? REDACTED_PLACEHOLDER
+        : redactSensitive(item, depth + 1);
+    }
+    return output;
+  }
+
+  return value;
+}
+
+/**
+ * Strips credentials out of a URL before it is logged.
+ *
+ * Request paths reach the logs verbatim and query strings routinely carry
+ * `?token=` or `?api_key=`. The path is what makes a log line useful for
+ * finding a slow endpoint; the parameter values are not.
+ */
+export function sanitizeUrl(rawUrl: string): string {
+  const queryStart = rawUrl.indexOf('?');
+  if (queryStart === -1) return rawUrl;
+
+  const path = rawUrl.slice(0, queryStart);
+  const params = new URLSearchParams(rawUrl.slice(queryStart + 1));
+
+  // Assembled by hand rather than via URLSearchParams.toString(), which would
+  // percent-encode the placeholder into `%5BREDACTED%5D` — still redacted, but
+  // no longer greppable in a log aggregator, which is the whole point of using
+  // a fixed marker.
+  const parts: string[] = [];
+  for (const [key, value] of params) {
+    parts.push(
+      isSensitiveKey(key)
+        ? `${encodeURIComponent(key)}=${REDACTED_PLACEHOLDER}`
+        : `${encodeURIComponent(key)}=${encodeURIComponent(value)}`
+    );
+  }
+
+  return parts.length > 0 ? `${path}?${parts.join('&')}` : path;
+}
+
 // ---------------------------------------------------------------------------
 // Error formatting
 // ---------------------------------------------------------------------------
@@ -84,12 +232,18 @@ export function formatError(error: unknown): FormattedError | string {
 // ---------------------------------------------------------------------------
 
 function formatMeta(meta: LogContext): LogContext {
+  // Redact first, then format the error. Order matters: formatError produces a
+  // plain object that redaction would otherwise walk pointlessly, and an
+  // error's own fields are not where credentials hide — the sibling context
+  // fields are.
+  const redacted = redactSensitive(meta) as LogContext;
+
   if (!('error' in meta) || meta.error === undefined) {
-    return meta;
+    return redacted;
   }
 
   return {
-    ...meta,
+    ...redacted,
     error: formatError(meta.error),
   };
 }
@@ -139,19 +293,32 @@ const baseLogger = winston.createLogger({
   ),
   transports: [
     new winston.transports.Console({
-      format:
-        process.env.NODE_ENV === 'production'
-          ? winston.format.json()
-          : winston.format.combine(
-              winston.format.colorize(),
-              winston.format.printf(({ timestamp, level, message, ...meta }) => {
-                const metaStr = Object.keys(meta).length ? ` ${JSON.stringify(meta)}` : '';
-                return `${timestamp} ${level}: ${message}${metaStr}`;
-              })
-            ),
+      format: buildConsoleFormat(resolveLogFormat(process.env.LOG_FORMAT)),
     }),
   ],
 });
+
+/**
+ * Builds the console formatter for a given output format.
+ *
+ * `json` emits newline-delimited JSON with a stable field set — `timestamp`,
+ * `level`, `message`, plus whatever structured context the call site attached
+ * — which is what a log aggregator needs to index consistently. `pretty` is
+ * the colourised single-line form for a human reading a terminal.
+ */
+function buildConsoleFormat(format: LogFormat): winston.Logform.Format {
+  if (format === 'json') {
+    return winston.format.json();
+  }
+
+  return winston.format.combine(
+    winston.format.colorize(),
+    winston.format.printf(({ timestamp, level, message, ...meta }) => {
+      const metaStr = Object.keys(meta).length ? ` ${JSON.stringify(meta)}` : '';
+      return `${timestamp} ${level}: ${message}${metaStr}`;
+    })
+  );
+}
 
 // ---------------------------------------------------------------------------
 // Public logger API
@@ -209,6 +376,15 @@ export function createRequestContext(requestId: string): LogContext {
  * configureLogger({ level: 'debug' });
  * ```
  */
-export function configureLogger(options: { level: string }): void {
-  baseLogger.level = resolveLogLevel(options.level);
+export function configureLogger(options: { level?: string; format?: string }): void {
+  if (options.level !== undefined) {
+    baseLogger.level = resolveLogLevel(options.level);
+  }
+
+  if (options.format !== undefined) {
+    const format = resolveLogFormat(options.format);
+    for (const transport of baseLogger.transports) {
+      transport.format = buildConsoleFormat(format);
+    }
+  }
 }
