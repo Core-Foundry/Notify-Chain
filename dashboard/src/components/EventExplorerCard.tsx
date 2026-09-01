@@ -3,17 +3,7 @@ import type { ContractStatus } from '../services/eventsApi';
 import { formatTimestamp } from '../utils/formatTime';
 import { CopyButton } from './CopyButton';
 
-const EVENT_KIND_STYLES: Record<string, string> = {
-  contract: 'event-explorer__badge--blue',
-  system: 'event-explorer__badge--purple',
-  debug: 'event-explorer__badge--default',
-};
-
-const EVENT_KIND_LABELS: Record<string, string> = {
-  contract: 'Contract',
-  system: 'System',
-  debug: 'Debug',
-};
+import { getEventKindClass, getEventKindLabel } from '../utils/eventTypeMapping';
 
 function shortenAddress(address: string) {
   if (address.length <= 14) {
@@ -21,14 +11,6 @@ function shortenAddress(address: string) {
   }
 
   return `${address.slice(0, 6)}...${address.slice(-4)}`;
-}
-
-function getEventKindClass(type: string) {
-  return EVENT_KIND_STYLES[type.toLowerCase()] ?? EVENT_KIND_STYLES.debug;
-}
-
-function getEventKindLabel(type: string) {
-  return EVENT_KIND_LABELS[type.toLowerCase()] ?? 'Unknown';
 }
 
 interface EventExplorerCardProps {

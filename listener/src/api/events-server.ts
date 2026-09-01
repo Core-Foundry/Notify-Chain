@@ -1,5 +1,7 @@
 import http from 'http';
 import * as StellarSDK from '@stellar/stellar-sdk';
+export { getAppVersion } from '../utils/app-version';
+import { APP_VERSION } from '../utils/app-version';
 import { eventRegistry } from '../store/event-registry';
 import { preferenceStore } from '../store/preference-store';
 import { PreferencesUpdateInput } from '../types/preferences';
@@ -57,6 +59,8 @@ import { NotificationHealthMonitor } from '../services/notification-health-monit
 import { getJobMonitor } from '../services/job-monitor';
 import { NotificationImportService } from '../services/notification-import-service';
 import { ResponseTimeMiddleware } from '../middleware/response-time';
+import { DEFAULT_MAX_BODY_BYTES, enforceBodyLimit } from '../middleware/body-limit';
+import { sanitizeUrl } from '../utils/logger';
 
 export interface EventsServerOptions {
   port: number;
@@ -98,6 +102,11 @@ export interface EventsServerOptions {
    * When omitted a new instance is created using `slowRequestThresholdMs`.
    */
   responseTimeMiddleware?: ResponseTimeMiddleware | null;
+  /**
+   * Largest request body accepted, in bytes. Oversized requests get a 413 and
+   * are never parsed. Defaults to {@link DEFAULT_MAX_BODY_BYTES}.
+   */
+  maxBodyBytes?: number;
 }
 
 type ServiceStatus = 'ok' | 'error' | 'not_configured';
@@ -110,6 +119,8 @@ interface ServiceHealth {
 
 interface HealthResponse {
   status: 'ok' | 'degraded' | 'error';
+  /** Semver string sourced from listener/package.json, e.g. "1.0.0". */
+  version: string;
   timestamp: string;
   services: {
     stellarRpc: ServiceHealth;
@@ -389,6 +400,7 @@ async function buildHealthResponse(options: EventsServerOptions): Promise<Health
 
   return {
     status: overallStatus,
+    version: APP_VERSION,
     timestamp: new Date().toISOString(),
     services: {
       stellarRpc,
@@ -424,6 +436,30 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
 
     // Start response-time tracking for this request (#491)
     responseTime.start(res);
+
+    // Request body size limit.
+    //
+    // Screened here, before routing, so an oversized payload is answered and
+    // the socket destroyed before any route handler attaches its own `data`
+    // listener and starts accumulating the body in memory.
+    const maxBodyBytes = options.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES;
+    const bodyLimit = enforceBodyLimit(req, res, {
+      maxBytes: maxBodyBytes,
+      onRejected: (reason, observedBytes) => {
+        logger.warn('Request body exceeded size limit', {
+          requestId,
+          correlationId,
+          method: req.method,
+          url: sanitizeUrl(req.url ?? '/'),
+          reason,
+          observedBytes,
+          maxBytes: maxBodyBytes,
+        });
+      },
+    });
+    if (!bodyLimit.allowed) {
+      return;
+    }
 
     res.setHeader('Access-Control-Allow-Origin', corsOrigin);
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
