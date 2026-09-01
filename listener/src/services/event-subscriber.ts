@@ -8,6 +8,7 @@ import {
   getEventName,
   matchesEventFilter,
   validateEventPayload,
+  validateRpcResponse,
 } from '../utils/event-utils';
 import { DiscordNotificationService } from './discord-notification';
 import { NotificationRetryQueue } from './notification-retry-queue';
@@ -123,6 +124,17 @@ export class EventSubscriber {
     for (const contractConfig of this.config.contractAddresses) {
       try {
         const response = await this.getContractEvents(contractConfig);
+
+        const responseValidation = validateRpcResponse(response);
+        if (!responseValidation.valid) {
+          logger.error('Rejecting invalid RPC response, skipping contract', {
+            requestId,
+            contractAddress: contractConfig.address,
+            reason: responseValidation.reason,
+          });
+          continue;
+        }
+
         const events = response.events || [];
         
         // Detect potential reorg if events exist and we have previous state
