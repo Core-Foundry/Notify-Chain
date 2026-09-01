@@ -7,6 +7,11 @@ import { getNotificationAnalyticsAggregator, NotificationAnalyticsAggregator } f
 import { sendWebhook } from './webhook-sender';
 import { NotificationType } from '../types/scheduled-notification';
 
+export const MAX_DISCORD_EMBED_LENGTH = 6000;
+export const MAX_DISCORD_FIELD_VALUE_LENGTH = 1024;
+export const MAX_DISCORD_EMBED_TITLE_LENGTH = 256;
+export const MAX_DISCORD_FOOTER_TEXT_LENGTH = 2048;
+
 export interface DiscordMessage {
   content?: string;
   embeds?: DiscordEmbed[];
@@ -23,6 +28,35 @@ export interface DiscordEmbed {
 
 export function createDiscordService(config: DiscordConfig): DiscordNotificationService {
   return new DiscordNotificationService(config);
+}
+
+// ---------------------------------------------------------------------------
+// Discord content safety
+// ---------------------------------------------------------------------------
+
+// Matches @everyone, @here, and all mention syntaxes: <@123>, <@!123>, <@&123>
+const MENTION_PATTERN = /@(everyone|here)|<@[!&]?\d+>/g;
+
+// Discord markdown characters that produce unintended formatting in embed content.
+// Underscores are intentionally excluded — they are common in Soroban event names
+// (e.g. task_created) and only trigger italics in matched-pair contexts.
+const MARKDOWN_CHARS = /([*`~|\\])/g;
+
+/**
+ * Sanitize user-controlled content before embedding it in a Discord message.
+ *
+ * - Strips @everyone / @here and all user/role mention syntax so on-chain
+ *   string data cannot trigger live Discord pings.
+ * - Escapes markdown control characters so the output renders as plain text
+ *   rather than accidentally producing bold, code, spoilers, etc.
+ *
+ * Only needed for content derived from on-chain data. Developer-controlled
+ * static strings (embed titles, field labels) don't require it.
+ */
+export function sanitizeForDiscord(text: string): string {
+  return text
+    .replace(MENTION_PATTERN, '[mention removed]')
+    .replace(MARKDOWN_CHARS, '\\$1');
 }
 
 export class DiscordNotificationService {
@@ -227,11 +261,12 @@ export class DiscordNotificationService {
     event: StellarSDK.rpc.Api.EventResponse,
     contractConfig: ContractConfig
   ): DiscordMessage {
-    const eventName = getEventName(event.topic) ?? 'Unknown Event';
+    const eventName = sanitizeForDiscord(getEventName(event.topic) ?? 'Unknown Event');
     const embed = this.createEventEmbed(event, contractConfig, eventName);
+    const sanitizedEmbed = this.sanitizeEmbed(embed);
 
     return {
-      embeds: [embed],
+      embeds: [sanitizedEmbed],
     };
   }
 
@@ -253,7 +288,7 @@ export class DiscordNotificationService {
       },
       {
         name: 'Type',
-        value: event.type,
+        value: sanitizeForDiscord(event.type),
         inline: true,
       },
     ];
@@ -283,6 +318,84 @@ export class DiscordNotificationService {
     return colors[eventType] || 0x808080;
   }
 
+  getEmbedLength(embed: DiscordEmbed): number {
+    let length = 0;
+    if (embed.title) length += embed.title.length;
+    if (embed.description) length += embed.description.length;
+    if (embed.fields) {
+      for (const field of embed.fields) {
+        length += field.name.length;
+        length += field.value.length;
+      }
+    }
+    if (embed.footer?.text) length += embed.footer.text.length;
+    return length;
+  }
+
+  sanitizeEmbed(embed: DiscordEmbed): DiscordEmbed {
+    let title = embed.title ?? '';
+    if (title.length > MAX_DISCORD_EMBED_TITLE_LENGTH) {
+      title = title.slice(0, MAX_DISCORD_EMBED_TITLE_LENGTH - 3) + '...';
+      logger.warn('Discord embed title truncated', {
+        originalLength: embed.title.length,
+        maxLength: MAX_DISCORD_EMBED_TITLE_LENGTH,
+      });
+    }
+
+    const fields = embed.fields?.map(field => {
+      let value = field.value;
+      if (value.length > MAX_DISCORD_FIELD_VALUE_LENGTH) {
+        value = value.slice(0, MAX_DISCORD_FIELD_VALUE_LENGTH - 3) + '...';
+        logger.warn('Discord field value truncated', {
+          fieldName: field.name,
+          originalLength: field.value.length,
+          maxLength: MAX_DISCORD_FIELD_VALUE_LENGTH,
+        });
+      }
+      return { ...field, value };
+    });
+
+    let footer = embed.footer;
+    if (footer?.text && footer.text.length > MAX_DISCORD_FOOTER_TEXT_LENGTH) {
+      footer = { text: footer.text.slice(0, MAX_DISCORD_FOOTER_TEXT_LENGTH - 3) + '...' };
+      logger.warn('Discord footer text truncated', {
+        originalLength: embed.footer.text.length,
+        maxLength: MAX_DISCORD_FOOTER_TEXT_LENGTH,
+      });
+    }
+
+    let sanitized: DiscordEmbed = { ...embed, title, fields, footer };
+
+    const totalLength = this.getEmbedLength(sanitized);
+    if (totalLength > MAX_DISCORD_EMBED_LENGTH) {
+      const excess = totalLength - MAX_DISCORD_EMBED_LENGTH;
+      const valueFieldIndex = sanitized.fields?.findIndex(f => f.name === 'Value');
+
+      if (valueFieldIndex !== undefined && valueFieldIndex >= 0 && sanitized.fields && sanitized.fields[valueFieldIndex]) {
+        const currentValue = sanitized.fields[valueFieldIndex].value;
+        const newValueLength = Math.max(0, currentValue.length - excess);
+        const newValue =
+          newValueLength < currentValue.length
+            ? currentValue.slice(0, newValueLength - 3) + '...'
+            : currentValue;
+
+        sanitized = {
+          ...sanitized,
+          fields: sanitized.fields.map((f, i) =>
+            i === valueFieldIndex ? { ...f, value: newValue } : f
+          ),
+        };
+
+        logger.warn('Discord embed truncated to fit size limit', {
+          originalLength: totalLength,
+          maxLength: MAX_DISCORD_EMBED_LENGTH,
+        });
+      }
+    }
+
+    return sanitized;
+  }
+
   private formatAddress(address: string): string {
     if (address.length <= 16) return address;
     return `${address.slice(0, 8)}...${address.slice(-8)}`;
@@ -299,14 +412,16 @@ export class DiscordNotificationService {
           return String(value.i64());
         case StellarSDK.xdr.ScValType.scvString(): {
           const strVal = value.str().toString();
-          return strVal.length > 500 ? strVal.slice(0, 500) + '...' : strVal;
+          return strVal.length > MAX_DISCORD_FIELD_VALUE_LENGTH ? strVal.slice(0, MAX_DISCORD_FIELD_VALUE_LENGTH) + '...' : strVal;
+          const truncated = strVal.length > 500 ? strVal.slice(0, 500) + '...' : strVal;
+          return sanitizeForDiscord(truncated);
         }
         case StellarSDK.xdr.ScValType.scvSymbol():
-          return `🔹 ${value.sym().toString()}`;
+          return `🔹 ${sanitizeForDiscord(value.sym().toString())}`;
         case StellarSDK.xdr.ScValType.scvAddress():
           return this.formatAddress(value.address().toString());
         default:
-          return JSON.stringify(value).slice(0, 500);
+          return JSON.stringify(value).slice(0, MAX_DISCORD_FIELD_VALUE_LENGTH);
       }
     } catch {
       return String(value);

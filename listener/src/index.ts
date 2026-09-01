@@ -27,6 +27,7 @@ import { NotificationMetricsRunner } from './services/notification-metrics-runne
 import { eventRegistry } from './store/event-registry';
 import logger from './utils/logger';
 import { loadConfig, validateConfig, ConfigError } from './config';
+import { SecretValidationError } from './config/validate-secrets';
 import { NotificationHealthMonitor } from './services/notification-health-monitor';
 import { getWorkerManager } from './services/worker-manager';
 import { EventDeduplicationService } from './services/event-deduplication-service';
@@ -170,57 +171,75 @@ async function main() {
   const subscriber = new EventSubscriber(config, deduplicationService);
   await subscriber.start();
 
-  const shutdown = async () => {
-    logger.info('Shutting down services...');
+  let isShuttingDown = false;
 
-    if (healthMonitor) {
-      healthMonitor.stop();
+  const shutdown = async (signal: string) => {
+    // Idempotency: prevent duplicate shutdown if multiple signals arrive
+    if (isShuttingDown) {
+      logger.warn('Shutdown already in progress, ignoring signal', { signal });
+      return;
     }
 
-    if (cleanupService) {
-      await cleanupService.stop();
+    isShuttingDown = true;
+    logger.info('Graceful shutdown initiated', { signal });
+
+    try {
+      if (healthMonitor) {
+        healthMonitor.stop();
+      }
+
+      if (cleanupService) {
+        await cleanupService.stop();
+      }
+
+      if (reconciliationEngine) {
+        reconciliationEngine.stop();
+      }
+
+      if (metricsRunner) {
+        await metricsRunner.stop();
+      }
+
+      if (archiveService) {
+        await archiveService.stop();
+      }
+
+      if (scheduler) {
+        await scheduler.stop();
+      }
+
+      if (retryScheduler) {
+        await retryScheduler.stop();
+      }
+
+      await subscriber.stop();
+      eventsServer.close();
+
+      logger.info('Graceful shutdown completed successfully', { signal });
+      process.exit(0);
+    } catch (error) {
+      logger.error('Error during graceful shutdown', { signal, error });
+      process.exit(1);
     }
-
-    if (reconciliationEngine) {
-      reconciliationEngine.stop();
-    }
-
-    if (metricsRunner) {
-      await metricsRunner.stop();
-    }
-
-    if (archiveService) {
-      await archiveService.stop();
-    }
-
-    if (scheduler) {
-      await scheduler.stop();
-    }
-
-    if (retryScheduler) {
-      await retryScheduler.stop();
-    }
-
-    await subscriber.stop();
-    eventsServer.close();
-
-    logger.info('All services stopped successfully');
-    process.exit(0);
   };
 
   process.on('SIGINT', async () => {
-    logger.info('Received SIGINT, shutting down');
-    await shutdown();
+    await shutdown('SIGINT');
   });
 
   process.on('SIGTERM', async () => {
-    logger.info('Received SIGTERM, shutting down');
-    await shutdown();
+    await shutdown('SIGTERM');
   });
 }
 
 main().catch((err) => {
-  if (err instanceof ConfigError) {
+  if (err instanceof SecretValidationError) {
+    // Secret validation failures are reported field-by-field without echoing
+    // actual secret values (#692).
+    logger.error('Startup secret validation failed — service will not start', {
+      error: err.message,
+    });
+  } else if (err instanceof ConfigError) {
     logger.error('Configuration error', { error: err.message });
   } else {
     logger.error('Error starting service', { error: err });
