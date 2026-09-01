@@ -1,3 +1,6 @@
+import { useState, useCallback } from 'react';
+import { EventExplorerPage } from './pages/EventExplorerPage';
+import { NotificationTimelineView } from './components/NotificationTimelineView';
 /**
  * App.tsx — root shell; layout delegated to DashboardLayout (#676).
  */
@@ -93,6 +96,10 @@ export function App() {
 
   const handleDrawerOpen = useCallback(() => setDrawerOpen(true), []);
   const handleDrawerClose = useCallback(() => setDrawerOpen(false), []);
+
+  const handleTabChange = useCallback((newTab: Tab) => {
+    setTab(newTab);
+  }, []);
 
   return (
     <ToastProvider>
