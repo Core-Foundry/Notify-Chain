@@ -117,6 +117,8 @@ export interface AppCleanupConfig {
   rateLimitEventRetentionMs: number;
   /** Retain in-memory events for this long (ms). */
   eventRetentionMs: number;
+  /** Retain processed event metadata for this long (ms). Default: 30 days. */
+  processedEventRetentionMs: number;
   /** Retain notification execution log rows for this long (ms). */
   executionLogRetentionMs: number;
 }

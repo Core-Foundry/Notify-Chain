@@ -164,6 +164,10 @@ function loadCleanupConfig(): AppCleanupConfig {
     notificationRetentionMs: parseIntegerEnv('NOTIFICATION_RETENTION_MS', String(7 * 24 * 60 * 60 * 1000)),
     rateLimitEventRetentionMs: parseIntegerEnv('RATE_LIMIT_EVENT_RETENTION_MS', String(24 * 60 * 60 * 1000)),
     eventRetentionMs: parseIntegerEnv('EVENT_RETENTION_MS', String(24 * 60 * 60 * 1000)),
+    processedEventRetentionMs: parseIntegerEnv(
+      'PROCESSED_EVENT_RETENTION_MS',
+      String(30 * 24 * 60 * 60 * 1000),
+    ),
     executionLogRetentionMs: parseIntegerEnv(
       'EXECUTION_LOG_RETENTION_MS',
       String(90 * 24 * 60 * 60 * 1000),
@@ -579,6 +583,12 @@ export function validateConfig(config: Config): void {
       errors.push(
         `NOTIFICATION_RETENTION_MS must be >= 60000 ms ` +
           `(received: ${config.cleanup.notificationRetentionMs}).`,
+      );
+    }
+    if (config.cleanup.processedEventRetentionMs < 60_000) {
+      errors.push(
+        `PROCESSED_EVENT_RETENTION_MS must be >= 60000 ms ` +
+          `(received: ${config.cleanup.processedEventRetentionMs}).`,
       );
     }
   }
