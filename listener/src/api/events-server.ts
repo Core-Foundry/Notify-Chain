@@ -118,6 +118,7 @@ interface HealthResponse {
   /** Semver string sourced from listener/package.json, e.g. "1.0.0". */
   version: string;
   timestamp: string;
+  uptimeSeconds: number;
   services: {
     stellarRpc: ServiceHealth;
     discord: ServiceHealth;
@@ -398,6 +399,7 @@ async function buildHealthResponse(options: EventsServerOptions): Promise<Health
     status: overallStatus,
     version: APP_VERSION,
     timestamp: new Date().toISOString(),
+    uptimeSeconds: process.uptime(),
     services: {
       stellarRpc,
       discord,

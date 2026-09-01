@@ -52,6 +52,7 @@ export interface HealthReport {
   queue: QueueHealth;
   workers: WorkerHealth;
   registry: RegistryHealth;
+  lastSuccessfulPollAt: string | null;
   /** Process uptime in milliseconds since startup. */
   uptimeMs: number;
   polling: PollingHealth;
@@ -68,6 +69,7 @@ export interface NotificationHealthMonitorOptions {
   now?: () => number;
   /** Optional repository used to surface DLQ depth in the health report. */
   repository?: ScheduledNotificationRepository | null;
+  getLastSuccessfulPoll?: () => number | null;
   /** Function to calculate uptime in milliseconds. */
   getUptimeMs?: () => number;
 }
@@ -84,6 +86,7 @@ export class NotificationHealthMonitor {
   private readonly stallThresholdCycles: number;
   private readonly maxProcessingDelayMs: number;
   private readonly now: () => number;
+  private readonly getLastSuccessfulPoll: () => number | null;
   private readonly getUptimeMs: () => number;
 
   private queue: EventProcessingQueue | null;
@@ -110,6 +113,7 @@ export class NotificationHealthMonitor {
     this.stallThresholdCycles = options.stallThresholdCycles ?? 3;
     this.maxProcessingDelayMs = options.maxProcessingDelayMs ?? 60_000;
     this.now = options.now ?? Date.now;
+    this.getLastSuccessfulPoll = options.getLastSuccessfulPoll ?? (() => null);
     this.getUptimeMs = options.getUptimeMs ?? (() => 0);
   }
 
@@ -151,12 +155,16 @@ export class NotificationHealthMonitor {
       registryHealth.status,
     );
 
+    const lastSuccessfulPollMs = this.getLastSuccessfulPoll();
+    const lastSuccessfulPollAt = lastSuccessfulPollMs !== null ? new Date(lastSuccessfulPollMs).toISOString() : null;
+
     const report: HealthReport = {
       status: overallStatus,
       timestamp: new Date(this.now()).toISOString(),
       queue: queueHealth,
       workers: workerHealth,
       registry: registryHealth,
+      lastSuccessfulPollAt,
       uptimeMs: this.getUptimeMs(),
       polling: pollingHealth,
     };

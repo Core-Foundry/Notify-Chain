@@ -28,15 +28,7 @@ export class EventSubscriber {
   private deduplicationService: EventDeduplicationService | null = null;
   private eventQueue: EventProcessingQueue | null = null;
   private expirationService: NotificationExpirationService | null = null;
-  /**
-   * Cached backfill start ledger, resolved once on the first cold-start fetch
-   * for any contract that has no stored cursor.  Re-used for all contracts in
-   * the same session so they share a consistent baseline.
-   *
-   * `null`  → not yet resolved (or backfill limit is disabled)
-   * `number` → resolved start ledger (>= 1)
-   */
-  private backfillStartLedger: number | null = null;
+  private lastSuccessfulPollAt: number | null = null;
 
   constructor(config: Config, deduplicationService?: EventDeduplicationService) {
     this.config = config;
@@ -93,6 +85,7 @@ export class EventSubscriber {
       try {
         await this.checkForEvents(requestId);
         this.reconnectAttempts = 0;
+        this.lastSuccessfulPollAt = Date.now();
 
         const durationMs = Date.now() - pollStart;
         pollingMetrics.record(durationMs, true);
@@ -524,5 +517,9 @@ export class EventSubscriber {
       eventQueue: this.eventQueue?.getMetrics() || null,
       retryQueue: this.retryQueue?.getMetrics() || null,
     };
+  }
+
+  getLastSuccessfulPoll(): number | null {
+    return this.lastSuccessfulPollAt;
   }
 }
