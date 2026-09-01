@@ -3,7 +3,7 @@ import { Config, ContractConfig } from '../types';
 import { eventRegistry } from '../store/event-registry';
 import { preferenceStore } from '../store/preference-store';
 import logger from '../utils/logger';
-import { generateRequestId } from '../utils/request-id';
+import { generateCorrelationId, generateRequestId } from '../utils/request-id';
 import {
   getEventName,
   matchesEventFilter,
@@ -155,6 +155,28 @@ export class EventSubscriber {
           }
         }
 
+        const processableEvents: Array<{
+          event: StellarSDK.rpc.Api.EventResponse;
+          correlationId: string;
+        }> = [];
+        for (const [eventIndex, event] of events.entries()) {
+          const correlationId = generateCorrelationId();
+          try {
+            if (this.shouldProcessEvent(event, contractConfig, requestId, correlationId)) {
+              processableEvents.push({ event, correlationId });
+            }
+          } catch (error) {
+            logger.warn('Skipping malformed event', {
+              requestId,
+              correlationId,
+              contractAddress: contractConfig.address,
+              eventIndex,
+              eventId: event?.id,
+              eventType: event?.type,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
+        }
         const processableEvents = events.filter((event: StellarSDK.rpc.Api.EventResponse) =>
           this.shouldProcessEvent(event, contractConfig, requestId)
         );
@@ -168,11 +190,24 @@ export class EventSubscriber {
           });
         }
 
-        for (const event of processableEvents) {
-          if (this.eventQueue) {
-            this.eventQueue.enqueue(event, contractConfig, requestId);
-          } else {
-            await this.processEvent(event, contractConfig, requestId);
+        for (const [eventIndex, processableEvent] of processableEvents.entries()) {
+          const { event, correlationId } = processableEvent;
+          try {
+            if (this.eventQueue) {
+              this.eventQueue.enqueue(event, contractConfig, correlationId);
+            } else {
+              await this.processEvent(event, contractConfig, correlationId);
+            }
+          } catch (error) {
+            logger.warn('Event processing failed; continuing batch', {
+              requestId,
+              correlationId,
+              contractAddress: contractConfig.address,
+              eventIndex,
+              eventId: event?.id,
+              eventType: event?.type,
+              error: error instanceof Error ? error.message : String(error),
+            });
           }
         }
 
@@ -209,7 +244,8 @@ export class EventSubscriber {
   private shouldProcessEvent(
     event: StellarSDK.rpc.Api.EventResponse,
     contractConfig: ContractConfig,
-    requestId: string = ''
+    requestId: string = '',
+    correlationId: string = requestId
   ): boolean {
     // Check if event has expired
     if (this.expirationService && !this.expirationService.shouldProcess(event)) {
@@ -230,6 +266,7 @@ export class EventSubscriber {
     if (!validation.valid) {
       logger.warn('Skipping invalid event payload', {
         requestId,
+        correlationId,
         contractAddress: contractConfig.address,
         eventId: event.id,
         reason: validation.reason,
@@ -335,7 +372,8 @@ export class EventSubscriber {
   private async processEvent(
     event: StellarSDK.rpc.Api.EventResponse,
     contractConfig: ContractConfig,
-    requestId: string = ''
+    requestId: string = '',
+    correlationId: string = ''
   ): Promise<boolean> {
     const eventStart = Date.now();
     const eventName = getEventName(event.topic);
@@ -345,7 +383,8 @@ export class EventSubscriber {
       const duplicate = await this.deduplicationService.isDuplicate(event.id, contractConfig.address);
       if (duplicate.isDuplicate) {
         logger.warn('Skipping event: already processed (persistent deduplication)', {
-          requestId,
+          requestId: correlationId,
+          correlationId,
           eventId: event.id,
           contractAddress: contractConfig.address,
           isReorgDuplicate: duplicate.isReorgDuplicate,
@@ -378,7 +417,8 @@ export class EventSubscriber {
     });
 
     logger.info('Processing event', {
-      requestId,
+      requestId: correlationId,
+      correlationId,
       contractAddress: displayEvent.contractAddress,
       eventId: displayEvent.eventId,
       eventName: displayEvent.eventName,
@@ -397,6 +437,7 @@ export class EventSubscriber {
         logger.info('Skipping Discord notification: category disabled by user preferences', {
           eventId: event.id,
           userId,
+          correlationId,
         });
       } else {
         try {
@@ -409,7 +450,8 @@ export class EventSubscriber {
 
           if (!success && this.retryQueue) {
             logger.warn('Discord notification failed, adding to retry queue', {
-              requestId,
+              requestId: correlationId,
+              correlationId,
               eventId: event.id,
             });
             this.retryQueue.enqueue(event, contractConfig, requestId);
@@ -418,7 +460,8 @@ export class EventSubscriber {
         } catch (error) {
           processingError = error instanceof Error ? error.message : String(error);
           logger.error('Error sending Discord notification', {
-            requestId,
+              requestId: correlationId,
+              correlationId,
             eventId: event.id,
             error: processingError,
           });
@@ -441,9 +484,11 @@ export class EventSubscriber {
     }
 
     logger.info('Event processing complete', {
-      requestId,
+      requestId: correlationId,
+      correlationId,
       eventId: event.id,
       notificationSent,
+      outcome: !this.discordService || notificationSent ? 'success' : 'failure',
       durationMs: Date.now() - eventStart,
     });
 

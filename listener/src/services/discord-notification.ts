@@ -6,6 +6,7 @@ import { NotificationDeduplicator, generateFingerprint } from './notification-de
 import { getNotificationAnalyticsAggregator, NotificationAnalyticsAggregator } from './notification-analytics-aggregator';
 import { sendWebhook } from './webhook-sender';
 import { NotificationType } from '../types/scheduled-notification';
+import { generateCorrelationId } from '../utils/request-id';
 
 export const MAX_DISCORD_EMBED_LENGTH = 6000;
 export const MAX_DISCORD_FIELD_VALUE_LENGTH = 1024;
@@ -31,7 +32,6 @@ export function createDiscordService(config: DiscordConfig): DiscordNotification
 }
 
 // ---------------------------------------------------------------------------
-<<<<<<< HEAD
 // Discord content safety
 // ---------------------------------------------------------------------------
 
@@ -58,7 +58,6 @@ export function sanitizeForDiscord(text: string): string {
   return text
     .replace(MENTION_PATTERN, '[mention removed]')
     .replace(MARKDOWN_CHARS, '\\$1');
-=======
 // Internal helpers
 // ---------------------------------------------------------------------------
 
@@ -86,7 +85,6 @@ async function safeReadResponseBody(response: Response, maxLength = 300): Promis
   } catch {
     return null;
   }
->>>>>>> 5bc550e (fix(listener): improve Discord delivery failure logging)
 }
 
 export class DiscordNotificationService {
@@ -111,6 +109,7 @@ export class DiscordNotificationService {
     contractConfig: ContractConfig,
     requestId?: string
   ): Promise<boolean> {
+    const correlationId = requestId ?? generateCorrelationId();
     const fingerprint = generateFingerprint(event.id, contractConfig.address);
 
     if (this.deduplicator.isDuplicate(fingerprint)) {
@@ -124,13 +123,16 @@ export class DiscordNotificationService {
       logger.info('Skipping duplicate notification', {
         eventId: event.id,
         contractAddress: contractConfig.address,
+        requestId: correlationId,
+        correlationId,
         fingerprint,
         deduplication: this.deduplicator.getMetrics(),
       });
       return true;
     }
     const logContext = {
-      requestId,
+      requestId: correlationId,
+      correlationId,
       eventId: event.id,
       contractAddress: contractConfig.address,
       webhookId: this.config.webhookId,
@@ -151,6 +153,12 @@ export class DiscordNotificationService {
 
         if (response.ok) {
           this.deduplicator.markSent(fingerprint);
+          logger.info('Discord notification sent successfully', {
+            eventId: event.id,
+            contractAddress: contractConfig.address,
+            requestId: correlationId,
+            correlationId,
+          });
           logger.info('Discord notification delivered', {
             ...logContext,
             durationMs,
@@ -195,9 +203,8 @@ export class DiscordNotificationService {
       const delayMs = Math.pow(2, attempt) * backoffBaseSeconds * 1000;
       logger.warn('Retrying Discord webhook', {
         ...logContext,
-        attempt: attempt + 1,
-        nextDelayMs: delayMs,
-        maxRetries,
+        delayMs,
+        attempt,
       });
 
       await this.delay(delayMs);
