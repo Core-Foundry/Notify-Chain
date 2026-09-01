@@ -1,4 +1,5 @@
 import winston from 'winston';
+import { redactObject } from './redact';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -231,7 +232,23 @@ export function formatError(error: unknown): FormattedError | string {
 // Internal helpers
 // ---------------------------------------------------------------------------
 
+/**
+ * Normalize the `error` field inside a meta object and then redact all
+ * sensitive fields so no credentials reach any log transport.
+ *
+ * The pipeline:
+ *   1. Expand `error` (if present) using `formatError`.
+ *   2. Redact sensitive keys / URL credentials / auth headers via the
+ *      centralized redaction engine (`redactObject`).
+ */
 function formatMeta(meta: LogContext): LogContext {
+  const normalized =
+    'error' in meta && meta.error !== undefined
+      ? { ...meta, error: formatError(meta.error) }
+      : meta;
+
+  // Redact sensitive fields before any transport receives the object.
+  return redactObject(normalized as Record<string, unknown>) as LogContext;
   // Redact first, then format the error. Order matters: formatError produces a
   // plain object that redaction would otherwise walk pointlessly, and an
   // error's own fields are not where credentials hide — the sibling context
