@@ -34,16 +34,19 @@ import { EventDeduplicationService } from './services/event-deduplication-servic
 
 dotenv.config();
 
+// Track process startup time for uptime calculation
+const PROCESS_START_TIME = Date.now();
+
 async function main() {
   const config = loadConfig();
-  // Validate all config values before starting any services (#494).
-  // This throws a descriptive ConfigError listing every problem found.
   validateConfig(config);
 
   let scheduler: NotificationScheduler | null = null;
   let retryScheduler: RetryScheduler | null = null;
   let notificationAPI: NotificationAPI | null = null;
   let healthMonitor: NotificationHealthMonitor | null = null;
+  let subscriber: EventSubscriber | null = null;
+
   let templateService: NotificationTemplateService | null = null;
   let legacyTemplateService: TemplateService | null = null;
   let cleanupService: CleanupService | null = null;
@@ -64,6 +67,12 @@ async function main() {
     const db = await initializeDatabase(config.databasePath);
 
     repository = new ScheduledNotificationRepository(db);
+    
+    healthMonitor = new NotificationHealthMonitor(null, getWorkerManager(), {
+      repository,
+      getUptimeMs: () => Date.now() - PROCESS_START_TIME,
+    });
+
     healthMonitor = new NotificationHealthMonitor(null, getWorkerManager(), {
       repository,
     });
@@ -91,7 +100,6 @@ async function main() {
       logger.info('Notification metrics runner started successfully');
     }
 
-    // Archive service: moves old notifications to the archive table.
     const archiveCfg = loadArchiveConfig();
     archiveStore = new ArchiveStore(db);
     archiveService = new ArchiveService(db, archiveCfg);
@@ -109,16 +117,13 @@ async function main() {
     templateService = new NotificationTemplateService(templateRepository);
 
     if (config.scheduler?.enabled) {
-      repository = new ScheduledNotificationRepository(db);
       notificationAPI = new NotificationAPI(repository);
 
-      // Initialize legacy template service
       const legacyTemplateRepo = new TemplateRepository(db);
       legacyTemplateService = new TemplateService(legacyTemplateRepo);
 
       logger.info('Template service initialized successfully');
 
-      // Initialize scheduler with Discord service if available
       let discordService: DiscordNotificationService | null = null;
       if (config.discord) {
         discordService = new DiscordNotificationService(config.discord);
@@ -163,6 +168,7 @@ async function main() {
     healthMonitor.start();
   }
 
+  subscriber = new EventSubscriber(config, deduplicationService);
   const subscriber = new EventSubscriber(config, deduplicationService ?? undefined);
   await subscriber.start();
 
@@ -207,8 +213,11 @@ async function main() {
         await retryScheduler.stop();
       }
 
+    if (subscriber) {
       await subscriber.stop();
-      eventsServer.close();
+    }
+
+    eventsServer.close();
 
       logger.info('Graceful shutdown completed successfully', { signal });
       process.exit(0);
