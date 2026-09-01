@@ -256,7 +256,7 @@ npm run build
 #### 4. Run the health check
 
 ```bash
-bash scripts/health-check.sh https://staging-api.your-domain.com/health
+curl https://staging-api.your-domain.com/health
 ```
 
 ---

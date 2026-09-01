@@ -161,7 +161,7 @@ export function MobileNavDrawer({
           </button>
         </div>
 
-        <nav aria-label="Main navigation" className="mobile-drawer__nav">
+        <nav aria-label="Mobile navigation" className="mobile-drawer__nav">
           {Object.entries(groups).map(([groupLabel, items]) => (
             <div key={groupLabel} className="mobile-drawer__group">
               <p className="mobile-drawer__group-label" aria-hidden="true">

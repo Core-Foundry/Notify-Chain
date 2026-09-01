@@ -107,6 +107,8 @@ describe('GET /health', () => {
     expect(health.services.database.status).toBe('ok');
     expect(health.services.eventRegistry).toEqual({ status: 'ok', eventCount: 5 });
     expect(health.timestamp).toBeDefined();
+    // version field is included in every health response (#624)
+    expect(health.version).toMatch(/^\d+\.\d+\.\d+.*$|^unknown$/);
   });
 
   it('returns 503 and status error when Stellar RPC is unreachable', async () => {

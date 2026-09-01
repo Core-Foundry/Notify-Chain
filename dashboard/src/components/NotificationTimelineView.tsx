@@ -4,6 +4,7 @@ import { fetchTimeline } from '../services/timelineApi';
 import { formatTimestamp } from '../utils/formatTime';
 import { EmptyState } from './EmptyState';
 import { CopyButton } from './CopyButton';
+import { FormField, FormInput } from './FormField';
 
 // ─── status helpers ──────────────────────────────────────────────────────────
 
@@ -119,29 +120,27 @@ export function NotificationTimelineView() {
 
       {/* Filter / search */}
       <form className="timeline-view__form" onSubmit={handleSearch} role="search">
-        <label htmlFor="timeline-id-input" className="timeline-view__label">
-          Notification ID
-        </label>
-        <div className="timeline-view__input-row">
-          <input
-            id="timeline-id-input"
-            type="number"
-            min="1"
-            className="timeline-view__input"
-            placeholder="e.g. 42"
-            value={inputValue}
-            onChange={(e) => setInputValue(e.target.value)}
-            aria-describedby={error ? 'timeline-error' : undefined}
-          />
-          <button type="submit" className="timeline-view__btn" disabled={loading}>
-            {loading ? 'Loading…' : 'View Timeline'}
-          </button>
-        </div>
-        {error && (
-          <p id="timeline-error" className="timeline-view__error" role="alert">
-            {error}
-          </p>
-        )}
+        <FormField
+          id="timeline-id-input"
+          label="Notification ID"
+          error={error ? `Notification ID: ${error}` : null}
+        >
+          <div className="timeline-view__input-row">
+            <FormInput
+              fieldId="timeline-id-input"
+              type="number"
+              min="1"
+              className="timeline-view__input"
+              placeholder="e.g. 42"
+              value={inputValue}
+              onChange={(e) => setInputValue(e.target.value)}
+              error={error ? `Notification ID: ${error}` : null}
+            />
+            <button type="submit" className="timeline-view__btn" disabled={loading}>
+              {loading ? 'Loading…' : 'View Timeline'}
+            </button>
+          </div>
+        </FormField>
       </form>
 
       {/* Loading skeleton */}
@@ -150,10 +149,6 @@ export function NotificationTimelineView() {
       {/* Empty state — searched but no entries */}
       {!loading && timeline && timeline.entries.length === 0 && (
         <EmptyState
-          size="inline"
-          title={`No history entries found for notification #${timeline.notificationId}`}
-          message={`Current status: ${STATUS_LABEL[overallStatus!] ?? overallStatus}`}
-        />
           className="empty-state--compact"
           icon="📭"
           title="No history entries"
@@ -210,7 +205,6 @@ export function NotificationTimelineView() {
 
       {/* Initial empty state — nothing searched yet */}
       {!loading && !timeline && !error && (
-        <EmptyState size="inline" message="Enter a notification ID above to view its delivery history." />
         <EmptyState
           className="empty-state--compact"
           icon="🕐"
