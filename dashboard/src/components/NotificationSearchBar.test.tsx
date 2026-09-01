@@ -157,15 +157,15 @@ describe('filterEvents with new filter fields', () => {
   });
 
   it('filters by date range', () => {
-    const jan1 = new Date('2026-01-01').getTime() + 1000;
-    const jan15 = new Date('2026-01-15').getTime() + 1000;
-    const feb1 = new Date('2026-02-01').getTime() + 1000;
+    const jan1 = Date.parse('2026-01-01T12:00:00Z');
+    const jan15 = Date.parse('2026-01-15T12:00:00Z');
+    const feb1 = Date.parse('2026-02-01T12:00:00Z');
     const events = [
       { eventId: '1', contractAddress: 'A', eventName: 'X', receivedAt: jan1, ledger: 1, type: 'c', topic: [], value: '' },
       { eventId: '2', contractAddress: 'A', eventName: 'X', receivedAt: jan15, ledger: 2, type: 'c', topic: [], value: '' },
       { eventId: '3', contractAddress: 'A', eventName: 'X', receivedAt: feb1, ledger: 3, type: 'c', topic: [], value: '' },
     ];
-    const result = filterEvents(events, '', 'all', 'all', 'all', '2026-01-01', '2026-01-20');
-    expect(result.map((e: { eventId: string }) => e.eventId)).toEqual(['1', '2']);
+    const result = filterEvents(events, '', 'all', 'all', 'all', '2026-01-01', '2026-01-20', '');
+    expect(result.map((e: { eventId: string }) => e.eventId).sort()).toEqual(['1', '2']);
   });
 });

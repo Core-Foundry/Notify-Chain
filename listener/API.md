@@ -31,12 +31,15 @@ For a centralized list of API errors, causes, examples, and troubleshooting step
 
 Returns the operational status of all service dependencies.
 
+The `uptimeSeconds` field reports the listener process uptime in seconds, measured from process startup.
+
 **Response `200`** — all systems operational (or Discord degraded but Stellar RPC healthy)
 
 ```json
 {
   "status": "ok",
   "timestamp": "2024-06-20T14:00:00.000Z",
+  "uptimeSeconds": 123.45,
   "services": {
     "stellarRpc": { "status": "ok", "latencyMs": 42 },
     "discord": { "status": "ok", "latencyMs": 87 },
