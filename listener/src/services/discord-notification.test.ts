@@ -267,7 +267,7 @@ describe('DiscordNotificationService', () => {
       mockFetch.mockResolvedValueOnce({ ok: true });
 
       const service = new DiscordNotificationService(mockConfig);
-      const longValue = 'a'.repeat(600);
+      const longValue = 'a'.repeat(1100);
       const mockEvent = createMockEvent({
         value: xdr.ScVal.scvString(longValue),
       });
@@ -279,7 +279,7 @@ describe('DiscordNotificationService', () => {
       const [, options] = mockFetch.mock.calls[0];
       const body = JSON.parse(options.body);
       const valueField = body.embeds[0].fields.find((f: any) => f.name === 'Value');
-      expect(valueField.value.length).toBeLessThan(600);
+      expect(valueField.value.length).toBeLessThan(1100);
       expect(valueField.value).toContain('...');
     });
 
@@ -299,6 +299,84 @@ describe('DiscordNotificationService', () => {
       const body = JSON.parse(options.body);
       const valueField = body.embeds[0].fields.find((f: any) => f.name === 'Value');
       expect(valueField.value).toContain('my_symbol');
+    });
+
+    it('should preserve short messages without truncation', async () => {
+      mockFetch.mockResolvedValueOnce({ ok: true });
+
+      const service = new DiscordNotificationService(mockConfig);
+      const mockEvent = createMockEvent({
+        value: xdr.ScVal.scvString('short'),
+      });
+      const mockContractConfig = { address: 'CA123', events: ['test'] };
+
+      const result = await service.sendEventNotification(mockEvent, mockContractConfig);
+
+      expect(result).toBe(true);
+      const [, options] = mockFetch.mock.calls[0];
+      const body = JSON.parse(options.body);
+      const valueField = body.embeds[0].fields.find((f: any) => f.name === 'Value');
+      expect(valueField.value).toBe('short');
+    });
+
+    it('should truncate oversized embed titles', async () => {
+      mockFetch.mockResolvedValueOnce({ ok: true });
+
+      const service = new DiscordNotificationService(mockConfig);
+      const longTopic = 'a'.repeat(300);
+      const mockEvent = createMockEvent({
+        topic: [xdr.ScVal.scvSymbol(longTopic)],
+        value: xdr.ScVal.scvString('test'),
+      });
+      const mockContractConfig = { address: 'CA123', events: ['test'] };
+
+      const result = await service.sendEventNotification(mockEvent, mockContractConfig);
+
+      expect(result).toBe(true);
+      const [, options] = mockFetch.mock.calls[0];
+      const body = JSON.parse(options.body);
+      expect(body.embeds[0].title.length).toBeLessThanOrEqual(256);
+      expect(body.embeds[0].title).toContain('...');
+    });
+
+    it('should enforce total embed size limit', async () => {
+      mockFetch.mockResolvedValueOnce({ ok: true });
+
+      const service = new DiscordNotificationService(mockConfig);
+      const longTopic = 'a'.repeat(300);
+      const hugeValue = 'b'.repeat(6000);
+      const mockEvent = createMockEvent({
+        topic: [xdr.ScVal.scvSymbol(longTopic)],
+        value: xdr.ScVal.scvString(hugeValue),
+      });
+      const mockContractConfig = { address: 'CA123', events: ['test'] };
+
+      const result = await service.sendEventNotification(mockEvent, mockContractConfig);
+
+      expect(result).toBe(true);
+      const [, options] = mockFetch.mock.calls[0];
+      const body = JSON.parse(options.body);
+      const embed = body.embeds[0];
+      expect(service.getEmbedLength(embed)).toBeLessThanOrEqual(6000);
+    });
+
+    it('should handle exact field value length boundary', async () => {
+      mockFetch.mockResolvedValueOnce({ ok: true });
+
+      const service = new DiscordNotificationService(mockConfig);
+      const exactValue = 'a'.repeat(1024);
+      const mockEvent = createMockEvent({
+        value: xdr.ScVal.scvString(exactValue),
+      });
+      const mockContractConfig = { address: 'CA123', events: ['test'] };
+
+      const result = await service.sendEventNotification(mockEvent, mockContractConfig);
+
+      expect(result).toBe(true);
+      const [, options] = mockFetch.mock.calls[0];
+      const body = JSON.parse(options.body);
+      const valueField = body.embeds[0].fields.find((f: any) => f.name === 'Value');
+      expect(valueField.value).toBe(exactValue);
     });
   });
 });
