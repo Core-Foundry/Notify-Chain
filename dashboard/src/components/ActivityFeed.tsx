@@ -179,6 +179,7 @@ export function ActivityFeed() {
           className={`activity-feed__toggle-realtime ${realTimeEnabled ? 'activity-feed__toggle-realtime--active' : ''}`}
           onClick={() => setRealTimeEnabled(!realTimeEnabled)}
           aria-pressed={realTimeEnabled}
+          aria-label={realTimeEnabled ? 'Pause live activity updates' : 'Resume live activity updates'}
         >
           {realTimeEnabled ? '🔴 Live' : '⏸ Paused'}
         </button>
@@ -206,9 +207,6 @@ export function ActivityFeed() {
             title="No activity yet"
             message="Actions and system events will show up here as they happen."
             className="empty-state--compact"
-            icon="📋"
-            title="No activity yet"
-            description="System events, notification deliveries, and contract activity will appear here as they occur."
           />
         ) : (
           displayedEvents.map(event => (
