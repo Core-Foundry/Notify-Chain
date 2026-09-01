@@ -339,6 +339,27 @@ export class EventSubscriber {
     contractConfig: ContractConfig
   ): Promise<StellarSDK.rpc.Api.GetEventsResponse> {
     const lastCursor = this.lastCursors.get(contractConfig.address);
+    const request: StellarSDK.rpc.Api.GetEventsRequest = lastCursor
+      ? {
+          filters: [
+            {
+              contractIds: [contractConfig.address],
+              type: 'contract',
+            },
+          ],
+          cursor: lastCursor,
+          limit: this.config.eventBatchSize,
+        }
+      : {
+          filters: [
+            {
+              contractIds: [contractConfig.address],
+              type: 'contract',
+            },
+          ],
+          startLedger: 1,
+          limit: this.config.eventBatchSize,
+        };
 
     let request: StellarSDK.rpc.Api.GetEventsRequest;
 

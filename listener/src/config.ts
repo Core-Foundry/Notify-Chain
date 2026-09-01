@@ -260,6 +260,7 @@ export function loadConfig(): Config {
     stellarNetworkPassphrase: trimEnv('STELLAR_NETWORK_PASSPHRASE') || 'Test SDF Network ; September 2015',
     contractAddresses: validateContractAddresses(rawContractAddresses),
     pollIntervalMs: parseIntegerEnv('POLL_INTERVAL_MS', '30000'),
+    eventBatchSize: parseIntegerEnv('EVENT_BATCH_SIZE', '100'),
     maxReconnectAttempts: parseIntegerEnv('MAX_RECONNECT_ATTEMPTS', '5'),
     reconnectDelayMs: parseIntegerEnv('RECONNECT_DELAY_MS', '5000'),
     eventsApiPort: parseIntegerEnv('EVENTS_API_PORT', '8787'),
@@ -393,6 +394,10 @@ export function validateConfig(config: Config): void {
       `POLL_INTERVAL_MS must be at least 1000 ms to avoid excessive RPC load ` +
         `(received: ${config.pollIntervalMs}).`,
     );
+  }
+
+  if (config.eventBatchSize < 1) {
+    errors.push(`EVENT_BATCH_SIZE must be >= 1 (received: ${config.eventBatchSize}).`);
   }
 
   if (config.maxReconnectAttempts < 1) {
