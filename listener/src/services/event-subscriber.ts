@@ -14,6 +14,7 @@ import { NotificationRetryQueue } from './notification-retry-queue';
 import { EventDeduplicationService } from './event-deduplication-service';
 import { EventProcessingQueue } from './event-processing-queue';
 import { NotificationExpirationService } from './notification-expiration';
+import { pollingMetrics } from './polling-metrics';
 
 export class EventSubscriber {
   private config: Config;
@@ -92,17 +93,23 @@ export class EventSubscriber {
         await this.checkForEvents(requestId);
         this.reconnectAttempts = 0;
 
+        const durationMs = Date.now() - pollStart;
+        pollingMetrics.record(durationMs, true);
+
         logger.info('Poll cycle complete', {
           requestId,
-          durationMs: Date.now() - pollStart,
+          durationMs,
         });
 
         await this.delay(this.config.pollIntervalMs);
       } catch (error) {
+        const durationMs = Date.now() - pollStart;
+        pollingMetrics.record(durationMs, false);
+
         logger.error('Error polling for events', {
           requestId,
           error,
-          durationMs: Date.now() - pollStart,
+          durationMs,
         });
         await this.handleReconnection(requestId);
       }
