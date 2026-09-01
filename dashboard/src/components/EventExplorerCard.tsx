@@ -1,5 +1,7 @@
 import { memo, useMemo } from 'react';
 import type { BlockchainEvent } from '../types/event';
+import type { ContractStatus } from '../services/eventsApi';
+import { formatTimestamp, parseToDate } from '../utils/formatTime';
 import { formatTimestamp } from '../utils/formatTime';
 import { CopyButton } from './CopyButton';
 
@@ -18,6 +20,7 @@ interface EventExplorerCardProps {
   onCopyContract: (contractAddress: string) => void;
   isCopied: boolean;
   onSelect?: (event: BlockchainEvent) => void;
+  contractStatuses: ContractStatus[];
   contractStatuses?: ContractStatus[];
 }
 
@@ -33,6 +36,7 @@ export function EventExplorerCard({
   const label = event.eventName ?? event.type;
   const badgeClass = getEventKindClass(event.type);
   const kindLabel = getEventKindLabel(event.type);
+  const receivedAt = parseToDate(event.receivedAt);
 
   return (
     <article
@@ -78,6 +82,8 @@ export function EventExplorerCard({
       </div>
 
       <div className="event-explorer__cell" data-label="Received" role="cell">
+        <time dateTime={receivedAt?.toISOString()}>
+          {formatTimestamp(event.receivedAt)}
         <time dateTime={new Date(event.receivedAt).toISOString()}>
           {formattedTime}
         </time>

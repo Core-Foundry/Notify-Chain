@@ -13,6 +13,23 @@ interface EventExplorerTableProps {
   events: BlockchainEvent[];
 }
 
+export function loadColumnWidths(): number[] {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return [...DEFAULT_COLUMN_WIDTHS];
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed) || parsed.length !== DEFAULT_COLUMN_WIDTHS.length) {
+      return [...DEFAULT_COLUMN_WIDTHS];
+    }
+    return parsed.map((value, index) => {
+      const n = Number(value);
+      if (!Number.isFinite(n) || n < MIN_COLUMN_WIDTH) {
+        return DEFAULT_COLUMN_WIDTHS[index];
+      }
+      return n;
+    });
+  } catch {
+    return [...DEFAULT_COLUMN_WIDTHS];
 async function syncCopyText(text: string) {
   if (navigator.clipboard?.writeText) {
     return navigator.clipboard.writeText(text);
