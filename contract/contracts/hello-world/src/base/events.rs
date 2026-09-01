@@ -227,7 +227,13 @@ pub struct Withdrawal {
 // ============================================================================
 
 /// Emitted when a notification is scheduled on-chain with a bounded lifetime.
-#[contractevent(data_format = "single-value")]
+///
+/// `payload_version` carries the protocol version of the stored
+/// [`ScheduledNotification`] payload so off-chain consumers can identify
+/// the schema without fetching the full storage record.  Version 1 is the
+/// initial versioned payload format.  Consumers that do not recognise the
+/// version should skip processing and log an unsupported-version warning.
+#[contractevent]
 #[derive(Clone)]
 pub struct NotificationScheduled {
     #[topic]
@@ -237,6 +243,9 @@ pub struct NotificationScheduled {
     #[topic]
     pub priority: NotificationPriority,
     pub notification_id: BytesN<32>,
+    /// Protocol version of the stored notification payload.
+    /// Matches [`CURRENT_NOTIFICATION_VERSION`] at the time of scheduling.
+    pub payload_version: u32,
 }
 
 /// Emitted when a scheduled notification's lifetime elapses and it is expired.

@@ -26,6 +26,15 @@ export class EventSubscriber {
   private deduplicationService: EventDeduplicationService | null = null;
   private eventQueue: EventProcessingQueue | null = null;
   private expirationService: NotificationExpirationService | null = null;
+  /**
+   * Cached backfill start ledger, resolved once on the first cold-start fetch
+   * for any contract that has no stored cursor.  Re-used for all contracts in
+   * the same session so they share a consistent baseline.
+   *
+   * `null`  → not yet resolved (or backfill limit is disabled)
+   * `number` → resolved start ledger (>= 1)
+   */
+  private backfillStartLedger: number | null = null;
 
   constructor(config: Config, deduplicationService?: EventDeduplicationService) {
     this.config = config;
@@ -217,31 +226,89 @@ export class EventSubscriber {
     return true;
   }
 
+  /**
+   * Resolve the ledger to start from on a cold start (no stored cursor).
+   *
+   * When `backfill.maxLedgers` is 0 the limit is disabled and we start from
+   * ledger 1 (original behaviour).  Otherwise we fetch the current network
+   * tip and compute `max(1, tip - maxLedgers)`.  The result is cached for
+   * the lifetime of this subscriber instance so all contracts share a
+   * consistent baseline and the RPC is only called once.
+   *
+   * If the tip cannot be fetched (RPC error) we fall back to ledger 1 and
+   * log a warning so real-time processing is never blocked.
+   */
+  private async resolveBackfillStartLedger(): Promise<number> {
+    const maxLedgers = this.config.backfill?.maxLedgers ?? 10_000;
+
+    // 0 means unlimited — behave exactly as before.
+    if (maxLedgers === 0) {
+      return 1;
+    }
+
+    // Return the cached value if already resolved for this session.
+    if (this.backfillStartLedger !== null) {
+      return this.backfillStartLedger;
+    }
+
+    try {
+      const latest: any = await (this.server as any).getLatestLedger();
+      const tip: number | null =
+        typeof latest?.sequence === 'number'
+          ? latest.sequence
+          : typeof latest?.ledger === 'number'
+            ? latest.ledger
+            : typeof latest?.latestLedger === 'number'
+              ? latest.latestLedger
+              : null;
+
+      if (tip !== null) {
+        const startLedger = Math.max(1, tip - maxLedgers);
+        this.backfillStartLedger = startLedger;
+
+        logger.warn('Backfill safety limit applied: starting historical replay from ledger', {
+          networkTipLedger: tip,
+          backfillMaxLedgers: maxLedgers,
+          startLedger,
+          skippedLedgers: Math.max(0, startLedger - 1),
+        });
+
+        return startLedger;
+      }
+    } catch (err) {
+      logger.warn('Failed to fetch network tip for backfill limit; falling back to ledger 1', {
+        error: err instanceof Error ? err.message : String(err),
+        backfillMaxLedgers: maxLedgers,
+      });
+    }
+
+    // Fallback: start from genesis so no events are silently skipped.
+    return 1;
+  }
+
   private async getContractEvents(
     contractConfig: ContractConfig
   ): Promise<StellarSDK.rpc.Api.GetEventsResponse> {
     const lastCursor = this.lastCursors.get(contractConfig.address);
-    const request: StellarSDK.rpc.Api.GetEventsRequest = lastCursor
-      ? {
-          filters: [
-            {
-              contractIds: [contractConfig.address],
-              type: 'contract',
-            },
-          ],
-          cursor: lastCursor,
-          limit: 100,
-        }
-      : {
-          filters: [
-            {
-              contractIds: [contractConfig.address],
-              type: 'contract',
-            },
-          ],
-          startLedger: 1,
-          limit: 100,
-        };
+
+    let request: StellarSDK.rpc.Api.GetEventsRequest;
+
+    if (lastCursor) {
+      // Normal real-time polling: continue from the last known cursor.
+      request = {
+        filters: [{ contractIds: [contractConfig.address], type: 'contract' }],
+        cursor: lastCursor,
+        limit: 100,
+      };
+    } else {
+      // Cold start: apply the backfill safety limit.
+      const startLedger = await this.resolveBackfillStartLedger();
+      request = {
+        filters: [{ contractIds: [contractConfig.address], type: 'contract' }],
+        startLedger,
+        limit: 100,
+      };
+    }
 
     return await this.server.getEvents(request);
   }
