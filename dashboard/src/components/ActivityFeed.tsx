@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { fetchActivityFeed, generateMockActivityEvents } from '../services/activityApi';
 import type { ActivityEvent, ActivityType } from '../types/activity';
-import { formatTimestamp } from '../utils/formatTime';
+import { formatRelativeTimestamp, formatTimestamp, parseToDate } from '../utils/formatTime';
 import { PaginationControls } from './PaginationControls';
 import { useWalletAccountSync } from '../hooks/useWalletAccountSync';
 import { EmptyState } from './EmptyState';
@@ -24,6 +24,7 @@ const getActivityTypeStyle = (type: ActivityType) => {
 // Individual activity event card
 const ActivityEventCard = ({ event }: { event: ActivityEvent }) => {
   const style = getActivityTypeStyle(event.type);
+  const timestamp = parseToDate(event.timestamp);
   return (
     <div
       className={`activity-event ${!event.read ? 'activity-event--unread' : ''}`}
@@ -42,8 +43,12 @@ const ActivityEventCard = ({ event }: { event: ActivityEvent }) => {
           <span className="activity-event__type" style={{ color: style.color }}>
             {event.type.replace(/_/g, ' ')}
           </span>
-          <time className="activity-event__time" dateTime={new Date(event.timestamp).toISOString()}>
-            {formatTimestamp(event.timestamp)}
+          <time
+            className="activity-event__time"
+            dateTime={timestamp?.toISOString()}
+            title={formatTimestamp(event.timestamp)}
+          >
+            {formatRelativeTimestamp(event.timestamp)}
           </time>
         </div>
         <p className="activity-event__message">{event.message}</p>

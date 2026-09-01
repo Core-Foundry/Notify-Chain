@@ -21,7 +21,8 @@ export type Tab =
   | 'export-history'
   | 'search'
   | 'preferences'
-  | 'templates';
+  | 'templates'
+  | 'rpc-benchmark';
 
 export interface NavItem {
   id: Tab;
@@ -40,6 +41,17 @@ export const NAV_ITEMS: NavItem[] = [
   { id: 'search', label: 'Notification Search', group: 'Search & Config' },
   { id: 'preferences', label: 'Preferences', group: 'Search & Config' },
   { id: 'templates', label: 'Templates', group: 'Search & Config' },
+  { id: 'explorer',       label: 'Event Explorer',       group: 'Monitoring' },
+  { id: 'timeline',       label: 'Delivery Timeline',    group: 'Monitoring' },
+  { id: 'activity',       label: 'Activity Feed',        group: 'Monitoring' },
+  { id: 'user-activity',  label: 'User Activity',        group: 'Monitoring' },
+  { id: 'retry-stats',    label: 'Retry Stats',          group: 'Operations' },
+  { id: 'webhooks',       label: 'Webhook Performance',  group: 'Operations' },
+  { id: 'export-history', label: 'Export History',       group: 'Operations' },
+  { id: 'search',         label: 'Notification Search',  group: 'Search & Config' },
+  { id: 'preferences',    label: 'Preferences',          group: 'Search & Config' },
+  { id: 'templates',      label: 'Templates',            group: 'Search & Config' },
+  { id: 'rpc-benchmark',  label: 'RPC Benchmark',        group: 'Diagnostics' },
 ];
 
 const FOCUSABLE_SELECTOR = [

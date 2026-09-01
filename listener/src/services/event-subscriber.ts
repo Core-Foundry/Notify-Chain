@@ -3,17 +3,19 @@ import { Config, ContractConfig } from '../types';
 import { eventRegistry } from '../store/event-registry';
 import { preferenceStore } from '../store/preference-store';
 import logger from '../utils/logger';
-import { generateRequestId } from '../utils/request-id';
+import { generateCorrelationId, generateRequestId } from '../utils/request-id';
 import {
   getEventName,
   matchesEventFilter,
   validateEventPayload,
+  validateRpcResponse,
 } from '../utils/event-utils';
 import { DiscordNotificationService } from './discord-notification';
 import { NotificationRetryQueue } from './notification-retry-queue';
 import { EventDeduplicationService } from './event-deduplication-service';
 import { EventProcessingQueue } from './event-processing-queue';
 import { NotificationExpirationService } from './notification-expiration';
+import { pollingMetrics } from './polling-metrics';
 
 export class EventSubscriber {
   private config: Config;
@@ -26,6 +28,7 @@ export class EventSubscriber {
   private deduplicationService: EventDeduplicationService | null = null;
   private eventQueue: EventProcessingQueue | null = null;
   private expirationService: NotificationExpirationService | null = null;
+  private lastSuccessfulPollAt: number | null = null;
 
   constructor(config: Config, deduplicationService?: EventDeduplicationService) {
     this.config = config;
@@ -82,18 +85,25 @@ export class EventSubscriber {
       try {
         await this.checkForEvents(requestId);
         this.reconnectAttempts = 0;
+        this.lastSuccessfulPollAt = Date.now();
+
+        const durationMs = Date.now() - pollStart;
+        pollingMetrics.record(durationMs, true);
 
         logger.info('Poll cycle complete', {
           requestId,
-          durationMs: Date.now() - pollStart,
+          durationMs,
         });
 
         await this.delay(this.config.pollIntervalMs);
       } catch (error) {
+        const durationMs = Date.now() - pollStart;
+        pollingMetrics.record(durationMs, false);
+
         logger.error('Error polling for events', {
           requestId,
           error,
-          durationMs: Date.now() - pollStart,
+          durationMs,
         });
         await this.handleReconnection(requestId);
       }
@@ -107,6 +117,17 @@ export class EventSubscriber {
     for (const contractConfig of this.config.contractAddresses) {
       try {
         const response = await this.getContractEvents(contractConfig);
+
+        const responseValidation = validateRpcResponse(response);
+        if (!responseValidation.valid) {
+          logger.error('Rejecting invalid RPC response, skipping contract', {
+            requestId,
+            contractAddress: contractConfig.address,
+            reason: responseValidation.reason,
+          });
+          continue;
+        }
+
         const events = response.events || [];
         
         // Detect potential reorg if events exist and we have previous state
@@ -127,7 +148,29 @@ export class EventSubscriber {
           }
         }
 
-        const processableEvents = events.filter((event) =>
+        const processableEvents: Array<{
+          event: StellarSDK.rpc.Api.EventResponse;
+          correlationId: string;
+        }> = [];
+        for (const [eventIndex, event] of events.entries()) {
+          const correlationId = generateCorrelationId();
+          try {
+            if (this.shouldProcessEvent(event, contractConfig, requestId, correlationId)) {
+              processableEvents.push({ event, correlationId });
+            }
+          } catch (error) {
+            logger.warn('Skipping malformed event', {
+              requestId,
+              correlationId,
+              contractAddress: contractConfig.address,
+              eventIndex,
+              eventId: event?.id,
+              eventType: event?.type,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
+        }
+        const processableEvents = events.filter((event: StellarSDK.rpc.Api.EventResponse) =>
           this.shouldProcessEvent(event, contractConfig, requestId)
         );
 
@@ -140,11 +183,24 @@ export class EventSubscriber {
           });
         }
 
-        for (const event of processableEvents) {
-          if (this.eventQueue) {
-            this.eventQueue.enqueue(event, contractConfig, requestId);
-          } else {
-            await this.processEvent(event, contractConfig, requestId);
+        for (const [eventIndex, processableEvent] of processableEvents.entries()) {
+          const { event, correlationId } = processableEvent;
+          try {
+            if (this.eventQueue) {
+              this.eventQueue.enqueue(event, contractConfig, correlationId);
+            } else {
+              await this.processEvent(event, contractConfig, correlationId);
+            }
+          } catch (error) {
+            logger.warn('Event processing failed; continuing batch', {
+              requestId,
+              correlationId,
+              contractAddress: contractConfig.address,
+              eventIndex,
+              eventId: event?.id,
+              eventType: event?.type,
+              error: error instanceof Error ? error.message : String(error),
+            });
           }
         }
 
@@ -181,7 +237,8 @@ export class EventSubscriber {
   private shouldProcessEvent(
     event: StellarSDK.rpc.Api.EventResponse,
     contractConfig: ContractConfig,
-    requestId: string = ''
+    requestId: string = '',
+    correlationId: string = requestId
   ): boolean {
     // Check if event has expired
     if (this.expirationService && !this.expirationService.shouldProcess(event)) {
@@ -202,6 +259,7 @@ export class EventSubscriber {
     if (!validation.valid) {
       logger.warn('Skipping invalid event payload', {
         requestId,
+        correlationId,
         contractAddress: contractConfig.address,
         eventId: event.id,
         reason: validation.reason,
@@ -217,6 +275,66 @@ export class EventSubscriber {
     return true;
   }
 
+  /**
+   * Resolve the ledger to start from on a cold start (no stored cursor).
+   *
+   * When `backfill.maxLedgers` is 0 the limit is disabled and we start from
+   * ledger 1 (original behaviour).  Otherwise we fetch the current network
+   * tip and compute `max(1, tip - maxLedgers)`.  The result is cached for
+   * the lifetime of this subscriber instance so all contracts share a
+   * consistent baseline and the RPC is only called once.
+   *
+   * If the tip cannot be fetched (RPC error) we fall back to ledger 1 and
+   * log a warning so real-time processing is never blocked.
+   */
+  private async resolveBackfillStartLedger(): Promise<number> {
+    const maxLedgers = this.config.backfill?.maxLedgers ?? 10_000;
+
+    // 0 means unlimited — behave exactly as before.
+    if (maxLedgers === 0) {
+      return 1;
+    }
+
+    // Return the cached value if already resolved for this session.
+    if (this.backfillStartLedger !== null) {
+      return this.backfillStartLedger;
+    }
+
+    try {
+      const latest: any = await (this.server as any).getLatestLedger();
+      const tip: number | null =
+        typeof latest?.sequence === 'number'
+          ? latest.sequence
+          : typeof latest?.ledger === 'number'
+            ? latest.ledger
+            : typeof latest?.latestLedger === 'number'
+              ? latest.latestLedger
+              : null;
+
+      if (tip !== null) {
+        const startLedger = Math.max(1, tip - maxLedgers);
+        this.backfillStartLedger = startLedger;
+
+        logger.warn('Backfill safety limit applied: starting historical replay from ledger', {
+          networkTipLedger: tip,
+          backfillMaxLedgers: maxLedgers,
+          startLedger,
+          skippedLedgers: Math.max(0, startLedger - 1),
+        });
+
+        return startLedger;
+      }
+    } catch (err) {
+      logger.warn('Failed to fetch network tip for backfill limit; falling back to ledger 1', {
+        error: err instanceof Error ? err.message : String(err),
+        backfillMaxLedgers: maxLedgers,
+      });
+    }
+
+    // Fallback: start from genesis so no events are silently skipped.
+    return 1;
+  }
+
   private async getContractEvents(
     contractConfig: ContractConfig
   ): Promise<StellarSDK.rpc.Api.GetEventsResponse> {
@@ -230,7 +348,7 @@ export class EventSubscriber {
             },
           ],
           cursor: lastCursor,
-          limit: 100,
+          limit: this.config.eventBatchSize,
         }
       : {
           filters: [
@@ -240,8 +358,27 @@ export class EventSubscriber {
             },
           ],
           startLedger: 1,
-          limit: 100,
+          limit: this.config.eventBatchSize,
         };
+
+    let request: StellarSDK.rpc.Api.GetEventsRequest;
+
+    if (lastCursor) {
+      // Normal real-time polling: continue from the last known cursor.
+      request = {
+        filters: [{ contractIds: [contractConfig.address], type: 'contract' }],
+        cursor: lastCursor,
+        limit: 100,
+      };
+    } else {
+      // Cold start: apply the backfill safety limit.
+      const startLedger = await this.resolveBackfillStartLedger();
+      request = {
+        filters: [{ contractIds: [contractConfig.address], type: 'contract' }],
+        startLedger,
+        limit: 100,
+      };
+    }
 
     return await this.server.getEvents(request);
   }
@@ -249,7 +386,8 @@ export class EventSubscriber {
   private async processEvent(
     event: StellarSDK.rpc.Api.EventResponse,
     contractConfig: ContractConfig,
-    requestId: string = ''
+    requestId: string = '',
+    correlationId: string = ''
   ): Promise<boolean> {
     const eventStart = Date.now();
     const eventName = getEventName(event.topic);
@@ -259,7 +397,8 @@ export class EventSubscriber {
       const duplicate = await this.deduplicationService.isDuplicate(event.id, contractConfig.address);
       if (duplicate.isDuplicate) {
         logger.warn('Skipping event: already processed (persistent deduplication)', {
-          requestId,
+          requestId: correlationId,
+          correlationId,
           eventId: event.id,
           contractAddress: contractConfig.address,
           isReorgDuplicate: duplicate.isReorgDuplicate,
@@ -292,7 +431,8 @@ export class EventSubscriber {
     });
 
     logger.info('Processing event', {
-      requestId,
+      requestId: correlationId,
+      correlationId,
       contractAddress: displayEvent.contractAddress,
       eventId: displayEvent.eventId,
       eventName: displayEvent.eventName,
@@ -311,6 +451,7 @@ export class EventSubscriber {
         logger.info('Skipping Discord notification: category disabled by user preferences', {
           eventId: event.id,
           userId,
+          correlationId,
         });
       } else {
         try {
@@ -323,7 +464,8 @@ export class EventSubscriber {
 
           if (!success && this.retryQueue) {
             logger.warn('Discord notification failed, adding to retry queue', {
-              requestId,
+              requestId: correlationId,
+              correlationId,
               eventId: event.id,
             });
             this.retryQueue.enqueue(event, contractConfig, requestId);
@@ -332,7 +474,8 @@ export class EventSubscriber {
         } catch (error) {
           processingError = error instanceof Error ? error.message : String(error);
           logger.error('Error sending Discord notification', {
-            requestId,
+              requestId: correlationId,
+              correlationId,
             eventId: event.id,
             error: processingError,
           });
@@ -355,9 +498,11 @@ export class EventSubscriber {
     }
 
     logger.info('Event processing complete', {
-      requestId,
+      requestId: correlationId,
+      correlationId,
       eventId: event.id,
       notificationSent,
+      outcome: !this.discordService || notificationSent ? 'success' : 'failure',
       durationMs: Date.now() - eventStart,
     });
 
@@ -393,5 +538,9 @@ export class EventSubscriber {
       eventQueue: this.eventQueue?.getMetrics() || null,
       retryQueue: this.retryQueue?.getMetrics() || null,
     };
+  }
+
+  getLastSuccessfulPoll(): number | null {
+    return this.lastSuccessfulPollAt;
   }
 }

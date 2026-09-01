@@ -6,7 +6,7 @@ import {
   MIN_COLUMN_WIDTH,
   EventExplorerTable,
 } from './EventExplorerTable';
-import { render, fireEvent } from '@testing-library/react';
+import { render, fireEvent, screen } from '@testing-library/react';
 import type { BlockchainEvent } from '../types/event';
 
 const STORAGE_KEY = 'notify-chain-event-table-widths';
@@ -81,5 +81,12 @@ describe('EventExplorerTable resizing UI', () => {
     expect(after).not.toBe(before);
     expect(after.split(' ').length).toBe(DEFAULT_COLUMN_WIDTHS.length);
     expect(localStorage.getItem(STORAGE_KEY)).toBeTruthy();
+  });
+
+  it('renders invalid event timestamps without throwing', () => {
+    render(<EventExplorerTable events={[{ ...sampleEvent, receivedAt: NaN }]} />);
+
+    expect(screen.getByText('Unknown time')).toBeInTheDocument();
+    expect(screen.getByText('Unknown time').closest('time')).not.toHaveAttribute('dateTime');
   });
 });

@@ -1,6 +1,6 @@
 import { memo } from 'react';
 import type { BlockchainEvent } from '../types/event';
-import { formatTimestamp } from '../utils/formatTime';
+import { formatRelativeTimestamp, formatTimestamp, parseToDate } from '../utils/formatTime';
 import { CopyButton } from './CopyButton';
 
 interface EventRowProps {
@@ -16,6 +16,7 @@ function shortenAddress(address: string): string {
 
 export const EventRow = memo(function EventRow({ event }: EventRowProps) {
   const label = event.eventName ?? event.type;
+  const receivedAt = parseToDate(event.receivedAt);
 
   return (
     <article
@@ -32,18 +33,19 @@ export const EventRow = memo(function EventRow({ event }: EventRowProps) {
           <span className="sr-only">Contract: </span>
           {shortenAddress(event.contractAddress)}
         </span>
-        <span>
+        <time dateTime={receivedAt?.toISOString()} title={formatTimestamp(event.receivedAt)}>
           <span className="sr-only">Received: </span>
-          {formatTimestamp(event.receivedAt)}
-        </span>
+          {formatRelativeTimestamp(event.receivedAt)}
+        </time>
         <CopyButton value={event.eventId} label="notification ID" size="xs" />
       </div>
       <div className="event-row__details">
         <span>Value: {event.value}</span>
         {event.txHash && (
-          <span>
+          <span title={event.txHash}>
             <span className="sr-only">Transaction: </span>
-            Tx: {shortenAddress(event.txHash)}
+            Tx: {shortenAddress(event.txHash)}{' '}
+            <CopyButton value={event.txHash} label="transaction hash" size="xs" />
           </span>
         )}
       </div>

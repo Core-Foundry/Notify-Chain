@@ -1,6 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useState, useCallback, memo, useMemo } from 'react';
 import type { BlockchainEvent } from '../types/event';
-import type { ContractStatus } from '../services/eventsApi';
 import { EventExplorerCard } from './EventExplorerCard';
 
 const STORAGE_KEY = 'notify-chain-event-table-widths';
@@ -12,8 +11,6 @@ const COLUMN_LABELS = ['Contract', 'Event', 'Kind', 'Received', 'Ledger', 'Trans
 
 interface EventExplorerTableProps {
   events: BlockchainEvent[];
-  onSelectEvent?: (event: BlockchainEvent) => void;
-  contractStatuses?: ContractStatus[];
 }
 
 export function loadColumnWidths(): number[] {
@@ -33,59 +30,29 @@ export function loadColumnWidths(): number[] {
     });
   } catch {
     return [...DEFAULT_COLUMN_WIDTHS];
+async function syncCopyText(text: string) {
+  if (navigator.clipboard?.writeText) {
+    return navigator.clipboard.writeText(text);
+  }
+
+  const fallback = document.createElement('textarea');
+  fallback.value = text;
+  fallback.setAttribute('readonly', '');
+  fallback.style.position = 'absolute';
+  fallback.style.left = '-9999px';
+  document.body.appendChild(fallback);
+  fallback.select();
+
+  const successful = document.execCommand('copy');
+  document.body.removeChild(fallback);
+
+  if (!successful) {
+    throw new Error('Clipboard copy failed.');
   }
 }
 
-export function persistColumnWidths(widths: number[]): void {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(widths));
-  } catch {
-    // Ignore quota / private mode failures — layout still works in-session.
-  }
-}
-
-export function widthsToGridTemplate(widths: number[]): string {
-  return widths.map((w) => `${w}px`).join(' ');
-}
-
-export function EventExplorerTable({
-  events,
-  onSelectEvent,
-  contractStatuses = [],
-}: EventExplorerTableProps) {
+export const EventExplorerTable = memo(function EventExplorerTable({ events }: EventExplorerTableProps) {
   const [copiedAddress, setCopiedAddress] = useState<string | null>(null);
-  const [columnWidths, setColumnWidths] = useState<number[]>(() => loadColumnWidths());
-  const dragRef = useRef<{ index: number; startX: number; startWidth: number } | null>(null);
-
-  useEffect(() => {
-    persistColumnWidths(columnWidths);
-  }, [columnWidths]);
-
-  useEffect(() => {
-    const onMove = (event: MouseEvent) => {
-      const drag = dragRef.current;
-      if (!drag) return;
-      const delta = event.clientX - drag.startX;
-      const nextWidth = Math.max(MIN_COLUMN_WIDTH, drag.startWidth + delta);
-      setColumnWidths((prev) => {
-        const next = [...prev];
-        next[drag.index] = nextWidth;
-        return next;
-      });
-    };
-
-    const onUp = () => {
-      dragRef.current = null;
-      document.body.classList.remove('event-explorer--resizing');
-    };
-
-    window.addEventListener('mousemove', onMove);
-    window.addEventListener('mouseup', onUp);
-    return () => {
-      window.removeEventListener('mousemove', onMove);
-      window.removeEventListener('mouseup', onUp);
-    };
-  }, []);
 
   const startResize = useCallback(
     (index: number, clientX: number) => {
@@ -121,6 +88,7 @@ export function EventExplorerTable({
   }
 
   const handleCopyContract = async (address: string) => {
+  const handleCopyContract = useCallback(async (address: string) => {
     try {
       await syncCopyText(address);
       setCopiedAddress(address);
@@ -128,7 +96,9 @@ export function EventExplorerTable({
     } catch {
       setCopiedAddress(null);
     }
-  };
+  }, []);
+
+  const isCopied = useMemo(() => (address: string) => copiedAddress === address, [copiedAddress]);
 
   const gridTemplate = widthsToGridTemplate(columnWidths);
 
@@ -167,12 +137,10 @@ export function EventExplorerTable({
             key={event.eventId}
             event={event}
             onCopyContract={handleCopyContract}
-            isCopied={copiedAddress === event.contractAddress}
-            onSelect={onSelectEvent}
-            contractStatuses={contractStatuses}
+            isCopied={isCopied(event.contractAddress)}
           />
         ))}
       </div>
     </section>
   );
-}
+});

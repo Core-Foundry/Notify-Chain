@@ -4,6 +4,15 @@ import { NotificationSearchPage } from './NotificationSearchPage';
 import { searchNotifications } from '../services/eventsApi';
 import type { NotificationSearchResponse } from '../services/eventsApi';
 
+jest.mock('../services/eventsApi', () => ({
+  searchNotifications: jest.fn(),
+}));
+
+const mockedSearch = searchNotifications as jest.MockedFunction<typeof searchNotifications>;
+
+jest.mock('../services/eventsApi', () => ({
+  searchNotifications: jest.fn(),
+}));
 jest.mock('../services/eventsApi', () => {
   const actual = jest.requireActual(
     '../services/eventsApi',
