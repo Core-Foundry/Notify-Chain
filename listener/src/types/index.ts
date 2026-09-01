@@ -63,6 +63,29 @@ export interface Config {
   analytics?: AnalyticsConfig;
   expiration?: ExpirationConfig;
   backfill?: BackfillConfig;
+  logging?: LoggingConfig;
+  api?: ApiConfig;
+}
+
+/** Observability settings, sourced from LOG_LEVEL / LOG_FORMAT. */
+export interface LoggingConfig {
+  /** `error | warn | info | debug`. Defaults to `info`. */
+  level: string;
+  /**
+   * `json` for aggregator-friendly newline-delimited JSON, `pretty` for the
+   * colourised human format. Defaults to `json` in production and `pretty`
+   * elsewhere.
+   */
+  format: string;
+}
+
+/** HTTP surface settings for the events API. */
+export interface ApiConfig {
+  /**
+   * Largest request body accepted, in bytes. Oversized requests are answered
+   * with 413 and their payload is never parsed.
+   */
+  maxBodyBytes: number;
 }
 
 export interface SchedulerConfig {

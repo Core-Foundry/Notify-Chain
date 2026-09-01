@@ -27,11 +27,15 @@ import { NotificationMetricsRunner } from './services/notification-metrics-runne
 import { eventRegistry } from './store/event-registry';
 import logger from './utils/logger';
 import { loadConfig, validateConfig, ConfigError } from './config';
+import { SecretValidationError } from './config/validate-secrets';
 import { NotificationHealthMonitor } from './services/notification-health-monitor';
 import { getWorkerManager } from './services/worker-manager';
 import { EventDeduplicationService } from './services/event-deduplication-service';
 
 dotenv.config();
+
+// Track process startup time for uptime calculation
+const PROCESS_START_TIME = Date.now();
 
 async function main() {
   const config = loadConfig();
@@ -40,10 +44,10 @@ async function main() {
   let scheduler: NotificationScheduler | null = null;
   let retryScheduler: RetryScheduler | null = null;
   let notificationAPI: NotificationAPI | null = null;
-  let templateService: TemplateService | null = null;
   let healthMonitor: NotificationHealthMonitor | null = null;
   let subscriber: EventSubscriber | null = null;
 
+  let templateService: NotificationTemplateService | null = null;
   let legacyTemplateService: TemplateService | null = null;
   let cleanupService: CleanupService | null = null;
   let repository: ScheduledNotificationRepository | null = null;
@@ -69,6 +73,14 @@ async function main() {
       getLastSuccessfulPoll: () => subscriber?.getLastSuccessfulPoll() ?? null,
     });
 
+      getUptimeMs: () => Date.now() - PROCESS_START_TIME,
+    });
+
+    healthMonitor = new NotificationHealthMonitor(null, getWorkerManager(), {
+      repository,
+    });
+
+    // Rebuild registry with configured event TTL
     if (config.cleanup) {
       eventRegistry.setTtlMs(config.cleanup.eventRetentionMs);
     }
@@ -144,7 +156,8 @@ async function main() {
     contractAddresses: config.contractAddresses,
     discordWebhookUrl: config.discord?.webhookUrl,
     notificationAPI,
-    templateService: legacyTemplateService,
+    templateService,
+    schedulerTemplateService: legacyTemplateService,
     webhookSecrets: config.webhookSecrets,
     apiKeys: config.apiKeys,
     rateLimit: config.rateLimit,
@@ -159,6 +172,7 @@ async function main() {
   }
 
   subscriber = new EventSubscriber(config, deduplicationService);
+  const subscriber = new EventSubscriber(config, deduplicationService ?? undefined);
   await subscriber.start();
 
   let isShuttingDown = false;
@@ -226,7 +240,13 @@ async function main() {
 }
 
 main().catch((err) => {
-  if (err instanceof ConfigError) {
+  if (err instanceof SecretValidationError) {
+    // Secret validation failures are reported field-by-field without echoing
+    // actual secret values (#692).
+    logger.error('Startup secret validation failed — service will not start', {
+      error: err.message,
+    });
+  } else if (err instanceof ConfigError) {
     logger.error('Configuration error', { error: err.message });
   } else {
     logger.error('Error starting service', { error: err });

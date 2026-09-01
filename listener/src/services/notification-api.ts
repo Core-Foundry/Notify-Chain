@@ -28,17 +28,8 @@ import { buildRetryStatisticsPayload } from './retry-statistics';
  * Includes support for idempotent request handling
  */
 export class NotificationAPI {
-  private readonly maxPayloadSizeBytes: number;
-
-  constructor(
-    private repository: ScheduledNotificationRepository,
-    private idempotencyService?: IdempotencyKeyService,
-    maxPayloadSizeBytes: number = DEFAULT_MAX_PAYLOAD_SIZE_BYTES
-  ) {
-    this.maxPayloadSizeBytes = maxPayloadSizeBytes;
   /** Maximum allowed serialised payload size in bytes. */
-  readonly maxPayloadSizeBytes: number;
-  private readonly maxPayloadSizeBytes: number = DEFAULT_MAX_PAYLOAD_SIZE_BYTES;
+  readonly maxPayloadSizeBytes: number = DEFAULT_MAX_PAYLOAD_SIZE_BYTES;
 
   constructor(
     private repository: ScheduledNotificationRepository,
@@ -118,7 +109,7 @@ export class NotificationAPI {
     validateNotificationMetadata(input.metadata ?? null);
 
     // Validate payload size BEFORE any storage or heavy processing operations.
-    // validatePayloadSize(input.payload, this.maxPayloadSizeBytes);
+    validatePayloadSize(input.payload, this.maxPayloadSizeBytes);
 
     logger.info('Scheduling new notification', {
       requestId,

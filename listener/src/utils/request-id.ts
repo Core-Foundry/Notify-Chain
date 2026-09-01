@@ -10,6 +10,10 @@ export function generateRequestId(): string {
 }
 
 /**
+ * Generates a non-sensitive identifier for tracing one notification workflow.
+ */
+export function generateCorrelationId(): string {
+  return randomUUID();
  * Client-supplied request IDs must be printable ASCII tokens of bounded length.
  * Rejects empty values, control characters, whitespace, and oversized strings
  * so untrusted header content is never reused as a log/trace key (#686).

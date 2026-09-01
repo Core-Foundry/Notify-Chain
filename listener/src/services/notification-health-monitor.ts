@@ -3,6 +3,7 @@ import { EventProcessingQueue } from './event-processing-queue';
 import { WorkerManager } from './worker-manager';
 import { eventRegistry } from '../store/event-registry';
 import { ScheduledNotificationRepository } from './scheduled-notification-repository';
+import { pollingMetrics } from './polling-metrics';
 
 export type ComponentStatus = 'healthy' | 'degraded' | 'unhealthy';
 
@@ -26,6 +27,25 @@ export interface RegistryHealth {
   processingDelayMs: number | null;
 }
 
+export interface PollingHealth {
+  /** ISO timestamp of the most recent successful poll, or null if none yet. */
+  lastSuccessAt: string | null;
+  /** ISO timestamp of the most recent failed poll, or null if none yet. */
+  lastFailureAt: string | null;
+  /** ISO timestamp of the most recent poll cycle (successful or not). */
+  lastPollAt: string | null;
+  /** Duration of the most recent poll cycle in milliseconds. */
+  lastPollDurationMs: number | null;
+  /** Whether the most recent poll cycle completed without error. */
+  lastPollSucceeded: boolean | null;
+  /** Total number of recorded poll cycles. */
+  totalPolls: number;
+  /** Number of successful poll cycles. */
+  successfulPolls: number;
+  /** Number of failed poll cycles. */
+  failedPolls: number;
+}
+
 export interface HealthReport {
   status: ComponentStatus;
   timestamp: string;
@@ -33,6 +53,9 @@ export interface HealthReport {
   workers: WorkerHealth;
   registry: RegistryHealth;
   lastSuccessfulPollAt: string | null;
+  /** Process uptime in milliseconds since startup. */
+  uptimeMs: number;
+  polling: PollingHealth;
 }
 
 export interface NotificationHealthMonitorOptions {
@@ -47,6 +70,8 @@ export interface NotificationHealthMonitorOptions {
   /** Optional repository used to surface DLQ depth in the health report. */
   repository?: ScheduledNotificationRepository | null;
   getLastSuccessfulPoll?: () => number | null;
+  /** Function to calculate uptime in milliseconds. */
+  getUptimeMs?: () => number;
 }
 
 /**
@@ -62,6 +87,7 @@ export class NotificationHealthMonitor {
   private readonly maxProcessingDelayMs: number;
   private readonly now: () => number;
   private readonly getLastSuccessfulPoll: () => number | null;
+  private readonly getUptimeMs: () => number;
 
   private queue: EventProcessingQueue | null;
   private workerManager: WorkerManager | null;
@@ -88,6 +114,7 @@ export class NotificationHealthMonitor {
     this.maxProcessingDelayMs = options.maxProcessingDelayMs ?? 60_000;
     this.now = options.now ?? Date.now;
     this.getLastSuccessfulPoll = options.getLastSuccessfulPoll ?? (() => null);
+    this.getUptimeMs = options.getUptimeMs ?? (() => 0);
   }
 
   start(): void {
@@ -120,6 +147,7 @@ export class NotificationHealthMonitor {
     const queueHealth = this.checkQueue();
     const workerHealth = this.checkWorkers();
     const registryHealth = this.checkRegistry();
+    const pollingHealth = this.checkPolling();
 
     const overallStatus = this.deriveOverallStatus(
       queueHealth.status,
@@ -137,6 +165,8 @@ export class NotificationHealthMonitor {
       workers: workerHealth,
       registry: registryHealth,
       lastSuccessfulPollAt,
+      uptimeMs: this.getUptimeMs(),
+      polling: pollingHealth,
     };
 
     this.lastReport = report;
@@ -224,6 +254,21 @@ export class NotificationHealthMonitor {
     }
 
     return { status, eventCount, lastIngestedAt, processingDelayMs };
+  }
+
+  private checkPolling(): PollingHealth {
+    const snapshot = pollingMetrics.snapshot();
+
+    return {
+      lastSuccessAt: snapshot.lastSuccessAt,
+      lastFailureAt: snapshot.lastFailureAt,
+      lastPollAt: snapshot.lastPollAt,
+      lastPollDurationMs: snapshot.lastPollDurationMs,
+      lastPollSucceeded: snapshot.lastPollSucceeded,
+      totalPolls: snapshot.totalPolls,
+      successfulPolls: snapshot.successfulPolls,
+      failedPolls: snapshot.failedPolls,
+    };
   }
 
   private deriveOverallStatus(...statuses: ComponentStatus[]): ComponentStatus {

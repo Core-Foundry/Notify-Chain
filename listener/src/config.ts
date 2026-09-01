@@ -1,4 +1,11 @@
-import { Config, ContractConfig, DiscordConfig, WebhookSecret, AppCleanupConfig, EventQueueConfig, RetrySchedulerOptions, AnalyticsConfig, ExpirationConfig, ApiKey, BackfillConfig } from './types';
+import { Config, ContractConfig, DiscordConfig, WebhookSecret, AppCleanupConfig, EventQueueConfig, RetrySchedulerOptions, AnalyticsConfig, ExpirationConfig, ApiKey, BackfillConfig, LoggingConfig, ApiConfig } from './types';
+import {
+  SUPPORTED_LOG_FORMATS,
+  SUPPORTED_LOG_LEVELS,
+  parseLogFormat,
+  parseLogLevel,
+} from './utils/logger';
+import { DEFAULT_MAX_BODY_BYTES } from './middleware/body-limit';
 
 export class ConfigError extends Error {
   constructor(message: string) {
@@ -289,6 +296,33 @@ export function loadConfig(): Config {
     analytics: loadAnalyticsConfig(),
     expiration: loadExpirationConfig(),
     backfill: loadBackfillConfig(),
+    logging: loadLoggingConfig(),
+    api: loadApiConfig(),
+  };
+}
+
+/**
+ * Observability settings.
+ *
+ * Raw strings are carried through and validated in `validateConfig`, matching
+ * how the rest of this loader works: collect everything, then report every
+ * problem at once rather than throwing on the first bad field.
+ */
+function loadLoggingConfig(): LoggingConfig {
+  return {
+    level: trimEnv('LOG_LEVEL') || 'info',
+    // Preserves the previous implicit behaviour when LOG_FORMAT is unset:
+    // JSON in production, human-readable elsewhere.
+    format:
+      trimEnv('LOG_FORMAT') ||
+      (process.env.NODE_ENV === 'production' ? 'json' : 'pretty'),
+  };
+}
+
+/** HTTP surface settings. */
+function loadApiConfig(): ApiConfig {
+  return {
+    maxBodyBytes: parseIntegerEnv('API_MAX_BODY_BYTES', String(DEFAULT_MAX_BODY_BYTES)),
   };
 }
 
@@ -559,11 +593,70 @@ export function validateConfig(config: Config): void {
     }
   }
 
+  // ── Logging ────────────────────────────────────────────────────────────────
+  // Rejected rather than silently downgraded: a typo in LOG_LEVEL that quietly
+  // resolves to "info" hides debug output an operator explicitly asked for, and
+  // they have no signal that the setting did not take.
+  if (config.logging) {
+    if (parseLogLevel(config.logging.level) === null) {
+      errors.push(
+        `LOG_LEVEL must be one of: ${SUPPORTED_LOG_LEVELS.join(', ')} ` +
+          `(received: "${config.logging.level}").`,
+      );
+    }
+
+    if (parseLogFormat(config.logging.format) === null) {
+      errors.push(
+        `LOG_FORMAT must be one of: ${SUPPORTED_LOG_FORMATS.join(', ')} ` +
+          `(received: "${config.logging.format}").`,
+      );
+    }
+  }
+
+  // ── API surface ────────────────────────────────────────────────────────────
+  if (config.api) {
+    if (!Number.isInteger(config.api.maxBodyBytes) || config.api.maxBodyBytes <= 0) {
+      errors.push(
+        `API_MAX_BODY_BYTES must be a positive integer ` +
+          `(received: ${config.api.maxBodyBytes}).`,
+      );
+    }
+  }
+
   if (errors.length > 0) {
     throw new ConfigError(
       `Configuration validation failed with ${errors.length} error(s):\n` +
         errors.map((e, i) => `  ${i + 1}. ${e}`).join('\n'),
     );
   }
+
+  // ── Secret validation (#692) ───────────────────────────────────────────────
+  // Run after structural checks so operators see both structural and secret
+  // problems in a single pass.  Errors are reported by field name only; the
+  // actual secret values are never included in any message.
+  validateSecrets([
+    {
+      fieldName: 'DISCORD_WEBHOOK_URL',
+      value: config.discord?.webhookUrl,
+      required: false,
+    },
+    {
+      fieldName: 'DISCORD_WEBHOOK_ID',
+      value: config.discord?.webhookId,
+      required: false,
+    },
+    // Webhook signing secrets
+    ...((config.webhookSecrets ?? []).map((ws, i) => ({
+      fieldName: `WEBHOOK_SECRETS[${i}].secret`,
+      value: ws.secret,
+      required: true,
+    }))),
+    // API keys
+    ...((config.apiKeys ?? []).map((ak, i) => ({
+      fieldName: `API_KEYS[${i}].key`,
+      value: ak.key,
+      required: true,
+    }))),
+  ]);
 }
 
