@@ -8,6 +8,8 @@ import { BatchValidationService } from './batch-validation-service';
 import { NotificationChannel } from '../utils/batch-validator';
 import { getWorkerManager } from './worker-manager';
 import { getJobMonitor } from './job-monitor';
+import { ProviderRegistry, getProviderRegistry } from './provider-registry';
+import { verifyPayloadIntegrity } from '../utils/payload-integrity';
 
 /**
  * Background scheduler that processes scheduled notifications
@@ -25,18 +27,25 @@ export class NotificationScheduler {
   private isRunning: boolean = false;
   private processorId: string;
   private batchValidator: BatchValidationService;
+  /**
+   * Provider registry used for all notification dispatch.
+   * When not supplied the module-level singleton is used.
+   */
+  private providerRegistry: ProviderRegistry;
 
   constructor(
     repository: ScheduledNotificationRepository,
     config: SchedulerConfig,
     discordService?: DiscordNotificationService | null,
-    batchValidator?: BatchValidationService
+    batchValidator?: BatchValidationService,
+    providerRegistry?: ProviderRegistry
   ) {
     this.repository = repository;
     this.config = { retryDelayMs: 5_000, ...config };
     this.discordService = discordService ?? null;
     this.processorId = config.processorId || uuidv4();
     this.batchValidator = batchValidator ?? new BatchValidationService();
+    this.providerRegistry = providerRegistry ?? getProviderRegistry();
   }
 
   /**
@@ -381,18 +390,60 @@ export class NotificationScheduler {
   }
 
   /**
-   * Execute notification delivery based on type
+   * Execute notification delivery based on type.
+   *
+   * The registry is queried first. When a registered provider exists for the
+   * notification type it is used for all delivery — including Discord and
+   * webhook notifications. This keeps the scheduler decoupled from any
+   * concrete provider implementation.
+   *
+   * Legacy path: when no provider is registered for the type, the scheduler
+   * falls back to the directly-injected `discordService` so that existing
+   * deployments that have not yet bootstrapped the registry continue to work.
    */
   private async executeNotification(
     notification: ScheduledNotification,
     requestId: string
   ): Promise<boolean> {
     const payload = JSON.parse(notification.payload);
+    const type = notification.notificationType;
 
-    switch (notification.notificationType) {
+    // ------------------------------------------------------------------
+    // Registry-based dispatch (preferred path)
+    // ------------------------------------------------------------------
+    if (this.providerRegistry.has(type)) {
+      const result = await this.providerRegistry.deliver(type, {
+        payload,
+        targetRecipient: notification.targetRecipient,
+        notificationType: type,
+        requestId,
+      });
+
+      if (result.degradedCapabilities.length > 0) {
+        logger.info('Notification delivered with degraded capabilities', {
+          requestId,
+          id: notification.id,
+          type,
+          degradedCapabilities: result.degradedCapabilities,
+        });
+      }
+
+      if (!result.success) {
+        throw new Error(result.errorMessage ?? 'Provider delivery returned failure');
+      }
+
+      return true;
+    }
+
+    // ------------------------------------------------------------------
+    // Legacy fallback: direct Discord service injection
+    // ------------------------------------------------------------------
+    switch (type) {
       case 'discord':
         if (!this.discordService) {
-          throw new Error('Discord service not configured');
+          throw new Error(
+            'Discord service not configured and no Discord provider registered in the registry'
+          );
         }
         return await this.discordService.sendEventNotification(
           payload.event,
@@ -401,19 +452,24 @@ export class NotificationScheduler {
         );
 
       case 'webhook':
-        // Implement webhook delivery
-        throw new Error('Webhook delivery not yet implemented');
+        throw new Error(
+          'Webhook delivery not yet implemented. Register a WebhookNotificationProvider in the ProviderRegistry.'
+        );
 
       case 'email':
-        // Implement email delivery
-        throw new Error('Email delivery not yet implemented');
+        throw new Error(
+          'Email delivery not yet implemented. Register an email NotificationProvider in the ProviderRegistry.'
+        );
 
       case 'sms':
-        // Implement SMS delivery
-        throw new Error('SMS delivery not yet implemented');
+        throw new Error(
+          'SMS delivery not yet implemented. Register an SMS NotificationProvider in the ProviderRegistry.'
+        );
 
       default:
-        throw new Error(`Unsupported notification type: ${notification.notificationType}`);
+        throw new Error(
+          `Unsupported notification type: "${type}". Register a provider for this type in the ProviderRegistry.`
+        );
     }
   }
 

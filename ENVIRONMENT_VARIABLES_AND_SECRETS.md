@@ -39,8 +39,23 @@ Variables marked **Required** are checked by `validateRequiredEnvVars()` in `lis
 
 | Variable | Default | Required | Description |
 |---|---|---|---|
-| `LOG_LEVEL` | `info` | No | Winston log level. Values: `error` \| `warn` \| `info` \| `http` \| `verbose` \| `debug` \| `silly`. |
-| `NODE_ENV` | *(unset)* | No | Set to `production` to enable newline-delimited JSON (structured) log output. Leave unset for human-readable pretty-print during development. |
+| `LOG_LEVEL` | `info` | No | Log verbosity. Exactly one of: `error` \| `warn` \| `info` \| `debug`. Any other value is **rejected at startup** with a `ConfigError`. |
+| `LOG_FORMAT` | *(env-dependent)* | No | Log output format: `json` (newline-delimited JSON for log aggregators) or `pretty` (colourised, human-readable). Defaults to `json` when `NODE_ENV=production`, `pretty` otherwise. Any other value is rejected at startup. |
+| `NODE_ENV` | *(unset)* | No | Set to `production` for production defaults. Affects the `LOG_FORMAT` default only when `LOG_FORMAT` is unset; an explicit `LOG_FORMAT` always wins. |
+
+> **Note on log levels.** Earlier revisions of this table listed `http`,
+> `verbose` and `silly`. The service has only ever implemented
+> `error | warn | info | debug` — the other values were silently downgraded to
+> `info`. They are now rejected at startup rather than accepted-and-ignored, so
+> a deployment that sets one will fail fast with a message naming the valid
+> values instead of running at unexpected verbosity.
+
+**Secret redaction.** Log records are scanned before emission and any field
+whose name looks like a credential (`password`, `secret`, `token`, `apiKey`,
+`authorization`, `signature`, `cookie`, `privateKey`, and case/underscore
+variants) has its value replaced with `[REDACTED]`. Query-string parameters in
+logged request URLs are redacted the same way. The field itself is kept so
+record shape stays stable for aggregator indexing.
 
 ### 2.2 Stellar / chain connectivity
 
@@ -126,8 +141,10 @@ Both variables must be provided together or neither.
 | Variable | Default | Required | Description |
 |---|---|---|---|
 | `POLL_INTERVAL_MS` | `30000` | No | How often the listener polls Stellar for new contract events (ms). |
+| `EVENT_BATCH_SIZE` | `100` | No | Maximum number of blockchain events fetched in each polling cycle. Must be at least `1`. |
 | `MAX_RECONNECT_ATTEMPTS` | `5` | No | Maximum number of reconnect attempts when the RPC endpoint fails. |
 | `RECONNECT_DELAY_MS` | `5000` | No | Delay between reconnect attempts (ms). |
+| `PROCESSED_EVENT_RETENTION_MS` | `2592000000` (30 days) | No | How long processed event metadata is retained for persistent deduplication and operations. Expired records are removed during database cleanup; minimum `60000` ms. |
 
 ### 2.10 Retry queue (in-memory)
 
@@ -182,6 +199,7 @@ The DB-backed retry scheduler persists retry state across process restarts.
 | `RATE_LIMIT_WINDOW_MS` | `60000` | No | Rate limit sliding window size (ms). |
 | `RATE_LIMIT_MAX_REQUESTS` | `60` | No | Maximum requests allowed per window (applies to all clients unless overridden). |
 | `RATE_LIMIT_CLIENT_OVERRIDES` | `{}` | No | Per-client rate limit overrides. JSON object. See shape below. |
+| `API_MAX_BODY_BYTES` | `1048576` | No | Largest request body the events API accepts, in bytes (default 1 MiB). Oversized `POST`/`PUT`/`PATCH` requests get `413 Payload Too Large` with code `PAYLOAD_TOO_LARGE`, and the payload is never parsed. Must be a positive integer. |
 
 **`RATE_LIMIT_CLIENT_OVERRIDES` shape:**
 ```json
