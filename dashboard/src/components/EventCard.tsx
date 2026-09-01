@@ -1,6 +1,6 @@
 import { memo, type KeyboardEvent } from 'react';
 import type { BlockchainEvent } from '../types/event';
-import { formatTimestamp, formatTimestampShort } from '../utils/formatTime';
+import { formatRelativeTimestamp, formatTimestamp } from '../utils/formatTime';
 import { CopyButton } from './CopyButton';
 
 export type EventCardVariant = 'compact' | 'expanded';
@@ -20,13 +20,7 @@ function shortenAddress(address: string): string {
 import { getEventBadgeClass } from '../utils/eventTypeMapping';
 
 function SkeletonLine({ width = '100%', height = '14px' }: { width?: string; height?: string }) {
-  return (
-    <span
-      className="event-card__skeleton"
-      style={{ width, height }}
-      aria-hidden="true"
-    />
-  );
+  return <span className="event-card__skeleton" style={{ width, height }} aria-hidden="true" />;
 }
 
 function LoadingCard({ variant }: { variant: EventCardVariant }) {
@@ -90,6 +84,13 @@ function handleActivationKey(onClick: (e: BlockchainEvent) => void, event: Block
   };
 }
 
+function CompactCard({
+  event,
+  onClick,
+}: {
+  event: BlockchainEvent;
+  onClick?: (e: BlockchainEvent) => void;
+}) {
 function IdValue({ value, label }: { value: string; label: string }) {
   return (
     <dd className="event-card__id-value" title={value}>
@@ -109,7 +110,7 @@ function CompactCard({ event, onClick }: { event: BlockchainEvent; onClick?: (e:
       className={`event-card event-card--compact${onClick ? ' event-card--clickable' : ''}`}
       data-event-id={event.eventId}
       onClick={onClick ? () => onClick(event) : undefined}
-      role={onClick ? 'button' : undefined}
+      role={onClick ? 'group' : undefined}
       tabIndex={onClick ? 0 : undefined}
       aria-label={onClick ? `View details for ${displayName} event` : undefined}
       onKeyDown={onClick ? handleActivationKey(onClick, event) : undefined}
@@ -123,7 +124,7 @@ function CompactCard({ event, onClick }: { event: BlockchainEvent; onClick?: (e:
           {shortenAddress(event.contractAddress)}
         </span>
         <span className="event-card__time" title={formatTimestamp(event.receivedAt)}>
-          {formatTimestampShort(event.receivedAt)}
+          {formatRelativeTimestamp(event.receivedAt)}
         </span>
       </div>
       <div className="event-card__details">
@@ -131,14 +132,23 @@ function CompactCard({ event, onClick }: { event: BlockchainEvent; onClick?: (e:
           Value: {event.value}
         </span>
         {event.txHash && (
-          <span title={event.txHash}>Tx: {shortenAddress(event.txHash)}</span>
+          <span title={event.txHash}>
+            Tx: {shortenAddress(event.txHash)}{' '}
+            <CopyButton value={event.txHash} label="transaction hash" size="xs" />
+          </span>
         )}
       </div>
     </Wrapper>
   );
 }
 
-function ExpandedCard({ event, onClick }: { event: BlockchainEvent; onClick?: (e: BlockchainEvent) => void }) {
+function ExpandedCard({
+  event,
+  onClick,
+}: {
+  event: BlockchainEvent;
+  onClick?: (e: BlockchainEvent) => void;
+}) {
   const displayName = event.eventName ?? event.type;
   const badgeClass = getEventBadgeClass(event.eventName);
   const Wrapper = onClick ? 'div' : 'article';
@@ -148,7 +158,7 @@ function ExpandedCard({ event, onClick }: { event: BlockchainEvent; onClick?: (e
       className={`event-card event-card--expanded${onClick ? ' event-card--clickable' : ''}`}
       data-event-id={event.eventId}
       onClick={onClick ? () => onClick(event) : undefined}
-      role={onClick ? 'button' : undefined}
+      role={onClick ? 'group' : undefined}
       tabIndex={onClick ? 0 : undefined}
       aria-label={onClick ? `View details for ${displayName} event` : undefined}
       onKeyDown={onClick ? handleActivationKey(onClick, event) : undefined}
@@ -168,6 +178,10 @@ function ExpandedCard({ event, onClick }: { event: BlockchainEvent; onClick?: (e
           {event.txHash && (
             <div className="event-card__field">
               <dt>Tx Hash</dt>
+              <dd title={event.txHash}>
+                {event.txHash}
+                <CopyButton value={event.txHash} label="transaction hash" size="xs" />
+              </dd>
               <IdValue value={event.txHash} label="tx hash" />
             </div>
           )}
@@ -188,7 +202,9 @@ function ExpandedCard({ event, onClick }: { event: BlockchainEvent; onClick?: (e
               <dd>
                 <ul className="event-card__topics">
                   {event.topic.map((t, i) => (
-                    <li key={i} className="event-card__topic-item">{t}</li>
+                    <li key={i} className="event-card__topic-item">
+                      {t}
+                    </li>
                   ))}
                 </ul>
               </dd>

@@ -55,6 +55,36 @@ describe('Config validation', () => {
     expect(() => loadConfig()).toThrow('EVENTS_API_PORT must be a valid integer, got "eighty"');
   });
 
+  it('loads the default blockchain event batch size', () => {
+    delete process.env.EVENT_BATCH_SIZE;
+
+    expect(loadConfig().eventBatchSize).toBe(100);
+  });
+
+  it('loads a configured blockchain event batch size', () => {
+    process.env.EVENT_BATCH_SIZE = '250';
+
+    expect(loadConfig().eventBatchSize).toBe(250);
+  });
+
+  it('rejects a non-integer blockchain event batch size', () => {
+    process.env.EVENT_BATCH_SIZE = 'many';
+
+    expect(() => loadConfig()).toThrow(
+      'EVENT_BATCH_SIZE must be a valid integer, got "many"'
+    );
+  });
+
+  it('rejects a non-positive blockchain event batch size', () => {
+    process.env.EVENT_BATCH_SIZE = '0';
+
+    const config = loadConfig();
+
+    expect(() => validateConfig(config)).toThrow(
+      'EVENT_BATCH_SIZE must be >= 1 (received: 0).'
+    );
+  });
+
   it('loads default values when optional environment variables are omitted', () => {
     process.env.CONTRACT_ADDRESSES = JSON.stringify([{ address: 'CXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX', events: ['*'] }]);
     delete process.env.STELLAR_NETWORK;
@@ -98,9 +128,34 @@ describe('Config validation', () => {
         notificationRetentionMs: 604800000,
         rateLimitEventRetentionMs: 86400000,
         eventRetentionMs: 86400000,
+        processedEventRetentionMs: 2592000000,
         executionLogRetentionMs: 7776000000,
       },
     });
+  });
+
+  it('loads a configured processed event retention duration', () => {
+    process.env.PROCESSED_EVENT_RETENTION_MS = '3600000';
+
+    expect(loadConfig().cleanup?.processedEventRetentionMs).toBe(3600000);
+  });
+
+  it('rejects invalid processed event retention configuration', () => {
+    process.env.PROCESSED_EVENT_RETENTION_MS = 'not-a-duration';
+
+    expect(() => loadConfig()).toThrow(
+      'PROCESSED_EVENT_RETENTION_MS must be a valid integer, got "not-a-duration"'
+    );
+  });
+
+  it('rejects processed event retention shorter than one minute', () => {
+    process.env.PROCESSED_EVENT_RETENTION_MS = '59999';
+
+    const config = loadConfig();
+
+    expect(() => validateConfig(config)).toThrow(
+      'PROCESSED_EVENT_RETENTION_MS must be >= 60000 ms (received: 59999).'
+    );
   });
 
   it('loads notification deduplication settings when Discord is configured', () => {

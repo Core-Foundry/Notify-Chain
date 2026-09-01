@@ -167,6 +167,10 @@ function loadCleanupConfig(): AppCleanupConfig {
     notificationRetentionMs: parseIntegerEnv('NOTIFICATION_RETENTION_MS', String(7 * 24 * 60 * 60 * 1000)),
     rateLimitEventRetentionMs: parseIntegerEnv('RATE_LIMIT_EVENT_RETENTION_MS', String(24 * 60 * 60 * 1000)),
     eventRetentionMs: parseIntegerEnv('EVENT_RETENTION_MS', String(24 * 60 * 60 * 1000)),
+    processedEventRetentionMs: parseIntegerEnv(
+      'PROCESSED_EVENT_RETENTION_MS',
+      String(30 * 24 * 60 * 60 * 1000),
+    ),
     executionLogRetentionMs: parseIntegerEnv(
       'EXECUTION_LOG_RETENTION_MS',
       String(90 * 24 * 60 * 60 * 1000),
@@ -259,6 +263,7 @@ export function loadConfig(): Config {
     stellarNetworkPassphrase: trimEnv('STELLAR_NETWORK_PASSPHRASE') || 'Test SDF Network ; September 2015',
     contractAddresses: validateContractAddresses(rawContractAddresses),
     pollIntervalMs: parseIntegerEnv('POLL_INTERVAL_MS', '30000'),
+    eventBatchSize: parseIntegerEnv('EVENT_BATCH_SIZE', '100'),
     maxReconnectAttempts: parseIntegerEnv('MAX_RECONNECT_ATTEMPTS', '5'),
     reconnectDelayMs: parseIntegerEnv('RECONNECT_DELAY_MS', '5000'),
     eventsApiPort: parseIntegerEnv('EVENTS_API_PORT', '8787'),
@@ -392,6 +397,10 @@ export function validateConfig(config: Config): void {
       `POLL_INTERVAL_MS must be at least 1000 ms to avoid excessive RPC load ` +
         `(received: ${config.pollIntervalMs}).`,
     );
+  }
+
+  if (config.eventBatchSize < 1) {
+    errors.push(`EVENT_BATCH_SIZE must be >= 1 (received: ${config.eventBatchSize}).`);
   }
 
   if (config.maxReconnectAttempts < 1) {
@@ -600,6 +609,12 @@ export function validateConfig(config: Config): void {
           `(received: ${config.cleanup.notificationRetentionMs}).`,
       );
     }
+    if (config.cleanup.processedEventRetentionMs < 60_000) {
+      errors.push(
+        `PROCESSED_EVENT_RETENTION_MS must be >= 60000 ms ` +
+          `(received: ${config.cleanup.processedEventRetentionMs}).`,
+      );
+    }
   }
 
   // ── Backfill ───────────────────────────────────────────────────────────────
@@ -657,5 +672,33 @@ export function validateConfig(config: Config): void {
         schemaErrors.map((e, i) => `  ${i + 1}. [${e.field}] ${e.message}`).join('\n'),
     );
   }
+  // ── Secret validation (#692) ───────────────────────────────────────────────
+  // Run after structural checks so operators see both structural and secret
+  // problems in a single pass.  Errors are reported by field name only; the
+  // actual secret values are never included in any message.
+  validateSecrets([
+    {
+      fieldName: 'DISCORD_WEBHOOK_URL',
+      value: config.discord?.webhookUrl,
+      required: false,
+    },
+    {
+      fieldName: 'DISCORD_WEBHOOK_ID',
+      value: config.discord?.webhookId,
+      required: false,
+    },
+    // Webhook signing secrets
+    ...((config.webhookSecrets ?? []).map((ws, i) => ({
+      fieldName: `WEBHOOK_SECRETS[${i}].secret`,
+      value: ws.secret,
+      required: true,
+    }))),
+    // API keys
+    ...((config.apiKeys ?? []).map((ak, i) => ({
+      fieldName: `API_KEYS[${i}].key`,
+      value: ak.key,
+      required: true,
+    }))),
+  ]);
 }
 

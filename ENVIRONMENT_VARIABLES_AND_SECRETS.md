@@ -143,8 +143,10 @@ Both variables must be provided together or neither.
 | Variable | Default | Required | Description |
 |---|---|---|---|
 | `POLL_INTERVAL_MS` | `30000` | No | How often the listener polls Stellar for new contract events (ms). |
+| `EVENT_BATCH_SIZE` | `100` | No | Maximum number of blockchain events fetched in each polling cycle. Must be at least `1`. |
 | `MAX_RECONNECT_ATTEMPTS` | `5` | No | Maximum number of reconnect attempts when the RPC endpoint fails. |
 | `RECONNECT_DELAY_MS` | `5000` | No | Delay between reconnect attempts (ms). |
+| `PROCESSED_EVENT_RETENTION_MS` | `2592000000` (30 days) | No | How long processed event metadata is retained for persistent deduplication and operations. Expired records are removed during database cleanup; minimum `60000` ms. |
 
 ### 2.10 Retry queue (in-memory)
 

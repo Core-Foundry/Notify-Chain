@@ -277,6 +277,11 @@ export class IndexingReconciliationEngine {
       const startLedger = Math.max(1, tip - this.lookbackLedgers);
       const endLedger = tip;
 
+      logger.info('Indexing reconciliation run started', {
+        window: { startLedger, endLedger },
+        contracts: this.contractAddresses.length,
+      });
+
       for (const contractAddress of this.contractAddresses) {
         await this.checkContract(contractAddress, startLedger, endLedger);
       }
@@ -316,6 +321,17 @@ export class IndexingReconciliationEngine {
     });
 
     const gaps = detectIndexingGaps(onChain, indexed);
+
+    if (onChain.length > 0 || indexed.length > 0) {
+      logger.info('Reconciliation contract progress', {
+        contractAddress,
+        window: { startLedger, endLedger },
+        onChainCount: onChain.length,
+        indexedCount: indexed.length,
+        missingEvents: gaps.missingEvents.length,
+      });
+    }
+
     if (gaps.missingEvents.length === 0) {
       return;
     }
