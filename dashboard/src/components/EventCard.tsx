@@ -17,21 +17,7 @@ function shortenAddress(address: string): string {
   return `${address.slice(0, 6)}...${address.slice(-4)}`;
 }
 
-const EVENT_TYPE_COLORS: Record<string, string> = {
-  TaskCreated: 'event-card__badge--green',
-  WorkSubmitted: 'event-card__badge--blue',
-  SubmissionApproved: 'event-card__badge--green',
-  SubmissionRejected: 'event-card__badge--red',
-  TaskCancelled: 'event-card__badge--red',
-  DisputeRaised: 'event-card__badge--yellow',
-  AutoshareCreated: 'event-card__badge--purple',
-  Withdrawal: 'event-card__badge--orange',
-};
-
-function getEventBadgeClass(name: string | null): string {
-  if (!name) return 'event-card__badge--default';
-  return EVENT_TYPE_COLORS[name] ?? 'event-card__badge--default';
-}
+import { getEventBadgeClass } from '../utils/eventTypeMapping';
 
 function SkeletonLine({ width = '100%', height = '14px' }: { width?: string; height?: string }) {
   return (

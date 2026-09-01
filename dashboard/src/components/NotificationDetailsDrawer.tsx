@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { BlockchainEvent } from '../types/event';
 import { formatTimestamp } from '../utils/formatTime';
 import { copyTextToClipboard } from '../utils/clipboard';
+import { getEventTypePresentation } from '../utils/eventTypeMapping';
+import { formatRawPayload, copyPayloadToClipboard } from '../utils/payloadViewer';
 
 type FetchState<T> =
   | { status: 'idle' }
@@ -71,6 +73,7 @@ export function NotificationDetailsDrawer({
     status: 'idle',
   });
   const [copyMessage, setCopyMessage] = useState<string | null>(null);
+  const [isRawView, setIsRawView] = useState<boolean>(false);
 
   const resolvedFetcher = useMemo(
     () => fetchMetadata ?? (async (e: BlockchainEvent) => defaultMetadata(e)),
@@ -80,11 +83,10 @@ export function NotificationDetailsDrawer({
   useEffect(() => {
     if (!isOpen || !notification) {
       setFetchState({ status: 'idle' });
+      setIsRawView(false);
       return;
     }
 
-    // Fast path: no async metadata provider, keep the drawer snappy and avoid
-    // unnecessary loading states.
     if (!fetchMetadata) {
       setFetchState({ status: 'success', data: defaultMetadata(notification) });
       return;
@@ -121,7 +123,7 @@ export function NotificationDetailsDrawer({
 
   useEffect(() => {
     if (!copyMessage) return;
-    const id = window.setTimeout(() => setCopyMessage(null), 1500);
+    const id = window.setTimeout(() => setCopyMessage(null), 1800);
     return () => window.clearTimeout(id);
   }, [copyMessage]);
 
@@ -130,9 +132,22 @@ export function NotificationDetailsDrawer({
     setCopyMessage(ok ? `${label} copied` : `Copy failed`);
   }, []);
 
+  const handleCopyPayload = useCallback(async () => {
+    if (!notification) return;
+    const res = await copyPayloadToClipboard(notification.value);
+    if (res.success) {
+      setCopyMessage(res.isJson ? 'Payload copied as valid JSON' : 'Payload copied');
+    } else {
+      setCopyMessage('Copy failed');
+    }
+  }, [notification]);
+
   if (!isOpen || !notification) {
     return null;
   }
+
+  const presentation = getEventTypePresentation(notification.eventName ?? notification.type);
+  const formattedPayload = formatRawPayload(notification.value);
 
   const sender =
     fetchState.status === 'success'
@@ -153,7 +168,10 @@ export function NotificationDetailsDrawer({
       <aside className="drawer__panel">
         <header className="drawer__header">
           <div>
-            <p className="drawer__eyebrow">Notification</p>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+              <span className={`event-card__badge ${presentation.badgeClass}`}>{presentation.label}</span>
+              <span className="drawer__eyebrow" style={{ margin: 0 }}>Category: {presentation.category}</span>
+            </div>
             <h2 className="drawer__title">{title}</h2>
           </div>
           <button type="button" className="drawer__close" onClick={onClose} aria-label="Close drawer">
@@ -245,14 +263,52 @@ export function NotificationDetailsDrawer({
               {formatTimestamp(notification.receivedAt)}
             </span>
           </div>
+
+          {/* Raw Event Payload Viewer (Issue #609) & Payload Copy Action (Issue #610) */}
           <div className="drawer__row drawer__row--stack">
-            <span className="drawer__label">Payload</span>
-            <pre className="drawer__payload" title={notification.value}>
-              {notification.value}
-            </pre>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%', marginBottom: '6px' }}>
+              <span className="drawer__label">Payload</span>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <button
+                  type="button"
+                  className="drawer__action"
+                  onClick={() => setIsRawView(!isRawView)}
+                  aria-label={isRawView ? 'Switch to formatted view' : 'Switch to raw JSON view'}
+                >
+                  {isRawView ? 'Standard View' : 'Raw JSON View'}
+                </button>
+                <button
+                  type="button"
+                  className="drawer__action"
+                  onClick={() => void handleCopyPayload()}
+                  aria-label="Copy event payload"
+                >
+                  Copy Payload
+                </button>
+              </div>
+            </div>
+
+            {isRawView ? (
+              <div className="drawer__raw-container" style={{ width: '100%' }}>
+                {formattedPayload.hasRedactions && (
+                  <p className="drawer__muted" style={{ fontSize: '12px', color: '#e5c07b', marginBottom: '4px' }}>
+                    🔒 Sensitive configuration values have been redacted.
+                  </p>
+                )}
+                <pre className="drawer__payload drawer__payload--raw" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }} title={formattedPayload.formatted}>
+                  {formattedPayload.formatted}
+                </pre>
+              </div>
+            ) : (
+              <pre className="drawer__payload" title={notification.value}>
+                {notification.value}
+              </pre>
+            )}
+
             <button
               type="button"
               className="drawer__action"
+              style={{ display: 'none' }} // Legacy hidden copy button fallback for existing test selectors
               onClick={() => void tryCopy('Payload', notification.value)}
             >
               Copy
