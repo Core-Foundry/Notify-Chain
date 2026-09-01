@@ -1,3 +1,13 @@
+/**
+ * App.tsx
+ *
+ * Integrates:
+ *  - #394 Accessibility: role="tablist", aria-selected, keyboard nav (arrow keys),
+ *    focus-visible rings, skip-to-content link
+ *  - #396 Navigation Redesign: grouped tabs, active-route highlighting,
+ *    mobile hamburger + off-canvas drawer
+ *  - #397 Toast: ToastProvider wraps the whole app
+ *  - #505 Keyboard Shortcuts: number keys for tabs, T for theme, ? for help
 import { useState, useCallback } from 'react';
 import { EventExplorerPage } from './pages/EventExplorerPage';
 import { NotificationTimelineView } from './components/NotificationTimelineView';
@@ -16,6 +26,8 @@ import { ExportHistoryPage } from './pages/ExportHistoryPage';
 import { NotificationSearchPage } from './pages/NotificationSearchPage';
 import { NotificationPreferencesPage } from './pages/NotificationPreferencesPage';
 import { TemplatesPage } from './pages/TemplatesPage';
+import { ChannelDetailsPage } from './pages/ChannelDetailsPage';
+import { RpcBenchmarkPage } from './pages/RpcBenchmarkPage';
 import { ThemeToggle } from './components/ThemeToggle';
 import { MobileNavDrawer, NAV_ITEMS, type Tab } from './components/MobileNavDrawer';
 import { ToastProvider } from './context/ToastContext';
@@ -24,6 +36,13 @@ import { useIsMobileNav } from './hooks/useMediaQuery';
 import { DeliveryHeatmap } from './components/DeliveryHeatmap';
 import { useEventStore } from './store/eventStore';
 import { SyncStatus } from './components/SyncStatus';
+import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
+import { KeyboardShortcutsHelp } from './components/KeyboardShortcutsHelp';
+
+export function App() {
+  const [tab, setTab] = useState<Tab>('explorer');
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
 import { DashboardLayout } from './layouts/DashboardLayout';
 
 export function App() {
@@ -41,6 +60,23 @@ export function App() {
   const tabListRef = useRef<HTMLDivElement>(null);
   const hamburgerRef = useRef<HTMLButtonElement>(null);
 
+  // ── Keyboard shortcuts (#505) ───────────────────────────────────────────
+  useKeyboardShortcuts({
+    activeTab: tab,
+    onTabChange: setTab,
+    onToggleTheme: toggleTheme,
+    helpOpen,
+    onToggleHelp: useCallback(() => setHelpOpen((prev) => !prev), []),
+    onCloseHelp: useCallback(() => setHelpOpen(false), []),
+  });
+
+  // ── Keyboard navigation inside tablist (arrow keys) ──────────────────────
+  const handleTabKeyDown = useCallback(
+    (e: KeyboardEvent<HTMLDivElement>) => {
+      const tabs = Array.from(
+        tabListRef.current?.querySelectorAll<HTMLButtonElement>('[role="tab"]') ?? [],
+      );
+      const current = tabs.findIndex((el) => el === document.activeElement);
   // Sync URL hash with tab state
   useEffect(() => {
     window.location.hash = tab;
@@ -103,6 +139,44 @@ export function App() {
 
   return (
     <ToastProvider>
+      {/* Skip-to-content link (#394) */}
+      <a href="#main-content" className="skip-link">
+        Skip to main content
+      </a>
+
+      {/* Keyboard shortcuts help overlay (#505) */}
+      <KeyboardShortcutsHelp isOpen={helpOpen} onClose={() => setHelpOpen(false)} />
+
+      <div className="app">
+        {/* Top bar */}
+        <header className="app__header" role="banner">
+          <div className="app__header-inner">
+            {/* Hamburger for mobile (#396) */}
+            <button
+              ref={hamburgerRef}
+              type="button"
+              className="app__hamburger"
+              aria-label="Open navigation menu"
+              aria-expanded={drawerOpen}
+              aria-controls="mobile-nav-drawer"
+              onClick={handleDrawerOpen}
+            >
+              <span className="app__hamburger-bar" aria-hidden="true" />
+              <span className="app__hamburger-bar" aria-hidden="true" />
+              <span className="app__hamburger-bar" aria-hidden="true" />
+            </button>
+
+            <span className="app__brand">NotifyChain</span>
+
+            <div className="app__theme-bar">
+              <SyncStatus />
+              <ThemeToggle theme={theme} onToggle={toggleTheme} />
+            </div>
+          </div>
+        </header>
+
+        {/* Desktop tab navigation (#394, #396) */}
+        <nav className="app-tabs" aria-label="Main navigation">
       <DashboardLayout
         activeTab={tab}
         onSelectTab={setTab}
@@ -128,6 +202,25 @@ export function App() {
             hidden={tab !== item.id}
             className="app__panel"
           >
+            {NAV_ITEMS.map((item, index) => (
+              <button
+                key={item.id}
+                type="button"
+                role="tab"
+                id={`tab-${item.id}`}
+                aria-selected={tab === item.id}
+                aria-controls={`panel-${item.id}`}
+                tabIndex={tab === item.id ? 0 : -1}
+                className={`app-tabs__btn${tab === item.id ? ' app-tabs__btn--active' : ''}`}
+                onClick={() => setTab(item.id)}
+                title={index < 9 ? `Press ${index + 1} to switch` : undefined}
+              >
+                {index < 9 && (
+                  <kbd className="app-tabs__shortcut">{index + 1}</kbd>
+                )}
+                {item.label}
+              </button>
+            ))}
             {tab === item.id && renderPanel(item.id, events)}
           </div>
         ))}
@@ -174,6 +267,10 @@ function renderPanel(tab: Tab, events: any[]) {
       return <NotificationPreferencesPage />;
     case 'templates':
       return <TemplatesPage />;
+    case 'channels':
+      return <ChannelDetailsPage />;
+    case 'rpc-benchmark':
+      return <RpcBenchmarkPage />;
     default:
       return null;
   }
