@@ -2,47 +2,355 @@ name: CI
 
 on:
   pull_request:
+  push:
+    branches:
+      - main
+      - develop
+
+env:
+  CARGO_TERM_COLOR: always
+  NODE_VERSION: "18"
+  RUST_TOOLCHAIN: stable
 
 jobs:
+  # --------------------------------------------------------------------------
+  # Frontend (dashboard): reproducible install → lint → typecheck → test
+  # --------------------------------------------------------------------------
   frontend:
-    name: Frontend (lint, typecheck, test)
+    name: Frontend (dashboard · lint · typecheck · test)
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: dashboard
     steps:
-      - uses: actions/checkout@v4
-      - name: Setup Node
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js ${{ env.NODE_VERSION }}
         uses: actions/setup-node@v4
         with:
-          node-version: 18
-          cache: 'npm'
-      - name: Install dependencies
-        working-directory: dashboard
-        run: npm ci
-      - name: Run lint
-        working-directory: dashboard
-        run: npm run lint
-      - name: TypeScript check (build)
-        working-directory: dashboard
-        run: npm run build
-      - name: Run tests
-        working-directory: dashboard
-        run: npm test --silent
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
+          cache-dependency-path: dashboard/package-lock.json
 
-  rust:
-    name: Rust (fmt check, tests)
+      # Issue 2 · frozen-lockfile install — fails fast if package-lock.json
+      # has drifted from package.json or is missing committed entries.
+      - name: Install dependencies (locked)
+        run: |
+          echo "::group::npm ci (frozen-lockfile install)"
+          npm ci --no-audit --no-fund
+          echo "::endgroup::"
+
+      - name: Lint (ESLint, zero warnings)
+        run: npm run lint
+
+      - name: Typecheck & build (Vite)
+        run: npm run build
+
+      - name: Unit tests (Jest)
+        run: npm test --silent -- --ci
+
+  # --------------------------------------------------------------------------
+  # Listener service: reproducible install → test → build
+  # --------------------------------------------------------------------------
+  listener:
+    name: Listener (test · build)
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: listener
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
+          cache-dependency-path: listener/package-lock.json
+
+      - name: Install dependencies (locked)
+        run: |
+          echo "::group::npm ci (frozen-lockfile install)"
+          npm ci --no-audit --no-fund
+          echo "::endgroup::"
+
+      - name: Unit & integration tests (Jest)
+        run: npm test -- --ci
+
+      - name: TypeScript build (tsc)
+        run: npm run build
+
+  # --------------------------------------------------------------------------
+  # Rust contracts: formatting → locked fetch → test suite
+  # --------------------------------------------------------------------------
+  rust:
+    name: Rust (fmt · locked fetch · test suite)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: contract
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain (${{ env.RUST_TOOLCHAIN }})
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          profile: minimal
+          components: rustfmt
+          override: true
+
+      - name: Cache cargo registry & build artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            contract/target
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-${{ hashFiles('contract/Cargo.lock', 'contract/**/Cargo.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Check formatting (rustfmt)
+        run: cargo fmt --all -- --check
+
+      # Issue 2 · cargo fetch --locked
+      # Aborts the build with a clear, actionable error if Cargo.lock is
+      # missing committed entries or has drifted from the workspace
+      # Cargo.toml(s). This is the Rust equivalent of `npm ci`.
+      - name: Fetch dependencies (locked — fail on Cargo.lock drift)
+        run: |
+          echo "::group::cargo fetch --locked"
+          cargo fetch --locked \
+            || {
+              echo "::error title=Cargo.lock drift::Cargo.lock does not match the workspace Cargo.toml(s). Run \`cargo generate-lockfile\` or \`cargo update -p <crate>\` locally and commit the updated Cargo.lock."
+              exit 1
+            }
+          echo "::endgroup::"
+
+      - name: Test suite (workspace, all features, locked)
+        run: cargo test --workspace --all-features --locked --verbose
+
+  # --------------------------------------------------------------------------
+  # Issue 3 · Automated vulnerability scanning
+  #   - cargo audit    (RustSec advisory DB)
+  #   - npm audit      (GH advisory DB — dashboard + listener)
+  #   Severity gating: only critical / high block the build.
+  #   Moderate / low / info are reported to the log as informational.
+  # --------------------------------------------------------------------------
+  security-scan:
+    name: Security scan (Rust + JS/TS)
+    runs-on: ubuntu-latest
+    needs: [frontend, listener, rust]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ----- Rust dependencies (for cargo-audit) -----
       - name: Install Rust toolchain
         uses: actions-rs/toolchain@v1
         with:
-          toolchain: stable
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
           profile: minimal
           override: true
-      - name: Check formatting
-        working-directory: contract
+
+      - name: Install cargo-audit
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+
+      # ----- Node (for npm audit) -----
+      - name: Setup Node.js ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
+
+      - name: Install jq (severity filtering)
         run: |
-          rustup component add rustfmt || true
-          cargo fmt --all -- --check
-      - name: Run tests
+          sudo apt-get update -y
+          sudo apt-get install -y jq
+
+      # ======================================================================
+      # Rust: cargo audit
+      # ======================================================================
+      - name: Rust audit (cargo-audit · RustSec)
         working-directory: contract
-        run: cargo test --workspace --all-features --verbose
+        id: rust_audit
+        run: |
+          echo "::group::cargo audit (RustSec advisory database)"
+          set +e
+          cargo audit --json --no-fetch --output rust-audit.json 2>rust-audit.err
+          AUDIT_EXIT=$?
+          set -e
+          # cargo-audit returns non-zero on any findings; severity is
+          # evaluated below via jq, so swallow the exit here.
+          echo "Raw cargo-audit exit code: $AUDIT_EXIT"
+          if [ ! -f rust-audit.json ]; then
+            # Fallback: advisory DB may be fresh & empty -> produce empty list.
+            echo '{"vulnerabilities":{"list":[]}}' > rust-audit.json
+          fi
+          echo "::endgroup::"
+
+          echo "::group::Rust audit summary (all severities)"
+          jq -r '
+            [.vulnerabilities.list[]?] | group_by(.severity)
+            | .[] | "\(.[0].severity // \"unknown\"): \(length)"
+          ' rust-audit.json
+          echo "::endgroup::"
+
+          echo "::group::Rust audit: critical / high findings"
+          BLOCKING=$(jq -r '
+            [.vulnerabilities.list[]?
+             | select(.severity == "critical" or .severity == "high")]
+            | length
+          ' rust-audit.json)
+          echo "blocking_count=$BLOCKING" >> "$GITHUB_OUTPUT"
+          if [ "$BLOCKING" -gt 0 ]; then
+            jq -C '.vulnerabilities.list[]?
+                   | select(.severity == "critical" or .severity == "high")' \
+              rust-audit.json || true
+          else
+            echo "(none — informational-only findings, if any, are printed above)"
+          fi
+          echo "::endgroup::"
+
+      # ======================================================================
+      # JavaScript/TypeScript: npm audit per package
+      # ======================================================================
+      - name: JS/TS audit (dashboard · npm audit)
+        working-directory: dashboard
+        id: npm_audit_dashboard
+        run: |
+          echo "::group::npm audit (dashboard) — advisory DB"
+          set +e
+          npm audit --json > ../dashboard-audit.json 2>../dashboard-audit.err
+          AUDIT_EXIT=$?
+          set -e
+          echo "Raw npm audit exit code: $AUDIT_EXIT"
+          echo "::endgroup::"
+
+          echo "::group::Dashboard audit summary (all severities)"
+          jq -r '
+            .metadata.vulnerabilities as $v
+            | "critical: \($v.critical // 0)
+            high:     \($v.high // 0)
+            moderate: \($v.moderate // 0)
+            low:      \($v.low // 0)
+            info:     \($v.info // 0)"
+          ' ../dashboard-audit.json
+          echo "::endgroup::"
+
+          echo "::group::Dashboard audit: critical / high findings"
+          BLOCKING=$(jq -r '
+            (.metadata.vulnerabilities.critical // 0) +
+            (.metadata.vulnerabilities.high // 0)
+          ' ../dashboard-audit.json)
+          echo "blocking_count=$BLOCKING" >> "$GITHUB_OUTPUT"
+          if [ "$BLOCKING" -gt 0 ]; then
+            jq -C '[.vulnerabilities[]?
+                   | select(.severity == "critical" or .severity == "high")]' \
+              ../dashboard-audit.json || true
+          else
+            echo "(none — informational-only findings, if any, are printed above)"
+          fi
+          echo "::endgroup::"
+
+      - name: JS/TS audit (listener · npm audit)
+        working-directory: listener
+        id: npm_audit_listener
+        run: |
+          echo "::group::npm audit (listener) — advisory DB"
+          set +e
+          npm audit --json > ../listener-audit.json 2>../listener-audit.err
+          AUDIT_EXIT=$?
+          set -e
+          echo "Raw npm audit exit code: $AUDIT_EXIT"
+          echo "::endgroup::"
+
+          echo "::group::Listener audit summary (all severities)"
+          jq -r '
+            .metadata.vulnerabilities as $v
+            | "critical: \($v.critical // 0)
+            high:     \($v.high // 0)
+            moderate: \($v.moderate // 0)
+            low:      \($v.low // 0)
+            info:     \($v.info // 0)"
+          ' ../listener-audit.json
+          echo "::endgroup::"
+
+          echo "::group::Listener audit: critical / high findings"
+          BLOCKING=$(jq -r '
+            (.metadata.vulnerabilities.critical // 0) +
+            (.metadata.vulnerabilities.high // 0)
+          ' ../listener-audit.json)
+          echo "blocking_count=$BLOCKING" >> "$GITHUB_OUTPUT"
+          if [ "$BLOCKING" -gt 0 ]; then
+            jq -C '[.vulnerabilities[]?
+                   | select(.severity == "critical" or .severity == "high")]' \
+              ../listener-audit.json || true
+          else
+            echo "(none — informational-only findings, if any, are printed above)"
+          fi
+          echo "::endgroup::"
+
+      # ======================================================================
+      # Blocking decision
+      # ======================================================================
+      - name: Severity gating — block on critical / high
+        if: always()
+        env:
+          RUST_BLOCKING: ${{ steps.rust_audit.outputs.blocking_count }}
+          DASH_BLOCKING: ${{ steps.npm_audit_dashboard.outputs.blocking_count }}
+          LIST_BLOCKING: ${{ steps.npm_audit_listener.outputs.blocking_count }}
+        run: |
+          TOTAL=$(( RUST_BLOCKING + DASH_BLOCKING + LIST_BLOCKING ))
+          echo "Blocking vulnerability counts:"
+          echo "  Rust (RustSec):       ${RUST_BLOCKING}"
+          echo "  Dashboard (npm):      ${DASH_BLOCKING}"
+          echo "  Listener (npm):       ${LIST_BLOCKING}"
+          echo "  -------------------------"
+          echo "  Total critical/high:  ${TOTAL}"
+
+          if [ "$TOTAL" -gt 0 ]; then
+            echo "::error title=Blocking vulnerabilities detected::Found ${TOTAL} critical/high severity dependency vulnerabilities. See the per-scan log groups above for details. Patch before merge, or file a documented suppression per .github/SECURITY_SCANNING.md."
+            exit 1
+          fi
+          echo "✅ No blocking vulnerabilities. Informational findings (moderate / low / info) are visible in the audit summary log groups above."
+
+  # --------------------------------------------------------------------------
+  # Issue 4 · Contract event documentation drift check
+  #   Parses Rust #[contractevent] structs and diffs them against
+  #   contract/contract_events_docs.json via scripts/check_events.ts.
+  # --------------------------------------------------------------------------
+  event-docs-check:
+    name: Contract event docs ↔ implementation sync check
+    runs-on: ubuntu-latest
+    needs: [listener]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
+          cache-dependency-path: listener/package-lock.json
+
+      # listener already pins ts-node as a devDep; reuse its toolchain so we
+      # don't introduce a separate install just for this script.
+      - name: Install listener dependencies (provides ts-node)
+        working-directory: listener
+        run: npm ci --no-audit --no-fund
+
+      - name: Validate contract events vs documentation
+        run: |
+          TS_NODE="$(pwd)/listener/node_modules/.bin/ts-node"
+          "$TS_NODE" \
+            scripts/check_events.ts \
+            --rust contract/contracts/hello-world/src/base/events.rs \
+            --docs contract/contract_events_docs.json

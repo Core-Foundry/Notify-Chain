@@ -265,4 +265,7 @@ mod tests {
 
     #[path = "../tests/notification_test.rs"]
     mod notification_test;
+
+    #[path = "../tests/state_transitions.rs"]
+    mod state_transitions;
 }

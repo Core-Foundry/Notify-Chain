@@ -1,0 +1,103 @@
+{
+  "$schema": "./contract_events_docs.schema.json",
+  "sourceRustFile": "contracts/hello-world/src/base/events.rs",
+  "description": "Canonical list of events emitted by the AutoShare smart contract. This file is the source of truth for off-chain consumers (listener, dashboard) and is validated against the Rust implementation in CI via scripts/check_events.ts.",
+  "events": [
+    {
+      "structName": "AutoshareCreated",
+      "eventSymbol": "autoshare_created",
+      "dataFormat": "single-value",
+      "category": "Group",
+      "fields": [
+        { "name": "creator",  "type": "Address",  "isTopic": true,  "required": true },
+        { "name": "category", "type": "NotificationCategory", "isTopic": true,  "required": true },
+        { "name": "id",       "type": "BytesN<32>",           "isTopic": false, "required": true }
+      ]
+    },
+    {
+      "structName": "ContractPaused",
+      "eventSymbol": "contract_paused",
+      "dataFormat": "struct",
+      "category": "Admin",
+      "fields": [
+        { "name": "category", "type": "NotificationCategory", "isTopic": true, "required": true }
+      ]
+    },
+    {
+      "structName": "ContractUnpaused",
+      "eventSymbol": "contract_unpaused",
+      "dataFormat": "struct",
+      "category": "Admin",
+      "fields": [
+        { "name": "category", "type": "NotificationCategory", "isTopic": true, "required": true }
+      ]
+    },
+    {
+      "structName": "AutoshareUpdated",
+      "eventSymbol": "autoshare_updated",
+      "dataFormat": "single-value",
+      "category": "Group",
+      "fields": [
+        { "name": "updater",  "type": "Address",              "isTopic": true,  "required": true },
+        { "name": "category", "type": "NotificationCategory", "isTopic": true,  "required": true },
+        { "name": "id",       "type": "BytesN<32>",           "isTopic": false, "required": true }
+      ]
+    },
+    {
+      "structName": "GroupDeactivated",
+      "eventSymbol": "group_deactivated",
+      "dataFormat": "single-value",
+      "category": "Group",
+      "fields": [
+        { "name": "creator",  "type": "Address",              "isTopic": true,  "required": true },
+        { "name": "category", "type": "NotificationCategory", "isTopic": true,  "required": true },
+        { "name": "id",       "type": "BytesN<32>",           "isTopic": false, "required": true }
+      ]
+    },
+    {
+      "structName": "GroupActivated",
+      "eventSymbol": "group_activated",
+      "dataFormat": "single-value",
+      "category": "Group",
+      "fields": [
+        { "name": "creator",  "type": "Address",              "isTopic": true,  "required": true },
+        { "name": "category", "type": "NotificationCategory", "isTopic": true,  "required": true },
+        { "name": "id",       "type": "BytesN<32>",           "isTopic": false, "required": true }
+      ]
+    },
+    {
+      "structName": "AdminTransferred",
+      "eventSymbol": "admin_transferred",
+      "dataFormat": "single-value",
+      "category": "Admin",
+      "fields": [
+        { "name": "old_admin", "type": "Address",              "isTopic": true,  "required": true },
+        { "name": "category",  "type": "NotificationCategory", "isTopic": true,  "required": true },
+        { "name": "new_admin", "type": "Address",              "isTopic": false, "required": true }
+      ]
+    },
+    {
+      "structName": "Withdrawal",
+      "eventSymbol": "withdrawal",
+      "dataFormat": "single-value",
+      "category": "Financial",
+      "fields": [
+        { "name": "token",     "type": "Address",              "isTopic": true,  "required": true },
+        { "name": "recipient", "type": "Address",              "isTopic": true,  "required": true },
+        { "name": "category",  "type": "NotificationCategory", "isTopic": true,  "required": true },
+        { "name": "amount",    "type": "i128",                 "isTopic": false, "required": true }
+      ]
+    },
+    {
+      "structName": "AuthorizationFailure",
+      "eventSymbol": "authorization_failure",
+      "dataFormat": "single-value",
+      "category": "Admin",
+      "fields": [
+        { "name": "caller",   "type": "Address",              "isTopic": true,  "required": true },
+        { "name": "category", "type": "NotificationCategory", "isTopic": true,  "required": true },
+        { "name": "action",   "type": "String",               "isTopic": false, "required": true }
+      ]
+    }
+  ]
+}
