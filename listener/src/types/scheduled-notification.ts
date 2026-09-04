@@ -7,6 +7,7 @@ export enum NotificationStatus {
   PROCESSING = 'PROCESSING',
   COMPLETED = 'COMPLETED',
   FAILED = 'FAILED',
+  DEAD_LETTERED = 'DEAD_LETTERED',
   CANCELLED = 'CANCELLED',
 }
 
@@ -85,7 +86,7 @@ export interface NotificationExecutionLog {
   scheduledNotificationId: number;
   executionAttempt: number;
   executionTime: Date;
-  status: 'SUCCESS' | 'FAILED' | 'RETRY';
+  status: 'SUCCESS' | 'FAILED' | 'RETRY' | 'DEAD_LETTERED';
   errorMessage?: string | null;
   responseData?: string | null;
   durationMs?: number | null;
