@@ -15,6 +15,7 @@
     "migrate": "ts-node src/scripts/migrate-db.ts",
     "migrate:templates": "ts-node src/scripts/migrate-templates.ts",
     "check-migrations": "ts-node src/scripts/check-migrations.ts",
+    "generate:events": "ts-node src/scripts/generate-synthetic-events.ts",
     "validate:batch": "ts-node src/utils/batch-validator.ts"
   },
   "keywords": [],
