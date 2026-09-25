@@ -46,6 +46,7 @@ import {
 import { CreateNotificationTemplateInput } from '../types/notification-template';
 import { BatchValidationService } from '../services/batch-validation-service';
 import { handleArchiveRequest } from './archive-api';
+import { handleDeliveryMetricsRequest } from './delivery-metrics-api';
 import { ArchiveStore } from '../services/archive-store';
 import { ArchiveService } from '../services/archive-service';
 import { NotificationMetricsStore } from '../services/notification-metrics-store';
@@ -1462,6 +1463,19 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
       }, requestId);
       if (handled) return;
     }
+
+    // GET /api/notifications/delivery-metrics and /history  (Issue #482)
+    const deliveryMetricsHandled = handleDeliveryMetricsRequest(
+      req,
+      res,
+      url,
+      {
+        analyticsAggregator: options.analyticsAggregator,
+        metricsStore: options.metricsStore,
+      },
+      { requestId, correlationId, startTime },
+    );
+    if (deliveryMetricsHandled) return;
 
 // GET /api/metrics/response-time — expose response-time counters (#491)
      if (req.method === 'GET' && url.pathname === '/api/metrics/response-time') {
