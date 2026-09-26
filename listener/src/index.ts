@@ -34,7 +34,6 @@ import { EventDeduplicationService } from './services/event-deduplication-servic
 
 dotenv.config();
 
-// Track process startup time for uptime calculation
 const PROCESS_START_TIME = Date.now();
 
 async function main() {
@@ -46,7 +45,6 @@ async function main() {
   let notificationAPI: NotificationAPI | null = null;
   let healthMonitor: NotificationHealthMonitor | null = null;
   let subscriber: EventSubscriber | null = null;
-
   let templateService: NotificationTemplateService | null = null;
   let legacyTemplateService: TemplateService | null = null;
   let cleanupService: CleanupService | null = null;
@@ -67,20 +65,13 @@ async function main() {
     const db = await initializeDatabase(config.databasePath);
 
     repository = new ScheduledNotificationRepository(db);
-    
+
     healthMonitor = new NotificationHealthMonitor(null, getWorkerManager(), {
       repository,
       getLastSuccessfulPoll: () => subscriber?.getLastSuccessfulPoll() ?? null,
-    });
-
       getUptimeMs: () => Date.now() - PROCESS_START_TIME,
     });
 
-    healthMonitor = new NotificationHealthMonitor(null, getWorkerManager(), {
-      repository,
-    });
-
-    // Rebuild registry with configured event TTL
     if (config.cleanup) {
       eventRegistry.setTtlMs(config.cleanup.eventRetentionMs);
     }
@@ -134,7 +125,6 @@ async function main() {
 
       scheduler = new NotificationScheduler(repository, config.scheduler, discordService);
       await scheduler.start();
-
       logger.info('Notification scheduler started successfully');
 
       if (config.retryScheduler?.enabled) {
@@ -171,14 +161,12 @@ async function main() {
     healthMonitor.start();
   }
 
-  subscriber = new EventSubscriber(config, deduplicationService);
-  const subscriber = new EventSubscriber(config, deduplicationService ?? undefined);
+  subscriber = new EventSubscriber(config, deduplicationService ?? undefined);
   await subscriber.start();
 
   let isShuttingDown = false;
 
   const shutdown = async (signal: string) => {
-    // Idempotency: prevent duplicate shutdown if multiple signals arrive
     if (isShuttingDown) {
       logger.warn('Shutdown already in progress, ignoring signal', { signal });
       return;
@@ -188,24 +176,17 @@ async function main() {
     logger.info('Graceful shutdown initiated', { signal });
 
     try {
+      // Stop accepting new events first so no new jobs are claimed
+      if (subscriber) {
+        await subscriber.stop();
+      }
+
+      // Wait for in-flight notification jobs to finish before closing anything
+      await getWorkerManager().initiateGracefulShutdown();
+
+      // Tear down schedulers and background services
       if (healthMonitor) {
         healthMonitor.stop();
-      }
-
-      if (cleanupService) {
-        await cleanupService.stop();
-      }
-
-      if (reconciliationEngine) {
-        reconciliationEngine.stop();
-      }
-
-      if (metricsRunner) {
-        await metricsRunner.stop();
-      }
-
-      if (archiveService) {
-        await archiveService.stop();
       }
 
       if (scheduler) {
@@ -216,11 +197,24 @@ async function main() {
         await retryScheduler.stop();
       }
 
-    if (subscriber) {
-      await subscriber.stop();
-    }
+      if (metricsRunner) {
+        await metricsRunner.stop();
+      }
 
-    eventsServer.close();
+      if (reconciliationEngine) {
+        reconciliationEngine.stop();
+      }
+
+      if (archiveService) {
+        await archiveService.stop();
+      }
+
+      if (cleanupService) {
+        await cleanupService.stop();
+      }
+
+      // Close the HTTP server last so health checks stay reachable during drain
+      eventsServer.close();
 
       logger.info('Graceful shutdown completed successfully', { signal });
       process.exit(0);
@@ -230,19 +224,12 @@ async function main() {
     }
   };
 
-  process.on('SIGINT', async () => {
-    await shutdown('SIGINT');
-  });
-
-  process.on('SIGTERM', async () => {
-    await shutdown('SIGTERM');
-  });
+  process.on('SIGINT', () => shutdown('SIGINT'));
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
 }
 
 main().catch((err) => {
   if (err instanceof SecretValidationError) {
-    // Secret validation failures are reported field-by-field without echoing
-    // actual secret values (#692).
     logger.error('Startup secret validation failed — service will not start', {
       error: err.message,
     });

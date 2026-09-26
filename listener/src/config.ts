@@ -1,7 +1,7 @@
-import { Config, ContractConfig, DiscordConfig, WebhookSecret, AppCleanupConfig, EventQueueConfig, RetrySchedulerOptions, AnalyticsConfig, ExpirationConfig, ApiKey } from './types';
+import { Config, ContractConfig, DiscordConfig, WebhookSecret, AppCleanupConfig, EventQueueConfig, RetrySchedulerOptions, AnalyticsConfig, ExpirationConfig, ApiKey, BackfillConfig, LoggingConfig, ApiConfig } from './types';
 import { validateCorsOrigin, CorsValidationError } from './utils/cors-validator';
 import { ConfigurationSchemaValidator, APP_CONFIG_SCHEMA } from './config-schema';
-import { Config, ContractConfig, DiscordConfig, WebhookSecret, AppCleanupConfig, EventQueueConfig, RetrySchedulerOptions, AnalyticsConfig, ExpirationConfig, ApiKey, BackfillConfig, LoggingConfig, ApiConfig } from './types';
+import { validateSecrets, SecretValidationError } from './config/validate-secrets';
 import {
   SUPPORTED_LOG_FORMATS,
   SUPPORTED_LOG_LEVELS,
@@ -615,6 +615,13 @@ export function validateConfig(config: Config): void {
           `(received: ${config.cleanup.processedEventRetentionMs}).`,
       );
     }
+  }
+
+  // ── Event queue ────────────────────────────────────────────────────────────
+  if (config.eventQueue?.maxConcurrency !== undefined && config.eventQueue.maxConcurrency < 1) {
+    errors.push(
+      `EVENT_QUEUE_MAX_CONCURRENCY must be >= 1 (received: ${config.eventQueue.maxConcurrency}).`,
+    );
   }
 
   // ── Backfill ───────────────────────────────────────────────────────────────
