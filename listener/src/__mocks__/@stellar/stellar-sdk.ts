@@ -1,7 +1,18 @@
 /**
  * Manual mock for @stellar/stellar-sdk.
  * Used by Jest (via moduleNameMapper) when the real package is not installed.
+ *
+ * Only the parts that need stubbing for tests are overridden here.
+ * Everything else (xdr, scValToNative, etc.) is re-exported from the real
+ * package so tests that construct ScVal fixtures work correctly.
  */
+
+// Re-export the real SDK's XDR and conversion utilities so ScVal fixture
+// helpers in tests work without hitting a live RPC endpoint.
+export {
+  xdr,
+  scValToNative,
+} from '../../../node_modules/@stellar/stellar-sdk/lib/index.js';
 
 export const rpc = {
   Server: jest.fn().mockImplementation(() => ({
