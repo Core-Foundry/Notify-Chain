@@ -307,6 +307,27 @@ The PR template will prompt you for:
 
 ---
 
+## Security and Vulnerability Management
+
+Before modifying dependencies, manifests, or lockfiles:
+
+1. Run the vulnerability scanners locally (they also run automatically in CI):
+   - **Rust**: `cd contract && cargo audit --deny warnings`
+   - **Node**: `cd <component> && npm audit --audit-level=high`
+2. Ensure installs are reproducible: `npm ci` (Node) and `cargo build --locked`
+   (Rust). Never commit a modified `package.json` / `Cargo.toml` without the
+   matching refreshed lockfile.
+3. Verify the on-chain event reference is not stale:
+   ```bash
+   cd listener
+   npm run check:event-docs
+   ```
+
+Full policy, step-by-step remediation playbook, and contacts for responsible
+disclosure are documented in [`docs/security.md`](docs/security.md).
+
+---
+
 ## Releasing NotifyChain
 
 Maintainers preparing a tagged release should follow the steps in

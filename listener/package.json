@@ -15,7 +15,8 @@
     "migrate": "ts-node src/scripts/migrate-db.ts",
     "migrate:templates": "ts-node src/scripts/migrate-templates.ts",
     "check-migrations": "ts-node src/scripts/check-migrations.ts",
-    "validate:batch": "ts-node src/utils/batch-validator.ts"
+    "validate:batch": "ts-node src/utils/batch-validator.ts",
+    "check:event-docs": "ts-node scripts/check-event-docs.ts"
   },
   "keywords": [],
   "author": "",
