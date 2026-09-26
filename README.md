@@ -650,6 +650,58 @@ See [`frontend/src/components/SubscriptionForm.tsx`](frontend/src/components/Sub
 
 ---
 
+### Testing
+
+NotifyChain includes comprehensive testing infrastructure:
+
+#### Smoke Tests (Fast Pipeline Validation)
+
+```bash
+cd listener
+npm install
+npm run test:smoke
+```
+
+The smoke test validates the complete notification pipeline from event ingestion to notification generation in <2 seconds without any external dependencies. See `listener/SMOKE_TEST.md` for details.
+
+#### Unit Tests
+
+```bash
+cd listener
+npm run test:unit
+```
+
+#### All Tests
+
+```bash
+cd listener
+npm run test:all
+```
+
+---
+
+## Developer Tools
+
+### Configuration Drift Detection
+
+NotifyChain includes an automated configuration drift detection tool that identifies environment variables documented in `.env.example` files but no longer used in the codebase.
+
+**Usage:**
+```bash
+# Check for unused configuration variables
+npm run lint:config
+
+# With verbose output
+npm run lint:config:verbose
+
+# Using Make
+make lint-config
+```
+
+**Documentation:** See [CONFIG_DRIFT_DETECTION.md](docs/CONFIG_DRIFT_DETECTION.md)
+
+---
+
 ## Contributing
 
 Contributions are welcome! Please follow these steps (or start with the canonical workflow guide):
@@ -667,6 +719,11 @@ Contributions are welcome! Please follow these steps (or start with the canonica
 5. Open a Pull Request
 
 Please follow the project's coding standards and include tests where applicable.
+
+**Before committing:**
+- Run `npm run lint:config` to check for configuration drift
+- Ensure all tests pass
+- Update documentation as needed
 
 For more detailed contribution guidelines, check:
 - [`CONTRIBUTING.md`](CONTRIBUTING.md)
