@@ -1,0 +1,13 @@
+{
+  "name": "notify-chain",
+  "version": "1.0.0",
+  "private": true,
+  "description": "NotifyChain - Decentralized Notification Infrastructure",
+  "scripts": {
+    "check:links": "markdown-link-check -c .markdown-link-check.json \"./**/*.md\"",
+    "check:links:quiet": "markdown-link-check -q -c .markdown-link-check.json \"./**/*.md\""
+  },
+  "devDependencies": {
+    "markdown-link-check": "^3.12.2"
+  }
+}

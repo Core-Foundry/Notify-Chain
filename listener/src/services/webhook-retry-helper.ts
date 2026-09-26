@@ -1,26 +1,39 @@
 /**
- * Bounded retry helper for transient API failures.
+ * Bounded retry helper for transient webhook API failures.
  *
- * Wraps the sendWebhook function with automatic retry logic for
- * transient failures such as:
- *   - Network/connection errors
- *   - Timeout (AbortError)
- *   - HTTP 429 (Too Many Requests)
- *   - HTTP 500, 502, 503, 504 (Server errors)
+ * Wraps `sendWebhook` with automatic retry logic for transient failures such
+ * as network errors, timeouts, HTTP 429, and 5xx responses.  Permanent
+ * client errors (400, 401, 403, 404, 422) are never retried.
  *
- * Permanent client errors (400, 401, 403, 404, 422) are NOT retried.
- *
- * Retry attempts are bounded by MAX_RETRY_ATTEMPTS to prevent infinite loops.
- * A delay is added between attempts to reduce load on failing services.
+ * Backoff behavior is fully driven by the provider-independent
+ * `RetryBackoffConfig` from `../utils/retry-backoff-config`.  Callers supply
+ * an optional `partialBackoff` field inside `opts`; defaults are applied for
+ * any omitted field, and the merged result is strictly validated (invalid
+ * configs throw before any HTTP call is made).
  */
 
 import { sendWebhook, WebhookSendOptions } from './webhook-sender';
+import {
+  PartialRetryBackoffConfig,
+  RetryBackoffConfig,
+  calculateBackoffDelayDeterministic,
+  resolveRetryBackoffConfig,
+} from '../utils/retry-backoff-config';
 
-/** Maximum number of retry attempts (not counting the initial attempt). */
-const MAX_RETRY_ATTEMPTS = 2;
-
-/** Delay in milliseconds between retry attempts. */
-const RETRY_DELAY_MS = 1000;
+/**
+ * Extended webhook send options: inherits all fields from the base
+ * `WebhookSendOptions` and adds a provider-independent `backoff` field for
+ * configuring retry behavior.
+ */
+export interface WebhookWithRetryOptions extends WebhookSendOptions {
+  /**
+   * Optional retry backoff configuration.  Any omitted field falls back to
+   * the defaults from `RETRY_BACKOFF_DEFAULTS`; the final merged config is
+   * strictly validated (throws on invalid values) before the first HTTP
+   * attempt is made.
+   */
+  backoff?: PartialRetryBackoffConfig;
+}
 
 /**
  * HTTP status codes that are considered retryable (transient failures).
@@ -40,111 +53,81 @@ const PERMANENT_CLIENT_ERRORS = new Set([400, 401, 403, 404, 422]);
  * @returns true if the failure is retryable
  */
 function isRetryable(response?: Response, error?: unknown): boolean {
-  // Network errors and timeouts are retryable
-  if (error) {
-    return true;
-  }
-
-  // Check HTTP status codes
-  if (response) {
-    // Success responses don't need retry
-    if (response.ok) {
-      return false;
-    }
-
-    // Permanent client errors should not be retried
-    if (PERMANENT_CLIENT_ERRORS.has(response.status)) {
-      return false;
-    }
-
-    // Explicit retryable status codes
-    if (RETRYABLE_STATUS_CODES.has(response.status)) {
-      return true;
-    }
-
-    // Any other 5xx error is retryable
-    if (response.status >= 500) {
-      return true;
-    }
-
-    // Other status codes (e.g., redirects, other 4xx) are not retried
-    return false;
-  }
-
-  return false;
+  if (error) return true;
+  if (!response) return false;
+  if (response.ok) return false;
+  if (PERMANENT_CLIENT_ERRORS.has(response.status)) return false;
+  if (RETRYABLE_STATUS_CODES.has(response.status)) return true;
+  return response.status >= 500;
 }
 
 /**
  * Delay execution for the specified number of milliseconds.
- *
- * @param ms - Milliseconds to delay
  */
 async function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 /**
- * Send a webhook with bounded retry logic for transient failures.
+ * Send a webhook with bounded, configurable retry logic for transient
+ * failures.
  *
- * Makes an initial attempt, then retries up to MAX_RETRY_ATTEMPTS times
- * if the failure is retryable. Adds a delay between attempts.
+ * Makes an initial attempt, then retries up to `backoff.maxRetries`
+ * additional times if the failure is retryable.  The delay before each
+ * retry follows `calculateBackoffDelay` (exponential + optional jitter,
+ * clamped to `backoff.maxDelayMs`).
+ *
+ * Permanent client errors and successful responses are returned immediately
+ * without waiting for additional attempts.
  *
  * @param url - Target webhook URL
  * @param payload - JSON-serializable payload
- * @param opts - Webhook send options (timeout, headers)
- * @returns Response object or throws the final error
- * @throws The last error encountered after all retry attempts are exhausted
+ * @param opts - Extended webhook options, including an optional `backoff`
+ *   block for provider-independent retry parameters.
+ * @returns The final `Response` (whether success or permanent failure).
+ * @throws The last encountered error *only* when all attempts end with an
+ *   exception (e.g. DNS error, abort signal).  HTTP responses, even 5xx,
+ *   are returned rather than thrown so callers can inspect status codes.
  */
 export async function sendWebhookWithRetry(
   url: string,
   payload: any,
-  opts: WebhookSendOptions = {},
+  opts: WebhookWithRetryOptions = {},
 ): Promise<Response> {
+  // Validate + resolve backoff config eagerly (before any network call) so
+  // configuration bugs surface immediately rather than on a transient retry.
+  const { backoff: partialBackoff, ...sendOptions } = opts;
+  const backoff: RetryBackoffConfig = resolveRetryBackoffConfig(partialBackoff);
+
   let lastError: unknown;
   let lastResponse: Response | undefined;
 
-  // Initial attempt + retry attempts
-  const maxAttempts = 1 + MAX_RETRY_ATTEMPTS;
+  // 1 initial attempt + N retries, where N = backoff.maxRetries
+  const maxAttempts = 1 + backoff.maxRetries;
 
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     try {
-      const response = await sendWebhook(url, payload, opts);
+      const response = await sendWebhook(url, payload, sendOptions);
 
-      // Success case
-      if (response.ok) {
-        return response;
-      }
+      if (response.ok) return response;
+      if (!isRetryable(response, undefined)) return response;
 
-      // Non-retryable failure (permanent client error)
-      if (!isRetryable(response, undefined)) {
-        return response;
-      }
-
-      // Retryable failure - store response and retry if attempts remain
       lastResponse = response;
-
       if (attempt < maxAttempts - 1) {
-        await delay(RETRY_DELAY_MS);
+        // Use the deterministic (midpoint-jitter) variant so tests and
+        // predictable callers get reproducible delays; the non-deterministic
+        // calculator is used by the long-running async schedulers instead.
+        await delay(calculateBackoffDelayDeterministic(attempt, backoff));
       }
     } catch (error) {
       lastError = error;
-
-      // If this was the last attempt, throw the error
       if (attempt === maxAttempts - 1) {
         throw error;
       }
-
-      // Otherwise, delay and retry
-      await delay(RETRY_DELAY_MS);
+      await delay(calculateBackoffDelayDeterministic(attempt, backoff));
     }
   }
 
-  // If we got here, we have a failed response (not an exception)
-  // Return the last response
-  if (lastResponse) {
-    return lastResponse;
-  }
-
-  // This should not happen, but handle it gracefully
+  if (lastResponse) return lastResponse;
   throw lastError ?? new Error('All retry attempts failed');
 }

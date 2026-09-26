@@ -196,10 +196,13 @@ function loadRetrySchedulerConfig(): RetrySchedulerOptions {
     lockTimeoutMs: parseIntegerEnv('RETRY_SCHEDULER_LOCK_TIMEOUT_MS', '60000'),
     processorId: trimEnv('RETRY_SCHEDULER_PROCESSOR_ID'),
     batchSize: parseIntegerEnv('RETRY_SCHEDULER_BATCH_SIZE', '10'),
-    baseDelayMs: parseIntegerEnv('RETRY_BASE_DELAY_MS', '5000'),
-    multiplier: parseIntegerEnv('RETRY_MULTIPLIER', '2'),
-    maxDelayMs: parseIntegerEnv('RETRY_MAX_DELAY_MS', String(60 * 60 * 1000)),
-    jitter: trimEnv('RETRY_JITTER') !== 'false',
+    backoff: {
+      initialDelayMs: parseIntegerEnv('RETRY_BASE_DELAY_MS', '5000'),
+      multiplier: parseIntegerEnv('RETRY_MULTIPLIER', '2'),
+      maxDelayMs: parseIntegerEnv('RETRY_MAX_DELAY_MS', String(60 * 60 * 1000)),
+      maxRetries: parseIntegerEnv('RETRY_MAX_RETRIES', '5'),
+      jitter: trimEnv('RETRY_JITTER') !== 'false',
+    },
   };
 }
 
@@ -271,10 +274,13 @@ export function loadConfig(): Config {
     databasePath: trimEnv('DATABASE_PATH') || './data/notifications.db',
     discord,
     retryQueue: {
-      baseDelayMs: parseIntegerEnv('RETRY_BASE_DELAY_MS', '5000'),
-      maxRetries: parseIntegerEnv('RETRY_MAX_RETRIES', '5'),
-      multiplier: parseIntegerEnv('RETRY_MULTIPLIER', '2'),
-      jitter: trimEnv('RETRY_JITTER') !== 'false',
+      backoff: {
+        initialDelayMs: parseIntegerEnv('RETRY_BASE_DELAY_MS', '5000'),
+        maxRetries: parseIntegerEnv('RETRY_MAX_RETRIES', '5'),
+        multiplier: parseIntegerEnv('RETRY_MULTIPLIER', '2'),
+        jitter: trimEnv('RETRY_JITTER') !== 'false',
+        maxDelayMs: parseIntegerEnv('RETRY_MAX_DELAY_MS', String(60 * 60 * 1000)),
+      },
       processIntervalMs: parseIntegerEnv('RETRY_QUEUE_PROCESS_INTERVAL_MS', '5000'),
     },
     eventQueue: {

@@ -6,6 +6,13 @@ import { ScheduledNotification, NotificationStatus } from '../types/scheduled-no
 import { DiscordNotificationService } from './discord-notification';
 import { WebhookDeliveryService } from './webhook-delivery-service';
 import { getWorkerManager } from './worker-manager';
+import {
+  PartialRetryBackoffConfig,
+  RetryBackoffConfig,
+  RETRY_BACKOFF_DEFAULTS,
+  calculateBackoffDelay,
+  resolveRetryBackoffConfig,
+} from '../utils/retry-backoff-config';
 
 export interface RetrySchedulerConfig {
   /** Whether the scheduler is enabled. */
@@ -18,43 +25,30 @@ export interface RetrySchedulerConfig {
   processorId?: string;
   /** Maximum notifications to process per poll cycle. */
   batchSize: number;
-  /** Backoff base delay (ms). Delay = base * multiplier^attempt */
-  baseDelayMs: number;
-  /** Backoff multiplier. Default: 2. */
-  multiplier: number;
-  /** Maximum delay cap (ms). Default: 1 hour. */
-  maxDelayMs: number;
-  /** Add ±25 % random jitter to prevent thundering herd. Default: true. */
-  jitter: boolean;
+  /**
+   * Provider-independent retry backoff configuration.
+   * All fields are optional; defaults from `RETRY_BACKOFF_DEFAULTS` are applied
+   * to any field the caller omits, and the merged result is strictly validated
+   * via `validateRetryBackoffConfig`.
+   */
+  backoff: PartialRetryBackoffConfig;
 }
 
-export const RETRY_SCHEDULER_DEFAULTS: RetrySchedulerConfig = {
+/**
+ * Defaults for the DB-backed scheduler. Scheduling-specific fields are
+ * retained here; backoff defaults are inherited from the shared
+ * `RETRY_BACKOFF_DEFAULTS` and can still be overridden per-instance via
+ * `RetrySchedulerConfig.backoff`.
+ */
+export const RETRY_SCHEDULER_DEFAULTS: Readonly<Omit<RetrySchedulerConfig, 'backoff'> & {
+  backoff: Readonly<RetryBackoffConfig>;
+}> = {
   enabled: true,
   pollIntervalMs: 15_000,
   lockTimeoutMs: 60_000,
   batchSize: 10,
-  baseDelayMs: 5_000,
-  multiplier: 2,
-  maxDelayMs: 60 * 60 * 1_000,
-  jitter: true,
+  backoff: { ...RETRY_BACKOFF_DEFAULTS },
 };
-
-/**
- * Calculates exponential backoff delay with optional jitter.
- *
- * Formula: delay = min(base * multiplier^attempt, maxDelayMs)
- * Jitter:  delay *= (0.75 + Math.random() * 0.5)  → ±25 %
- */
-export function calculateBackoffDelay(
-  attempt: number,
-  baseDelayMs: number,
-  multiplier: number,
-  maxDelayMs: number,
-  jitter: boolean
-): number {
-  const raw = Math.min(baseDelayMs * Math.pow(multiplier, attempt), maxDelayMs);
-  return jitter ? raw * (0.75 + Math.random() * 0.5) : raw;
-}
 
 /**
  * DB-backed retry scheduler.
@@ -71,7 +65,9 @@ export function calculateBackoffDelay(
  * scheduler instances from retrying the same notification.
  */
 export class RetryScheduler {
-  private readonly config: RetrySchedulerConfig;
+  private readonly config: Omit<RetrySchedulerConfig, 'backoff'> & {
+    backoff: Readonly<RetryBackoffConfig>;
+  };
   private readonly processorId: string;
   private repository: ScheduledNotificationRepository;
   private discordService: DiscordNotificationService | null;
@@ -85,7 +81,16 @@ export class RetryScheduler {
     discordService?: DiscordNotificationService | null,
     webhookDeliveryService?: WebhookDeliveryService,
   ) {
-    this.config = { ...RETRY_SCHEDULER_DEFAULTS, ...config };
+    const inherited = { ...RETRY_SCHEDULER_DEFAULTS, ...config } as RetrySchedulerConfig;
+    const backoff = resolveRetryBackoffConfig(inherited.backoff);
+    this.config = {
+      enabled: inherited.enabled,
+      pollIntervalMs: inherited.pollIntervalMs,
+      lockTimeoutMs: inherited.lockTimeoutMs,
+      processorId: inherited.processorId,
+      batchSize: inherited.batchSize,
+      backoff,
+    };
     this.processorId = this.config.processorId ?? `retry-${uuidv4()}`;
     this.repository = repository;
     this.discordService = discordService ?? null;
@@ -106,10 +111,11 @@ export class RetryScheduler {
     logger.info('RetryScheduler started', {
       processorId: this.processorId,
       pollIntervalMs: this.config.pollIntervalMs,
-      baseDelayMs: this.config.baseDelayMs,
-      multiplier: this.config.multiplier,
-      maxDelayMs: this.config.maxDelayMs,
-      jitter: this.config.jitter,
+      initialDelayMs: this.config.backoff.initialDelayMs,
+      multiplier: this.config.backoff.multiplier,
+      maxDelayMs: this.config.backoff.maxDelayMs,
+      maxRetries: this.config.backoff.maxRetries,
+      jitter: this.config.backoff.jitter,
     });
 
     await this.repository.recoverStaleLocks();
@@ -250,16 +256,7 @@ export class RetryScheduler {
 
       const nextRetryAt = isFinalAttempt
         ? undefined
-        : new Date(
-            Date.now() +
-              calculateBackoffDelay(
-                priorFailures,
-                this.config.baseDelayMs,
-                this.config.multiplier,
-                this.config.maxDelayMs,
-                this.config.jitter
-              )
-          );
+        : new Date(Date.now() + calculateBackoffDelay(priorFailures, this.config.backoff));
 
       await this.repository.markAsFailedOrRetry(
         notification.id!,

@@ -1,3 +1,5 @@
+import type { PartialRetryBackoffConfig } from '../utils/retry-backoff-config';
+
 export interface ContractConfig {
   address: string;
   events: string[];
@@ -16,11 +18,15 @@ export interface DiscordConfig {
 }
 
 export interface RetryQueueConfig {
-  baseDelayMs?: number;
-  multiplier?: number;
-  jitter?: boolean;
-  maxRetries?: number;
+  /**
+   * Provider-independent retry backoff parameters for the in-memory
+   * notification retry queue.  Defaults from `RETRY_BACKOFF_DEFAULTS` are
+   * applied to any omitted field; the merged result is strictly validated
+   * by the shared `resolveRetryBackoffConfig` validator.
+   */
+  backoff?: PartialRetryBackoffConfig;
   processIntervalMs?: number;
+  priorityWeights?: { high: number; medium: number; low: number };
 }
 
 export interface WebhookSecret {
@@ -131,10 +137,12 @@ export interface RetrySchedulerOptions {
   lockTimeoutMs: number;
   processorId?: string;
   batchSize: number;
-  baseDelayMs: number;
-  multiplier: number;
-  maxDelayMs: number;
-  jitter: boolean;
+  /**
+   * Provider-independent retry backoff parameters for the DB-backed retry
+   * scheduler.  Omitted fields fall back to `RETRY_BACKOFF_DEFAULTS`; the
+   * final merged config is strictly validated before any retries run.
+   */
+  backoff: PartialRetryBackoffConfig;
 }
 
 export interface AnalyticsConfig {
