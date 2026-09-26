@@ -56,6 +56,10 @@ import { NotificationImportService } from '../services/notification-import-servi
 import { ResponseTimeMiddleware } from '../middleware/response-time';
 import { DEFAULT_MAX_BODY_BYTES, enforceBodyLimit } from '../middleware/body-limit';
 import { sanitizeUrl } from '../utils/logger';
+import { sanitizeCredentials } from '../utils/credential-sanitizer';
+import { DiscordNotificationProvider } from '../services/providers/discord-provider';
+import { WebhookNotificationProvider } from '../services/providers/webhook-provider';
+import { ProviderHealthResult } from '../types/provider-capabilities';
 
 export interface EventsServerOptions {
   port: number;
