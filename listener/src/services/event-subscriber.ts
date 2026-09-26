@@ -29,6 +29,7 @@ export class EventSubscriber {
   private eventQueue: EventProcessingQueue | null = null;
   private expirationService: NotificationExpirationService | null = null;
   private lastSuccessfulPollAt: number | null = null;
+  private backfillStartLedger: number | null = null;
 
   constructor(config: Config, deduplicationService?: EventDeduplicationService) {
     this.config = config;
@@ -65,6 +66,7 @@ export class EventSubscriber {
 
     this.isRunning = true;
     logger.info('Starting event subscriber service');
+    await this.restoreCheckpoints();
     this.eventQueue?.start();
     this.retryQueue?.start();
     this.poll();
@@ -75,6 +77,51 @@ export class EventSubscriber {
     this.eventQueue?.stop();
     this.retryQueue?.stop();
     logger.info('Stopping event subscriber service');
+  }
+
+  /**
+   * Restore the in-memory cursor map from persisted checkpoints.
+   *
+   * Called once at the start of `start()` before the poll loop begins.
+   * For each configured contract address, if a row exists in
+   * `polling_cursors`, the stored cursor string is loaded into
+   * `this.lastCursors` so the first poll resumes from the last known
+   * position rather than replaying from the beginning.
+   *
+   * Failures are logged and swallowed per-contract so a single bad DB
+   * row never prevents the subscriber from starting.
+   */
+  private async restoreCheckpoints(): Promise<void> {
+    if (!this.deduplicationService) {
+      return;
+    }
+
+    let restored = 0;
+
+    for (const contractConfig of this.config.contractAddresses) {
+      try {
+        const record = await this.deduplicationService.getLastCursor(contractConfig.address);
+        if (record) {
+          this.lastCursors.set(contractConfig.address, record.cursor);
+          restored++;
+          logger.info('Checkpoint restored', {
+            contractAddress: contractConfig.address,
+            cursor: record.cursor,
+            ledgerNumber: record.ledgerNumber,
+          });
+        }
+      } catch (error) {
+        logger.warn('Failed to restore checkpoint for contract; starting from beginning', {
+          contractAddress: contractConfig.address,
+          error,
+        });
+      }
+    }
+
+    logger.info('Checkpoint restore complete', {
+      contractsConfigured: this.config.contractAddresses.length,
+      contractsRestored: restored,
+    });
   }
 
   private async poll(): Promise<void> {
@@ -170,9 +217,6 @@ export class EventSubscriber {
             });
           }
         }
-        const processableEvents = events.filter((event: StellarSDK.rpc.Api.EventResponse) =>
-          this.shouldProcessEvent(event, contractConfig, requestId)
-        );
 
         if (events.length > 0) {
           logger.info('Received events', {
@@ -248,7 +292,6 @@ export class EventSubscriber {
         contractAddress: contractConfig.address,
         eventId: event.id,
         eventName,
-        receivedAt: event.receivedAt,
         currentTime: Date.now(),
         reason: 'expired',
       });
@@ -339,27 +382,6 @@ export class EventSubscriber {
     contractConfig: ContractConfig
   ): Promise<StellarSDK.rpc.Api.GetEventsResponse> {
     const lastCursor = this.lastCursors.get(contractConfig.address);
-    const request: StellarSDK.rpc.Api.GetEventsRequest = lastCursor
-      ? {
-          filters: [
-            {
-              contractIds: [contractConfig.address],
-              type: 'contract',
-            },
-          ],
-          cursor: lastCursor,
-          limit: this.config.eventBatchSize,
-        }
-      : {
-          filters: [
-            {
-              contractIds: [contractConfig.address],
-              type: 'contract',
-            },
-          ],
-          startLedger: 1,
-          limit: this.config.eventBatchSize,
-        };
 
     let request: StellarSDK.rpc.Api.GetEventsRequest;
 

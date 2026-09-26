@@ -66,6 +66,8 @@ async function main() {
     logger.info('Initializing database');
     const db = await initializeDatabase(config.databasePath);
 
+    deduplicationService = new EventDeduplicationService(db);
+
     repository = new ScheduledNotificationRepository(db);
     
     healthMonitor = new NotificationHealthMonitor(null, getWorkerManager(), {
