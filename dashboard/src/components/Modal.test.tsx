@@ -35,13 +35,13 @@ describe('Modal', () => {
 
   it('calls onClose when close button is clicked', () => {
     const onClose = jest.fn();
-    const { getAllByLabelText } = render(
+    const { getByLabelText } = render(
       <Modal isOpen onClose={onClose} title="Close me">
         <p>Body</p>
       </Modal>
     );
 
-    fireEvent.click(getAllByLabelText(/close modal/i)[1]);
+    fireEvent.click(getByLabelText(/close modal/i));
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 

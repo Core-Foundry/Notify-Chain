@@ -4,6 +4,7 @@ import { generateRequestId } from '../utils/request-id';
 import { ScheduledNotificationRepository } from './scheduled-notification-repository';
 import { ScheduledNotification, NotificationStatus } from '../types/scheduled-notification';
 import { DiscordNotificationService } from './discord-notification';
+import { WebhookDeliveryService } from './webhook-delivery-service';
 import { getWorkerManager } from './worker-manager';
 
 export interface RetrySchedulerConfig {
@@ -74,18 +75,21 @@ export class RetryScheduler {
   private readonly processorId: string;
   private repository: ScheduledNotificationRepository;
   private discordService: DiscordNotificationService | null;
+  private webhookDeliveryService: WebhookDeliveryService;
   private timer: NodeJS.Timeout | null = null;
   private running = false;
 
   constructor(
     repository: ScheduledNotificationRepository,
     config: Partial<RetrySchedulerConfig> = {},
-    discordService?: DiscordNotificationService | null
+    discordService?: DiscordNotificationService | null,
+    webhookDeliveryService?: WebhookDeliveryService,
   ) {
     this.config = { ...RETRY_SCHEDULER_DEFAULTS, ...config };
     this.processorId = this.config.processorId ?? `retry-${uuidv4()}`;
     this.repository = repository;
     this.discordService = discordService ?? null;
+    this.webhookDeliveryService = webhookDeliveryService ?? new WebhookDeliveryService();
   }
 
   async start(): Promise<void> {
@@ -305,6 +309,21 @@ export class RetryScheduler {
           payload.contractConfig,
           `retry-${notification.id}-${requestId}`
         );
+
+      case 'webhook': {
+        const targetUrl: string = notification.targetRecipient;
+        if (!targetUrl) throw new Error('Webhook notification missing targetRecipient URL');
+        const result = await this.webhookDeliveryService.deliver(
+          targetUrl,
+          payload,
+          `retry-${notification.id}-${requestId}`,
+        );
+        if (!result.success) {
+          // Surface the specific reason so it lands in markAsFailedOrRetry's error details
+          throw new Error(result.errorReason ?? `Webhook delivery failed (HTTP ${result.statusCode ?? 'unknown'})`);
+        }
+        return true;
+      }
 
       default:
         throw new Error(`Unsupported notification type: ${notification.notificationType}`);

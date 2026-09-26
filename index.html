@@ -1,0 +1,531 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Kairos Elite — Dashboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#0E1B2A;
+    --surface:#14263B;
+    --surface-2:#1B3350;
+    --border:#24405C;
+    --border-strong:#31567A;
+    --text:#EDF2F7;
+    --text-secondary:#9FB2C7;
+    --text-muted:#6C89A6;
+    --accent:#E8A33D;
+    --accent-dark:#4A3410;
+    --teal:#35B7A0;
+    --teal-dark:#0F3A33;
+    --danger:#E2574C;
+    --danger-dark:#4A1815;
+    --radius:10px;
+    --header-h:64px;
+    --sidebar-w:232px;
+    --rail-w:76px;
+  }
+  *,*::before,*::after{ box-sizing:border-box; }
+  html,body{ margin:0; padding:0; max-width:100%; overflow-x:hidden; }
+  body{
+    background:var(--bg);
+    color:var(--text);
+    font-family:'Inter',system-ui,sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  h1,h2,h3,.brand{ font-family:'Sora',sans-serif; }
+  .mono{ font-family:'JetBrains Mono',monospace; }
+  a{ color:inherit; }
+  img,svg{ max-width:100%; display:block; }
+
+  .skip-link{
+    position:absolute; left:8px; top:-48px;
+    background:var(--accent); color:#3A2609; font-weight:600;
+    padding:10px 16px; border-radius:8px; z-index:200;
+    transition:top .15s ease;
+  }
+  .skip-link:focus{ top:8px; }
+
+  :focus-visible{ outline:2px solid var(--accent); outline-offset:2px; border-radius:4px; }
+
+  /* ---------- App shell ---------- */
+  .app{ display:flex; min-height:100vh; width:100%; }
+
+  /* Sidebar (desktop/tablet) */
+  .sidebar{
+    width:var(--sidebar-w);
+    flex:0 0 var(--sidebar-w);
+    background:var(--surface);
+    border-right:1px solid var(--border);
+    display:flex;
+    flex-direction:column;
+    min-width:0;
+    height:100vh;
+    position:sticky;
+    top:0;
+  }
+  .sidebar-head{
+    display:flex; align-items:center; gap:10px;
+    padding:18px 18px 14px;
+    border-bottom:1px solid var(--border);
+    min-width:0;
+  }
+  .mark{
+    width:30px; height:30px; flex:0 0 30px; border-radius:8px;
+    background:linear-gradient(160deg,var(--accent),var(--teal));
+    display:flex; align-items:center; justify-content:center;
+    font-family:'Sora'; font-weight:700; font-size:14px; color:#0E1B2A;
+  }
+  .brand{ font-size:15px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .brand small{ display:block; font-family:'Inter'; font-weight:400; font-size:11px; color:var(--text-muted); }
+
+  .nav{ list-style:none; margin:0; padding:12px 10px; flex:1; overflow-y:auto; }
+  .nav li + li{ margin-top:2px; }
+  .nav-link{
+    display:flex; align-items:center; gap:12px;
+    padding:10px 12px; border-radius:8px;
+    text-decoration:none; color:var(--text-secondary);
+    font-size:14px; font-weight:500;
+    border:1px solid transparent;
+    background:none; width:100%; text-align:left; cursor:pointer;
+    min-width:0;
+  }
+  .nav-link .lbl{ white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .nav-link:hover{ background:var(--surface-2); color:var(--text); }
+  .nav-link[aria-current="page"]{
+    background:var(--surface-2); color:var(--accent);
+    border-color:var(--border-strong);
+  }
+  .nav-ico{ flex:0 0 18px; width:18px; height:18px; }
+
+  .sidebar-foot{
+    padding:14px 18px; border-top:1px solid var(--border);
+    display:flex; align-items:center; gap:10px; min-width:0;
+  }
+  .avatar{
+    width:32px; height:32px; border-radius:50%; flex:0 0 32px;
+    background:var(--surface-2); border:1px solid var(--border-strong);
+    display:flex; align-items:center; justify-content:center;
+    font-size:12px; font-weight:600; color:var(--accent);
+  }
+  .who{ min-width:0; overflow:hidden; }
+  .who p{ margin:0; font-size:13px; font-weight:500; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .who span{ font-size:11px; color:var(--text-muted); }
+
+  /* Main column */
+  .main{ flex:1 1 auto; min-width:0; display:flex; flex-direction:column; }
+
+  .topbar{
+    height:var(--header-h); flex:0 0 var(--header-h);
+    display:flex; align-items:center; gap:14px;
+    padding:0 20px; border-bottom:1px solid var(--border);
+    background:var(--bg);
+    position:sticky; top:0; z-index:20;
+    min-width:0;
+  }
+  .hamburger{
+    display:none; flex:0 0 auto;
+    width:38px; height:38px; border-radius:8px;
+    background:var(--surface); border:1px solid var(--border);
+    color:var(--text); align-items:center; justify-content:center;
+    cursor:pointer;
+  }
+  .page-title{ font-size:17px; font-weight:600; margin:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .topbar-spacer{ flex:1; min-width:8px; }
+  .icon-btn{
+    width:38px; height:38px; border-radius:8px; flex:0 0 38px;
+    background:var(--surface); border:1px solid var(--border);
+    color:var(--text-secondary); display:flex; align-items:center; justify-content:center;
+    cursor:pointer; position:relative;
+  }
+  .icon-btn:hover{ color:var(--text); border-color:var(--border-strong); }
+  .dot{
+    position:absolute; top:6px; right:6px;
+    width:8px; height:8px; border-radius:50%;
+    background:var(--danger); border:2px solid var(--bg);
+  }
+
+  .pulse-strip{ height:26px; flex:0 0 26px; border-bottom:1px solid var(--border); overflow:hidden; }
+  .pulse-strip svg{ width:100%; height:100%; display:block; }
+
+  .content{ padding:22px; width:100%; min-width:0; }
+  .content > section{ max-width:1180px; margin:0 auto; }
+
+  .section-head{ margin-bottom:18px; }
+  .section-head h2{ font-size:19px; font-weight:600; margin:0 0 4px; }
+  .section-head p{ margin:0; font-size:13px; color:var(--text-secondary); }
+
+  /* Stat grid */
+  .stat-grid{
+    display:grid;
+    grid-template-columns:repeat(auto-fit,minmax(180px,1fr));
+    gap:14px; margin-bottom:22px;
+  }
+  .stat-card{
+    background:var(--surface); border:1px solid var(--border);
+    border-radius:var(--radius); padding:16px; min-width:0;
+  }
+  .stat-card .lbl{ font-size:12px; color:var(--text-secondary); margin:0 0 8px; }
+  .stat-card .val{ font-size:24px; font-weight:600; margin:0; font-family:'Sora'; }
+  .stat-card .delta{ font-size:12px; margin-top:6px; display:inline-flex; align-items:center; gap:4px; }
+  .delta.up{ color:var(--teal); }
+  .delta.down{ color:var(--danger); }
+
+  /* Two-column body */
+  .grid-2{
+    display:grid; grid-template-columns:minmax(0,2fr) minmax(0,1fr);
+    gap:16px;
+  }
+  .panel{
+    background:var(--surface); border:1px solid var(--border);
+    border-radius:var(--radius); padding:16px; min-width:0;
+  }
+  .panel h3{ font-size:14px; margin:0 0 12px; font-weight:600; }
+
+  .row-list{ list-style:none; margin:0; padding:0; }
+  .row-list li{
+    display:flex; align-items:center; gap:12px;
+    padding:10px 0; border-bottom:1px solid var(--border);
+    min-width:0;
+  }
+  .row-list li:last-child{ border-bottom:none; }
+  .row-ico{
+    width:34px; height:34px; border-radius:8px; flex:0 0 34px;
+    display:flex; align-items:center; justify-content:center;
+    background:var(--teal-dark); color:var(--teal);
+  }
+  .row-body{ min-width:0; flex:1; }
+  .row-body p{ margin:0; font-size:13px; font-weight:500; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .row-body span{ font-size:12px; color:var(--text-muted); }
+  .row-time{ flex:0 0 auto; font-size:11px; color:var(--text-muted); white-space:nowrap; }
+
+  .status-item{ display:flex; align-items:center; justify-content:space-between; gap:10px; padding:8px 0; min-width:0; }
+  .status-item + .status-item{ border-top:1px solid var(--border); }
+  .status-item .name{ font-size:13px; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .badge{
+    font-size:11px; font-weight:600; padding:3px 9px; border-radius:999px; flex:0 0 auto;
+  }
+  .badge.ok{ background:var(--teal-dark); color:var(--teal); }
+  .badge.warn{ background:var(--accent-dark); color:var(--accent); }
+  .badge.err{ background:var(--danger-dark); color:var(--danger); }
+
+  /* Notifications */
+  .filter-chips{ display:flex; gap:8px; flex-wrap:wrap; margin-bottom:18px; }
+  .chip{
+    border:1px solid var(--border); background:var(--surface);
+    color:var(--text-secondary); font-size:12px; font-weight:500;
+    padding:7px 13px; border-radius:999px; cursor:pointer;
+  }
+  .chip[aria-pressed="true"]{ background:var(--surface-2); color:var(--accent); border-color:var(--border-strong); }
+
+  .notif-group + .notif-group{ margin-top:20px; }
+  .notif-group h3{ font-size:12px; text-transform:uppercase; letter-spacing:.04em; color:var(--text-muted); margin:0 0 8px; font-weight:600; }
+  .notif-list{ list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:8px; }
+  .notif-item{
+    display:flex; gap:12px; align-items:flex-start;
+    background:var(--surface); border:1px solid var(--border);
+    border-radius:var(--radius); padding:13px 14px; min-width:0;
+  }
+  .notif-item.unread{ border-color:var(--border-strong); }
+  .notif-ico{
+    width:32px; height:32px; border-radius:8px; flex:0 0 32px;
+    display:flex; align-items:center; justify-content:center;
+  }
+  .notif-ico.info{ background:var(--teal-dark); color:var(--teal); }
+  .notif-ico.warn{ background:var(--accent-dark); color:var(--accent); }
+  .notif-ico.err{ background:var(--danger-dark); color:var(--danger); }
+  .notif-body{ min-width:0; flex:1; }
+  .notif-body p{ margin:0 0 2px; font-size:13.5px; font-weight:500; }
+  .notif-body span{ font-size:12px; color:var(--text-secondary); display:block; overflow-wrap:anywhere; }
+  .notif-meta{ flex:0 0 auto; font-size:11px; color:var(--text-muted); text-align:right; white-space:nowrap; }
+
+  .view{ display:none; }
+  .view.active{ display:block; }
+
+  /* Off-canvas overlay for mobile nav */
+  .scrim{
+    display:none; position:fixed; inset:0; background:rgba(4,10,18,.6); z-index:29;
+  }
+  .scrim.open{ display:block; }
+
+  /* ---------- Tablet ---------- */
+  @media (max-width:1023px){
+    :root{ --sidebar-w:var(--rail-w); }
+    .brand, .who, .nav-link .lbl{ display:none; }
+    .sidebar-head{ justify-content:center; padding:16px 8px; }
+    .nav-link{ justify-content:center; padding:12px 0; }
+    .sidebar-foot{ justify-content:center; padding:14px 8px; }
+    .grid-2{ grid-template-columns:1fr; }
+  }
+
+  /* ---------- Mobile ---------- */
+  @media (max-width:767px){
+    .hamburger{ display:flex; }
+    .sidebar{
+      position:fixed; top:0; left:0; height:100vh; z-index:30;
+      width:250px; flex-basis:250px;
+      transform:translateX(-100%);
+      transition:transform .2s ease;
+    }
+    .sidebar.open{ transform:translateX(0); }
+    .sidebar .brand,
+    .sidebar .who,
+    .sidebar .nav-link .lbl{ display:block; }
+    .sidebar .sidebar-head{ justify-content:flex-start; }
+    .sidebar .nav-link{ justify-content:flex-start; }
+    .sidebar .sidebar-foot{ justify-content:flex-start; }
+
+    .content{ padding:16px; }
+    .stat-grid{ grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:10px; }
+    .page-title{ font-size:15px; }
+    .notif-meta{ text-align:left; }
+    .notif-item{ flex-wrap:wrap; }
+  }
+</style>
+</head>
+<body>
+<a class="skip-link" href="#main-content">Skip to content</a>
+
+<div class="app">
+  <div class="scrim" id="scrim"></div>
+
+  <!-- Sidebar navigation -->
+  <aside class="sidebar" id="sidebar" aria-label="Primary">
+    <div class="sidebar-head">
+      <div class="mark" aria-hidden="true">KE</div>
+      <div class="brand">Kairos Elite<small>Operations console</small></div>
+    </div>
+    <nav>
+      <ul class="nav">
+        <li>
+          <button class="nav-link" data-view="dashboard" aria-current="page">
+            <svg class="nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg>
+            <span class="lbl">Dashboard</span>
+          </button>
+        </li>
+        <li>
+          <button class="nav-link" data-view="notifications">
+            <svg class="nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M6 8a6 6 0 0 1 12 0c0 5 2 6 2 6H4s2-1 2-6"/><path d="M9.5 20a2.5 2.5 0 0 0 5 0"/></svg>
+            <span class="lbl">Notifications</span>
+          </button>
+        </li>
+        <li>
+          <a class="nav-link" href="#">
+            <svg class="nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="3" y="4" width="18" height="14" rx="2"/><path d="M3 9h18"/></svg>
+            <span class="lbl">Projects</span>
+          </a>
+        </li>
+        <li>
+          <a class="nav-link" href="#">
+            <svg class="nav-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="12" cy="12" r="3.2"/><path d="M19 12a7 7 0 0 0-.15-1.4l2-1.6-2-3.4-2.35.9a7 7 0 0 0-2.4-1.4L13.6 3h-3.2l-.5 2.1a7 7 0 0 0-2.4 1.4l-2.35-.9-2 3.4 2 1.6a7 7 0 0 0 0 2.8l-2 1.6 2 3.4 2.35-.9a7 7 0 0 0 2.4 1.4l.5 2.1h3.2l.5-2.1a7 7 0 0 0 2.4-1.4l2.35.9 2-3.4-2-1.6c.1-.46.15-.93.15-1.4Z"/></svg>
+            <span class="lbl">Settings</span>
+          </a>
+        </li>
+      </ul>
+    </nav>
+    <div class="sidebar-foot">
+      <div class="avatar">MO</div>
+      <div class="who"><p>Mmesolove</p><span>Admin</span></div>
+    </div>
+  </aside>
+
+  <!-- Main column -->
+  <div class="main">
+    <header class="topbar">
+      <button class="hamburger" id="hamburger" aria-label="Open navigation menu" aria-expanded="false" aria-controls="sidebar">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+      </button>
+      <h1 class="page-title" id="page-title">Dashboard</h1>
+      <div class="topbar-spacer"></div>
+      <button class="icon-btn" aria-label="Search">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+      </button>
+      <button class="icon-btn" aria-label="4 unread notifications" id="bell-btn">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 8a6 6 0 0 1 12 0c0 5 2 6 2 6H4s2-1 2-6"/><path d="M9.5 20a2.5 2.5 0 0 0 5 0"/></svg>
+        <span class="dot" aria-hidden="true"></span>
+      </button>
+    </header>
+
+    <div class="pulse-strip" aria-hidden="true">
+      <svg viewBox="0 0 600 26" preserveAspectRatio="none">
+        <polyline points="0,13 60,13 75,4 90,22 105,13 180,13 195,6 210,20 225,13 320,13 335,3 350,23 365,13 460,13 475,7 490,19 505,13 600,13"
+          fill="none" stroke="#35B7A0" stroke-width="1.4" opacity="0.8"/>
+      </svg>
+    </div>
+
+    <main class="content" id="main-content">
+
+      <!-- ============ DASHBOARD VIEW ============ -->
+      <section class="view active" id="view-dashboard" aria-labelledby="page-title">
+        <div class="section-head">
+          <h2>Welcome back</h2>
+          <p>Here's what's happening across your projects today.</p>
+        </div>
+
+        <div class="stat-grid">
+          <div class="stat-card">
+            <p class="lbl">Active projects</p>
+            <p class="val mono">18</p>
+            <span class="delta up">▲ 3 this month</span>
+          </div>
+          <div class="stat-card">
+            <p class="lbl">Models in production</p>
+            <p class="val mono">7</p>
+            <span class="delta up">▲ 1 this week</span>
+          </div>
+          <div class="stat-card">
+            <p class="lbl">Uptime, 30 days</p>
+            <p class="val mono">99.92%</p>
+            <span class="delta down">▼ 0.03%</span>
+          </div>
+          <div class="stat-card">
+            <p class="lbl">Open tickets</p>
+            <p class="val mono">5</p>
+            <span class="delta up">▲ 2 today</span>
+          </div>
+        </div>
+
+        <div class="grid-2">
+          <div class="panel">
+            <h3>Recent activity</h3>
+            <ul class="row-list">
+              <li>
+                <div class="row-ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6 9 17l-5-5"/></svg></div>
+                <div class="row-body"><p>Deployment succeeded — Atlas NLP v2.3</p><span>Cloud DevOps · Production</span></div>
+                <span class="row-time">2m ago</span>
+              </li>
+              <li>
+                <div class="row-ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20V10M18 20V4M6 20v-4"/></svg></div>
+                <div class="row-body"><p>New training run started — Sahel vision model</p><span>AI / ML pipeline</span></div>
+                <span class="row-time">41m ago</span>
+              </li>
+              <li>
+                <div class="row-ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="3"/></svg></div>
+                <div class="row-body"><p>Design review approved — Client portal UI</p><span>UI / UX design</span></div>
+                <span class="row-time">3h ago</span>
+              </li>
+              <li>
+                <div class="row-ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 12h16M12 4v16"/></svg></div>
+                <div class="row-body"><p>Smart contract audit completed — Ledger Vault</p><span>Blockchain</span></div>
+                <span class="row-time">Yesterday</span>
+              </li>
+            </ul>
+          </div>
+
+          <div class="panel">
+            <h3>System status</h3>
+            <div class="status-item"><span class="name">API gateway</span><span class="badge ok">Operational</span></div>
+            <div class="status-item"><span class="name">Inference cluster</span><span class="badge ok">Operational</span></div>
+            <div class="status-item"><span class="name">Data pipeline (Lagos)</span><span class="badge warn">Degraded</span></div>
+            <div class="status-item"><span class="name">Notification service</span><span class="badge ok">Operational</span></div>
+            <div class="status-item"><span class="name">Billing</span><span class="badge err">Incident</span></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ NOTIFICATIONS VIEW ============ -->
+      <section class="view" id="view-notifications" aria-labelledby="page-title">
+        <div class="section-head">
+          <h2>Notifications</h2>
+          <p>Updates from your projects, deployments, and team.</p>
+        </div>
+
+        <div class="filter-chips" role="group" aria-label="Filter notifications">
+          <button class="chip" aria-pressed="true">All</button>
+          <button class="chip" aria-pressed="false">Unread</button>
+          <button class="chip" aria-pressed="false">Alerts</button>
+          <button class="chip" aria-pressed="false">Mentions</button>
+        </div>
+
+        <div class="notif-group">
+          <h3>Today</h3>
+          <ul class="notif-list">
+            <li class="notif-item unread">
+              <div class="notif-ico err"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v4M12 17h.01M10.3 3.9 2.7 18a2 2 0 0 0 1.7 3h15.2a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg></div>
+              <div class="notif-body"><p>Billing incident detected</p><span>Payment webhook failing for 3 client accounts. Investigating now.</span></div>
+              <span class="notif-meta">9:41 AM</span>
+            </li>
+            <li class="notif-item unread">
+              <div class="notif-ico info"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6 9 17l-5-5"/></svg></div>
+              <div class="notif-body"><p>Atlas NLP v2.3 deployed to production</p><span>Rollout completed across all regions with zero downtime.</span></div>
+              <span class="notif-meta">8:15 AM</span>
+            </li>
+          </ul>
+        </div>
+
+        <div class="notif-group">
+          <h3>Yesterday</h3>
+          <ul class="notif-list">
+            <li class="notif-item">
+              <div class="notif-ico warn"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></svg></div>
+              <div class="notif-body"><p>Data pipeline latency above threshold</p><span>Lagos region ingest is running 40% slower than baseline.</span></div>
+              <span class="notif-meta">6:02 PM</span>
+            </li>
+            <li class="notif-item">
+              <div class="notif-ico info"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="3"/></svg></div>
+              <div class="notif-body"><p>New comment on Client portal UI</p><span>Amara left feedback on the onboarding flow mockups.</span></div>
+              <span class="notif-meta">2:47 PM</span>
+            </li>
+            <li class="notif-item">
+              <div class="notif-ico info"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 12h16M12 4v16"/></svg></div>
+              <div class="notif-body"><p>Ledger Vault audit report ready</p><span>Smart contract audit finished with no critical findings.</span></div>
+              <span class="notif-meta">11:20 AM</span>
+            </li>
+          </ul>
+        </div>
+      </section>
+
+    </main>
+  </div>
+</div>
+
+<script>
+(function(){
+  var sidebar = document.getElementById('sidebar');
+  var hamburger = document.getElementById('hamburger');
+  var scrim = document.getElementById('scrim');
+  var navButtons = document.querySelectorAll('.nav-link[data-view]');
+  var views = document.querySelectorAll('.view');
+  var pageTitle = document.getElementById('page-title');
+  var titles = { dashboard: 'Dashboard', notifications: 'Notifications' };
+
+  function openNav(){
+    sidebar.classList.add('open');
+    scrim.classList.add('open');
+    hamburger.setAttribute('aria-expanded', 'true');
+  }
+  function closeNav(){
+    sidebar.classList.remove('open');
+    scrim.classList.remove('open');
+    hamburger.setAttribute('aria-expanded', 'false');
+  }
+  hamburger.addEventListener('click', function(){
+    sidebar.classList.contains('open') ? closeNav() : openNav();
+  });
+  scrim.addEventListener('click', closeNav);
+  document.addEventListener('keydown', function(e){
+    if (e.key === 'Escape') closeNav();
+  });
+
+  navButtons.forEach(function(btn){
+    btn.addEventListener('click', function(){
+      var target = btn.getAttribute('data-view');
+      navButtons.forEach(function(b){ b.removeAttribute('aria-current'); });
+      btn.setAttribute('aria-current', 'page');
+      views.forEach(function(v){ v.classList.remove('active'); });
+      document.getElementById('view-' + target).classList.add('active');
+      pageTitle.textContent = titles[target];
+      closeNav();
+      document.getElementById('main-content').focus({preventScroll:true});
+    });
+  });
+
+  document.getElementById('bell-btn').addEventListener('click', function(){
+    navButtons[1].click();
+  });
+})();
+</script>
+</body>
+</html>

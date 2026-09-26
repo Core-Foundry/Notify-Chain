@@ -46,6 +46,8 @@ export interface Config {
   stellarNetworkPassphrase: string;
   contractAddresses: ContractConfig[];
   pollIntervalMs: number;
+  /** Maximum number of blockchain events fetched per polling cycle (default: 100). */
+  eventBatchSize: number;
   maxReconnectAttempts: number;
   reconnectDelayMs: number;
   eventsApiPort: number;
@@ -61,7 +63,31 @@ export interface Config {
   rateLimit?: RateLimitConfig;
   cleanup?: AppCleanupConfig;
   analytics?: AnalyticsConfig;
+  expiration?: ExpirationConfig;
   backfill?: BackfillConfig;
+  logging?: LoggingConfig;
+  api?: ApiConfig;
+}
+
+/** Observability settings, sourced from LOG_LEVEL / LOG_FORMAT. */
+export interface LoggingConfig {
+  /** `error | warn | info | debug`. Defaults to `info`. */
+  level: string;
+  /**
+   * `json` for aggregator-friendly newline-delimited JSON, `pretty` for the
+   * colourised human format. Defaults to `json` in production and `pretty`
+   * elsewhere.
+   */
+  format: string;
+}
+
+/** HTTP surface settings for the events API. */
+export interface ApiConfig {
+  /**
+   * Largest request body accepted, in bytes. Oversized requests are answered
+   * with 413 and their payload is never parsed.
+   */
+  maxBodyBytes: number;
 }
 
 export interface SchedulerConfig {
@@ -93,6 +119,8 @@ export interface AppCleanupConfig {
   rateLimitEventRetentionMs: number;
   /** Retain in-memory events for this long (ms). */
   eventRetentionMs: number;
+  /** Retain processed event metadata for this long (ms). Default: 30 days. */
+  processedEventRetentionMs: number;
   /** Retain notification execution log rows for this long (ms). */
   executionLogRetentionMs: number;
 }
@@ -120,33 +148,31 @@ export interface AnalyticsConfig {
   snapshotRetentionDays: number;
 }
 
+export interface ExpirationConfig {
+  /** Default expiration time in milliseconds (default: 24 hours = 86400000). */
+  defaultExpirationMs: number;
+  /** Per-event-type expiration times in milliseconds. */
+  perEventTypeExpiration?: Record<string, number>;
+  /** Whether expiration checking is enabled (default: true). */
+  enabled: boolean;
+}
+
+/**
+ * Safety limits for the historical backfill that runs when the listener
+ * starts without a stored cursor (first boot or after downtime).
+ */
 export interface BackfillConfig {
   /**
-   * When true, a backfill run is triggered once at startup before the live
-   * polling loop begins.
+   * Maximum number of ledgers to replay from the network tip on a cold start.
+   *
+   * When the subscriber has no persisted cursor for a contract it would
+   * normally request events from ledger 1, which can be an arbitrarily large
+   * range after downtime or a configuration change.  This limit caps the
+   * range to the most recent `maxLedgers` ledgers instead.
+   *
+   * Set to `0` to disable the limit and allow full historical replay
+   * (the previous default behaviour).  Default: 10 000.
    */
-  enabled: boolean;
-  /**
-   * The earliest ledger from which to recover missed events (inclusive).
-   * Events at or after this ledger that are not yet in processed_events will
-   * be passed through the normal processing pipeline.
-   */
-  startLedger: number;
-  /**
-   * The last ledger to include in the backfill window (inclusive).
-   * Defaults to the current network-tip ledger when not set.
-   */
-  endLedger?: number;
-  /**
-   * Maximum number of Stellar RPC pages to fetch per contract during the
-   * backfill.  Each page holds up to 200 events.  Defaults to 50.
-   */
-  maxPages?: number;
-  /**
-   * Upper bound on the total number of on-chain events processed per
-   * contract.  Acts as a safety rail against unexpectedly large windows.
-   * Defaults to 10 000.
-   */
-  maxEventsPerContract?: number;
+  maxLedgers: number;
 }
 

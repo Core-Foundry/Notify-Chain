@@ -118,7 +118,9 @@ describe('Execution Metrics API Integration', () => {
     const response = await fetch(`${serverUrl}/api/schedule/execution-metrics`);
     expect(response.status).toBe(200);
 
-    const metrics = await response.json();
+    const envelope = (await response.json()) as { success: boolean; data?: any; error?: any };
+    expect(envelope.success).toBe(true);
+    const metrics = envelope.data;
 
     // CRITICAL ASSERTION: Must return deduplicated metrics
     expect(metrics.totalNotifications).toBe(1);
@@ -214,7 +216,9 @@ describe('Execution Metrics API Integration', () => {
     const response = await fetch(`${serverUrl}/api/schedule/retry-distribution`);
     expect(response.status).toBe(200);
 
-    const distribution = await response.json();
+    const envelope = (await response.json()) as { success: boolean; data?: any; error?: any };
+    expect(envelope.success).toBe(true);
+    const distribution = envelope.data;
 
     // Verify distribution structure
     expect(Array.isArray(distribution)).toBe(true);
@@ -254,12 +258,16 @@ describe('Execution Metrics API Integration', () => {
       server.listen(testPort, () => resolve());
     });
 
-    // Both endpoints should return 503
+    // Both endpoints should return 503 with the standard error envelope
     const metricsResponse = await fetch(`${serverUrl}/api/schedule/execution-metrics`);
     expect(metricsResponse.status).toBe(503);
+    const metricsEnvelope = await metricsResponse.json() as any;
+    expect(metricsEnvelope.success).toBe(false);
 
     const distributionResponse = await fetch(`${serverUrl}/api/schedule/retry-distribution`);
     expect(distributionResponse.status).toBe(503);
+    const distributionEnvelope = await distributionResponse.json() as any;
+    expect(distributionEnvelope.success).toBe(false);
   });
 
   it('should handle CORS preflight requests', async () => {
@@ -306,7 +314,9 @@ describe('Execution Metrics API Integration', () => {
     const response = await fetch(`${serverUrl}/api/schedule/stats`);
     expect(response.status).toBe(200);
 
-    const stats = await response.json();
+    const envelope = (await response.json()) as { success: boolean; data?: any; error?: any };
+    expect(envelope.success).toBe(true);
+    const stats = envelope.data;
 
     // Verify structure
     expect(stats).toHaveProperty('pending');

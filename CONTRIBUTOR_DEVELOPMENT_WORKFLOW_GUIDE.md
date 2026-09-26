@@ -21,7 +21,7 @@ A single, end-to-end workflow for local setup, branching, testing, and submittin
 - Rust (stable) with WebAssembly target:
   - `rustup target add wasm32-unknown-unknown`
 - Stellar CLI:
-  - `cargo install stellar-cli`
+  - `cargo install --locked stellar-cli --features opt`
 - Node.js:
   - Listener uses **Node 20**
   - Dashboard uses **Node 18**

@@ -1,6 +1,6 @@
-import { NotificationTemplateCache, getTemplateCache, resetTemplateCache, NotificationTemplate } from './notification-template-cache';
+import { NotificationTemplateCache, getTemplateCache, resetTemplateCache, AuditedNotificationTemplate } from './notification-template-cache';
 
-const makeTemplate = (id: string): NotificationTemplate => ({
+const makeTemplate = (id: string): AuditedNotificationTemplate => ({
   id,
   name: `Template ${id}`,
   type: 'email',

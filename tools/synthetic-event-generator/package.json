@@ -1,0 +1,15 @@
+{
+  "name": "synthetic-event-generator",
+  "version": "1.0.0",
+  "description": "Synthetic event generator for Notify-Chain local development",
+  "main": "index.js",
+  "scripts": {
+    "generate": "node index.js generate",
+    "generate:batch": "node index.js generate:batch",
+    "validate": "node index.js validate",
+    "test": "echo 'No tests configured yet'"
+  },
+  "dependencies": {
+    "commander": "^11.1.0"
+  }
+}

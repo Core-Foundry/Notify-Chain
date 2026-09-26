@@ -5,6 +5,33 @@ export interface EventValidationResult {
   reason?: string;
 }
 
+export interface RpcResponseValidationResult {
+  valid: boolean;
+  reason?: string;
+}
+
+export function validateRpcResponse(
+  response: StellarSDK.rpc.Api.GetEventsResponse | null | undefined
+): RpcResponseValidationResult {
+  if (!response || typeof response !== 'object') {
+    return { valid: false, reason: 'RPC response is missing or not an object' };
+  }
+
+  if (response.events === undefined || response.events === null) {
+    return { valid: false, reason: 'RPC response is missing the events field' };
+  }
+
+  if (!Array.isArray(response.events)) {
+    return { valid: false, reason: 'RPC response events field is not an array' };
+  }
+
+  if (response.cursor !== undefined && typeof response.cursor !== 'string') {
+    return { valid: false, reason: 'RPC response cursor field is not a string' };
+  }
+
+  return { valid: true };
+}
+
 export function validateEventPayload(
   event: StellarSDK.rpc.Api.EventResponse
 ): EventValidationResult {

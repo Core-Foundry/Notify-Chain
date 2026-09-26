@@ -3,6 +3,7 @@ import {
   getEventName,
   matchesEventFilter,
   validateEventPayload,
+  validateRpcResponse,
 } from './event-utils';
 
 function createValidEvent(overrides: Record<string, unknown> = {}) {
@@ -17,6 +18,24 @@ function createValidEvent(overrides: Record<string, unknown> = {}) {
     txHash: 'hash',
     topic: [xdr.ScVal.scvSymbol('TaskCreated')],
     value: xdr.ScVal.scvU32(1),
+    ...overrides,
+  };
+}
+
+function createValidRpcResponse(overrides: Record<string, unknown> = {}) {
+  return {
+    latestLedger: 123,
+    events: [
+      {
+        id: 'event-1',
+        type: 'contract',
+        ledger: 100,
+        txHash: 'hash',
+        topic: [],
+        value: 1,
+      },
+    ],
+    cursor: 'cursor-1',
     ...overrides,
   };
 }
@@ -91,6 +110,55 @@ describe('event-utils', () => {
 
     it('rejects unnamed events when specific filters are configured', () => {
       expect(matchesEventFilter(null, ['TaskCreated'])).toBe(false);
+    });
+  });
+
+  describe('validateRpcResponse', () => {
+    it('accepts a complete RPC response', () => {
+      expect(validateRpcResponse(createValidRpcResponse() as any)).toEqual({
+        valid: true,
+      });
+    });
+
+    it('rejects a null response', () => {
+      const result = validateRpcResponse(null);
+      expect(result.valid).toBe(false);
+      expect(result.reason).toMatch(/missing/i);
+    });
+
+    it('rejects a non-object response', () => {
+      const result = validateRpcResponse('not-an-object' as any);
+      expect(result.valid).toBe(false);
+      expect(result.reason).toMatch(/not an object/i);
+    });
+
+    it('rejects a response missing the events field', () => {
+      const result = validateRpcResponse(
+        createValidRpcResponse({ events: undefined }) as any
+      );
+      expect(result.valid).toBe(false);
+      expect(result.reason).toMatch(/events/i);
+    });
+
+    it('rejects a response whose events field is not an array', () => {
+      const result = validateRpcResponse(
+        createValidRpcResponse({ events: 'not-an-array' }) as any
+      );
+      expect(result.valid).toBe(false);
+      expect(result.reason).toMatch(/events field is not an array/i);
+    });
+
+    it('rejects a response whose cursor is not a string', () => {
+      const result = validateRpcResponse(
+        createValidRpcResponse({ cursor: 123 }) as any
+      );
+      expect(result.valid).toBe(false);
+      expect(result.reason).toMatch(/cursor/i);
+    });
+
+    it('accepts a response without a cursor', () => {
+      const { cursor, ...rest } = createValidRpcResponse();
+      expect(validateRpcResponse(rest as any)).toEqual({ valid: true });
     });
   });
 });

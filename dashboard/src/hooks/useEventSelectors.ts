@@ -16,7 +16,9 @@ export function useFilteredEvents() {
         filters.eventType,
         filters.status,
         filters.dateFrom,
-        filters.dateTo
+        filters.dateTo,
+        filters.txHash,
+        filters.sortBy ?? 'newest',
       ),
     [events, filters]
   );

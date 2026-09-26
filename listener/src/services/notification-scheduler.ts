@@ -7,6 +7,9 @@ import { DiscordNotificationService } from './discord-notification';
 import { BatchValidationService } from './batch-validation-service';
 import { NotificationChannel } from '../utils/batch-validator';
 import { getWorkerManager } from './worker-manager';
+import { getJobMonitor } from './job-monitor';
+import { ProviderRegistry, getProviderRegistry } from './provider-registry';
+import { verifyPayloadIntegrity } from '../utils/payload-integrity';
 
 /**
  * Background scheduler that processes scheduled notifications
@@ -24,18 +27,25 @@ export class NotificationScheduler {
   private isRunning: boolean = false;
   private processorId: string;
   private batchValidator: BatchValidationService;
+  /**
+   * Provider registry used for all notification dispatch.
+   * When not supplied the module-level singleton is used.
+   */
+  private providerRegistry: ProviderRegistry;
 
   constructor(
     repository: ScheduledNotificationRepository,
     config: SchedulerConfig,
     discordService?: DiscordNotificationService | null,
-    batchValidator?: BatchValidationService
+    batchValidator?: BatchValidationService,
+    providerRegistry?: ProviderRegistry
   ) {
     this.repository = repository;
     this.config = { retryDelayMs: 5_000, ...config };
     this.discordService = discordService ?? null;
     this.processorId = config.processorId || uuidv4();
     this.batchValidator = batchValidator ?? new BatchValidationService();
+    this.providerRegistry = providerRegistry ?? getProviderRegistry();
   }
 
   /**
@@ -176,7 +186,8 @@ export class NotificationScheduler {
         return;
       }
 
-      // Process each notification with job tracking
+      // Process each notification with job tracking + monitoring
+      const jobMonitor = getJobMonitor();
       for (const notification of notifications) {
         const jobId = `notification-${notification.id}`;
         if (!workerManager.startJob(jobId)) {
@@ -191,8 +202,14 @@ export class NotificationScheduler {
           continue;
         }
 
+        jobMonitor.startJob(jobId, 'scheduled-notification', {
+          notificationId: notification.id,
+          type: notification.notificationType,
+          requestId,
+        });
+
         try {
-          await this.processNotification(notification, requestId);
+          await this.processNotification(notification, requestId, jobId);
         } finally {
           workerManager.completeJob(jobId);
         }
@@ -219,10 +236,12 @@ export class NotificationScheduler {
    */
   private async processNotification(
     notification: ScheduledNotification,
-    requestId: string
+    requestId: string,
+    jobId?: string
   ): Promise<void> {
     const startTime = Date.now();
     const executionAttempt = notification.retryCount + 1;
+    const jobMonitor = getJobMonitor();
 
     try {
       logger.info('Processing scheduled notification', {
@@ -251,6 +270,11 @@ export class NotificationScheduler {
           notification.retryCount,
           notification.maxRetries
         );
+        if (jobId) {
+          jobMonitor.failJob(jobId, 'Not yet due for execution', {
+            notificationId: notification.id,
+          });
+        }
         return;
       }
 
@@ -262,6 +286,8 @@ export class NotificationScheduler {
           now,
           missedByMs: timeDiff,
         });
+      }
+
       // Verify payload integrity before executing
       const secret = process.env.PAYLOAD_INTEGRITY_SECRET;
       if (secret) {
@@ -282,6 +308,11 @@ export class NotificationScheduler {
             notification.maxRetries, // exhaust retries — don't retry a tampered payload
             notification.maxRetries
           );
+          if (jobId) {
+            jobMonitor.failJob(jobId, 'Payload integrity check failed: hash mismatch', {
+              notificationId: notification.id,
+            });
+          }
           return;
         }
       }
@@ -301,6 +332,13 @@ export class NotificationScheduler {
           durationMs,
         });
 
+        if (jobId) {
+          jobMonitor.completeJob(jobId, {
+            notificationId: notification.id,
+            durationMs,
+          });
+        }
+
         logger.info('Notification delivered successfully', {
           requestId,
           id: notification.id,
@@ -319,6 +357,13 @@ export class NotificationScheduler {
         attempt: executionAttempt,
         durationMs,
       });
+
+      if (jobId) {
+        jobMonitor.failJob(jobId, (error as Error).message, {
+          notificationId: notification.id,
+          attempt: executionAttempt,
+        });
+      }
 
       const willRetry = notification.retryCount + 1 < notification.maxRetries;
       const nextRetryAt = willRetry
@@ -345,18 +390,60 @@ export class NotificationScheduler {
   }
 
   /**
-   * Execute notification delivery based on type
+   * Execute notification delivery based on type.
+   *
+   * The registry is queried first. When a registered provider exists for the
+   * notification type it is used for all delivery — including Discord and
+   * webhook notifications. This keeps the scheduler decoupled from any
+   * concrete provider implementation.
+   *
+   * Legacy path: when no provider is registered for the type, the scheduler
+   * falls back to the directly-injected `discordService` so that existing
+   * deployments that have not yet bootstrapped the registry continue to work.
    */
   private async executeNotification(
     notification: ScheduledNotification,
     requestId: string
   ): Promise<boolean> {
     const payload = JSON.parse(notification.payload);
+    const type = notification.notificationType;
 
-    switch (notification.notificationType) {
+    // ------------------------------------------------------------------
+    // Registry-based dispatch (preferred path)
+    // ------------------------------------------------------------------
+    if (this.providerRegistry.has(type)) {
+      const result = await this.providerRegistry.deliver(type, {
+        payload,
+        targetRecipient: notification.targetRecipient,
+        notificationType: type,
+        requestId,
+      });
+
+      if (result.degradedCapabilities.length > 0) {
+        logger.info('Notification delivered with degraded capabilities', {
+          requestId,
+          id: notification.id,
+          type,
+          degradedCapabilities: result.degradedCapabilities,
+        });
+      }
+
+      if (!result.success) {
+        throw new Error(result.errorMessage ?? 'Provider delivery returned failure');
+      }
+
+      return true;
+    }
+
+    // ------------------------------------------------------------------
+    // Legacy fallback: direct Discord service injection
+    // ------------------------------------------------------------------
+    switch (type) {
       case 'discord':
         if (!this.discordService) {
-          throw new Error('Discord service not configured');
+          throw new Error(
+            'Discord service not configured and no Discord provider registered in the registry'
+          );
         }
         return await this.discordService.sendEventNotification(
           payload.event,
@@ -365,19 +452,24 @@ export class NotificationScheduler {
         );
 
       case 'webhook':
-        // Implement webhook delivery
-        throw new Error('Webhook delivery not yet implemented');
+        throw new Error(
+          'Webhook delivery not yet implemented. Register a WebhookNotificationProvider in the ProviderRegistry.'
+        );
 
       case 'email':
-        // Implement email delivery
-        throw new Error('Email delivery not yet implemented');
+        throw new Error(
+          'Email delivery not yet implemented. Register an email NotificationProvider in the ProviderRegistry.'
+        );
 
       case 'sms':
-        // Implement SMS delivery
-        throw new Error('SMS delivery not yet implemented');
+        throw new Error(
+          'SMS delivery not yet implemented. Register an SMS NotificationProvider in the ProviderRegistry.'
+        );
 
       default:
-        throw new Error(`Unsupported notification type: ${notification.notificationType}`);
+        throw new Error(
+          `Unsupported notification type: "${type}". Register a provider for this type in the ProviderRegistry.`
+        );
     }
   }
 

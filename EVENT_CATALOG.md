@@ -11,9 +11,9 @@ NotifyChain leverages these on-chain events to feed the off-chain listener, inde
 NotifyChain contracts use a structured event design that allows off-chain services to quickly categorize and filter events without needing to parse the full event payload first.
 
 ### 1.1 Notification Category
-Every event emitted by the [AutoShareContract](file:///workspaces/Notify-Chain/contract/contracts/hello-world/src/lib.rs#L22) carries a `NotificationCategory` as one of its indexed topics. This allows listeners to filter for whole categories of events.
+Every event emitted by the [AutoShareContract](contract/contracts/hello-world/src/lib.rs#L22) carries a `NotificationCategory` as one of its indexed topics. This allows listeners to filter for whole categories of events.
 
-The enum is defined in [events.rs](file:///workspaces/Notify-Chain/contract/contracts/hello-world/src/base/events.rs#L18):
+The enum is defined in [events.rs](contract/contracts/hello-world/src/base/events.rs#L18):
 
 | Variant | Value (U32) | Description |
 | :--- | :--- | :--- |
@@ -25,7 +25,7 @@ The enum is defined in [events.rs](file:///workspaces/Notify-Chain/contract/cont
 ### 1.2 Notification Priority
 Every event emitted by `AutoShareContract` also carries a `NotificationPriority` topic to help downstream routers filter or trigger alerts based on severity.
 
-The enum is defined in [events.rs](file:///workspaces/Notify-Chain/contract/contracts/hello-world/src/base/events.rs#L46):
+The enum is defined in [events.rs](contract/contracts/hello-world/src/base/events.rs#L46):
 
 | Variant | Value (U32) | Description |
 | :--- | :--- | :--- |
@@ -41,7 +41,7 @@ To prevent breaking changes in downstream indexers, category and priority topics
 
 ## 2. AutoShare Contract Events
 
-These events are defined in [base/events.rs](file:///workspaces/Notify-Chain/contract/contracts/hello-world/src/base/events.rs) within the AutoShare contract.
+These events are defined in [base/events.rs](contract/contracts/hello-world/src/base/events.rs) within the AutoShare contract.
 
 In Soroban, CamelCase struct names compile to snake_case symbols by default (e.g., `AutoshareCreated` is emitted on-chain with the first topic `Symbol("autoshare_created")`).
 
@@ -50,7 +50,7 @@ In Soroban, CamelCase struct names compile to snake_case symbols by default (e.g
 ### 2.1 `autoshare_created`
 Emitted when a new AutoShare group is created.
 
-- **Trigger Method**: [create](file:///workspaces/Notify-Chain/contract/contracts/hello-world/src/lib.rs#L63)
+- **Trigger Method**: [create](contract/contracts/hello-world/src/lib.rs#L63)
 - **Topics**:
   1. `Symbol("autoshare_created")`
   2. `creator: Address` (Indexed creator of the group)
@@ -63,7 +63,7 @@ Emitted when a new AutoShare group is created.
 ### 2.2 `autoshare_updated`
 Emitted when the members list of an AutoShare group is updated.
 
-- **Trigger Method**: [update_members](file:///workspaces/Notify-Chain/contract/contracts/hello-world/src/lib.rs#L77)
+- **Trigger Method**: [update_members](contract/contracts/hello-world/src/lib.rs#L77)
 - **Topics**:
   1. `Symbol("autoshare_updated")`
   2. `updater: Address` (Address that updated the members)
@@ -76,7 +76,7 @@ Emitted when the members list of an AutoShare group is updated.
 ### 2.3 `group_deactivated`
 Emitted when an AutoShare group is deactivated by its creator.
 
-- **Trigger Method**: [deactivate_group](file:///workspaces/Notify-Chain/contract/contracts/hello-world/src/lib.rs#L123)
+- **Trigger Method**: [deactivate_group](contract/contracts/hello-world/src/lib.rs#L123)
 - **Topics**:
   1. `Symbol("group_deactivated")`
   2. `creator: Address` (Creator performing deactivation)
@@ -89,7 +89,7 @@ Emitted when an AutoShare group is deactivated by its creator.
 ### 2.4 `group_activated`
 Emitted when a deactivated group is reactivated.
 
-- **Trigger Method**: [activate_group](file:///workspaces/Notify-Chain/contract/contracts/hello-world/src/lib.rs#L128)
+- **Trigger Method**: [activate_group](contract/contracts/hello-world/src/lib.rs#L128)
 - **Topics**:
   1. `Symbol("group_activated")`
   2. `creator: Address` (Creator performing reactivation)
@@ -102,7 +102,7 @@ Emitted when a deactivated group is reactivated.
 ### 2.5 `contract_paused`
 Emitted when the contract is paused by the administrator.
 
-- **Trigger Method**: [pause](file:///workspaces/Notify-Chain/contract/contracts/hello-world/src/lib.rs#L43)
+- **Trigger Method**: [pause](contract/contracts/hello-world/src/lib.rs#L43)
 - **Topics**:
   1. `Symbol("contract_paused")`
   2. `category: NotificationCategory` (Always `Admin` / `1`)
@@ -114,7 +114,7 @@ Emitted when the contract is paused by the administrator.
 ### 2.6 `contract_unpaused`
 Emitted when the contract is unpaused by the administrator.
 
-- **Trigger Method**: [unpause](file:///workspaces/Notify-Chain/contract/contracts/hello-world/src/lib.rs#L48)
+- **Trigger Method**: [unpause](contract/contracts/hello-world/src/lib.rs#L48)
 - **Topics**:
   1. `Symbol("contract_unpaused")`
   2. `category: NotificationCategory` (Always `Admin` / `1`)
@@ -126,7 +126,7 @@ Emitted when the contract is unpaused by the administrator.
 ### 2.7 `admin_transferred`
 Emitted when admin privileges are transferred to a new account.
 
-- **Trigger Method**: [transfer_admin](file:///workspaces/Notify-Chain/contract/contracts/hello-world/src/lib.rs#L143)
+- **Trigger Method**: [transfer_admin](contract/contracts/hello-world/src/lib.rs#L143)
 - **Topics**:
   1. `Symbol("admin_transferred")`
   2. `old_admin: Address` (Old admin address)
@@ -139,7 +139,7 @@ Emitted when admin privileges are transferred to a new account.
 ### 2.8 `withdrawal`
 Emitted when the admin withdraws collected usage fees from the contract.
 
-- **Trigger Method**: [withdraw](file:///workspaces/Notify-Chain/contract/contracts/hello-world/src/lib.rs#L148)
+- **Trigger Method**: [withdraw](contract/contracts/hello-world/src/lib.rs#L148)
 - **Topics**:
   1. `Symbol("withdrawal")`
   2. `token: Address` (Token withdrawn)
@@ -165,7 +165,7 @@ Emitted when an unauthorized operation attempt is detected on-chain.
 ### 2.10 `scheduled_notification_cancelled`
 Emitted when a scheduled notification is cancelled on-chain.
 
-- **Trigger Method**: [cancel_notification](file:///workspaces/Notify-Chain/contract/contracts/hello-world/src/lib.rs#L253)
+- **Trigger Method**: [cancel_notification](contract/contracts/hello-world/src/lib.rs#L253)
 - **Topics**:
   1. `Symbol("scheduled_notification_cancelled")`
   2. `caller: Address` (The user who triggered cancellation)
@@ -178,7 +178,7 @@ Emitted when a scheduled notification is cancelled on-chain.
 ### 2.11 `notification_scheduled`
 Emitted when a notification is scheduled on-chain with a bounded lifetime.
 
-- **Trigger Method**: [schedule_notification](file:///workspaces/Notify-Chain/contract/contracts/hello-world/src/lib.rs#L265)
+- **Trigger Method**: [schedule_notification](contract/contracts/hello-world/src/lib.rs#L265)
 - **Topics**:
   1. `Symbol("notification_scheduled")`
   2. `creator: Address` (The creator of the notification)
@@ -191,7 +191,7 @@ Emitted when a notification is scheduled on-chain with a bounded lifetime.
 ### 2.12 `notification_expired`
 Emitted when a scheduled notification's lifetime elapses, marking it expired.
 
-- **Trigger Method**: [expire_notification](file:///workspaces/Notify-Chain/contract/contracts/hello-world/src/lib.rs#L289)
+- **Trigger Method**: [expire_notification](contract/contracts/hello-world/src/lib.rs#L289)
 - **Topics**:
   1. `Symbol("notification_expired")`
   2. `notification_id: BytesN<32>` (ID of the expired notification)
@@ -204,7 +204,7 @@ Emitted when a scheduled notification's lifetime elapses, marking it expired.
 ### 2.13 `notification_revoked`
 Emitted when a scheduled notification is revoked by its creator or admin.
 
-- **Trigger Method**: [revoke_notification](file:///workspaces/Notify-Chain/contract/contracts/hello-world/src/lib.rs#L297)
+- **Trigger Method**: [revoke_notification](contract/contracts/hello-world/src/lib.rs#L297)
 - **Topics**:
   1. `Symbol("notification_revoked")`
   2. `notification_id: BytesN<32>` (ID of the revoked notification)
@@ -217,14 +217,14 @@ Emitted when a scheduled notification is revoked by its creator or admin.
 
 ## 3. TaskBounty Contract Events
 
-These events are defined in [events.rs](file:///workspaces/Notify-Chain/Documents/Task%20Bounty/src/events.rs) within the TaskBounty contract. They do not use the category/priority helper wrapper but emit multi-topic symbols directly.
+These events are defined in [events.rs](Documents/Task%20Bounty/src/events.rs) within the TaskBounty contract. They do not use the category/priority helper wrapper but emit multi-topic symbols directly.
 
 ---
 
 ### 3.1 `task_created`
 Emitted when a new task is created and reward tokens are escrowed in the contract.
 
-- **Trigger Method**: [create_task](file:///workspaces/Notify-Chain/Documents/Task%20Bounty/src/lib.rs#L58)
+- **Trigger Method**: [create_task](Documents/Task%20Bounty/src/lib.rs#L58)
 - **Topics**:
   1. `Symbol("task")`
   2. `Symbol("created")`
@@ -240,7 +240,7 @@ Emitted when a new task is created and reward tokens are escrowed in the contrac
 ### 3.2 `work_submitted`
 Emitted when a contributor submits work for a task.
 
-- **Trigger Method**: [submit_work](file:///workspaces/Notify-Chain/Documents/Task%20Bounty/src/lib.rs#L92)
+- **Trigger Method**: [submit_work](Documents/Task%20Bounty/src/lib.rs#L92)
 - **Topics**:
   1. `Symbol("work")`
   2. `Symbol("submit")`
@@ -255,7 +255,7 @@ Emitted when a contributor submits work for a task.
 ### 3.3 `submission_approved`
 Emitted when the poster approves a work submission, releasing escrowed rewards.
 
-- **Trigger Method**: [approve_submission](file:///workspaces/Notify-Chain/Documents/Task%20Bounty/src/lib.rs#L110)
+- **Trigger Method**: [approve_submission](Documents/Task%20Bounty/src/lib.rs#L110)
 - **Topics**:
   1. `Symbol("sub")`
   2. `Symbol("approved")`
@@ -270,7 +270,7 @@ Emitted when the poster approves a work submission, releasing escrowed rewards.
 ### 3.4 `submission_rejected`
 Emitted when the poster rejects a submission.
 
-- **Trigger Method**: [reject_submission](file:///workspaces/Notify-Chain/Documents/Task%20Bounty/src/lib.rs#L128)
+- **Trigger Method**: [reject_submission](Documents/Task%20Bounty/src/lib.rs#L128)
 - **Topics**:
   1. `Symbol("sub")`
   2. `Symbol("rejected")`
@@ -284,7 +284,7 @@ Emitted when the poster rejects a submission.
 ### 3.5 `task_cancelled`
 Emitted when a task is cancelled and funds are refunded to the poster.
 
-- **Trigger Method**: [cancel_task](file:///workspaces/Notify-Chain/Documents/Task%20Bounty/src/lib.rs#L145)
+- **Trigger Method**: [cancel_task](Documents/Task%20Bounty/src/lib.rs#L145)
 - **Topics**:
   1. `Symbol("task")`
   2. `Symbol("cancel")`
@@ -297,7 +297,7 @@ Emitted when a task is cancelled and funds are refunded to the poster.
 ### 3.6 `dispute_raised`
 Emitted when a poster or contributor raises a dispute over a work submission.
 
-- **Trigger Method**: [raise_dispute](file:///workspaces/Notify-Chain/Documents/Task%20Bounty/src/lib.rs#L158)
+- **Trigger Method**: [raise_dispute](Documents/Task%20Bounty/src/lib.rs#L158)
 - **Topics**:
   1. `Symbol("dispute")`
   2. `Symbol("raised")`
