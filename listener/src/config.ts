@@ -1,5 +1,4 @@
-import { Config, ContractConfig, DiscordConfig, WebhookSecret, AppCleanupConfig, EventQueueConfig, RetrySchedulerOptions } from './types';
-import { Config, ContractConfig, DiscordConfig, WebhookSecret, AppCleanupConfig, EventQueueConfig, RetrySchedulerOptions, AnalyticsConfig } from './types';
+import { Config, ContractConfig, DiscordConfig, WebhookSecret, AppCleanupConfig, EventQueueConfig, RetrySchedulerOptions, AnalyticsConfig, BackfillConfig } from './types';
 
 export class ConfigError extends Error {
   constructor(message: string) {
@@ -174,6 +173,37 @@ function loadRetrySchedulerConfig(): RetrySchedulerOptions {
   };
 }
 
+function loadBackfillConfig(): BackfillConfig | undefined {
+  const enabled = trimEnv('BACKFILL_ENABLED') === 'true';
+  if (!enabled) {
+    return undefined;
+  }
+
+  const rawStart = trimEnv('BACKFILL_START_LEDGER');
+  if (!rawStart) {
+    throw new ConfigError('BACKFILL_START_LEDGER is required when BACKFILL_ENABLED=true.');
+  }
+  const startLedger = parseIntegerEnv('BACKFILL_START_LEDGER', rawStart);
+  if (startLedger < 1) {
+    throw new ConfigError('BACKFILL_START_LEDGER must be >= 1.');
+  }
+
+  const rawEnd = trimEnv('BACKFILL_END_LEDGER');
+  const endLedger =
+    rawEnd !== undefined ? parseIntegerEnv('BACKFILL_END_LEDGER', rawEnd) : undefined;
+  if (endLedger !== undefined && endLedger < startLedger) {
+    throw new ConfigError('BACKFILL_END_LEDGER must be >= BACKFILL_START_LEDGER.');
+  }
+
+  return {
+    enabled,
+    startLedger,
+    endLedger,
+    maxPages: parseIntegerEnv('BACKFILL_MAX_PAGES', '50'),
+    maxEventsPerContract: parseIntegerEnv('BACKFILL_MAX_EVENTS_PER_CONTRACT', '10000'),
+  };
+}
+
 export function loadConfig(): Config {
   const discord = loadDiscordConfig();
   const rawContractAddresses = parseJsonEnv<unknown>('CONTRACT_ADDRESSES', '[]');
@@ -228,6 +258,7 @@ export function loadConfig(): Config {
     },
     cleanup: loadCleanupConfig(),
     analytics: loadAnalyticsConfig(),
+    backfill: loadBackfillConfig(),
   };
 }
 

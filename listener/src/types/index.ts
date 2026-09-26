@@ -61,6 +61,7 @@ export interface Config {
   rateLimit?: RateLimitConfig;
   cleanup?: AppCleanupConfig;
   analytics?: AnalyticsConfig;
+  backfill?: BackfillConfig;
 }
 
 export interface SchedulerConfig {
@@ -117,5 +118,35 @@ export interface AnalyticsConfig {
   persistIntervalMs: number;
   /** How long to retain persisted snapshots (days). */
   snapshotRetentionDays: number;
+}
+
+export interface BackfillConfig {
+  /**
+   * When true, a backfill run is triggered once at startup before the live
+   * polling loop begins.
+   */
+  enabled: boolean;
+  /**
+   * The earliest ledger from which to recover missed events (inclusive).
+   * Events at or after this ledger that are not yet in processed_events will
+   * be passed through the normal processing pipeline.
+   */
+  startLedger: number;
+  /**
+   * The last ledger to include in the backfill window (inclusive).
+   * Defaults to the current network-tip ledger when not set.
+   */
+  endLedger?: number;
+  /**
+   * Maximum number of Stellar RPC pages to fetch per contract during the
+   * backfill.  Each page holds up to 200 events.  Defaults to 50.
+   */
+  maxPages?: number;
+  /**
+   * Upper bound on the total number of on-chain events processed per
+   * contract.  Acts as a safety rail against unexpectedly large windows.
+   * Defaults to 10 000.
+   */
+  maxEventsPerContract?: number;
 }
 

@@ -23,6 +23,8 @@ import {
   IndexingReconciliationEngine,
   createDefaultAlertSink,
 } from './services/indexing-reconciliation-engine';
+import { HistoricalBackfillService } from './services/historical-backfill-service';
+import { EventDeduplicationService } from './services/event-deduplication-service';
 import { initNotificationAnalyticsAggregator } from './services/notification-analytics-aggregator';
 import { NotificationMetricsStore } from './services/notification-metrics-store';
 import { NotificationMetricsRunner } from './services/notification-metrics-runner';
@@ -55,6 +57,7 @@ async function main() {
   let archiveStore: ArchiveStore | null = null;
   let metricsRunner: NotificationMetricsRunner | null = null;
   let metricsStore: NotificationMetricsStore | null = null;
+  let deduplicationService: EventDeduplicationService | null = null;
 
   const healthMonitor = new NotificationHealthMonitor(null, getWorkerManager());
 
@@ -177,6 +180,27 @@ async function main() {
   });
 
   healthMonitor.start();
+
+  // Run historical backfill before the live polling loop starts so that any
+  // events missed during downtime are recovered first. The backfill is
+  // one-shot; already-processed events are automatically skipped by the
+  // persistent deduplication layer.
+  if (config.backfill?.enabled) {
+    if (!deduplicationService) {
+      throw new Error('Backfill enabled but deduplication service was not initialised.');
+    }
+    const discordService = config.discord
+      ? new DiscordNotificationService(config.discord)
+      : null;
+    const backfillService = new HistoricalBackfillService(
+      config.stellarRpcUrl,
+      config.contractAddresses,
+      config.backfill,
+      deduplicationService,
+      discordService
+    );
+    await backfillService.run();
+  }
 
   const subscriber = new EventSubscriber(config);
   await subscriber.start();
