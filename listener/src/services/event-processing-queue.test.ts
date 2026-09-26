@@ -1,4 +1,3 @@
-import { xdr } from '@stellar/stellar-sdk';
 import * as StellarSDK from '@stellar/stellar-sdk';
 import {
   EventProcessingQueue,
@@ -14,6 +13,10 @@ jest.mock('../utils/logger', () => ({
   },
 }));
 
+// Stub xdr.ScVal values — EventProcessingQueue never inspects the xdr payload,
+// it only passes the event object through to the processor.
+const stubScVal = { _switch: { name: 'scvSymbol' } } as unknown as StellarSDK.xdr.ScVal;
+
 function createMockEvent(
   overrides: Partial<StellarSDK.rpc.Api.EventResponse> = {}
 ): StellarSDK.rpc.Api.EventResponse {
@@ -26,8 +29,8 @@ function createMockEvent(
     operationIndex: 0,
     inSuccessfulContractCall: true,
     txHash: 'abc123',
-    topic: [xdr.ScVal.scvSymbol('test_event')],
-    value: xdr.ScVal.scvString('test value'),
+    topic: [stubScVal],
+    value: stubScVal,
     ...overrides,
   };
 }
