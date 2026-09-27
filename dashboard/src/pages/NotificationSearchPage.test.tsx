@@ -6,11 +6,33 @@ import type { NotificationSearchResponse } from '../services/eventsApi';
 
 jest.mock('../services/eventsApi', () => ({
   searchNotifications: jest.fn(),
-  isListenerApiTimeoutError: (error: unknown) =>
-    error instanceof Error && /timed out|timeout/i.test(error.message),
 }));
 
 const mockedSearch = searchNotifications as jest.MockedFunction<typeof searchNotifications>;
+
+jest.mock('../services/eventsApi', () => ({
+  searchNotifications: jest.fn(),
+}));
+jest.mock('../services/eventsApi', () => {
+  const actual = jest.requireActual('../services/eventsApi') as typeof import('../services/eventsApi');
+  return {
+    ...actual,
+    searchNotifications: jest.fn(),
+  };
+});
+
+const mockedSearch = searchNotifications as jest.MockedFunction<typeof searchNotifications>;
+
+function emptyResponse(): NotificationSearchResponse {
+  return {
+    results: [],
+    total: 0,
+    limit: 20,
+    offset: 0,
+    itemCount: 0,
+    totalPages: 0,
+  };
+}
 
 const mockResult: NotificationSearchResponse = {
   results: [
@@ -25,6 +47,7 @@ const mockResult: NotificationSearchResponse = {
       status: 'PENDING',
       createdAt: '2026-01-15T12:00:00.000Z',
       payload: null,
+      failureReason: null,
     },
   ],
   total: 1,
@@ -33,17 +56,6 @@ const mockResult: NotificationSearchResponse = {
   itemCount: 1,
   totalPages: 1,
 };
-
-function emptyResponse(): NotificationSearchResponse {
-  return {
-    results: [],
-    total: 0,
-    limit: 20,
-    offset: 0,
-    itemCount: 0,
-    totalPages: 0,
-  };
-}
 
 describe('NotificationSearchPage filters', () => {
   beforeEach(() => {
@@ -116,6 +128,7 @@ describe('NotificationSearchPage filters', () => {
           status: 'COMPLETED',
           createdAt: '2026-03-01T00:00:00.000Z',
           payload: null,
+          failureReason: null,
         },
       ],
       total: 1,
@@ -174,13 +187,34 @@ describe('NotificationSearchPage filters', () => {
       target: { value: 'payment' },
     });
 
-    await act(async () => {
-      jest.advanceTimersByTime(300);
-    });
+  it('appends type, status, startDate, and endDate to the URL', async () => {
+    const { searchNotifications: realSearch } = jest.requireActual(
+      '../services/eventsApi'
+    ) as typeof import('../services/eventsApi');
 
     await waitFor(() => {
       expect(screen.getByText(/The notification search timed out\. Please try again\./i)).toBeInTheDocument();
     });
+  });
+
+    expect(global.fetch).toHaveBeenCalledWith(
+      expect.stringContaining('type=webhook')
+    );
+    const calledUrl = (global.fetch as jest.Mock).mock.calls[0][0] as string;
+    expect(calledUrl).toContain('status=COMPLETED');
+    expect(calledUrl).toContain('startDate=2026-01-01');
+    expect(calledUrl).toContain('endDate=2026-01-31');
+  });
+});
+
+describe('NotificationSearchPage loading skeletons', () => {
+  beforeEach(() => {
+    mockedSearch.mockReset();
+    jest.useFakeTimers();
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
   });
 
   it('shows result-card skeletons while searching and hides Searching text', async () => {
@@ -237,5 +271,97 @@ describe('NotificationSearchPage filters', () => {
     expect(screen.getByText(/1 result/i)).toBeInTheDocument();
     expect(screen.getByText('evt-abc')).toBeInTheDocument();
     expect(document.querySelector('.notif-result-card__status')).toHaveTextContent('PENDING');
+  });
+});
+
+describe('NotificationResultCard copy notification ID', () => {
+  beforeEach(() => {
+    mockedSearch.mockReset();
+    jest.useFakeTimers();
+    Object.assign(navigator, {
+      clipboard: {
+        writeText: jest.fn().mockResolvedValue(undefined),
+      },
+    });
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  it('renders the notification ID with a copy button in result cards', async () => {
+    mockedSearch.mockResolvedValue(mockResult);
+    render(<NotificationSearchPage />);
+
+    // Trigger a search
+    fireEvent.change(screen.getByLabelText(/free-text search/i), {
+      target: { value: 'test' },
+    });
+
+    await act(async () => {
+      jest.advanceTimersByTime(300);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText('1')).toBeInTheDocument();
+    });
+
+    // Verify the notification ID label and value are present
+    expect(screen.getByText('Notification ID')).toBeInTheDocument();
+
+    // Verify a CopyButton with the correct aria-label is present
+    const copyBtn = screen.getByRole('button', { name: /copy notification id/i });
+    expect(copyBtn).toBeInTheDocument();
+  });
+
+  it('copies notification ID to clipboard when copy button is clicked', async () => {
+    mockedSearch.mockResolvedValue(mockResult);
+    render(<NotificationSearchPage />);
+
+    fireEvent.change(screen.getByLabelText(/free-text search/i), {
+      target: { value: 'test' },
+    });
+
+    await act(async () => {
+      jest.advanceTimersByTime(300);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText('Notification ID')).toBeInTheDocument();
+    });
+
+    const copyBtn = screen.getByRole('button', { name: /copy notification id/i });
+    await act(async () => {
+      fireEvent.click(copyBtn);
+    });
+
+    expect(navigator.clipboard.writeText).toHaveBeenCalledWith('1');
+  });
+
+  it('shows success feedback after copying notification ID', async () => {
+    mockedSearch.mockResolvedValue(mockResult);
+    render(<NotificationSearchPage />);
+
+    fireEvent.change(screen.getByLabelText(/free-text search/i), {
+      target: { value: 'test' },
+    });
+
+    await act(async () => {
+      jest.advanceTimersByTime(300);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText('Notification ID')).toBeInTheDocument();
+    });
+
+    const copyBtn = screen.getByRole('button', { name: /copy notification id/i });
+    await act(async () => {
+      fireEvent.click(copyBtn);
+    });
+
+    // After clicking, the CopyButton should show "Copied" feedback
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /notification id copied/i })).toBeInTheDocument();
+    });
   });
 });

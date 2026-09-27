@@ -1,0 +1,14 @@
+**/.git
+**/node_modules
+**/dist
+**/build
+**/.next
+**/coverage
+**/*.log
+**/*.db
+**/*.db-journal
+**/data
+**/.env
+**/.env.*
+!**/.env.example
+contract/target

@@ -8,6 +8,7 @@ import { PaginationControls } from '../components/PaginationControls';
 import { NotificationDetailsDrawer } from '../components/NotificationDetailsDrawer';
 import { IndexingHealthPanel } from '../components/IndexingHealthPanel';
 import { NotificationHealthPanel } from '../components/NotificationHealthPanel';
+import { EmptyState } from '../components/EmptyState';
 import { useEventFilters, useEventLoadingState, useFilteredEvents } from '../hooks/useEventSelectors';
 import { useEventStore } from '../store/eventStore';
 import {
@@ -55,6 +56,14 @@ export function EventExplorerPage() {
   const setEvents = useEventStore((state) => state.setEvents);
   const setLoading = useEventStore((state) => state.setLoading);
   const setError = useEventStore((state) => state.setError);
+  const markSyncSuccess = useEventStore((state) => state.markSyncSuccess);
+  const markSyncFailure = useEventStore((state) => state.markSyncFailure);
+  const setSearch = useEventStore((state) => state.setSearch);
+  const setContractFilter = useEventStore((state) => state.setContractFilter);
+  const setEventTypeFilter = useEventStore((state) => state.setEventTypeFilter);
+  const setStatusFilter = useEventStore((state) => state.setStatusFilter);
+  const setDateFrom = useEventStore((state) => state.setDateFrom);
+  const setDateTo = useEventStore((state) => state.setDateTo);
   // Re-fetch whenever lastFetchedAt is reset to 0 (via invalidateEvents()) so
   // that a successful blockchain status-change transaction is reflected on the
   // next render cycle without requiring a full hard refresh.
@@ -85,15 +94,13 @@ export function EventExplorerPage() {
         const remoteEvents = await fetchEvents(API_URL);
         if (!cancelled) {
           setEvents(remoteEvents);
+          markSyncSuccess();
         }
       } catch (error) {
         if (!cancelled) {
           setEvents(generateMockEvents(DEFAULT_EVENT_COUNT));
-          setError(
-            isListenerApiTimeoutError(error)
-              ? 'Listener API timed out — showing mock events for demo.'
-              : 'Listener API unavailable — showing mock events for demo.'
-          );
+          setError('Listener API unavailable — showing mock events for demo.');
+          markSyncFailure('Initial sync failed');
         }
       } finally {
         if (!cancelled) {
@@ -123,10 +130,12 @@ export function EventExplorerPage() {
         const remoteEvents = await fetchEvents(API_URL);
         if (!cancelled) {
           setEvents(remoteEvents);
+          markSyncSuccess();
         }
       } catch {
-        // Silently ignore polling errors — the error banner is reserved for
-        // the initial load failure so background polls don't disrupt the user.
+        if (!cancelled) {
+          markSyncFailure('Background refresh failed');
+        }
       }
     }, POLL_INTERVAL_MS);
 
@@ -147,14 +156,12 @@ export function EventExplorerPage() {
     fetchEvents(API_URL)
       .then((remoteEvents) => {
         setEvents(remoteEvents);
+        markSyncSuccess();
       })
       .catch((error) => {
         setEvents(generateMockEvents(DEFAULT_EVENT_COUNT));
-        setError(
-          isListenerApiTimeoutError(error)
-            ? 'Listener API timed out — showing mock events for demo.'
-            : 'Listener API unavailable — showing mock events for demo.'
-        );
+        setError('Listener API unavailable — showing mock events for demo.');
+        markSyncFailure('Wallet refresh failed');
       })
       .finally(() => {
         setLoading(false);
@@ -196,6 +203,16 @@ export function EventExplorerPage() {
   const fromIndex = filteredEvents.length === 0 ? 0 : (page - 1) * limit + 1;
   const toIndex = Math.min(filteredEvents.length, page * limit);
 
+  const handleClearFilters = useCallback(() => {
+    setSearch('');
+    setContractFilter('');
+    setEventTypeFilter('');
+    setStatusFilter('all');
+    setDateFrom('');
+    setDateTo('');
+    setPage(1);
+  }, [setSearch, setContractFilter, setEventTypeFilter, setStatusFilter, setDateFrom, setDateTo]);
+
   const handleRetry = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -203,17 +220,15 @@ export function EventExplorerPage() {
     try {
       const remoteEvents = await fetchEvents(API_URL);
       setEvents(remoteEvents);
-    } catch (error) {
+      markSyncSuccess();
+    } catch {
       setEvents(generateMockEvents(DEFAULT_EVENT_COUNT));
-      setError(
-        isListenerApiTimeoutError(error)
-          ? 'The listener API timed out. Retrying may help.'
-          : 'Retry failed — still using demo event data.'
-      );
+      setError('Retry failed — still using demo event data.');
+      markSyncFailure('Manual refresh failed');
     } finally {
       setLoading(false);
     }
-  }, [setError, setEvents, setLoading]);
+  }, [markSyncFailure, markSyncSuccess, setError, setEvents, setLoading]);
 
   const handleSelectEvent = useCallback((event: BlockchainEvent) => {
     setSelectedNotification(event);
@@ -291,13 +306,12 @@ export function EventExplorerPage() {
           contractStatuses={contractStatuses}
         />
       ) : (
-        <section className="event-explorer__empty-state" role="status" aria-live="polite">
-          <h2>No events found</h2>
-          <p>
-            Update the search, event type, or contract filter to uncover matching Soroban
-            contract events.
-          </p>
-        </section>
+        <EmptyState
+          icon="🔍"
+          title="No events found"
+          description="Update the search, event type, or contract filter to uncover matching Soroban contract events."
+          action={{ label: 'Clear filters', onClick: handleClearFilters }}
+        />
       )}
 
       <PaginationControls

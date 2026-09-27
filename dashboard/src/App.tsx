@@ -1,17 +1,47 @@
-import { useState } from 'react';
+/**
+ * App.tsx
+ *
+ * Integrates:
+ *  - #394 Accessibility: role="tablist", aria-selected, keyboard nav (arrow keys),
+ *    focus-visible rings, skip-to-content link
+ *  - #396 Navigation Redesign: grouped tabs, active-route highlighting,
+ *    mobile hamburger + off-canvas drawer
+ *  - #397 Toast: ToastProvider wraps the whole app
+ *  - #505 Keyboard Shortcuts: number keys for tabs, T for theme, ? for help
+import { useState, useCallback } from 'react';
+import { EventExplorerPage } from './pages/EventExplorerPage';
+import { NotificationTimelineView } from './components/NotificationTimelineView';
+/**
+ * App.tsx — root shell; layout delegated to DashboardLayout (#676).
+ */
+
+import { useState, useRef, useCallback, useEffect, type KeyboardEvent } from 'react';
 import { EventExplorerPage } from './pages/EventExplorerPage';
 import { NotificationTimelineView } from './components/NotificationTimelineView';
 import { ActivityFeed } from './components/ActivityFeed';
+import { UserActivityTimeline } from './components/UserActivityTimeline';
+import { RetryStatisticsPanel } from './components/RetryStatisticsPanel';
 import { WebhookDashboardPage } from './pages/WebhookDashboardPage';
 import { ExportHistoryPage } from './pages/ExportHistoryPage';
 import { NotificationSearchPage } from './pages/NotificationSearchPage';
 import { NotificationPreferencesPage } from './pages/NotificationPreferencesPage';
 import { TemplatesPage } from './pages/TemplatesPage';
+import { ChannelDetailsPage } from './pages/ChannelDetailsPage';
+import { RpcBenchmarkPage } from './pages/RpcBenchmarkPage';
 import { ThemeToggle } from './components/ThemeToggle';
+import { MobileNavDrawer, NAV_ITEMS, type Tab } from './components/MobileNavDrawer';
+import { ToastProvider } from './context/ToastContext';
 import { useTheme } from './hooks/useTheme';
+import { useIsMobileNav } from './hooks/useMediaQuery';
 import { DeliveryHeatmap } from './components/DeliveryHeatmap';
 import { useEventStore } from './store/eventStore';
+import { SyncStatus } from './components/SyncStatus';
+import { ErrorBoundary } from './components/ErrorBoundary';
 
+type Tab = 'explorer' | 'preferences';
+
+export function App() {
+  const [activeTab, setActiveTab] = useState<Tab>('explorer');
 type Tab =
   | 'explorer'
   | 'timeline'
@@ -20,121 +50,304 @@ type Tab =
   | 'export-history'
   | 'search'
   | 'preferences'
-  | 'templates';
+  | 'templates'
+  | 'channels';
+
+const TAB_ITEMS: { id: Tab; label: string }[] = [
+  { id: 'explorer', label: 'Event Explorer' },
+  { id: 'timeline', label: 'Delivery Timeline' },
+  { id: 'activity', label: 'Activity Feed' },
+  { id: 'webhooks', label: 'Webhook Performance' },
+  { id: 'export-history', label: 'Export History' },
+  { id: 'search', label: 'Notification Search' },
+  { id: 'preferences', label: 'Preferences' },
+  { id: 'templates', label: 'Templates' },
+];
+import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
+import { KeyboardShortcutsHelp } from './components/KeyboardShortcutsHelp';
 
 export function App() {
   const [tab, setTab] = useState<Tab>('explorer');
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
+import { DashboardLayout } from './layouts/DashboardLayout';
+
+export function App() {
+  const [tab, setTab] = useState<Tab>(() => {
+    const hash = window.location.hash.slice(1);
+    if (NAV_ITEMS.some((item) => item.id === hash)) {
+      return hash as Tab;
+    }
+    return 'explorer';
+  });
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const isMobileNav = useIsMobileNav();
   const { theme, toggleTheme } = useTheme();
   const events = useEventStore((state) => state.events);
+  const tabListRef = useRef<HTMLDivElement>(null);
+  const hamburgerRef = useRef<HTMLButtonElement>(null);
+
+  // ── Keyboard shortcuts (#505) ───────────────────────────────────────────
+  useKeyboardShortcuts({
+    activeTab: tab,
+    onTabChange: setTab,
+    onToggleTheme: toggleTheme,
+    helpOpen,
+    onToggleHelp: useCallback(() => setHelpOpen((prev) => !prev), []),
+    onCloseHelp: useCallback(() => setHelpOpen(false), []),
+  });
+
+  // ── Keyboard navigation inside tablist (arrow keys) ──────────────────────
+  const handleTabKeyDown = useCallback(
+    (e: KeyboardEvent<HTMLDivElement>) => {
+      const tabs = Array.from(
+        tabListRef.current?.querySelectorAll<HTMLButtonElement>('[role="tab"]') ?? [],
+      );
+      const current = tabs.findIndex((el) => el === document.activeElement);
+  // Sync URL hash with tab state
+  useEffect(() => {
+    window.location.hash = tab;
+  }, [tab]);
+
+  // Sync tab state with URL hash changes
+  useEffect(() => {
+    const handleHashChange = () => {
+      const hash = window.location.hash.slice(1);
+      if (NAV_ITEMS.some((item) => item.id === hash)) {
+        setTab(hash as Tab);
+      }
+    };
+    window.addEventListener('hashchange', handleHashChange);
+    return () => window.removeEventListener('hashchange', handleHashChange);
+  }, []);
+
+  // Close mobile drawer when the viewport crosses into desktop layout so
+  // hidden overlay/focus-trap state does not linger after a resize (#681).
+  useEffect(() => {
+    if (!isMobileNav && drawerOpen) {
+      setDrawerOpen(false);
+    }
+  }, [isMobileNav, drawerOpen]);
+
+  const handleTabKeyDown = useCallback((e: KeyboardEvent<HTMLDivElement>) => {
+    const tabs = Array.from(
+      tabListRef.current?.querySelectorAll<HTMLButtonElement>('[role="tab"]') ?? [],
+    );
+    const current = tabs.findIndex((el) => el === document.activeElement);
+
+    let next = current;
+    if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+      e.preventDefault();
+      next = (current + 1) % tabs.length;
+    } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      next = (current - 1 + tabs.length) % tabs.length;
+    } else if (e.key === 'Home') {
+      e.preventDefault();
+      next = 0;
+    } else if (e.key === 'End') {
+      e.preventDefault();
+      next = tabs.length - 1;
+    }
+
+    if (next !== current) {
+      tabs[next]?.focus();
+      const navItem = NAV_ITEMS[next];
+      if (navItem) setTab(navItem.id);
+    }
+  }, []);
+
+  const handleDrawerOpen = useCallback(() => setDrawerOpen(true), []);
+  const handleDrawerClose = useCallback(() => setDrawerOpen(false), []);
+
+  const handleTabChange = useCallback((newTab: Tab) => {
+    setTab(newTab);
+  }, []);
 
   return (
-    <div className="app">
-      <div className="app__theme-bar">
-        <ThemeToggle theme={theme} onToggle={toggleTheme} />
-      </div>
-  | 'preferences';
+    <ToastProvider>
+      {/* Skip-to-content link (#394) */}
+      <a href="#main-content" className="skip-link">
+        Skip to main content
+      </a>
 
-export function App() {
-  const [tab, setTab] = useState<Tab>('explorer');
+      {/* Keyboard shortcuts help overlay (#505) */}
+      <KeyboardShortcutsHelp isOpen={helpOpen} onClose={() => setHelpOpen(false)} />
 
-  return (
-    <div className="app">
-      <nav className="app-tabs" role="tablist" aria-label="Main navigation">
-        <button
-          type="button"
-          role="tab"
-          type="button"
-          aria-selected={tab === 'explorer'}
-          className={`app-tabs__btn${tab === 'explorer' ? ' app-tabs__btn--active' : ''}`}
-          onClick={() => setTab('explorer')}
-        >
-          Event Explorer
-        </button>
-        <button
-          type="button"
-          role="tab"
-          type="button"
-          aria-selected={tab === 'timeline'}
-          className={`app-tabs__btn${tab === 'timeline' ? ' app-tabs__btn--active' : ''}`}
-          onClick={() => setTab('timeline')}
-        >
-          Delivery Timeline
-        </button>
-        <button
-          type="button"
-          role="tab"
-          type="button"
-          aria-selected={tab === 'activity'}
-          className={`app-tabs__btn${tab === 'activity' ? ' app-tabs__btn--active' : ''}`}
-          onClick={() => setTab('activity')}
-        >
-          Activity Feed
-        </button>
-        <button
-          type="button"
-          role="tab"
-          type="button"
-          aria-selected={tab === 'webhooks'}
-          className={`app-tabs__btn${tab === 'webhooks' ? ' app-tabs__btn--active' : ''}`}
-          onClick={() => setTab('webhooks')}
-        >
-          Webhook Performance
-        </button>
-        <button
-          type="button"
-          role="tab"
-          type="button"
-          aria-selected={tab === 'export-history'}
-          className={`app-tabs__btn${tab === 'export-history' ? ' app-tabs__btn--active' : ''}`}
-          onClick={() => setTab('export-history')}
-        >
-          Export History
-        </button>
-        <button
-          type="button"
-          role="tab"
-          type="button"
-          aria-selected={tab === 'search'}
-          className={`app-tabs__btn${tab === 'search' ? ' app-tabs__btn--active' : ''}`}
-          onClick={() => setTab('search')}
-        >
-          Notification Search
-        </button>
-        <button
-          role="tab"
-          type="button"
-          type="button"
-          role="tab"
-          aria-selected={tab === 'preferences'}
-          className={`app-tabs__btn${tab === 'preferences' ? ' app-tabs__btn--active' : ''}`}
-          onClick={() => setTab('preferences')}
-        >
-          Preferences
-        </button>
-        <button
-          role="tab"
-          type="button"
-          aria-selected={tab === 'templates'}
-          className={`app-tabs__btn${tab === 'templates' ? ' app-tabs__btn--active' : ''}`}
-          onClick={() => setTab('templates')}
-        >
-          Templates
-        </button>
-      </nav>
+      <div className="app">
+        {/* Top bar */}
+        <header className="app__header" role="banner">
+          <div className="app__header-inner">
+            {/* Hamburger for mobile (#396) */}
+            <button
+              ref={hamburgerRef}
+              type="button"
+              className="app__hamburger"
+              aria-label="Open navigation menu"
+              aria-expanded={drawerOpen}
+              aria-controls="mobile-nav-drawer"
+              onClick={handleDrawerOpen}
+            >
+              <span className="app__hamburger-bar" aria-hidden="true" />
+              <span className="app__hamburger-bar" aria-hidden="true" />
+              <span className="app__hamburger-bar" aria-hidden="true" />
+            </button>
 
-      {tab === 'explorer' && (
+            <span className="app__brand">NotifyChain</span>
+
+            <div className="app__theme-bar">
+              <SyncStatus />
+              <ThemeToggle theme={theme} onToggle={toggleTheme} />
+            </div>
+          </div>
+        </header>
+
+        {/* Desktop tab navigation (#394, #396) */}
+        <nav className="app-tabs" aria-label="Main navigation">
+      <DashboardLayout
+        activeTab={tab}
+        onSelectTab={setTab}
+        drawerOpen={drawerOpen}
+        onDrawerOpen={handleDrawerOpen}
+        onDrawerClose={handleDrawerClose}
+        tabListRef={tabListRef}
+        hamburgerRef={hamburgerRef}
+        onTabKeyDown={handleTabKeyDown}
+        themeBar={
+          <>
+            <SyncStatus />
+            <ThemeToggle theme={theme} onToggle={toggleTheme} />
+          </>
+        }
+      >
+        {NAV_ITEMS.map((item) => (
+          <div
+            key={item.id}
+            role="tabpanel"
+            id={`panel-${item.id}`}
+            aria-labelledby={`tab-${item.id}`}
+            hidden={tab !== item.id}
+            className="app__panel"
+          >
+            {NAV_ITEMS.map((item, index) => (
+              <button
+                key={item.id}
+                type="button"
+                role="tab"
+                id={`tab-${item.id}`}
+                aria-selected={tab === item.id}
+                aria-controls={`panel-${item.id}`}
+                tabIndex={tab === item.id ? 0 : -1}
+                className={`app-tabs__btn${tab === item.id ? ' app-tabs__btn--active' : ''}`}
+                onClick={() => setTab(item.id)}
+                title={index < 9 ? `Press ${index + 1} to switch` : undefined}
+              >
+                {index < 9 && (
+                  <kbd className="app-tabs__shortcut">{index + 1}</kbd>
+                )}
+                {item.label}
+              </button>
+            ))}
+            {tab === item.id && renderPanel(item.id, events)}
+          </div>
+        ))}
+      </DashboardLayout>
+
+      <MobileNavDrawer
+        isOpen={drawerOpen}
+        onClose={handleDrawerClose}
+        activeTab={tab}
+        onSelectTab={(t) => {
+          setTab(t);
+          handleDrawerClose();
+        }}
+      />
+    </ToastProvider>
+  );
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function renderPanel(tab: Tab, events: any[]) {
+  switch (tab) {
+    case 'explorer':
+      return (
+        <ErrorBoundary section="Event Explorer">
+          <>
+            <EventExplorerPage />
+            <DeliveryHeatmap events={events} />
+          </>
+        </ErrorBoundary>
         <>
           <EventExplorerPage />
           <DeliveryHeatmap events={events} />
         </>
-      )}
-      {tab === 'timeline' && <NotificationTimelineView />}
-      {tab === 'activity' && <ActivityFeed />}
-      {tab === 'webhooks' && <WebhookDashboardPage />}
-      {tab === 'export-history' && <ExportHistoryPage />}
-      {tab === 'search' && <NotificationSearchPage />}
-      {tab === 'preferences' && <NotificationPreferencesPage />}
-      {tab === 'templates' && <TemplatesPage />}
-    </div>
-  );
+      );
+    case 'timeline':
+      return (
+        <ErrorBoundary section="Delivery Timeline">
+          <NotificationTimelineView />
+        </ErrorBoundary>
+      );
+    case 'activity':
+      return (
+        <ErrorBoundary section="Activity Feed">
+          <ActivityFeed />
+        </ErrorBoundary>
+      );
+    case 'user-activity':
+      return (
+        <ErrorBoundary section="User Activity">
+          <UserActivityTimeline />
+        </ErrorBoundary>
+      );
+    case 'retry-stats':
+      return (
+        <ErrorBoundary section="Retry Statistics">
+          <RetryStatisticsPanel />
+        </ErrorBoundary>
+      );
+    case 'webhooks':
+      return (
+        <ErrorBoundary section="Webhook Performance">
+          <WebhookDashboardPage />
+        </ErrorBoundary>
+      );
+    case 'export-history':
+      return (
+        <ErrorBoundary section="Export History">
+          <ExportHistoryPage />
+        </ErrorBoundary>
+      );
+    case 'search':
+      return (
+        <ErrorBoundary section="Notification Search">
+          <NotificationSearchPage />
+        </ErrorBoundary>
+      );
+    case 'preferences':
+      return (
+        <ErrorBoundary section="Notification Preferences">
+          <NotificationPreferencesPage />
+        </ErrorBoundary>
+      );
+    case 'templates':
+      return (
+        <ErrorBoundary section="Templates">
+          <TemplatesPage />
+        </ErrorBoundary>
+      );
+    case 'channels':
+      return (
+        <ErrorBoundary section="Channel Details">
+          <ChannelDetailsPage />
+        </ErrorBoundary>
+      );
+      return <TemplatesPage />;
+    case 'channels':
+      return <ChannelDetailsPage />;
+    case 'rpc-benchmark':
+      return <RpcBenchmarkPage />;
+    default:
+      return null;
+  }
 }

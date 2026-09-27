@@ -1,6 +1,7 @@
 import * as StellarSDK from '@stellar/stellar-sdk';
 import { ContractConfig } from '../types';
 import logger from '../utils/logger';
+import { generateCorrelationId } from '../utils/request-id';
 import { getEventName } from '../utils/event-utils';
 import { getNotificationAnalyticsAggregator, NotificationAnalyticsAggregator } from './notification-analytics-aggregator';
 import { NotificationType } from '../types/scheduled-notification';
@@ -68,15 +69,6 @@ export class NotificationRetryQueue {
     processingTimes: [] as number[],
   };
 
-  // Metrics
-  private metrics = {
-    totalEnqueued: 0,
-    totalProcessed: 0,
-    totalSucceeded: 0,
-    totalFailed: 0,
-    processingTimes: [] as number[],
-  };
-
   constructor(notificationFn: NotificationFn, options?: RetryQueueOptions) {
     this.notificationFn = notificationFn;
     this.baseDelayMs = options?.baseDelayMs ?? DEFAULTS.baseDelayMs;
@@ -94,11 +86,13 @@ export class NotificationRetryQueue {
     requestId?: string,
     priority: Priority = Priority.Medium
   ): void {
+    const correlationId = requestId ?? generateCorrelationId();
     const fingerprint = buildRetryFingerprint(event, contractConfig.address);
 
     if (this.queuedFingerprints.has(fingerprint)) {
       logger.info('Skipping duplicate retry queue entry', {
-        requestId,
+        requestId: correlationId,
+        correlationId,
         eventId: event.id,
         contractAddress: contractConfig.address,
         fingerprint,
@@ -110,7 +104,8 @@ export class NotificationRetryQueue {
     const nextRetryAt = Date.now() + delayMs;
 
     logger.info('Notification queued for retry', {
-      requestId,
+      requestId: correlationId,
+      correlationId,
       eventId: event.id,
       contractAddress: contractConfig.address,
       delayMs,
@@ -120,9 +115,8 @@ export class NotificationRetryQueue {
     });
 
     this.queuedFingerprints.add(fingerprint);
-    this.queue.push({ event, contractConfig, retryCount: 0, nextRetryAt, requestId });
-    this.metrics.totalEnqueued++;
     this.queue.push({ event, contractConfig, retryCount: 0, nextRetryAt, requestId, priority, enqueuedAt: Date.now() });
+    this.metrics.totalEnqueued++;
   }
 
   start(): void {
@@ -189,6 +183,7 @@ export class NotificationRetryQueue {
 
     logger.info('Retrying failed notification', {
       requestId: item.requestId,
+      correlationId: item.requestId,
       eventId: item.event.id,
       contractAddress: item.contractConfig.address,
       attempt,
@@ -220,6 +215,7 @@ export class NotificationRetryQueue {
       });
       logger.info('Retry succeeded', {
         requestId: item.requestId,
+        correlationId: item.requestId,
         eventId: item.event.id,
         contractAddress: item.contractConfig.address,
         attempt,
@@ -242,6 +238,7 @@ export class NotificationRetryQueue {
       });
       logger.error('Notification permanently failed after max retries', {
         requestId: item.requestId,
+        correlationId: item.requestId,
         eventId: item.event.id,
         contractAddress: item.contractConfig.address,
         totalAttempts: attempt,
@@ -254,6 +251,7 @@ export class NotificationRetryQueue {
 
     logger.warn('Retry failed, scheduling next attempt', {
       requestId: item.requestId,
+      correlationId: item.requestId,
       eventId: item.event.id,
       contractAddress: item.contractConfig.address,
       attempt,

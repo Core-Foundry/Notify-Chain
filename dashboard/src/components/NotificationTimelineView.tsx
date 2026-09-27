@@ -2,6 +2,9 @@ import { useState, useCallback } from 'react';
 import type { NotificationTimeline, TimelineEntry, TimelineStatus } from '../types/timeline';
 import { fetchTimeline } from '../services/timelineApi';
 import { formatTimestamp } from '../utils/formatTime';
+import { EmptyState } from './EmptyState';
+import { CopyButton } from './CopyButton';
+import { FormField, FormInput } from './FormField';
 
 // ─── status helpers ──────────────────────────────────────────────────────────
 
@@ -117,29 +120,27 @@ export function NotificationTimelineView() {
 
       {/* Filter / search */}
       <form className="timeline-view__form" onSubmit={handleSearch} role="search">
-        <label htmlFor="timeline-id-input" className="timeline-view__label">
-          Notification ID
-        </label>
-        <div className="timeline-view__input-row">
-          <input
-            id="timeline-id-input"
-            type="number"
-            min="1"
-            className="timeline-view__input"
-            placeholder="e.g. 42"
-            value={inputValue}
-            onChange={(e) => setInputValue(e.target.value)}
-            aria-describedby={error ? 'timeline-error' : undefined}
-          />
-          <button type="submit" className="timeline-view__btn" disabled={loading}>
-            {loading ? 'Loading…' : 'View Timeline'}
-          </button>
-        </div>
-        {error && (
-          <p id="timeline-error" className="timeline-view__error" role="alert">
-            {error}
-          </p>
-        )}
+        <FormField
+          id="timeline-id-input"
+          label="Notification ID"
+          error={error ? `Notification ID: ${error}` : null}
+        >
+          <div className="timeline-view__input-row">
+            <FormInput
+              fieldId="timeline-id-input"
+              type="number"
+              min="1"
+              className="timeline-view__input"
+              placeholder="e.g. 42"
+              value={inputValue}
+              onChange={(e) => setInputValue(e.target.value)}
+              error={error ? `Notification ID: ${error}` : null}
+            />
+            <button type="submit" className="timeline-view__btn" disabled={loading}>
+              {loading ? 'Loading…' : 'View Timeline'}
+            </button>
+          </div>
+        </FormField>
       </form>
 
       {/* Loading skeleton */}
@@ -147,12 +148,16 @@ export function NotificationTimelineView() {
 
       {/* Empty state — searched but no entries */}
       {!loading && timeline && timeline.entries.length === 0 && (
-        <div className="timeline-view__empty" role="status">
-          <p>No history entries found for notification #{timeline.notificationId}.</p>
+        <EmptyState
+          className="empty-state--compact"
+          icon="📭"
+          title="No history entries"
+          description={`No delivery history found for notification #${timeline.notificationId}.`}
+        >
           <p className="timeline-view__empty-sub">
             Current status: <strong>{STATUS_LABEL[overallStatus!] ?? overallStatus}</strong>
           </p>
-        </div>
+        </EmptyState>
       )}
 
       {/* Timeline entries */}
@@ -162,6 +167,7 @@ export function NotificationTimelineView() {
             <span>
               Notification <strong>#{timeline.notificationId}</strong>
             </span>
+            <CopyButton value={String(timeline.notificationId)} label="notification ID" size="xs" />
             <span
               className={`timeline__dot ${STATUS_CLASS[overallStatus!] ?? ''} timeline__dot--inline`}
               aria-hidden="true"
@@ -199,9 +205,12 @@ export function NotificationTimelineView() {
 
       {/* Initial empty state — nothing searched yet */}
       {!loading && !timeline && !error && (
-        <div className="timeline-view__empty" role="status">
-          <p>Enter a notification ID above to view its delivery history.</p>
-        </div>
+        <EmptyState
+          className="empty-state--compact"
+          icon="🕐"
+          title="View delivery timeline"
+          description="Enter a notification ID above to see the full delivery history, retry attempts, and current status."
+        />
       )}
     </section>
   );

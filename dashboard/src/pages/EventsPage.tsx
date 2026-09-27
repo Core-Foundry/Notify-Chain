@@ -18,6 +18,8 @@ export function EventsPage() {
   const setEvents = useEventStore((state) => state.setEvents);
   const setLoading = useEventStore((state) => state.setLoading);
   const setError = useEventStore((state) => state.setError);
+  const markSyncSuccess = useEventStore((state) => state.markSyncSuccess);
+  const markSyncFailure = useEventStore((state) => state.markSyncFailure);
   // Re-fetch whenever lastFetchedAt is reset to 0 (via invalidateEvents()) so
   // that a successful blockchain status-change transaction is reflected on the
   // next render cycle without requiring a full hard refresh.
@@ -46,15 +48,13 @@ export function EventsPage() {
         const remoteEvents = await fetchEvents(API_URL);
         if (!cancelled) {
           setEvents(remoteEvents);
+          markSyncSuccess();
         }
       } catch (error) {
         if (!cancelled) {
           setEvents(generateMockEvents(DEFAULT_EVENT_COUNT));
-          setError(
-            isListenerApiTimeoutError(error)
-              ? 'Listener API timed out — showing mock events for demo.'
-              : 'Listener API unavailable — showing mock events for demo.'
-          );
+          setError('Listener API unavailable — showing mock events for demo.');
+          markSyncFailure('Initial sync failed');
         }
       } finally {
         if (!cancelled) {
@@ -70,9 +70,12 @@ export function EventsPage() {
         const remoteEvents = await fetchEvents(API_URL);
         if (!cancelled) {
           setEvents(remoteEvents);
+          markSyncSuccess();
         }
       } catch {
-        // Silently ignore background poll errors.
+        if (!cancelled) {
+          markSyncFailure('Background refresh failed');
+        }
       }
     }, POLL_INTERVAL_MS);
 
@@ -80,7 +83,7 @@ export function EventsPage() {
       cancelled = true;
       clearInterval(intervalId);
     };
-  }, [lastFetchedAt, setEvents, setError, setLoading]);
+  }, [lastFetchedAt, markSyncFailure, markSyncSuccess, setEvents, setError, setLoading]);
 
   return (
     <main className="events-page">

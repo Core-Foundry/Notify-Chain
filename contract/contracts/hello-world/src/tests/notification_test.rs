@@ -558,6 +558,7 @@ fn test_recall_notification_emits_event_for_sender() {
         &creator,
         &3600u64,
         &String::from_str(&test_env.env, "Recall me"),
+        &NotificationPriority::Medium,
     );
     client.recall_notification(&notification_id, &creator);
 
@@ -580,6 +581,7 @@ fn test_recall_notification_rejects_unauthorized_sender() {
         &creator,
         &3600u64,
         &String::from_str(&test_env.env, "Nope"),
+        &NotificationPriority::Medium,
     );
 
     let result = client.try_recall_notification(&notification_id, &other);
@@ -604,6 +606,7 @@ fn test_recall_notification_rejects_after_delivery_confirmation() {
         &creator,
         &3600u64,
         &String::from_str(&test_env.env, "Delivered"),
+        &NotificationPriority::Medium,
     );
     client.confirm_notification_delivery(&notification_id, &creator);
 
@@ -666,4 +669,95 @@ fn test_created_event_backward_compatible_shape() {
         .unwrap();
     let data_id = BytesN::<32>::try_from_val(&test_env.env, &data).unwrap();
     assert_eq!(data_id, id);
+}
+
+// ============================================
+// Notification Priority Assignment
+// ============================================
+
+fn make_notification_id(env: &soroban_sdk::Env, tag: u8) -> BytesN<32> {
+    let mut id_bytes = [0u8; 32];
+    id_bytes[0] = tag;
+    BytesN::from_array(env, &id_bytes)
+}
+
+#[test]
+fn test_schedule_notification_stores_assigned_priority() {
+    let test_env = setup_test_env();
+    let client = AutoShareContractClient::new(&test_env.env, &test_env.autoshare_contract);
+    let creator = test_env.users.get(0).unwrap().clone();
+
+    for (tag, priority) in [
+        (60u8, NotificationPriority::High),
+        (61u8, NotificationPriority::Medium),
+        (62u8, NotificationPriority::Low),
+    ] {
+        let id = make_notification_id(&test_env.env, tag);
+        client.schedule_notification(
+            &id,
+            &creator,
+            &3600u64,
+            &String::from_str(&test_env.env, "Priority test"),
+            &priority,
+        );
+
+        let stored = client.get_notification(&id);
+        assert_eq!(stored.priority, priority, "stored priority must match what was assigned at scheduling time");
+    }
+}
+
+#[test]
+fn test_schedule_notification_event_carries_assigned_priority() {
+    let test_env = setup_test_env();
+    let client = AutoShareContractClient::new(&test_env.env, &test_env.autoshare_contract);
+    let creator = test_env.users.get(0).unwrap().clone();
+
+    let id = make_notification_id(&test_env.env, 63);
+    client.schedule_notification(
+        &id,
+        &creator,
+        &3600u64,
+        &String::from_str(&test_env.env, "High priority alert"),
+        &NotificationPriority::High,
+    );
+
+    let topics = topics_of(&test_env.env, "notification_scheduled").expect("event must be emitted");
+    // [0] name, [1] creator, [2] category, [3] priority.
+    let priority = NotificationPriority::try_from_val(&test_env.env, &topics.get(3).unwrap()).unwrap();
+    assert_eq!(priority, NotificationPriority::High);
+}
+
+#[test]
+fn test_batch_schedule_notifications_stores_per_item_priority() {
+    let test_env = setup_test_env();
+    let client = AutoShareContractClient::new(&test_env.env, &test_env.autoshare_contract);
+    let creator = test_env.users.get(0).unwrap().clone();
+
+    let mut ids: Vec<BytesN<32>> = Vec::new(&test_env.env);
+    let mut ttls: Vec<u64> = Vec::new(&test_env.env);
+    let mut titles: Vec<String> = Vec::new(&test_env.env);
+    let mut priorities: Vec<NotificationPriority> = Vec::new(&test_env.env);
+
+    let assigned = [
+        NotificationPriority::High,
+        NotificationPriority::Medium,
+        NotificationPriority::Low,
+    ];
+    for (i, priority) in assigned.iter().enumerate() {
+        ids.push_back(make_notification_id(&test_env.env, 70 + i as u8));
+        ttls.push_back(3600u64);
+        titles.push_back(String::from_str(&test_env.env, "Batch priority test"));
+        priorities.push_back(priority.clone());
+    }
+
+    client.batch_schedule_notifications(&ids, &creator, &ttls, &titles, &priorities);
+
+    for (i, priority) in assigned.iter().enumerate() {
+        let id = make_notification_id(&test_env.env, 70 + i as u8);
+        let stored = client.get_notification(&id);
+        assert_eq!(
+            stored.priority, *priority,
+            "each notification in a batch must retain its own assigned priority"
+        );
+    }
 }

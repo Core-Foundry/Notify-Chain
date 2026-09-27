@@ -1,6 +1,7 @@
 import http from 'http';
 import logger from '../utils/logger';
 import { getDatabase } from '../database/database';
+import { sendErr, ErrorCode } from '../utils/response';
 import { RateLimitConfig } from '../types';
 
 export interface RateLimitMetrics {
@@ -152,14 +153,8 @@ export class RateLimiter {
       // Record rate limit event
       this.recordEvent(clientId, clientType, req.url || '', req.method || '', maxRequests, windowMs, requestId);
 
-      res.writeHead(429, { 'Content-Type': 'application/json' });
-      res.end(
-        JSON.stringify({
-          error: 'Too Many Requests',
-          message: `Rate limit exceeded. Try again in ${waitSec} seconds.`,
-        })
-      );
-      return false;
+      sendErr(res, 429, `Rate limit exceeded. Try again in ${waitSec} seconds.`, ErrorCode.RATE_LIMITED);
+       return false;
     }
 
     this.metrics.allowedRequests++;

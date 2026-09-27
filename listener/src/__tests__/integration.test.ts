@@ -51,4 +51,29 @@ describe("Full Notification Lifecycle Integration Test", () => {
     // 5. Simulate acknowledgement (event is processed)
     expect(retrievedEvents[0].receivedAt).toBeLessThanOrEqual(Date.now());
   });
+
+  test("evicts oldest events instead of failing when registry is at capacity", () => {
+    const boundedRegistry = new EventRegistry(2);
+    const topic = [xdr.ScVal.scvSymbol("task"), xdr.ScVal.scvSymbol("created")];
+    const value = xdr.ScVal.scvU32(1);
+
+    for (let i = 0; i < 3; i++) {
+      boundedRegistry.addFromInput({
+        eventId: `event-${i}`,
+        contractAddress: "CDNJ3YJ5F4U5YF4O5U6Y7I8U9Y0U1I2O3P4I5U6Y7I8",
+        eventName: "task",
+        ledger: 100 + i,
+        type: "contract",
+        topic,
+        value,
+        txHash: `hash-${i}`,
+      });
+    }
+
+    // The registry should degrade gracefully (evict oldest) rather than
+    // throwing or silently dropping the newest notification.
+    const remaining = boundedRegistry.getEvents();
+    expect(remaining.length).toBe(2);
+    expect(remaining.map((e) => e.eventId)).toEqual(["event-1", "event-2"]);
+  });
 });

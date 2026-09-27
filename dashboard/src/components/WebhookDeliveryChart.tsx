@@ -1,5 +1,6 @@
 import { memo, useMemo } from 'react';
 import type { WebhookMetricBucket } from '../types/webhook';
+import { EmptyState } from './EmptyState';
 
 interface WebhookDeliveryChartProps {
   buckets: WebhookMetricBucket[];
@@ -147,9 +148,12 @@ export const WebhookDeliveryChart = memo(function WebhookDeliveryChart({
           })}
         </svg>
       ) : buckets.length === 0 ? (
-        <div className="webhook-delivery-chart__empty" role="status">
-          No data for the selected range
-        </div>
+        <EmptyState
+          className="empty-state--inline"
+          icon="📊"
+          title="No data"
+          description="No delivery data for the selected range."
+        />
       ) : (
         <svg
           viewBox={`0 0 ${viewBoxWidth} ${viewBoxHeight}`}

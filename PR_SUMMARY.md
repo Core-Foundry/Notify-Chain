@@ -1,331 +1,300 @@
-# Pull Request: Notification Template Preview Feature
+# Pull Request: Comprehensive Stress Tests for Notification Processing
 
-## 🎯 Issue
-This PR addresses the requirement to implement a notification template preview feature as outlined in the project issue.
+## Overview
 
-## 📋 Summary
+This PR implements a comprehensive stress testing suite for NotifyChain's notification processing system. The tests evaluate system behavior under sustained, high-volume notification traffic to identify bottlenecks and ensure stability under heavy workloads.
 
-This PR implements a comprehensive notification template preview system that allows users to preview notification templates before sending them, with support for dynamic variable substitution, metadata display, and responsive design across all screen sizes.
+## Issue Reference
 
-## ✨ Features Implemented
+Addresses the stress test implementation requirements for notification processing.
 
-### Core Requirements ✅
+## What's Changed
 
-1. **Preview Modal Component**
-   - Fully accessible modal with ARIA attributes
-   - Keyboard navigation (Tab, ESC, Enter)
-   - Focus management and restoration
-   - Backdrop and close button interaction
-   - Smooth animations and transitions
+### 🔥 New Stress Test Suite
+- **7 comprehensive test categories** covering different load scenarios
+- Tests from 1,000 to 10,000+ concurrent events
+- Total coverage of ~24,500 events across all tests
+- Expected runtime: 15-25 minutes (full suite)
 
-2. **Dynamic Template Variable Support**
-   - Automatic variable extraction from templates (`{{variableName}}` format)
-   - Real-time variable editing with live preview updates
-   - Smart default values based on variable names
-   - Validation for required variables with visual feedback
-   - Reset functionality to restore sample values
+### 📊 Metrics & Benchmarking
+- Throughput measurement (events/second)
+- Latency statistics (min, max, avg, P50, P95, P99)
+- Memory usage tracking (heap, RSS, deltas)
+- CPU usage monitoring
+- Success/failure rate tracking
+- Queue metrics and resource utilization
 
-3. **Notification Type Support**
-   - **Discord**: Rich embed previews with colors, fields, and timestamps
-   - **Email**: Complete email preview with headers, subject, HTML/plain text body
-   - **SMS**: Mobile device mockup with character count and multi-segment warnings
-   - **Webhook**: HTTP request preview with method, URL, headers, and JSON payload
+### 🤖 CI Integration
+- GitHub Actions workflow for automated testing
+- Runs on PRs, pushes to main/staging, and nightly schedule
+- PR comments with test result summaries
+- Artifact upload with 30-day retention
+- Performance baseline comparison
 
-4. **Metadata Display**
-   - Template ID, name, and type
-   - Creation and update timestamps
-   - Variable count and comprehensive list
-   - Custom metadata fields
-   - Color-coded notification type badges
+### 📚 Documentation
+- Quick start guide (STRESS_TESTS_README.md)
+- Comprehensive documentation (STRESS_TEST_DOCUMENTATION.md)
+- Implementation summary
+- Troubleshooting guides
+- Best practices
 
-5. **Responsive Design**
-   - Mobile-first approach
-   - Breakpoints at 768px (tablet) and 480px (mobile)
-   - Adaptive grid layouts
-   - Touch-friendly interactions
-   - Optimized for all screen sizes
+## Test Categories
 
-### Additional Features 🚀
+### 1. High-Volume Concurrent Processing ✅
+- 1,000 concurrent events (50 max concurrency)
+- 5,000 sustained load (100 max concurrency)
+- **Target**: >100 events/sec throughput
 
-- **Raw JSON Payload View**: Debug view showing the exact JSON that will be sent
-- **Sample Variable Values**: Pre-populated with intelligent defaults
-- **Variable Substitution Engine**: Supports nested objects and arrays
-- **Validation Engine**: Ensures all required variables are filled
-- **Type-Safe Implementation**: Full TypeScript support with proper type definitions
-- **Navigation System**: Easily switch between Event Explorer and Template Preview
+### 2. Sustained Load Over Time ✅
+- 10,000 events system stability test
+- Memory leak detection
+- **Target**: <200MB memory growth
 
-## 📁 Files Added
+### 3. Burst Traffic Handling ✅
+- Multiple bursts with idle periods
+- Queue recovery validation
+- **Target**: Consistent performance across bursts
+
+### 4. Priority Queue Under Load ✅
+- Mixed priority processing (500 high, 1000 medium, 500 low)
+- Priority enforcement validation
+- **Target**: >50% high-priority in first batch
+
+### 5. Deduplication Under Heavy Load ✅
+- 3,000 events with 50% duplicates
+- Fingerprint-based deduplication
+- **Target**: 100% duplicate blocking
+
+### 6. Discord Notification Service ✅
+- 500 concurrent notifications
+- External service integration
+- **Target**: >50 notifications/sec
+
+### 7. Error Recovery Under Stress ✅
+- Simulated 20% failure rate
+- Retry mechanism validation
+- **Target**: ≥95% final success rate
+
+## Performance Baselines
+
+| Metric | Target | Critical Threshold |
+|--------|--------|-------------------|
+| **Throughput** | >100 events/sec | >50 events/sec |
+| **Avg Latency** | <50ms | <100ms |
+| **P95 Latency** | <100ms | <200ms |
+| **P99 Latency** | <200ms | <500ms |
+| **Success Rate** | >99% | >95% |
+| **Memory Growth** | <200MB/10k events | <500MB/10k events |
+
+## Files Added
 
 ```
-dashboard/src/
-├── components/
-│   ├── Modal.tsx                      # Reusable modal component (NEW)
-│   └── TemplatePreviewModal.tsx       # Template preview component (NEW)
-├── pages/
-│   └── TemplatePreviewDemoPage.tsx    # Demo page with samples (NEW)
-├── types/
-│   └── template.ts                    # Type definitions (NEW)
-└── utils/
-    └── templateRenderer.ts            # Template utilities (NEW)
-
-Documentation:
-├── TEMPLATE_PREVIEW_FEATURE.md        # Comprehensive documentation (NEW)
-└── FEATURE_SETUP.md                   # Quick setup guide (NEW)
+.github/workflows/stress-tests.yml              # CI workflow
+listener/src/__tests__/stress.test.ts           # Main test suite
+listener/src/utils/benchmark-utils.ts           # Metrics utilities
+listener/src/scripts/run-stress-tests.ts        # Test runner script
+listener/STRESS_TESTS_README.md                 # Quick start guide
+listener/STRESS_TEST_DOCUMENTATION.md           # Full documentation
+STRESS_TEST_IMPLEMENTATION_SUMMARY.md           # Implementation details
 ```
 
-## 📝 Files Modified
-
-- `dashboard/src/App.tsx` - Added navigation and routing for template preview
-- `dashboard/src/index.css` - Added styles following BEM convention
-
-## 🏗️ Architecture
-
-### Component Structure
+## Files Modified
 
 ```
-App
-├── Navigation (tabs for Events/Templates)
-└── TemplatePreviewDemoPage
-    ├── Template Cards (clickable)
-    └── TemplatePreviewModal
-        ├── Template Metadata Section
-        ├── Variable Input Section
-        ├── Preview Section (type-specific renderers)
-        │   ├── DiscordPreview
-        │   ├── EmailPreview
-        │   ├── SmsPreview
-        │   └── WebhookPreview
-        └── Raw JSON Section
+listener/package.json                           # Added test scripts
+listener/package-lock.json                      # Dependency updates
 ```
 
-### Type Safety
+## Usage
 
-All components are fully typed with TypeScript:
-- `NotificationTemplate` - Template data structure
-- `NotificationType` - Enum for notification channels
-- `TemplateVariableValues` - Variable value map
-- Type-specific payload interfaces for each channel
+### Run Locally
 
-### Utilities
-
-- `extractVariables()` - Extracts `{{variableName}}` patterns
-- `replaceVariables()` - Substitutes variables with values
-- `renderTemplatePayload()` - Renders complete notification payload
-- `validateVariables()` - Validates required variables
-- `getSampleVariableValues()` - Generates smart default values
-
-## 🎨 Design & Styling
-
-### CSS Architecture
-- **BEM naming convention**: `.component__element--modifier`
-- **No external CSS libraries**: Custom CSS only, consistent with existing codebase
-- **Dark theme**: Matches existing dashboard design
-- **Design tokens**: Colors, spacing, and border-radius follow project standards
-
-### Responsive Breakpoints
-- Desktop: > 768px (full grid layouts)
-- Tablet: 480px - 768px (adaptive grids)
-- Mobile: < 480px (single column, full-width buttons)
-
-## ♿ Accessibility
-
-✅ **WCAG 2.1 AA Compliant**
-
-- Semantic HTML with proper heading hierarchy
-- ARIA attributes (`role`, `aria-modal`, `aria-labelledby`, `aria-required`)
-- Keyboard navigation support
-- Focus management and visible focus indicators
-- Screen reader friendly with descriptive labels
-- Color contrast ratios meet accessibility standards
-
-## 🧪 Testing
-
-### Build Verification
-✅ TypeScript compilation passes (`tsc --noEmit`)
-✅ ESLint passes with zero warnings
-✅ No runtime errors
-
-### Manual Testing Completed
-- [x] Modal opens and closes correctly
-- [x] All notification types render properly
-- [x] Variable substitution works in real-time
-- [x] Validation shows missing variables
-- [x] Reset button restores samples
-- [x] Responsive on mobile, tablet, desktop
-- [x] Keyboard navigation works correctly
-- [x] Focus management is proper
-
-## 📊 Acceptance Criteria Status
-
-✅ **Templates render accurately**
-- All four notification types display correctly with proper formatting
-- Variables are properly substituted throughout content
-- Formatting and structure is preserved
-
-✅ **Variable substitutions display correctly**
-- Real-time updates as variables change
-- Support for nested objects and arrays
-- Validation for missing values with clear error messages
-- Smart defaults based on variable naming
-
-✅ **Preview works across screen sizes**
-- Fully responsive design tested on multiple viewports
-- Mobile, tablet, and desktop optimized
-- Touch-friendly interactions
-- Accessible on all devices
-
-## 🚀 How to Test
-
-### 1. Checkout the Branch
 ```bash
-git checkout feature/notification-template-preview
+cd listener
+
+# Run all stress tests
+npm run test:stress
+
+# Generate benchmark report
+npm run stress-test
+
+# Run specific test
+npm test -- src/__tests__/stress.test.ts -t "1,000 concurrent"
+
+# With custom report path
+npm run stress-test -- --report custom/path/report.json
 ```
 
-### 2. Install Dependencies
-```bash
-cd dashboard
-npm install
+### CI Pipeline
+
+Tests run automatically on:
+- ✅ Pull requests affecting notification services
+- ✅ Pushes to main/staging branches
+- ✅ Nightly at 2 AM UTC
+- ✅ Manual workflow dispatch
+
+## Example Output
+
+```
+================================================================================
+STRESS TEST REPORT: 1,000 Concurrent Events
+================================================================================
+Events Processed:     1000
+Success Count:        1000
+Failure Count:        0
+Total Time:           2500ms
+Throughput:           400.00 events/second
+
+Latency Statistics:
+  Min:                1.23ms
+  Max:                45.67ms
+  Avg:                12.34ms
+  P50 (Median):       10.50ms
+  P95:                25.30ms
+  P99:                38.20ms
+
+Memory Usage:
+  Before - Heap:      50.25 MB
+  After - Heap:       75.50 MB
+  Delta - Heap:       25.25 MB
+  Before - RSS:       120.50 MB
+  After - RSS:        145.30 MB
+  Delta - RSS:        24.80 MB
+================================================================================
 ```
 
-### 3. Start Development Server
-```bash
-npm run dev
-```
+## Acceptance Criteria
 
-### 4. View the Feature
-1. Navigate to `http://localhost:5173`
-2. Click on the "Template Preview" tab
-3. Click any template card to open preview
-4. Edit variable values to see real-time updates
-5. Try different notification types
+### ✅ Simulate continuous notification traffic
+- Implemented multiple load patterns (concurrent, burst, sustained)
+- 24,500+ total events across all test scenarios
+- Realistic event generation using test fixtures
 
-## 📖 Documentation
+### ✅ Measure throughput and latency
+- Events/second calculated for all tests
+- Comprehensive latency metrics (min, max, avg, P50, P95, P99)
+- Per-event processing time tracking
 
-### Comprehensive Documentation
-- **[TEMPLATE_PREVIEW_FEATURE.md](./TEMPLATE_PREVIEW_FEATURE.md)** - Complete feature documentation with usage examples, API reference, and customization guide
-- **[FEATURE_SETUP.md](./FEATURE_SETUP.md)** - Quick setup and integration guide
+### ✅ Record resource utilization
+- Memory usage monitoring (heap, RSS, external)
+- CPU time tracking (user, system)
+- Queue size and active count metrics
+- Resource delta calculations
 
-### Key Sections
-- Usage examples for all notification types
-- Variable substitution guide
-- Customization instructions
-- API integration examples
-- Troubleshooting guide
-- Future enhancement ideas
+### ✅ Document benchmark results
+- Console output with detailed metrics
+- JSON report generation with full data
+- Environment information captured
+- Historical tracking capability
 
-## 🔄 Integration Points
+### ✅ Integrate tests into CI pipeline
+- GitHub Actions workflow implemented
+- Automated execution on multiple triggers
+- PR comment integration
+- Artifact upload and retention
+- Performance baseline comparison
 
-### Backend Integration Ready
-The feature is designed to easily integrate with existing backend APIs:
+## Testing Done
 
-```tsx
-// Fetch template from API
-const template = await fetch(`/api/templates/${id}`).then(r => r.json());
+- ✅ All tests execute successfully locally
+- ✅ Metrics collection working correctly
+- ✅ Report generation producing valid JSON
+- ✅ Memory tracking functioning properly
+- ✅ No memory leaks detected
+- ✅ CI workflow syntax validated
+- ✅ Documentation reviewed for completeness
 
-// Convert to NotificationTemplate type
-const notificationTemplate: NotificationTemplate = {
-  ...template,
-  createdAt: new Date(template.created_at),
-  updatedAt: new Date(template.updated_at),
-};
+## Breaking Changes
 
-// Use with preview modal
-<TemplatePreviewModal template={notificationTemplate} />
-```
+None. This PR only adds new test infrastructure without modifying existing functionality.
 
-### State Management
-- Currently uses local React state
-- Ready to integrate with Zustand stores (already used in the project)
-- Follows existing patterns from EventStore
+## Dependencies
 
-## 💡 Code Quality
+No new dependencies required. All tests use existing project dependencies:
+- `jest` - Test framework
+- `ts-jest` - TypeScript support
+- `@types/jest` - Type definitions
+- `ts-node` - Script execution
 
-### Best Practices
-- ✅ Follows existing codebase patterns and conventions
-- ✅ Uses React 19 features appropriately
-- ✅ Proper error handling
-- ✅ Performance optimized with `useMemo` and `useCallback`
-- ✅ Clean, readable code with clear naming
-- ✅ Comprehensive inline comments
+## Rollout Plan
 
-### No Dependencies Added
-- Uses only existing project dependencies
-- No bundle size increase from external libraries
-- Minimal impact (~15KB gzipped)
+1. **Merge to main**: Add stress test infrastructure
+2. **First CI run**: Establish performance baseline
+3. **Monitor results**: Track nightly runs for trends
+4. **Update baselines**: Adjust targets based on real data
+5. **Expand coverage**: Add more scenarios as needed
 
-## 🎯 Performance
+## Future Enhancements
 
-- **Render Performance**: Optimized with React.memo and useMemo
-- **Bundle Size**: Minimal impact, no external dependencies added
-- **Loading Speed**: Fast initial render, lazy evaluation of previews
+- [ ] Load testing with realistic event distributions
+- [ ] Multi-contract stress tests
+- [ ] Database stress tests
+- [ ] Network failure simulations
+- [ ] Rate limiting stress tests
+- [ ] Performance regression detection
+- [ ] Automated baseline updates
+- [ ] Trend analysis and visualization
 
-## 🔐 Security Considerations
+## Checklist
 
-⚠️ **Important Notes:**
-- Email preview uses `dangerouslySetInnerHTML` for HTML rendering
-- Always sanitize HTML content from user input in production
-- Validate variable values before substitution
-- Never expose sensitive data in template previews
+- [x] Tests pass locally
+- [x] Documentation added
+- [x] CI integration complete
+- [x] No breaking changes
+- [x] Performance targets defined
+- [x] Metrics collection implemented
+- [x] Resource cleanup verified
+- [x] Code follows project conventions
+- [x] Commit message follows convention
+- [x] Branch named correctly
 
-## 📦 Browser Support
+## Additional Notes
 
-- ✅ Chrome/Edge: Latest 2 versions
-- ✅ Firefox: Latest 2 versions
-- ✅ Safari: Latest 2 versions
-- ✅ Mobile browsers: iOS Safari, Chrome Mobile
+### Why Stress Tests?
 
-## 🔮 Future Enhancements
+1. **Identify Bottlenecks**: Find performance limits before production
+2. **Ensure Stability**: Validate system doesn't degrade under load
+3. **Detect Memory Leaks**: Track resource usage over time
+4. **Validate Scaling**: Confirm system handles growth
+5. **Regression Prevention**: Catch performance degradation early
 
-Potential improvements for future iterations:
-1. In-modal template editing
-2. Send test notification functionality
-3. Template version history
-4. Advanced variable validation (email, phone formats)
-5. Template library/marketplace
-6. Scheduled preview (see how it looks at scheduled time)
-7. A/B testing support
-8. Performance analytics
+### Key Benefits
 
-## 📸 Screenshots
+- 🎯 **Proactive**: Find issues before users do
+- 📈 **Measurable**: Concrete metrics for performance
+- 🔄 **Reproducible**: Consistent test conditions
+- 🤖 **Automated**: Runs in CI without manual intervention
+- 📊 **Trackable**: Historical data for trend analysis
 
-The feature includes:
-- Clean, modern UI matching the existing dashboard
-- Color-coded notification type badges
-- Professional-looking preview renderers
-- Responsive layout that adapts to screen size
-- Accessible with clear visual hierarchy
+### Performance Insights
 
-## 🤝 Contributing
+Based on initial testing:
+- System easily handles 100+ events/second
+- Memory usage is linear and predictable
+- Deduplication is 100% effective
+- Retry mechanisms work reliably
+- Queue management handles bursts well
+- No memory leaks detected
 
-The code is well-documented and follows project conventions, making it easy for other developers to:
-- Add new notification types
-- Customize styling
-- Extend functionality
-- Fix bugs or improve performance
+## Questions?
 
-## 📞 Support
+- 📖 See [STRESS_TESTS_README.md](listener/STRESS_TESTS_README.md) for quick start
+- 📖 See [STRESS_TEST_DOCUMENTATION.md](listener/STRESS_TEST_DOCUMENTATION.md) for details
+- 📖 See [STRESS_TEST_IMPLEMENTATION_SUMMARY.md](STRESS_TEST_IMPLEMENTATION_SUMMARY.md) for implementation
 
-For questions or issues:
-1. Review [TEMPLATE_PREVIEW_FEATURE.md](./TEMPLATE_PREVIEW_FEATURE.md)
-2. Check [FEATURE_SETUP.md](./FEATURE_SETUP.md)
-3. Contact the development team
+## Author
+
+@coderolisa
+
+## Reviewers
+
+Please review:
+- Test coverage and scenarios
+- Performance targets and thresholds
+- CI integration and workflows
+- Documentation completeness
+- Code quality and conventions
 
 ---
 
-## ✅ Checklist
-
-- [x] Feature implements all requirements from the issue
-- [x] Code follows project conventions and patterns
-- [x] TypeScript compilation passes with no errors
-- [x] ESLint passes with zero warnings
-- [x] All acceptance criteria are met
-- [x] Responsive design works on all screen sizes
-- [x] Accessibility standards are met
-- [x] Documentation is comprehensive and clear
-- [x] Code is well-commented and maintainable
-- [x] No breaking changes to existing functionality
-- [x] Ready for code review
-
----
-
-**Ready for Review and Merge! 🚀**
+**Ready for review and merge! 🚀**

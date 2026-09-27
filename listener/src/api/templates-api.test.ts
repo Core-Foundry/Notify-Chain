@@ -14,7 +14,7 @@ jest.mock('@stellar/stellar-sdk', () => ({
       getHealth: jest.fn().mockResolvedValue({ status: 'healthy' }),
     })),
   },
-}));
+}), { virtual: true });
 
 jest.mock('../utils/logger', () => ({
   __esModule: true,
@@ -84,7 +84,7 @@ describe('Template API endpoints', () => {
       stellarRpcUrl: 'http://localhost',
       stellarNetworkPassphrase: 'Test SDF Network ; September 2015',
       contractAddresses: [],
-      templateService: service,
+      templateService: service as any,
     });
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', () => resolve()));
     await service.create({
@@ -109,7 +109,8 @@ describe('Template API endpoints', () => {
     });
 
     expect(res.status).toBe(200);
-    expect((res.body as { body: string }).body).toBe('Hello {{name}}, welcome aboard!');
+    expect((res.body as any).success).toBe(true);
+    expect((res.body as any).data.body).toBe('Hello {{name}}, welcome aboard!');
 
     const audit = await service.getAuditHistory('welcome-email');
     expect(audit).toHaveLength(1);
@@ -125,17 +126,19 @@ describe('Template API endpoints', () => {
     const res = await request(server, 'GET', '/api/templates/welcome-email/audit');
 
     expect(res.status).toBe(200);
-    const body = res.body as { templateId: string; records: Array<{ actor: string; action: string }> };
-    expect(body.templateId).toBe('welcome-email');
-    expect(body.records).toHaveLength(1);
-    expect(body.records[0].actor).toBe('bearer:editor-token');
-    expect(body.records[0].action).toBe('UPDATE');
+    expect((res.body as any).success).toBe(true);
+    const data = (res.body as any).data as { templateId: string; records: Array<{ actor: string; action: string }> };
+    expect(data.templateId).toBe('welcome-email');
+    expect(data.records).toHaveLength(1);
+    expect(data.records[0].actor).toBe('bearer:editor-token');
+    expect(data.records[0].action).toBe('UPDATE');
   });
 
   it('GET /api/templates/:id returns a template through the cache-backed service', async () => {
     const res = await request(server, 'GET', '/api/templates/welcome-email');
     expect(res.status).toBe(200);
-    expect((res.body as { id: string }).id).toBe('welcome-email');
+    expect((res.body as any).success).toBe(true);
+    expect((res.body as any).data.id).toBe('welcome-email');
   });
 
   it('POST /api/templates creates a template', async () => {
@@ -149,7 +152,8 @@ describe('Template API endpoints', () => {
     });
 
     expect(res.status).toBe(201);
-    expect((res.body as { id: string }).id).toBe('digest');
+    expect((res.body as any).success).toBe(true);
+    expect((res.body as any).data.id).toBe('digest');
   });
 
   it('returns 404 when updating a missing template', async () => {
@@ -158,11 +162,14 @@ describe('Template API endpoints', () => {
       body: { body: 'Nope' },
     });
     expect(res.status).toBe(404);
+    expect((res.body as any).success).toBe(false);
+    expect((res.body as any).error.code).toBe('NOT_FOUND');
   });
 
   it('returns 404 for audit history on a missing template', async () => {
     const res = await request(server, 'GET', '/api/templates/missing/audit');
     expect(res.status).toBe(404);
+    expect((res.body as any).success).toBe(false);
   });
 
   it('returns 400 for an empty update body', async () => {
@@ -171,6 +178,8 @@ describe('Template API endpoints', () => {
       body: {},
     });
     expect(res.status).toBe(400);
+    expect((res.body as any).success).toBe(false);
+    expect((res.body as any).error.code).toBe('BAD_REQUEST');
   });
 
   it('returns 503 when template service is not configured', async () => {
@@ -187,6 +196,8 @@ describe('Template API endpoints', () => {
     });
 
     expect(res.status).toBe(503);
+    expect((res.body as any).success).toBe(false);
+    expect((res.body as any).error.code).toBe('SERVICE_UNAVAILABLE');
     await new Promise<void>((resolve, reject) => disabledServer.close((err) => (err ? reject(err) : resolve())));
   });
 
@@ -194,7 +205,8 @@ describe('Template API endpoints', () => {
     await service.create({ id: 'tmpl-2', name: 'Second', type: 'sms', body: 'Hi {{name}}' });
     const res = await request(server, 'GET', '/api/templates');
     expect(res.status).toBe(200);
-    const body = res.body as Array<{ id: string }>;
+    expect((res.body as any).success).toBe(true);
+    const body = (res.body as any).data as Array<{ id: string }>;
     expect(body.length).toBeGreaterThanOrEqual(2);
     expect(body.some((t) => t.id === 'welcome-email')).toBe(true);
     expect(body.some((t) => t.id === 'tmpl-2')).toBe(true);
@@ -202,7 +214,8 @@ describe('Template API endpoints', () => {
 
   it('DELETE /api/templates/:id removes the template', async () => {
     const del = await request(server, 'DELETE', '/api/templates/welcome-email');
-    expect(del.status).toBe(204);
+    expect(del.status).toBe(200);
+    expect((del.body as any).success).toBe(true);
 
     const get = await request(server, 'GET', '/api/templates/welcome-email');
     expect(get.status).toBe(404);
@@ -211,6 +224,7 @@ describe('Template API endpoints', () => {
   it('DELETE /api/templates/:id returns 404 for missing template', async () => {
     const res = await request(server, 'DELETE', '/api/templates/missing');
     expect(res.status).toBe(404);
+    expect((res.body as any).success).toBe(false);
   });
 
   it('POST /api/templates/:id/render substitutes variables', async () => {
@@ -218,9 +232,10 @@ describe('Template API endpoints', () => {
       body: { name: 'Alice' },
     });
     expect(res.status).toBe(200);
-    const body = res.body as { body: string; subject: string };
-    expect(body.body).toBe('Hello Alice');
-    expect(body.subject).toBe('Welcome');
+    expect((res.body as any).success).toBe(true);
+    const data = (res.body as any).data as { body: string; subject: string };
+    expect(data.body).toBe('Hello Alice');
+    expect(data.subject).toBe('Welcome');
   });
 
   it('POST /api/templates/:id/render returns 422 for missing variables', async () => {
@@ -228,7 +243,8 @@ describe('Template API endpoints', () => {
       body: {},
     });
     expect(res.status).toBe(422);
-    expect((res.body as { error: string }).error).toMatch(/missing required variables/i);
+    expect((res.body as any).success).toBe(false);
+    expect((res.body as any).error.message).toMatch(/missing required variables/i);
   });
 
   it('POST /api/templates/:id/render returns 404 for missing template', async () => {
@@ -236,6 +252,7 @@ describe('Template API endpoints', () => {
       body: { name: 'Bob' },
     });
     expect(res.status).toBe(404);
+    expect((res.body as any).success).toBe(false);
   });
 });
 
