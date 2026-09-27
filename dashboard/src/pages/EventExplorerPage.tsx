@@ -10,7 +10,12 @@ import { IndexingHealthPanel } from '../components/IndexingHealthPanel';
 import { NotificationHealthPanel } from '../components/NotificationHealthPanel';
 import { useEventFilters, useEventLoadingState, useFilteredEvents } from '../hooks/useEventSelectors';
 import { useEventStore } from '../store/eventStore';
-import { fetchEvents, fetchStatus, type ContractStatus } from '../services/eventsApi';
+import {
+  fetchEvents,
+  fetchStatus,
+  isListenerApiTimeoutError,
+  type ContractStatus,
+} from '../services/eventsApi';
 import { resolveIndexingHealthUrl } from '../services/indexingHealthApi';
 import { resolveNotificationHealthUrl } from '../services/notificationHealthApi';
 import { generateMockEvents } from '../utils/eventData';
@@ -81,10 +86,14 @@ export function EventExplorerPage() {
         if (!cancelled) {
           setEvents(remoteEvents);
         }
-      } catch {
+      } catch (error) {
         if (!cancelled) {
           setEvents(generateMockEvents(DEFAULT_EVENT_COUNT));
-          setError('Listener API unavailable — showing mock events for demo.');
+          setError(
+            isListenerApiTimeoutError(error)
+              ? 'Listener API timed out — showing mock events for demo.'
+              : 'Listener API unavailable — showing mock events for demo.'
+          );
         }
       } finally {
         if (!cancelled) {
@@ -139,9 +148,13 @@ export function EventExplorerPage() {
       .then((remoteEvents) => {
         setEvents(remoteEvents);
       })
-      .catch(() => {
+      .catch((error) => {
         setEvents(generateMockEvents(DEFAULT_EVENT_COUNT));
-        setError('Listener API unavailable — showing mock events for demo.');
+        setError(
+          isListenerApiTimeoutError(error)
+            ? 'Listener API timed out — showing mock events for demo.'
+            : 'Listener API unavailable — showing mock events for demo.'
+        );
       })
       .finally(() => {
         setLoading(false);
@@ -190,9 +203,13 @@ export function EventExplorerPage() {
     try {
       const remoteEvents = await fetchEvents(API_URL);
       setEvents(remoteEvents);
-    } catch {
+    } catch (error) {
       setEvents(generateMockEvents(DEFAULT_EVENT_COUNT));
-      setError('Retry failed — still using demo event data.');
+      setError(
+        isListenerApiTimeoutError(error)
+          ? 'The listener API timed out. Retrying may help.'
+          : 'Retry failed — still using demo event data.'
+      );
     } finally {
       setLoading(false);
     }

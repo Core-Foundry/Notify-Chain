@@ -2,8 +2,8 @@ import { useState, useCallback, useEffect, useRef } from 'react';
 import { NotificationSearchSkeleton } from '../components/NotificationSearchSkeleton';
 import { getEventsApiBaseUrl } from '../config/eventsApiUrl';
 import { useDebounce } from '../hooks/useDebounce';
-import { getEventsApiBaseUrl } from '../config/eventsApiUrl';
 import {
+  isListenerApiTimeoutError,
   searchNotifications,
   type NotificationSearchResult,
   type NotificationSearchResponse,
@@ -31,8 +31,6 @@ export const NOTIFICATION_TYPE_OPTIONS = [
   { value: 'webhook', label: 'Webhook' },
   { value: 'sms', label: 'SMS' },
 ];
-const API_BASE = getEventsApiBaseUrl();
-
 const STATUS_OPTIONS = ['', 'PENDING', 'PROCESSING', 'COMPLETED', 'FAILED', 'CANCELLED', 'PROCESSED'];
 
 export function NotificationSearchPage() {
@@ -97,7 +95,13 @@ export function NotificationSearchPage() {
       setResponse(result);
     } catch (err: unknown) {
       if (err instanceof Error && err.name === 'AbortError') return;
-      setError(err instanceof Error ? err.message : 'Search failed');
+      setError(
+        isListenerApiTimeoutError(err)
+          ? 'The notification search timed out. Please try again.'
+          : err instanceof Error
+            ? err.message
+            : 'Search failed'
+      );
     } finally {
       setLoading(false);
     }

@@ -67,8 +67,52 @@ export interface NotificationSearchParams {
   offset?: number;
 }
 
+export const LISTENER_API_TIMEOUT_MS = 10_000;
+
+export function isListenerApiTimeoutError(error: unknown): boolean {
+  return error instanceof Error && /timed out|timeout/i.test(error.message);
+}
+
+async function fetchWithTimeout(
+  input: RequestInfo | URL,
+  init: RequestInit = {},
+  timeoutMs = LISTENER_API_TIMEOUT_MS
+): Promise<Response> {
+  const controller = new AbortController();
+  const signal = init.signal;
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+  let abortListener: (() => void) | null = null;
+  if (signal) {
+    if (signal.aborted) {
+      controller.abort();
+    } else {
+      abortListener = () => controller.abort();
+      signal.addEventListener('abort', abortListener, { once: true });
+    }
+  }
+
+  try {
+    return await fetch(input, {
+      ...init,
+      signal: controller.signal,
+    });
+  } catch (error) {
+    const err = error as { name?: string };
+    if (controller.signal.aborted && err?.name === 'AbortError') {
+      throw new Error(`Listener API request timed out after ${timeoutMs}ms.`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+    if (abortListener && signal) {
+      signal.removeEventListener('abort', abortListener);
+    }
+  }
+}
+
 export async function fetchEvents(apiUrl: string): Promise<BlockchainEvent[]> {
-  const response = await fetch(apiUrl);
+  const response = await fetchWithTimeout(apiUrl);
   if (!response.ok) {
     throw new Error(`Failed to fetch events: ${response.status}`);
   }
@@ -79,7 +123,7 @@ export async function fetchEvents(apiUrl: string): Promise<BlockchainEvent[]> {
 }
 
 export async function fetchStatus(apiUrl: string): Promise<StatusResponse> {
-  const response = await fetch(`${apiUrl}/api/status`);
+  const response = await fetchWithTimeout(`${apiUrl}/api/status`);
   if (!response.ok) {
     throw new Error(`Failed to fetch status: ${response.status}`);
   }
@@ -102,7 +146,7 @@ export async function searchNotifications(
   if (params.limit !== undefined) url.searchParams.set('limit', String(params.limit));
   if (params.offset !== undefined) url.searchParams.set('offset', String(params.offset));
 
-  const response = await fetch(url.toString());
+  const response = await fetchWithTimeout(url.toString());
   if (!response.ok) {
     throw new Error(`Search failed: ${response.status}`);
   }

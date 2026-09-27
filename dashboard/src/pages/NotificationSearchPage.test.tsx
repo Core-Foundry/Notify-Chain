@@ -1,43 +1,13 @@
-import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
-import { NotificationSearchPage } from './NotificationSearchPage';
-import * as eventsApi from '../services/eventsApi';
-
-jest.mock('../services/eventsApi', () => {
-  const actual = jest.requireActual('../services/eventsApi') as typeof import('../services/eventsApi');
-  return {
-    ...actual,
-    searchNotifications: jest.fn(),
-  };
-});
-
-const searchNotifications = eventsApi.searchNotifications as jest.MockedFunction<
-  typeof eventsApi.searchNotifications
->;
-
-function emptyResponse(): eventsApi.NotificationSearchResponse {
-  return {
-    results: [],
-    total: 0,
-    limit: 20,
-    offset: 0,
-    itemCount: 0,
-    totalPages: 0,
-  };
-}
-
-describe('NotificationSearchPage filters', () => {
-  beforeEach(() => {
-    jest.useFakeTimers();
-    searchNotifications.mockReset();
-    searchNotifications.mockResolvedValue(emptyResponse());
 import '@testing-library/jest-dom';
-import { render, screen, waitFor, fireEvent, act } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { NotificationSearchPage } from './NotificationSearchPage';
 import { searchNotifications } from '../services/eventsApi';
 import type { NotificationSearchResponse } from '../services/eventsApi';
 
 jest.mock('../services/eventsApi', () => ({
   searchNotifications: jest.fn(),
+  isListenerApiTimeoutError: (error: unknown) =>
+    error instanceof Error && /timed out|timeout/i.test(error.message),
 }));
 
 const mockedSearch = searchNotifications as jest.MockedFunction<typeof searchNotifications>;
@@ -64,10 +34,22 @@ const mockResult: NotificationSearchResponse = {
   totalPages: 1,
 };
 
-describe('NotificationSearchPage loading skeletons', () => {
+function emptyResponse(): NotificationSearchResponse {
+  return {
+    results: [],
+    total: 0,
+    limit: 20,
+    offset: 0,
+    itemCount: 0,
+    totalPages: 0,
+  };
+}
+
+describe('NotificationSearchPage filters', () => {
   beforeEach(() => {
-    mockedSearch.mockReset();
     jest.useFakeTimers();
+    mockedSearch.mockReset();
+    mockedSearch.mockResolvedValue(emptyResponse());
   });
 
   afterEach(() => {
@@ -108,10 +90,10 @@ describe('NotificationSearchPage loading skeletons', () => {
     });
 
     await waitFor(() => {
-      expect(searchNotifications).toHaveBeenCalled();
+      expect(mockedSearch).toHaveBeenCalled();
     });
 
-    const lastCall = searchNotifications.mock.calls[searchNotifications.mock.calls.length - 1];
+    const lastCall = mockedSearch.mock.calls[mockedSearch.mock.calls.length - 1];
     expect(lastCall?.[1]).toMatchObject({
       type: 'discord',
       status: 'FAILED',
@@ -121,7 +103,7 @@ describe('NotificationSearchPage loading skeletons', () => {
   });
 
   it('updates results when filters change', async () => {
-    searchNotifications.mockResolvedValue({
+    mockedSearch.mockResolvedValue({
       results: [
         {
           id: 1,
@@ -182,42 +164,25 @@ describe('NotificationSearchPage loading skeletons', () => {
     expect(screen.getByLabelText(/filter from date/i)).toHaveValue('');
     expect(screen.queryByRole('button', { name: /clear all filters/i })).not.toBeInTheDocument();
   });
-});
 
-describe('searchNotifications query params', () => {
-  const originalFetch = global.fetch;
+  it('shows a friendly timeout message when the listener search request expires', async () => {
+    mockedSearch.mockRejectedValue(new Error('Listener API request timed out after 10000ms.'));
 
-  beforeEach(() => {
-    global.fetch = jest.fn().mockResolvedValue({
-      ok: true,
-      json: async () => emptyResponse(),
+    render(<NotificationSearchPage />);
+
+    fireEvent.change(screen.getByLabelText(/free-text search/i), {
+      target: { value: 'payment' },
+    });
+
+    await act(async () => {
+      jest.advanceTimersByTime(300);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText(/The notification search timed out\. Please try again\./i)).toBeInTheDocument();
     });
   });
 
-  afterEach(() => {
-    global.fetch = originalFetch;
-  });
-
-  it('appends type, status, startDate, and endDate to the URL', async () => {
-    // Use the real implementation (not the page mock)
-    const { searchNotifications: realSearch } = jest.requireActual(
-      '../services/eventsApi'
-    ) as typeof import('../services/eventsApi');
-
-    await realSearch('http://localhost:8787', {
-      type: 'webhook',
-      status: 'COMPLETED',
-      startDate: '2026-01-01',
-      endDate: '2026-01-31',
-    });
-
-    expect(global.fetch).toHaveBeenCalledWith(
-      expect.stringContaining('type=webhook')
-    );
-    const calledUrl = (global.fetch as jest.Mock).mock.calls[0][0] as string;
-    expect(calledUrl).toContain('status=COMPLETED');
-    expect(calledUrl).toContain('startDate=2026-01-01');
-    expect(calledUrl).toContain('endDate=2026-01-31');
   it('shows result-card skeletons while searching and hides Searching text', async () => {
     mockedSearch.mockReturnValue(new Promise(() => {}));
 

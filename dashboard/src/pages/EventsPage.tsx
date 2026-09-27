@@ -6,7 +6,7 @@ import { WalletConnectButton } from '../components/WalletConnectButton';
 import { getEventsApiBaseUrl } from '../config/eventsApiUrl';
 import { useEventLoadingState } from '../hooks/useEventSelectors';
 import { useEventStore } from '../store/eventStore';
-import { fetchEvents } from '../services/eventsApi';
+import { fetchEvents, isListenerApiTimeoutError } from '../services/eventsApi';
 import { generateMockEvents } from '../utils/eventData';
 import { restoreWalletSession } from '../services/wallet';
 
@@ -47,10 +47,14 @@ export function EventsPage() {
         if (!cancelled) {
           setEvents(remoteEvents);
         }
-      } catch {
+      } catch (error) {
         if (!cancelled) {
           setEvents(generateMockEvents(DEFAULT_EVENT_COUNT));
-          setError('Listener API unavailable — showing mock events for demo.');
+          setError(
+            isListenerApiTimeoutError(error)
+              ? 'Listener API timed out — showing mock events for demo.'
+              : 'Listener API unavailable — showing mock events for demo.'
+          );
         }
       } finally {
         if (!cancelled) {
