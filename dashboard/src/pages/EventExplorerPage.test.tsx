@@ -61,7 +61,7 @@ describe('EventExplorerPage refresh states', () => {
     mockedFetchEvents.mockReturnValueOnce(
       new Promise((resolve) => {
         resolveRefresh = resolve;
-      })
+      }),
     );
 
     // Advance time to trigger background refresh (15s)
