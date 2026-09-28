@@ -59,10 +59,18 @@ jobs:
       - name: Lint listener changes
         if: steps.changed.outputs.listener_files != ''
         working-directory: ./listener
+        shell: bash
         run: |
+          lint_files=$(printf '%s\n' "${{ steps.changed.outputs.listener_files }}" | tr ' ' '\n' | grep -v '^src/test-utils/' | grep -v '^src/__tests__/' | tr '\n' ' ' || true)
+
+          if [ -z "$lint_files" ]; then
+            echo "No changed listener files are included in the configured ESLint scope."
+            exit 0
+          fi
+
           echo "Linting changed listener files:"
-          printf '%s\n' "${{ steps.changed.outputs.listener_files }}"
-          npx eslint ${{ steps.changed.outputs.listener_files }} --max-warnings=0
+          printf '%s\n' "$lint_files"
+          npx eslint $lint_files --max-warnings=0
 
       - name: Lint dashboard changes
         if: steps.changed.outputs.dashboard_files != ''
