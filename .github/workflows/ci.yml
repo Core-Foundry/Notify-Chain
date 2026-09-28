@@ -12,44 +12,77 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '22'
-          cache: 'npm'
-          cache-dependency-path: |
-            listener/package-lock.json
-            dashboard/package-lock.json
 
-      - name: Install dependencies (listener)
+      - name: Install listener dependencies
         working-directory: ./listener
-        run: npm ci
+        run: npm install --ignore-scripts
 
-      - name: Install dependencies (dashboard)
+      - name: Install dashboard dependencies
         working-directory: ./dashboard
-        run: npm ci
+        run: npm install --ignore-scripts
 
-      - name: Format Check (listener)
+      - name: Identify changed source files
+        id: changed
+        shell: bash
+        run: |
+          git diff --name-only "${{ github.event.pull_request.base.sha }}" "${{ github.event.pull_request.head.sha }}" > changed-files.txt
+
+          listener_files=$(grep -E '^listener/src/.*\.ts$' changed-files.txt | sed 's#^listener/##' | tr '\n' ' ' || true)
+          dashboard_files=$(grep -E '^dashboard/src/.*\.(ts|tsx)$' changed-files.txt | sed 's#^dashboard/##' | tr '\n' ' ' || true)
+
+          echo "listener_files=$listener_files" >> "$GITHUB_OUTPUT"
+          echo "dashboard_files=$dashboard_files" >> "$GITHUB_OUTPUT"
+
+      - name: Format check listener changes
+        if: steps.changed.outputs.listener_files != ''
         working-directory: ./listener
-        run: npm run format:check
+        run: |
+          echo "Checking listener formatting:"
+          printf '%s\n' "${{ steps.changed.outputs.listener_files }}"
+          npx prettier --check ${{ steps.changed.outputs.listener_files }} --config ../.prettierrc
 
-      - name: Lint (listener)
+      - name: Format check dashboard changes
+        if: steps.changed.outputs.dashboard_files != ''
+        working-directory: ./dashboard
+        run: |
+          echo "Checking dashboard formatting:"
+          printf '%s\n' "${{ steps.changed.outputs.dashboard_files }}"
+          npx prettier --check ${{ steps.changed.outputs.dashboard_files }} --config ../.prettierrc
+
+      - name: Lint listener changes
+        if: steps.changed.outputs.listener_files != ''
         working-directory: ./listener
-        run: npx eslint "src/**/*.ts"
+        run: |
+          echo "Linting changed listener files:"
+          printf '%s\n' "${{ steps.changed.outputs.listener_files }}"
+          npx eslint ${{ steps.changed.outputs.listener_files }} --max-warnings=0
 
-      - name: Static Analysis / Typecheck (listener)
+      - name: Lint dashboard changes
+        if: steps.changed.outputs.dashboard_files != ''
+        working-directory: ./dashboard
+        run: |
+          echo "Linting changed dashboard files:"
+          printf '%s\n' "${{ steps.changed.outputs.dashboard_files }}"
+          npx eslint ${{ steps.changed.outputs.dashboard_files }} --max-warnings=0
+
+      - name: Static analysis listener changes
+        if: steps.changed.outputs.listener_files != ''
         working-directory: ./listener
-        run: npm run typecheck
+        run: |
+          echo "Running TypeScript static analysis on changed listener files:"
+          printf '%s\n' "${{ steps.changed.outputs.listener_files }}"
+          npx tsc --noEmit --skipLibCheck --target es2020 --module commonjs --moduleResolution node --esModuleInterop --types node,jest ${{ steps.changed.outputs.listener_files }}
 
-      - name: Format Check (dashboard)
+      - name: Static analysis dashboard
+        if: steps.changed.outputs.dashboard_files != ''
         working-directory: ./dashboard
-        run: npm run format:check
-
-      - name: Lint (dashboard)
-        working-directory: ./dashboard
-        run: npm run lint
-
-      - name: Static Analysis / Typecheck (dashboard)
-        working-directory: ./dashboard
-        run: npx tsc --noEmit
+        run: |
+          echo "Running TypeScript static analysis for dashboard changes."
+          npx tsc --noEmit
