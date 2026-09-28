@@ -99,6 +99,8 @@ export interface SchedulerConfig {
   batchSize: number;
   timingBufferMs: number;
   retryDelayMs?: number;
+  /** Max notifications processed concurrently per poll cycle (WORKER_CONCURRENCY). Default 1 = serial. */
+  concurrency?: number;
 }
 
 export interface DeadLetterQueueEntry {
