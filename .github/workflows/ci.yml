@@ -190,10 +190,3 @@ jobs:
       - name: Run fuzz tests
         working-directory: contract
         run: cargo test fuzz_ --verbose -- --nocapture
-      - name: Generate fuzz coverage report
-        run: bash scripts/run-fuzz-coverage.sh
-      - name: Upload fuzz coverage report
-        uses: actions/upload-artifact@v4
-        with:
-          name: fuzz-coverage-report
-          path: contract/reports/fuzz-coverage.json
