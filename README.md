@@ -41,7 +41,7 @@ The project enables developers to build reactive decentralized applications with
 >
 > **Architecture decisions**: [Architecture Decision Records](docs/adr/README.md) — the *why* behind the project's significant technical choices, including the [off-chain listener architecture](docs/adr/0001-off-chain-listener-architecture.md), [Soroban on Stellar](docs/adr/0002-soroban-smart-contracts.md), [SQLite persistence](docs/adr/0003-sqlite-for-local-persistence.md), [TypeScript for the listener](docs/adr/0004-typescript-for-listener-service.md), and the [event deduplication strategy](docs/adr/0005-event-deduplication-strategy.md).
 >
-> **Contributor guides**: [Git Workflow](docs/GIT_WORKFLOW.md) · [Contributor Troubleshooting](docs/CONTRIBUTOR_TROUBLESHOOTING.md)
+> **Contributor guides**: [Git Workflow](docs/GIT_WORKFLOW.md) · [Contributor Troubleshooting](docs/CONTRIBUTOR_TROUBLESHOOTING.md) · [Blockchain Event Lifecycle](CONTRIBUTOR_EVENT_LIFECYCLE.md)
 
 ---
 
