@@ -122,7 +122,7 @@ jobs:
           printf '%s\n' "${{ steps.changed.outputs.dashboard_files }}"
 
           set +e
-          tsc_output=$(npx tsc --noEmit ${{ steps.changed.outputs.dashboard_files }} 2>&1)
+          tsc_output=$(npx tsc --noEmit -p tsconfig.json 2>&1)
           tsc_status=$?
           set -e
 
