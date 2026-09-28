@@ -135,6 +135,11 @@ export interface RetrySchedulerOptions {
   multiplier: number;
   maxDelayMs: number;
   jitter: boolean;
+  /**
+   * Timeout (ms) for outbound webhook requests (`WEBHOOK_TIMEOUT_MS`).
+   * Defaults to `DEFAULT_WEBHOOK_TIMEOUT_MS` (10 000 ms).
+   */
+  webhookTimeoutMs: number;
 }
 
 export interface AnalyticsConfig {

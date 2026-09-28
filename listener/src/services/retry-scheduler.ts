@@ -4,7 +4,7 @@ import { generateRequestId } from '../utils/request-id';
 import { ScheduledNotificationRepository } from './scheduled-notification-repository';
 import { ScheduledNotification, NotificationStatus } from '../types/scheduled-notification';
 import { DiscordNotificationService } from './discord-notification';
-import { WebhookDeliveryService } from './webhook-delivery-service';
+import { WebhookDeliveryService, DEFAULT_WEBHOOK_TIMEOUT_MS } from './webhook-delivery-service';
 import { getWorkerManager } from './worker-manager';
 
 export interface RetrySchedulerConfig {
@@ -26,6 +26,11 @@ export interface RetrySchedulerConfig {
   maxDelayMs: number;
   /** Add ±25 % random jitter to prevent thundering herd. Default: true. */
   jitter: boolean;
+  /**
+   * Timeout (ms) applied to outbound webhook requests (`WEBHOOK_TIMEOUT_MS`).
+   * Default: DEFAULT_WEBHOOK_TIMEOUT_MS.
+   */
+  webhookTimeoutMs: number;
 }
 
 export const RETRY_SCHEDULER_DEFAULTS: RetrySchedulerConfig = {
@@ -37,6 +42,7 @@ export const RETRY_SCHEDULER_DEFAULTS: RetrySchedulerConfig = {
   multiplier: 2,
   maxDelayMs: 60 * 60 * 1_000,
   jitter: true,
+  webhookTimeoutMs: DEFAULT_WEBHOOK_TIMEOUT_MS,
 };
 
 /**
@@ -89,7 +95,9 @@ export class RetryScheduler {
     this.processorId = this.config.processorId ?? `retry-${uuidv4()}`;
     this.repository = repository;
     this.discordService = discordService ?? null;
-    this.webhookDeliveryService = webhookDeliveryService ?? new WebhookDeliveryService();
+    this.webhookDeliveryService =
+      webhookDeliveryService ??
+      new WebhookDeliveryService({ timeoutMs: this.config.webhookTimeoutMs });
   }
 
   async start(): Promise<void> {

@@ -518,4 +518,51 @@ describe('Config validation', () => {
       );
     });
   });
+
+  describe('WEBHOOK_TIMEOUT_MS', () => {
+    it('defaults to 10000 when unset', () => {
+      delete process.env.WEBHOOK_TIMEOUT_MS;
+
+      expect(loadConfig().retryScheduler?.webhookTimeoutMs).toBe(10000);
+    });
+
+    it('loads a configured webhook timeout', () => {
+      process.env.WEBHOOK_TIMEOUT_MS = '2500';
+
+      expect(loadConfig().retryScheduler?.webhookTimeoutMs).toBe(2500);
+    });
+
+    it('rejects a non-numeric webhook timeout at parse time', () => {
+      process.env.WEBHOOK_TIMEOUT_MS = 'soon';
+
+      expect(() => loadConfig()).toThrow(ConfigError);
+      expect(() => loadConfig()).toThrow(
+        'WEBHOOK_TIMEOUT_MS must be a valid integer, got "soon"'
+      );
+    });
+
+    it('rejects a zero webhook timeout', () => {
+      process.env.WEBHOOK_TIMEOUT_MS = '0';
+
+      const config = loadConfig();
+      expect(() => validateConfig(config)).toThrow(ConfigError);
+      expect(() => validateConfig(config)).toThrow('WEBHOOK_TIMEOUT_MS must be >= 1 ms');
+    });
+
+    it('rejects a negative webhook timeout', () => {
+      process.env.WEBHOOK_TIMEOUT_MS = '-50';
+
+      const config = loadConfig();
+      expect(() => validateConfig(config)).toThrow(ConfigError);
+      expect(() => validateConfig(config)).toThrow('WEBHOOK_TIMEOUT_MS must be >= 1 ms');
+    });
+
+    it('rejects an absurdly large webhook timeout', () => {
+      process.env.WEBHOOK_TIMEOUT_MS = '9999999';
+
+      const config = loadConfig();
+      expect(() => validateConfig(config)).toThrow(ConfigError);
+      expect(() => validateConfig(config)).toThrow('WEBHOOK_TIMEOUT_MS must be <= 300000 ms');
+    });
+  });
 });

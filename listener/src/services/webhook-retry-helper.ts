@@ -14,7 +14,7 @@
  * A delay is added between attempts to reduce load on failing services.
  */
 
-import { sendWebhook, WebhookSendOptions } from './webhook-sender';
+import { sendWebhook, WebhookSendOptions, WebhookFailureReason, isWebhookTimeoutError } from './webhook-sender';
 
 /** Maximum number of retry attempts (not counting the initial attempt). */
 const MAX_RETRY_ATTEMPTS = 2;
@@ -33,6 +33,46 @@ const RETRYABLE_STATUS_CODES = new Set([429, 500, 502, 503, 504]);
 const PERMANENT_CLIENT_ERRORS = new Set([400, 401, 403, 404, 422]);
 
 /**
+ * Classify a webhook attempt as a specific failure reason, or `null` when it
+ * succeeded / did not fail.
+ *
+ * A request timeout is reported as its own `'timeout'` reason rather than
+ * being folded into a generic network error, so retry logic and observability
+ * can treat (and count) the two separately.
+ *
+ * @param response - The HTTP response, if one was received
+ * @param error - The error thrown, if the request failed before/without a response
+ * @returns the failure reason, or null when the attempt did not fail
+ */
+export function classifyWebhookFailure(
+  response?: Response,
+  error?: unknown
+): WebhookFailureReason | null {
+  // A thrown error means no HTTP response was available. Timeouts are their
+  // own reason; everything else is a network-level failure.
+  if (error) {
+    return isWebhookTimeoutError(error) ? 'timeout' : 'network';
+  }
+
+  if (!response || response.ok) {
+    return null;
+  }
+
+  // Permanent client errors are not worth retrying.
+  if (PERMANENT_CLIENT_ERRORS.has(response.status)) {
+    return 'http_permanent';
+  }
+
+  // Explicit retryable status codes, plus any other 5xx.
+  if (RETRYABLE_STATUS_CODES.has(response.status) || response.status >= 500) {
+    return 'http_retryable';
+  }
+
+  // Other status codes (e.g. redirects, unlisted 4xx) are non-retryable.
+  return 'http_permanent';
+}
+
+/**
  * Determines if an error or response should trigger a retry.
  *
  * @param response - The HTTP response, if available
@@ -40,38 +80,8 @@ const PERMANENT_CLIENT_ERRORS = new Set([400, 401, 403, 404, 422]);
  * @returns true if the failure is retryable
  */
 function isRetryable(response?: Response, error?: unknown): boolean {
-  // Network errors and timeouts are retryable
-  if (error) {
-    return true;
-  }
-
-  // Check HTTP status codes
-  if (response) {
-    // Success responses don't need retry
-    if (response.ok) {
-      return false;
-    }
-
-    // Permanent client errors should not be retried
-    if (PERMANENT_CLIENT_ERRORS.has(response.status)) {
-      return false;
-    }
-
-    // Explicit retryable status codes
-    if (RETRYABLE_STATUS_CODES.has(response.status)) {
-      return true;
-    }
-
-    // Any other 5xx error is retryable
-    if (response.status >= 500) {
-      return true;
-    }
-
-    // Other status codes (e.g., redirects, other 4xx) are not retried
-    return false;
-  }
-
-  return false;
+  const reason = classifyWebhookFailure(response, error);
+  return reason === 'timeout' || reason === 'network' || reason === 'http_retryable';
 }
 
 /**
