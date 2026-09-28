@@ -1,0 +1,147 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  format-lint-typecheck:
+    name: Code Quality Checks
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install listener dependencies
+        working-directory: ./listener
+        run: npm install --ignore-scripts
+
+      - name: Install dashboard dependencies
+        working-directory: ./dashboard
+        run: npm install --ignore-scripts
+
+      - name: Identify changed source files
+        id: changed
+        shell: bash
+        run: |
+          git diff --name-only "${{ github.event.pull_request.base.sha }}" "${{ github.event.pull_request.head.sha }}" > changed-files.txt
+
+          listener_files=$(grep -E '^listener/src/.*\.ts$' changed-files.txt | sed 's#^listener/##' | tr '\n' ' ' || true)
+          dashboard_files=$(grep -E '^dashboard/src/.*\.(ts|tsx)$' changed-files.txt | sed 's#^dashboard/##' | tr '\n' ' ' || true)
+
+          echo "listener_files=$listener_files" >> "$GITHUB_OUTPUT"
+          echo "dashboard_files=$dashboard_files" >> "$GITHUB_OUTPUT"
+
+      - name: Format check listener changes
+        if: steps.changed.outputs.listener_files != ''
+        working-directory: ./listener
+        run: |
+          echo "Checking listener formatting:"
+          printf '%s\n' "${{ steps.changed.outputs.listener_files }}"
+          npx prettier --check ${{ steps.changed.outputs.listener_files }} --config ../.prettierrc
+
+      - name: Format check dashboard changes
+        if: steps.changed.outputs.dashboard_files != ''
+        working-directory: ./dashboard
+        run: |
+          echo "Checking dashboard formatting:"
+          printf '%s\n' "${{ steps.changed.outputs.dashboard_files }}"
+          npx prettier --check ${{ steps.changed.outputs.dashboard_files }} --config ../.prettierrc
+
+      - name: Lint listener changes
+        if: steps.changed.outputs.listener_files != ''
+        working-directory: ./listener
+        shell: bash
+        run: |
+          lint_files=$(printf '%s\n' "${{ steps.changed.outputs.listener_files }}" | tr ' ' '\n' | grep -v '^src/test-utils/' | grep -v '^src/__tests__/' | tr '\n' ' ' || true)
+
+          if [ -z "$lint_files" ]; then
+            echo "No changed listener files are included in the configured ESLint scope."
+            exit 0
+          fi
+
+          echo "Linting changed listener files:"
+          printf '%s\n' "$lint_files"
+          npx eslint $lint_files --max-warnings=0
+
+      - name: Lint dashboard changes
+        if: steps.changed.outputs.dashboard_files != ''
+        working-directory: ./dashboard
+        run: |
+          echo "Linting changed dashboard files:"
+          printf '%s\n' "${{ steps.changed.outputs.dashboard_files }}"
+          npx eslint ${{ steps.changed.outputs.dashboard_files }} --max-warnings=0
+
+      - name: Static analysis listener changes
+        if: steps.changed.outputs.listener_files != ''
+        working-directory: ./listener
+        shell: bash
+        run: |
+          echo "Running TypeScript static analysis on changed listener files:"
+          printf '%s\n' "${{ steps.changed.outputs.listener_files }}"
+
+          set +e
+          tsc_output=$(npx tsc --noEmit --skipLibCheck --target es2020 --module commonjs --moduleResolution node --esModuleInterop --types node,jest ${{ steps.changed.outputs.listener_files }} 2>&1)
+          tsc_status=$?
+          set -e
+
+          printf '%s\n' "$tsc_output"
+
+          changed_errors=""
+          for file in ${{ steps.changed.outputs.listener_files }}; do
+            file_errors=$(printf '%s\n' "$tsc_output" | grep -F "${file}(" || true)
+            if [ -n "$file_errors" ]; then
+              changed_errors="${changed_errors}${file_errors}"$'\n'
+            fi
+          done
+
+          if [ -n "$changed_errors" ]; then
+            echo "TypeScript errors found in changed listener files:"
+            printf '%s\n' "$changed_errors"
+            exit 1
+          fi
+
+          if [ "$tsc_status" -ne 0 ]; then
+            echo "TypeScript reported errors only in unchanged/imported files; those errors are outside this PR's changed-file scope."
+          fi
+
+      - name: Static analysis dashboard
+        if: steps.changed.outputs.dashboard_files != ''
+        working-directory: ./dashboard
+        shell: bash
+        run: |
+          echo "Running TypeScript static analysis for dashboard changes:"
+          printf '%s\n' "${{ steps.changed.outputs.dashboard_files }}"
+
+          set +e
+          tsc_output=$(npx tsc --noEmit -p tsconfig.json 2>&1)
+          tsc_status=$?
+          set -e
+
+          printf '%s\n' "$tsc_output"
+
+          changed_errors=""
+          for file in ${{ steps.changed.outputs.dashboard_files }}; do
+            file_errors=$(printf '%s\n' "$tsc_output" | grep -F "${file}(" || true)
+            if [ -n "$file_errors" ]; then
+              changed_errors="${changed_errors}${file_errors}"$'\n'
+            fi
+          done
+
+          if [ -n "$changed_errors" ]; then
+            echo "TypeScript errors found in changed dashboard files:"
+            printf '%s\n' "$changed_errors"
+            exit 1
+          fi
+
+          if [ "$tsc_status" -ne 0 ]; then
+            echo "TypeScript reported errors only in unchanged/imported files; those errors are outside this PR's changed-file scope."
+          fi
