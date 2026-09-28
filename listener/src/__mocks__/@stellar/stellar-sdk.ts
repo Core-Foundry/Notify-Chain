@@ -3,6 +3,46 @@
  * Used by Jest (via moduleNameMapper) when the real package is not installed.
  */
 
+// String constants used as ScValType enum stand-ins.
+// Both ScValType.scvSymbol() and ScVal.scvSymbol(…).switch() return the same
+// string so that switch/case identity comparisons inside event-utils.ts work.
+const SCV_SYMBOL = 'scvSymbol';
+const SCV_STRING = 'scvString';
+const SCV_U32 = 'scvU32';
+const SCV_VOID = 'scvVoid';
+
+/**
+ * Minimal xdr.ScVal stub supporting the types used by the test suite and
+ * by getEventName() inside event-utils.ts.
+ */
+export const xdr = {
+  ScVal: {
+    scvSymbol: (value: string) => ({
+      switch: () => SCV_SYMBOL,
+      sym: () => ({ toString: () => value }),
+      str: () => ({ toString: () => value }),
+    }),
+    scvString: (value: string) => ({
+      switch: () => SCV_STRING,
+      sym: () => ({ toString: () => value }),
+      str: () => ({ toString: () => value }),
+    }),
+    scvU32: (value: number) => ({
+      switch: () => SCV_U32,
+      u32: () => value,
+    }),
+    scvVoid: () => ({
+      switch: () => SCV_VOID,
+    }),
+  },
+  ScValType: {
+    scvSymbol: () => SCV_SYMBOL,
+    scvString: () => SCV_STRING,
+    scvU32: () => SCV_U32,
+    scvVoid: () => SCV_VOID,
+  },
+};
+
 export const rpc = {
   Server: jest.fn().mockImplementation(() => ({
     getHealth: jest.fn().mockResolvedValue({ status: 'healthy' }),
@@ -33,6 +73,7 @@ export const Networks = {
 
 export default {
   rpc,
+  xdr,
   Contract,
   Keypair,
   Account,
