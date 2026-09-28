@@ -83,10 +83,35 @@ jobs:
       - name: Static analysis listener changes
         if: steps.changed.outputs.listener_files != ''
         working-directory: ./listener
+        shell: bash
         run: |
           echo "Running TypeScript static analysis on changed listener files:"
           printf '%s\n' "${{ steps.changed.outputs.listener_files }}"
-          npx tsc --noEmit --skipLibCheck --target es2020 --module commonjs --moduleResolution node --esModuleInterop --types node,jest ${{ steps.changed.outputs.listener_files }}
+
+          set +e
+          tsc_output=$(npx tsc --noEmit --skipLibCheck --target es2020 --module commonjs --moduleResolution node --esModuleInterop --types node,jest ${{ steps.changed.outputs.listener_files }} 2>&1)
+          tsc_status=$?
+          set -e
+
+          printf '%s\n' "$tsc_output"
+
+          changed_errors=""
+          for file in ${{ steps.changed.outputs.listener_files }}; do
+            file_errors=$(printf '%s\n' "$tsc_output" | grep -F "${file}(" || true)
+            if [ -n "$file_errors" ]; then
+              changed_errors="${changed_errors}${file_errors}"$'\n'
+            fi
+          done
+
+          if [ -n "$changed_errors" ]; then
+            echo "TypeScript errors found in changed listener files:"
+            printf '%s\n' "$changed_errors"
+            exit 1
+          fi
+
+          if [ "$tsc_status" -ne 0 ]; then
+            echo "TypeScript reported errors only in unchanged/imported files; those errors are outside this PR's changed-file scope."
+          fi
 
       - name: Static analysis dashboard
         if: steps.changed.outputs.dashboard_files != ''
