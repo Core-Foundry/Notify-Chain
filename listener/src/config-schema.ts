@@ -211,6 +211,7 @@ export const APP_CONFIG_SCHEMA: ConfigSchema = {
     lockTimeoutMs: { type: 'number', min: 1000 },
     batchSize: { type: 'number', min: 1 },
     timingBufferMs: { type: 'number', min: 0 },
+    concurrency: { type: 'number', min: 1 },
   },
   rateLimit: {
     enabled: { type: 'boolean' },
