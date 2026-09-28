@@ -291,6 +291,7 @@ export function loadConfig(): Config {
       lockTimeoutMs: parseIntegerEnv('SCHEDULER_LOCK_TIMEOUT_MS', '60000'),
       processorId: trimEnv('SCHEDULER_PROCESSOR_ID'),
       batchSize: parseIntegerEnv('SCHEDULER_BATCH_SIZE', '10'),
+      concurrency: parseIntegerEnv('WORKER_CONCURRENCY', '1'),
       timingBufferMs: parseIntegerEnv('SCHEDULER_TIMING_BUFFER_MS', '60000'),
     },
     retryScheduler: loadRetrySchedulerConfig(),
@@ -523,6 +524,12 @@ export function validateConfig(config: Config): void {
           'SCHEDULER_POLL_INTERVAL_MS.',
       );
     }
+    if (config.scheduler.concurrency < 1) {
+      errors.push(
+        `WORKER_CONCURRENCY must be >= 1 (received: ${config.scheduler.concurrency}). ` +
+          'Set the number of notifications processed concurrently per poll cycle.'
+      );
+    }
     if (config.scheduler.batchSize < 1) {
       errors.push(`SCHEDULER_BATCH_SIZE must be >= 1 (received: ${config.scheduler.batchSize}).`);
     }
@@ -701,4 +708,3 @@ export function validateConfig(config: Config): void {
     }))),
   ]);
 }
-
