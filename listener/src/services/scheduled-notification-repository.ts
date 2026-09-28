@@ -72,8 +72,15 @@ export class ScheduledNotificationRepository {
   }
 
   /**
-   * Fetch pending notifications due for execution with distributed locking
-   * Uses atomic update to prevent race conditions
+   * Dequeue pending notifications due for execution with distributed locking.
+   * Uses a single atomic UPDATE ... WHERE id IN (SELECT ...) so two workers
+   * polling at the same time can never claim the same row.
+   *
+   * A job whose `next_retry_at` is still in the future is deliberately skipped:
+   * it is waiting out its exponential backoff and is claimed by the retry path
+   * (`fetchDueRetries`) once that window has elapsed. Claiming it here would
+   * discard the persisted backoff state and let the main scheduler race the
+   * retry scheduler for the same row.
    */
   async fetchAndLockPendingNotifications(
     processorId: string,
@@ -96,6 +103,7 @@ export class ScheduledNotificationRepository {
         SELECT id FROM scheduled_notifications
         WHERE status = ?
           AND execute_at <= ?
+          AND (next_retry_at IS NULL OR next_retry_at <= ?)
         ORDER BY priority ASC, execute_at ASC
         LIMIT ?
       )
@@ -107,6 +115,7 @@ export class ScheduledNotificationRepository {
       lockExpiresAt.toISOString(),
       now.toISOString(),
       NotificationStatus.PENDING,
+      now.toISOString(),
       now.toISOString(),
       batchSize,
     ];
@@ -136,6 +145,50 @@ export class ScheduledNotificationRepository {
     });
 
     return rows.map(this.rowToModel);
+  }
+
+  /**
+   * Renew the claim lease on an in-flight notification (heartbeat).
+   *
+   * Extends `lock_expires_at` only while this processor still owns the row, so a
+   * worker that lost its claim can never take it back. Returns false when the
+   * lease is no longer held — the job has already reached a terminal state, was
+   * recovered by `recoverStaleLocks`, or was claimed by another worker.
+   *
+   * Without this heartbeat a delivery that outlives `lockTimeoutMs` is reset to
+   * PENDING by the next `recoverStaleLocks` poll (both schedulers call it) while
+   * the original worker is still sending, which is exactly how one job gets
+   * processed by two workers at once.
+   */
+  async renewLock(
+    id: number,
+    processorId: string,
+    lockTimeoutMs: number,
+    requestId?: string
+  ): Promise<boolean> {
+    const lockExpiresAt = new Date(Date.now() + lockTimeoutMs).toISOString();
+
+    const result = await this.db.run(
+      `
+        UPDATE scheduled_notifications
+        SET lock_expires_at = ?
+        WHERE id = ? AND processor_id = ? AND status = ?
+      `,
+      [lockExpiresAt, id, processorId, NotificationStatus.PROCESSING]
+    );
+
+    const renewed = result.changes > 0;
+
+    if (renewed) {
+      logger.debug('Renewed notification claim lease', {
+        requestId,
+        id,
+        processorId,
+        lockExpiresAt,
+      });
+    }
+
+    return renewed;
   }
 
   /**
