@@ -12,6 +12,20 @@ import { generateRequestId, resolveCorrelationId } from '../utils/request-id';
 import { TemplateService } from '../services/template-service';
 import { handleTemplateRoutes } from './template-routes';
 import { sendOk, sendErr, sendJson, ErrorCode } from '../utils/response';
+import { validateQueryParams, QueryParamSpec } from '../utils/query-validation';
+
+/** Structured 400 for query-parameter validation failures (#646). */
+function sendQueryParamError(
+  res: http.ServerResponse,
+  result: Extract<ReturnType<typeof validateQueryParams>, { ok: false }>
+): void {
+  sendErr(res, 400, result.message, ErrorCode.BAD_REQUEST, {
+    parameter: result.parameter,
+    code: result.code,
+    supportedParameters: result.supportedParameters,
+  });
+}
+
 import { handleApiError, ApiError } from './error-handler';
 import { applyRequestContext } from '../utils/request-id';
 import { applyRequestIdMiddleware } from '../middleware/request-id';
@@ -543,12 +557,15 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
 
     // GET /api/events
     if (req.method === 'GET' && url.pathname.startsWith('/api/events')) {
-      const limitParam = url.searchParams.get('limit');
-      const limit = limitParam ? parseInt(limitParam, 10) : undefined;
-      const events =
-        limit !== undefined && !Number.isNaN(limit)
-          ? eventRegistry.getEvents(limit)
-          : eventRegistry.getEvents();
+      const query = validateQueryParams(url.searchParams, {
+        limit: { type: 'integer', min: 1, max: 1000 },
+      });
+      if (!query.ok) {
+        sendQueryParamError(res, query);
+        return;
+      }
+      const limit = query.values.limit as number | undefined;
+      const events = limit !== undefined ? eventRegistry.getEvents(limit) : eventRegistry.getEvents();
 
       logger.info('Handling GET /api/events', { requestId, correlationId, limit: limit ?? 'all' });
 
@@ -609,7 +626,14 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
       }
 
       const snapshot = aggregator.snapshot();
-      const reset = url.searchParams.get('reset') === 'true';
+      const query = validateQueryParams(url.searchParams, {
+        reset: { type: 'boolean' },
+      });
+      if (!query.ok) {
+        sendQueryParamError(res, query);
+        return;
+      }
+      const reset = query.values.reset === true;
 
       logger.info('Handling GET /api/analytics', {
         requestId,
@@ -634,10 +658,16 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
         sendErr(res, 503, 'Metrics store unavailable', ErrorCode.SERVICE_UNAVAILABLE);
         return;
       }
-      const limitParam = url.searchParams.get('limit');
-      const sinceParam = url.searchParams.get('since');
-      const limit = limitParam ? parseInt(limitParam, 10) : undefined;
-      const since = sinceParam ? new Date(sinceParam) : undefined;
+      const query = validateQueryParams(url.searchParams, {
+        limit: { type: 'integer', min: 1 },
+        since: { type: 'date' },
+      });
+      if (!query.ok) {
+        sendQueryParamError(res, query);
+        return;
+      }
+      const limit = query.values.limit as number | undefined;
+      const since = query.values.since ? new Date(query.values.since as string) : undefined;
       options.metricsStore.getHistory(limit, since)
         .then((snapshots) => { sendOk(res, 200, { snapshots }); })
         .catch((error) => {
@@ -976,8 +1006,14 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
     // GET /api/schedule/jobs — background job monitoring snapshot
     if (req.method === 'GET' && url.pathname === '/api/schedule/jobs') {
       const monitor = getJobMonitor();
-      const limitParam = url.searchParams.get('limit');
-      const limit = limitParam ? Math.min(Math.max(parseInt(limitParam, 10) || 25, 1), 200) : 25;
+      const query = validateQueryParams(url.searchParams, {
+        limit: { type: 'integer', min: 1 },
+      });
+      if (!query.ok) {
+        sendQueryParamError(res, query);
+        return;
+      }
+      const limit = Math.min((query.values.limit as number | undefined) ?? 25, 200);
       sendOk(res, 200, {
         ...monitor.getSnapshot(),
         recentJobs: monitor.listRecentJobs(limit),
@@ -989,8 +1025,14 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
     // GET /api/schedule/jobs/failures — failed job log
     if (req.method === 'GET' && url.pathname === '/api/schedule/jobs/failures') {
       const monitor = getJobMonitor();
-      const limitParam = url.searchParams.get('limit');
-      const limit = limitParam ? Math.min(Math.max(parseInt(limitParam, 10) || 50, 1), 200) : 50;
+      const query = validateQueryParams(url.searchParams, {
+        limit: { type: 'integer', min: 1 },
+      });
+      if (!query.ok) {
+        sendQueryParamError(res, query);
+        return;
+      }
+      const limit = Math.min((query.values.limit as number | undefined) ?? 50, 200);
       sendOk(res, 200, { failures: monitor.listFailures(limit), count: monitor.listFailures(limit).length });
       return;
     }
@@ -1023,8 +1065,14 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
         return;
       }
 
-      const limitParam = url.searchParams.get('limit');
-      const limit = limitParam ? Math.max(1, Math.min(500, parseInt(limitParam, 10) || 100)) : undefined;
+      const query = validateQueryParams(url.searchParams, {
+        limit: { type: 'integer', min: 1, max: 500 },
+      });
+      if (!query.ok) {
+        sendQueryParamError(res, query);
+        return;
+      }
+      const limit = query.values.limit as number | undefined;
 
       options.notificationAPI.getPendingJobs(limit)
         .then((jobs) => {
@@ -1091,12 +1139,24 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
       }
 
       const url = new URL(req.url, 'http://localhost');
-      const limit = url.searchParams.get('limit') ? parseInt(url.searchParams.get('limit')!, 10) : undefined;
-      const offset = url.searchParams.get('offset') ? parseInt(url.searchParams.get('offset')!, 10) : undefined;
-      const cursor = url.searchParams.get('cursor') || undefined;
-      const status = url.searchParams.get('status') as 'SUCCESS' | 'FAILED' | 'RETRY' | null;
-      const startDate = url.searchParams.get('startDate');
-      const endDate = url.searchParams.get('endDate');
+      const query = validateQueryParams(url.searchParams, {
+        limit: { type: 'integer', min: 1 },
+        offset: { type: 'integer', min: 0 },
+        cursor: { type: 'string', maxLength: 256 },
+        status: { type: 'string', values: ['SUCCESS', 'FAILED', 'RETRY'] },
+        startDate: { type: 'date' },
+        endDate: { type: 'date' },
+      });
+      if (!query.ok) {
+        sendQueryParamError(res, query);
+        return;
+      }
+      const limit = query.values.limit as number | undefined;
+      const offset = query.values.offset as number | undefined;
+      const cursor = (query.values.cursor as string | undefined) || undefined;
+      const status = (query.values.status as 'SUCCESS' | 'FAILED' | 'RETRY' | undefined) ?? null;
+      const startDate = (query.values.startDate as string | undefined) ?? null;
+      const endDate = (query.values.endDate as string | undefined) ?? null;
 
       logger.info('Handling GET /api/notifications/history', {
         requestId, correlationId, limit, offset, cursor, status, startDate, endDate,
@@ -1126,18 +1186,34 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
 
     // GET /api/notifications/search
     if (req.method === 'GET' && url.pathname === '/api/notifications/search') {
-      const q = url.searchParams.get('q') ?? undefined;
-      const sender = url.searchParams.get('sender') ?? undefined;
-      const txHash = url.searchParams.get('txHash') ?? undefined;
-      const eventId = url.searchParams.get('eventId') ?? undefined;
-      const status = url.searchParams.get('status') ?? undefined;
-      const type = url.searchParams.get('type') ?? undefined;
-      const startDate = url.searchParams.get('startDate') ?? undefined;
-      const endDate = url.searchParams.get('endDate') ?? undefined;
-      const limit = url.searchParams.get('limit') ? parseInt(url.searchParams.get('limit')!, 10) : undefined;
-      const offset = url.searchParams.get('offset') ? parseInt(url.searchParams.get('offset')!, 10) : undefined;
-      const rawSortBy = url.searchParams.get('sortBy') ?? undefined;
-      const sortBy = (rawSortBy === 'oldest' || rawSortBy === 'status') ? rawSortBy : 'newest';
+      const query = validateQueryParams(url.searchParams, {
+        q: { type: 'string', maxLength: 500 },
+        sender: { type: 'string', maxLength: 256 },
+        txHash: { type: 'string', maxLength: 256 },
+        eventId: { type: 'string', maxLength: 256 },
+        status: { type: 'string', maxLength: 64 },
+        type: { type: 'string', maxLength: 64 },
+        startDate: { type: 'date' },
+        endDate: { type: 'date' },
+        limit: { type: 'integer', min: 1 },
+        offset: { type: 'integer', min: 0 },
+        sortBy: { type: 'string', values: ['newest', 'oldest', 'status'] },
+      });
+      if (!query.ok) {
+        sendQueryParamError(res, query);
+        return;
+      }
+      const q = query.values.q as string | undefined;
+      const sender = query.values.sender as string | undefined;
+      const txHash = query.values.txHash as string | undefined;
+      const eventId = query.values.eventId as string | undefined;
+      const status = query.values.status as string | undefined;
+      const type = query.values.type as string | undefined;
+      const startDate = query.values.startDate as string | undefined;
+      const endDate = query.values.endDate as string | undefined;
+      const limit = query.values.limit as number | undefined;
+      const offset = query.values.offset as number | undefined;
+      const sortBy = (query.values.sortBy as 'newest' | 'oldest' | 'status' | undefined) ?? 'newest';
 
       logger.info('Handling GET /api/notifications/search', {
         requestId,
@@ -1181,8 +1257,16 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
 
     // GET /api/search/suggestions
     if (req.method === 'GET' && url.pathname === '/api/search/suggestions') {
-      const q = url.searchParams.get('q') || '';
-      const limit = url.searchParams.get('limit') ? parseInt(url.searchParams.get('limit')!, 10) : undefined;
+      const query = validateQueryParams(url.searchParams, {
+        q: { type: 'string', maxLength: 200 },
+        limit: { type: 'integer', min: 1, max: 100 },
+      });
+      if (!query.ok) {
+        sendQueryParamError(res, query);
+        return;
+      }
+      const q = (query.values.q as string | undefined) || '';
+      const limit = query.values.limit as number | undefined;
 
       logger.info('Handling GET /api/search/suggestions', { requestId, correlationId, q, limit });
 
@@ -1480,7 +1564,14 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
 // GET /api/metrics/response-time — expose response-time counters (#491)
      if (req.method === 'GET' && url.pathname === '/api/metrics/response-time') {
        const metrics = responseTime.getMetrics();
-       const reset = url.searchParams.get('reset') === 'true';
+       const query = validateQueryParams(url.searchParams, {
+         reset: { type: 'boolean' },
+       });
+       if (!query.ok) {
+         sendQueryParamError(res, query);
+         return;
+       }
+       const reset = query.values.reset === true;
        sendOk(res, 200, metrics);
        if (reset) {
          responseTime.resetMetrics();
@@ -1516,4 +1607,4 @@ export function startEventsServer(options: EventsServerOptions): http.Server {
     logger.info('Events API server listening', { port: options.port });
   });
   return server;
-}
+      }
