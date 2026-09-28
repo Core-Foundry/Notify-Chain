@@ -1,0 +1,50 @@
+# cargo-deny configuration
+# Docs: https://embarkstudios.github.io/cargo-deny/
+
+[graph]
+# Treat dev-dependencies as out-of-scope for license checks —
+# only production (non-dev) crates need to meet the license policy.
+exclude-dev = true
+
+# ---------------------------------------------------------------------------
+# License policy
+# ---------------------------------------------------------------------------
+[licenses]
+# Confidence threshold for license text matching (0.0–1.0).
+# 0.8 is cargo-deny's default; keep it to avoid false negatives.
+confidence-threshold = 0.8
+
+# Approved SPDX identifiers. These align with the Node.js policy in
+# scripts/license-policy.json so the whole project shares one policy.
+allow = [
+  "MIT",
+  "Apache-2.0",
+  "Apache-2.0 WITH LLVM-exception",
+  "ISC",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "0BSD",
+  "CC0-1.0",
+  "Unicode-DFS-2016",
+  "Unlicense",
+  "Zlib",
+]
+
+# Crates that carry multiple licenses (A OR B) are acceptable as long as
+# at least one expression satisfies the allow list — cargo-deny handles
+# this automatically with `allow` rather than `deny`.
+
+# ---------------------------------------------------------------------------
+# Advisories (security)
+# ---------------------------------------------------------------------------
+[advisories]
+# Fail on any unpatched vulnerability in the RustSec advisory database.
+ignore = []
+
+# ---------------------------------------------------------------------------
+# Bans (duplicate crates / wildcard deps)
+# ---------------------------------------------------------------------------
+[bans]
+# Warn when the same crate appears more than once with different versions.
+multiple-versions = "warn"
+wildcards = "deny"
