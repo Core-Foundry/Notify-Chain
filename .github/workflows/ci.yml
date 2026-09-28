@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  format-lint-typecheck:
+    name: Code Quality Checks
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: |
+            listener/package-lock.json
+            dashboard/package-lock.json
+
+      - name: Install dependencies (listener)
+        working-directory: ./listener
+        run: npm ci
+
+      - name: Install dependencies (dashboard)
+        working-directory: ./dashboard
+        run: npm ci
+
+      - name: Format Check (listener)
+        working-directory: ./listener
+        run: npm run format:check
+
+      - name: Lint (listener)
+        working-directory: ./listener
+        run: npx eslint "src/**/*.ts"
+
+      - name: Static Analysis / Typecheck (listener)
+        working-directory: ./listener
+        run: npm run typecheck
+
+      - name: Format Check (dashboard)
+        working-directory: ./dashboard
+        run: npm run format:check
+
+      - name: Lint (dashboard)
+        working-directory: ./dashboard
+        run: npm run lint
+
+      - name: Static Analysis / Typecheck (dashboard)
+        working-directory: ./dashboard
+        run: npx tsc --noEmit

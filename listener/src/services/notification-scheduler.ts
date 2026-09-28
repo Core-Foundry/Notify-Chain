@@ -10,6 +10,10 @@ import { getWorkerManager } from './worker-manager';
 import { getJobMonitor } from './job-monitor';
 import { ProviderRegistry, getProviderRegistry } from './provider-registry';
 import { verifyPayloadIntegrity } from '../utils/payload-integrity';
+import {
+  getNotificationAnalyticsAggregator,
+  NotificationAnalyticsAggregator,
+} from './notification-analytics-aggregator';
 
 /**
  * Background scheduler that processes scheduled notifications
@@ -32,13 +36,14 @@ export class NotificationScheduler {
    * When not supplied the module-level singleton is used.
    */
   private providerRegistry: ProviderRegistry;
+  private analytics: NotificationAnalyticsAggregator;
 
   constructor(
     repository: ScheduledNotificationRepository,
     config: SchedulerConfig,
     discordService?: DiscordNotificationService | null,
     batchValidator?: BatchValidationService,
-    providerRegistry?: ProviderRegistry
+    providerRegistry?: ProviderRegistry,
   ) {
     this.repository = repository;
     this.config = { retryDelayMs: 5_000, ...config };
@@ -46,6 +51,7 @@ export class NotificationScheduler {
     this.processorId = config.processorId || uuidv4();
     this.batchValidator = batchValidator ?? new BatchValidationService();
     this.providerRegistry = providerRegistry ?? getProviderRegistry();
+    this.analytics = getNotificationAnalyticsAggregator();
   }
 
   /**
@@ -126,7 +132,7 @@ export class NotificationScheduler {
         this.processorId,
         this.config.lockTimeoutMs,
         this.config.batchSize,
-        requestId
+        requestId,
       );
 
       if (notifications.length === 0) {
@@ -140,7 +146,7 @@ export class NotificationScheduler {
       }
 
       const batchRejection = this.batchValidator.rejectIfInvalid(
-        this.toValidationBatch(notifications)
+        this.toValidationBatch(notifications),
       );
 
       if (batchRejection) {
@@ -153,9 +159,11 @@ export class NotificationScheduler {
         for (const notification of notifications) {
           await this.repository.markAsFailedOrRetry(
             notification.id!,
-            new Error(`Batch validation failed: ${batchRejection.errors.map((e) => e.message).join('; ')}`),
+            new Error(
+              `Batch validation failed: ${batchRejection.errors.map((e) => e.message).join('; ')}`,
+            ),
             notification.retryCount,
-            notification.maxRetries
+            notification.maxRetries,
           );
         }
         return;
@@ -180,7 +188,7 @@ export class NotificationScheduler {
             notification.id!,
             new Error('Scheduler shutting down'),
             notification.retryCount,
-            notification.maxRetries
+            notification.maxRetries,
           );
         }
         return;
@@ -197,7 +205,7 @@ export class NotificationScheduler {
             notification.id!,
             new Error('Scheduler shutting down'),
             notification.retryCount,
-            notification.maxRetries
+            notification.maxRetries,
           );
           continue;
         }
@@ -237,7 +245,7 @@ export class NotificationScheduler {
   private async processNotification(
     notification: ScheduledNotification,
     requestId: string,
-    jobId?: string
+    jobId?: string,
   ): Promise<void> {
     const startTime = Date.now();
     const executionAttempt = notification.retryCount + 1;
@@ -268,7 +276,7 @@ export class NotificationScheduler {
           notification.id!,
           new Error('Not yet due for execution'),
           notification.retryCount,
-          notification.maxRetries
+          notification.maxRetries,
         );
         if (jobId) {
           jobMonitor.failJob(jobId, 'Not yet due for execution', {
@@ -296,7 +304,9 @@ export class NotificationScheduler {
             requestId,
             id: notification.id,
           });
-        } else if (!verifyPayloadIntegrity(notification.payload, notification.payloadHash, secret)) {
+        } else if (
+          !verifyPayloadIntegrity(notification.payload, notification.payloadHash, secret)
+        ) {
           logger.error('Payload integrity verification failed — rejecting notification', {
             requestId,
             id: notification.id,
@@ -306,7 +316,7 @@ export class NotificationScheduler {
             notification.id!,
             new Error('Payload integrity check failed: hash mismatch'),
             notification.maxRetries, // exhaust retries — don't retry a tampered payload
-            notification.maxRetries
+            notification.maxRetries,
           );
           if (jobId) {
             jobMonitor.failJob(jobId, 'Payload integrity check failed: hash mismatch', {
@@ -339,11 +349,25 @@ export class NotificationScheduler {
           });
         }
 
+        const deliveryLatencyMs = notification.createdAt
+          ? Date.now() - new Date(notification.createdAt).getTime()
+          : undefined;
+
+        this.analytics.record({
+          notificationType: notification.notificationType,
+          contractAddress: notification.contractAddress ?? undefined,
+          outcome: 'success',
+          durationMs,
+          deliveryLatencyMs,
+          timestamp: Date.now(),
+        });
+
         logger.info('Notification delivered successfully', {
           requestId,
           id: notification.id,
           type: notification.notificationType,
           durationMs,
+          deliveryLatencyMs,
         });
       } else {
         throw new Error('Notification delivery returned false');
@@ -365,6 +389,15 @@ export class NotificationScheduler {
         });
       }
 
+      this.analytics.record({
+        notificationType: notification.notificationType,
+        contractAddress: notification.contractAddress ?? undefined,
+        outcome: 'failure',
+        durationMs,
+        errorReason: (error as Error).message,
+        timestamp: Date.now(),
+      });
+
       const willRetry = notification.retryCount + 1 < notification.maxRetries;
       const nextRetryAt = willRetry
         ? new Date(Date.now() + (this.config.retryDelayMs ?? 5_000))
@@ -375,7 +408,7 @@ export class NotificationScheduler {
         error as Error,
         notification.retryCount,
         notification.maxRetries,
-        nextRetryAt
+        nextRetryAt,
       );
 
       await this.repository.logExecution({
@@ -403,7 +436,7 @@ export class NotificationScheduler {
    */
   private async executeNotification(
     notification: ScheduledNotification,
-    requestId: string
+    requestId: string,
   ): Promise<boolean> {
     const payload = JSON.parse(notification.payload);
     const type = notification.notificationType;
@@ -442,33 +475,33 @@ export class NotificationScheduler {
       case 'discord':
         if (!this.discordService) {
           throw new Error(
-            'Discord service not configured and no Discord provider registered in the registry'
+            'Discord service not configured and no Discord provider registered in the registry',
           );
         }
         return await this.discordService.sendEventNotification(
           payload.event,
           payload.contractConfig,
-          `scheduler-${notification.id}-${requestId}`
+          `scheduler-${notification.id}-${requestId}`,
         );
 
       case 'webhook':
         throw new Error(
-          'Webhook delivery not yet implemented. Register a WebhookNotificationProvider in the ProviderRegistry.'
+          'Webhook delivery not yet implemented. Register a WebhookNotificationProvider in the ProviderRegistry.',
         );
 
       case 'email':
         throw new Error(
-          'Email delivery not yet implemented. Register an email NotificationProvider in the ProviderRegistry.'
+          'Email delivery not yet implemented. Register an email NotificationProvider in the ProviderRegistry.',
         );
 
       case 'sms':
         throw new Error(
-          'SMS delivery not yet implemented. Register an SMS NotificationProvider in the ProviderRegistry.'
+          'SMS delivery not yet implemented. Register an SMS NotificationProvider in the ProviderRegistry.',
         );
 
       default:
         throw new Error(
-          `Unsupported notification type: "${type}". Register a provider for this type in the ProviderRegistry.`
+          `Unsupported notification type: "${type}". Register a provider for this type in the ProviderRegistry.`,
         );
     }
   }

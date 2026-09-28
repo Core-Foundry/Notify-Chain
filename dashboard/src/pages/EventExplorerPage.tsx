@@ -47,6 +47,8 @@ export function EventExplorerPage() {
   const [limit, setLimit] = useState(() => parseLimitParam(initialSearch));
   const [selectedNotification, setSelectedNotification] = useState<BlockchainEvent | null>(null);
   const [contractStatuses, setContractStatuses] = useState<ContractStatus[]>([]);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [refreshError, setRefreshError] = useState<string | null>(null);
 
   const setEvents = useEventStore((state) => state.setEvents);
   const setLoading = useEventStore((state) => state.setLoading);
@@ -121,6 +123,8 @@ export function EventExplorerPage() {
     // Poll for status updates so delivered/failed notifications are reflected
     // without requiring a manual page refresh.
     const intervalId = setInterval(async () => {
+      setIsRefreshing(true);
+      setRefreshError(null);
       try {
         const remoteEvents = await fetchEvents(API_URL);
         if (!cancelled) {
@@ -129,7 +133,12 @@ export function EventExplorerPage() {
         }
       } catch {
         if (!cancelled) {
+          setRefreshError('Background refresh failed');
           markSyncFailure('Background refresh failed');
+        }
+      } finally {
+        if (!cancelled) {
+          setIsRefreshing(false);
         }
       }
     }, POLL_INTERVAL_MS);
@@ -209,21 +218,21 @@ export function EventExplorerPage() {
   }, [setSearch, setContractFilter, setEventTypeFilter, setStatusFilter, setDateFrom, setDateTo]);
 
   const handleRetry = useCallback(async () => {
-    setLoading(true);
-    setError(null);
+    setIsRefreshing(true);
+    setRefreshError(null);
 
     try {
       const remoteEvents = await fetchEvents(API_URL);
       setEvents(remoteEvents);
       markSyncSuccess();
+      setError(null);
     } catch {
-      setEvents(generateMockEvents(DEFAULT_EVENT_COUNT));
-      setError('Retry failed — still using demo event data.');
+      setRefreshError('Manual refresh failed');
       markSyncFailure('Manual refresh failed');
     } finally {
-      setLoading(false);
+      setIsRefreshing(false);
     }
-  }, [markSyncFailure, markSyncSuccess, setError, setEvents, setLoading]);
+  }, [markSyncFailure, markSyncSuccess, setError, setEvents]);
 
   const handleSelectEvent = useCallback((event: BlockchainEvent) => {
     setSelectedNotification(event);
@@ -273,7 +282,7 @@ export function EventExplorerPage() {
       <EventFiltersBar />
       <NotificationSearchBar />
 
-      {error && (
+      {error && !filteredEvents.length && (
         <section className="event-explorer__error-banner" role="alert">
           <div>
             <strong>Error:</strong> {error}
@@ -284,15 +293,26 @@ export function EventExplorerPage() {
         </section>
       )}
 
+      {refreshError && filteredEvents.length > 0 && (
+        <section className="event-explorer__error-banner event-explorer__error-banner--refresh" role="alert">
+          <div>
+            <strong>Refresh Error:</strong> {refreshError} — existing events are still displayed.
+          </div>
+          <button type="button" className="event-explorer__retry-button" onClick={handleRetry}>
+            Retry Refresh
+          </button>
+        </section>
+      )}
+
       <div className="event-explorer__status-row">
         <p className="event-explorer__summary">
           Showing {fromIndex.toLocaleString()}–{toIndex.toLocaleString()} of{' '}
           {filteredEvents.length.toLocaleString()} events
         </p>
-        {isLoading && <p className="event-explorer__loading-note">Loading events…</p>}
+        {(isLoading || isRefreshing) && <p className="event-explorer__loading-note">{isRefreshing ? 'Refreshing events…' : 'Loading events…'}</p>}
       </div>
 
-      {isLoading ? (
+      {(isLoading && filteredEvents.length === 0) ? (
         <EventExplorerSkeleton rows={Math.min(limit, 8)} />
       ) : currentPageEvents.length > 0 ? (
         <EventExplorerTable
