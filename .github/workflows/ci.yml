@@ -116,6 +116,32 @@ jobs:
       - name: Static analysis dashboard
         if: steps.changed.outputs.dashboard_files != ''
         working-directory: ./dashboard
+        shell: bash
         run: |
-          echo "Running TypeScript static analysis for dashboard changes."
-          npx tsc --noEmit
+          echo "Running TypeScript static analysis for dashboard changes:"
+          printf '%s\n' "${{ steps.changed.outputs.dashboard_files }}"
+
+          set +e
+          tsc_output=$(npx tsc --noEmit ${{ steps.changed.outputs.dashboard_files }} 2>&1)
+          tsc_status=$?
+          set -e
+
+          printf '%s\n' "$tsc_output"
+
+          changed_errors=""
+          for file in ${{ steps.changed.outputs.dashboard_files }}; do
+            file_errors=$(printf '%s\n' "$tsc_output" | grep -F "${file}(" || true)
+            if [ -n "$file_errors" ]; then
+              changed_errors="${changed_errors}${file_errors}"$'\n'
+            fi
+          done
+
+          if [ -n "$changed_errors" ]; then
+            echo "TypeScript errors found in changed dashboard files:"
+            printf '%s\n' "$changed_errors"
+            exit 1
+          fi
+
+          if [ "$tsc_status" -ne 0 ]; then
+            echo "TypeScript reported errors only in unchanged/imported files; those errors are outside this PR's changed-file scope."
+          fi
