@@ -3,7 +3,7 @@ import { render, screen, waitFor, act } from '@testing-library/react';
 import { EventExplorerPage } from './EventExplorerPage';
 import { useEventStore } from '../store/eventStore';
 import { generateMockEvents } from '../utils/eventData';
-import { fetchEvents, fetchStatus } from '../services/eventsApi';
+import { fetchEvents } from '../services/eventsApi';
 
 jest.mock('../services/eventsApi', () => ({
   fetchEvents: jest.fn(),
