@@ -241,6 +241,50 @@ describe('WebhookDeliveryService', () => {
     });
   });
 
+  // ── Classification (issue #643) ───────────────────────────────────────────
+
+  describe('response category', () => {
+    it('reports success for 2xx responses', async () => {
+      mockSendWebhook.mockResolvedValue(makeResponse(200));
+
+      const result = await service.deliver(TARGET_URL, PAYLOAD, REQUEST_ID);
+
+      expect(result.category).toBe('success');
+    });
+
+    it.each([429, 500, 502, 503, 504])('reports retryable for HTTP %i', async (status) => {
+      mockSendWebhook.mockResolvedValue(makeResponse(status, false));
+
+      const result = await service.deliver(TARGET_URL, PAYLOAD, REQUEST_ID);
+
+      expect(result.category).toBe('retryable');
+    });
+
+    it.each([400, 401, 403, 404, 422])('reports permanent for HTTP %i', async (status) => {
+      mockSendWebhook.mockResolvedValue(makeResponse(status, false));
+
+      const result = await service.deliver(TARGET_URL, PAYLOAD, REQUEST_ID);
+
+      expect(result.category).toBe('permanent');
+    });
+
+    it('reports retryable for a request timeout', async () => {
+      mockSendWebhook.mockRejectedValue(makeAbortError());
+
+      const result = await service.deliver(TARGET_URL, PAYLOAD, REQUEST_ID);
+
+      expect(result.category).toBe('retryable');
+    });
+
+    it('reports retryable for a network error', async () => {
+      mockSendWebhook.mockRejectedValue(new Error('ECONNREFUSED'));
+
+      const result = await service.deliver(TARGET_URL, PAYLOAD, REQUEST_ID);
+
+      expect(result.category).toBe('retryable');
+    });
+  });
+
   // ── Default options ───────────────────────────────────────────────────────
 
   describe('default options', () => {

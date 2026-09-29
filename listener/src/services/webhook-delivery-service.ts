@@ -17,6 +17,11 @@
  */
 
 import logger from '../utils/logger';
+import {
+  classifyWebhookError,
+  classifyWebhookStatus,
+  type WebhookResponseCategory,
+} from './webhook-response-classifier';
 import { sendWebhook, WebhookSendOptions } from './webhook-sender';
 
 export interface WebhookDeliveryOptions {
@@ -33,6 +38,8 @@ export interface WebhookDeliveryResult {
   statusCode?: number;
   /** Human-readable failure reason for logging. */
   errorReason?: string;
+  /** Classified outcome: `success`, `retryable`, or `permanent`. */
+  category: WebhookResponseCategory;
 }
 
 export class WebhookDeliveryService {
@@ -73,19 +80,24 @@ export class WebhookDeliveryService {
     try {
       const response = await sendWebhook(targetUrl, payload, sendOpts);
       const durationMs = Date.now() - startMs;
+      const category = classifyWebhookStatus(response.status);
 
-      if (response.ok) {
+      if (category === 'success') {
         logger.info('Webhook delivered successfully', {
           ...logCtx,
           statusCode: response.status,
           durationMs,
         });
-        return { success: true, statusCode: response.status };
+        return { success: true, statusCode: response.status, category };
       }
 
-      // 5xx — transient server error, worth retrying
-      if (response.status >= 500) {
-        logger.warn('Webhook delivery failed with server error (5xx) — will retry', {
+      if (category === 'retryable') {
+        // 5xx is the common transient case; 429 (rate limited) is also retryable.
+        const message =
+          response.status >= 500
+            ? 'Webhook delivery failed with server error (5xx) — will retry'
+            : 'Webhook delivery failed with a transient error — will retry';
+        logger.warn(message, {
           ...logCtx,
           statusCode: response.status,
           durationMs,
@@ -94,6 +106,7 @@ export class WebhookDeliveryService {
           success: false,
           statusCode: response.status,
           errorReason: `HTTP ${response.status}`,
+          category,
         };
       }
 
@@ -107,6 +120,7 @@ export class WebhookDeliveryService {
         success: false,
         statusCode: response.status,
         errorReason: `HTTP ${response.status}`,
+        category,
       };
     } catch (err) {
       const durationMs = Date.now() - startMs;
@@ -131,7 +145,7 @@ export class WebhookDeliveryService {
         });
       }
 
-      return { success: false, errorReason };
+      return { success: false, errorReason, category: classifyWebhookError(err) };
     }
   }
 }
