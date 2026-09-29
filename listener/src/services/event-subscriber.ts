@@ -16,6 +16,7 @@ import { EventDeduplicationService } from './event-deduplication-service';
 import { EventProcessingQueue } from './event-processing-queue';
 import { NotificationExpirationService } from './notification-expiration';
 import { pollingMetrics } from './polling-metrics';
+import { safeLedgerRangeValidation, MAX_LEDGER_RANGE } from '../utils/ledger-range-validator';
 
 export class EventSubscriber {
   private config: Config;
@@ -29,6 +30,8 @@ export class EventSubscriber {
   private eventQueue: EventProcessingQueue | null = null;
   private expirationService: NotificationExpirationService | null = null;
   private lastSuccessfulPollAt: number | null = null;
+  /** Cached start ledger resolved on the first cold-start backfill resolution. */
+  private backfillStartLedger: number | null = null;
 
   constructor(config: Config, deduplicationService?: EventDeduplicationService) {
     this.config = config;
@@ -170,9 +173,6 @@ export class EventSubscriber {
             });
           }
         }
-        const processableEvents = events.filter((event: StellarSDK.rpc.Api.EventResponse) =>
-          this.shouldProcessEvent(event, contractConfig, requestId)
-        );
 
         if (events.length > 0) {
           logger.info('Received events', {
@@ -313,6 +313,28 @@ export class EventSubscriber {
 
       if (tip !== null) {
         const startLedger = Math.max(1, tip - maxLedgers);
+
+        // Validate that the computed start ledger is a positive integer within
+        // the valid ledger range before caching.  The range-width cap that
+        // applies to external HTTP callers is NOT enforced here because the
+        // internal backfill limit is already governed by `maxLedgers`.
+        const rangeCheck = safeLedgerRangeValidation(startLedger, tip);
+        if (!rangeCheck.valid && startLedger > 1) {
+          // Only fall back when the start ledger itself is invalid (e.g. it
+          // somehow ended up <= 0 or > MAX_LEDGER_VALUE).  A range-too-large
+          // result is expected for long bacfills and is intentionally ignored.
+          const isRangeSizeError = rangeCheck.issues?.every((i) => i.field === 'endLedger');
+          if (!isRangeSizeError) {
+            logger.warn('Backfill start ledger failed range validation; falling back to ledger 1', {
+              startLedger,
+              networkTipLedger: tip,
+              reason: rangeCheck.reason,
+            });
+            this.backfillStartLedger = 1;
+            return 1;
+          }
+        }
+
         this.backfillStartLedger = startLedger;
 
         logger.warn('Backfill safety limit applied: starting historical replay from ledger', {
@@ -339,27 +361,6 @@ export class EventSubscriber {
     contractConfig: ContractConfig
   ): Promise<StellarSDK.rpc.Api.GetEventsResponse> {
     const lastCursor = this.lastCursors.get(contractConfig.address);
-    const request: StellarSDK.rpc.Api.GetEventsRequest = lastCursor
-      ? {
-          filters: [
-            {
-              contractIds: [contractConfig.address],
-              type: 'contract',
-            },
-          ],
-          cursor: lastCursor,
-          limit: this.config.eventBatchSize,
-        }
-      : {
-          filters: [
-            {
-              contractIds: [contractConfig.address],
-              type: 'contract',
-            },
-          ],
-          startLedger: 1,
-          limit: this.config.eventBatchSize,
-        };
 
     let request: StellarSDK.rpc.Api.GetEventsRequest;
 

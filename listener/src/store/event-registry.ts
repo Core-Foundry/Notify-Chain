@@ -86,6 +86,16 @@ export class EventRegistry {
     return this.events.slice(this.events.length - limit);
   }
 
+  /**
+   * Returns all events whose ledger number falls within [startLedger, endLedger] (inclusive).
+   * The caller is responsible for validating the range before calling this method.
+   */
+  getEventsByLedgerRange(startLedger: number, endLedger: number): DisplayEvent[] {
+    return this.events.filter(
+      (e) => e.ledger >= startLedger && e.ledger <= endLedger,
+    );
+  }
+
   count(): number {
     return this.events.length;
   }
