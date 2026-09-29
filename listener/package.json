@@ -13,6 +13,8 @@
     "test:stress": "node ./node_modules/jest/bin/jest.js src/__tests__/stress.test.ts --runInBand --detectOpenHandles",
     "stress-test": "ts-node src/scripts/run-stress-tests.ts",
     "migrate": "ts-node src/scripts/migrate-db.ts",
+    "migrate:rollback": "ts-node src/scripts/rollback-db.ts",
+    "check-migration-safety": "ts-node src/scripts/check-migration-safety.ts",
     "migrate:templates": "ts-node src/scripts/migrate-templates.ts",
     "check-migrations": "ts-node src/scripts/check-migrations.ts",
     "validate:batch": "ts-node src/utils/batch-validator.ts"
