@@ -56,6 +56,8 @@ import { NotificationImportService } from '../services/notification-import-servi
 import { ResponseTimeMiddleware } from '../middleware/response-time';
 import { DEFAULT_MAX_BODY_BYTES, enforceBodyLimit } from '../middleware/body-limit';
 import { sanitizeUrl } from '../utils/logger';
+import { DataExportService } from '../services/data-export-service';
+import { validatePayload, Schemas, parseAndValidateBody } from '../middleware/request-validator';
 
 export interface EventsServerOptions {
   port: number;
@@ -104,6 +106,8 @@ export interface EventsServerOptions {
    * are never parsed. Defaults to {@link DEFAULT_MAX_BODY_BYTES}.
    */
   maxBodyBytes?: number;
+  /** Optional DataExportService override for administrative exports (#850). */
+  dataExportService?: DataExportService | null;
 }
 
 type ServiceStatus = 'ok' | 'error' | 'not_configured';
@@ -825,6 +829,109 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
       return;
     }
 
+    // GET & POST /api/admin/export (and /api/export) — Data Export Utility (#850)
+    if (
+      (req.method === 'GET' || req.method === 'POST') &&
+      (url.pathname === '/api/admin/export' || url.pathname === '/api/export')
+    ) {
+      const apiKeyHeader = req.headers['x-api-key'];
+      if (options.apiKeys && options.apiKeys.length > 0) {
+        const provided = Array.isArray(apiKeyHeader) ? apiKeyHeader[0] : apiKeyHeader;
+        const allowed = options.apiKeys.some((k) => k.key === provided);
+        if (!allowed) {
+          sendErr(res, 401, 'Unauthorized', ErrorCode.UNAUTHORIZED);
+          return;
+        }
+      }
+
+      const processExport = async (rawFilters: Record<string, unknown>) => {
+        try {
+          const exportService =
+            options.dataExportService ?? new DataExportService(getDatabase());
+
+          const validation = validatePayload(rawFilters, Schemas.dataExport);
+          if (!validation.valid) {
+            sendErr(
+              res,
+              400,
+              `Validation failed: ${validation.issues[0]?.message}`,
+              ErrorCode.BAD_REQUEST,
+              validation.issues
+            );
+            return;
+          }
+
+          const type = (rawFilters.type as 'notifications' | 'events' | 'all') || 'all';
+          const format = (rawFilters.format as 'json' | 'csv') || 'json';
+          const includeSensitive =
+            rawFilters.includeSensitive === true || rawFilters.includeSensitive === 'true';
+
+          const limit = rawFilters.limit ? Number(rawFilters.limit) : undefined;
+          const offset = rawFilters.offset ? Number(rawFilters.offset) : undefined;
+
+          const result = await exportService.exportData({
+            type,
+            format,
+            includeSensitive,
+            notificationFilters: {
+              status: rawFilters.status as string | undefined,
+              notificationType: (rawFilters.channel || rawFilters.notificationType) as string | undefined,
+              targetRecipient: (rawFilters.recipient || rawFilters.targetRecipient) as string | undefined,
+              contractAddress: (rawFilters.contract || rawFilters.contractAddress) as string | undefined,
+              fromDate: (rawFilters.from || rawFilters.fromDate) as string | undefined,
+              toDate: (rawFilters.to || rawFilters.toDate) as string | undefined,
+              limit,
+              offset,
+            },
+            eventFilters: {
+              status: rawFilters.status as string | undefined,
+              eventType: rawFilters.eventType as string | undefined,
+              contractAddress: (rawFilters.contract || rawFilters.contractAddress) as string | undefined,
+              fromDate: (rawFilters.from || rawFilters.fromDate) as string | undefined,
+              toDate: (rawFilters.to || rawFilters.toDate) as string | undefined,
+              limit,
+              offset,
+            },
+          });
+
+          if (format === 'csv') {
+            res.writeHead(200, {
+              'Content-Type': 'text/csv',
+              'Content-Disposition': 'attachment; filename="notifychain-export.csv"',
+            });
+            res.end(result.csvContent || '');
+            return;
+          }
+
+          sendOk(res, 200, result);
+        } catch (error) {
+          logger.error('Failed to export data', { error, requestId, correlationId });
+          handleApiError(res, error, requestId, correlationId);
+        }
+      };
+
+      if (req.method === 'GET') {
+        const queryParams: Record<string, unknown> = {};
+        url.searchParams.forEach((val, key) => {
+          queryParams[key] = val;
+        });
+        await processExport(queryParams);
+        return;
+      } else {
+        let body = '';
+        req.on('data', (chunk) => { body += chunk.toString(); });
+        req.on('end', async () => {
+          try {
+            const bodyParams = body ? JSON.parse(body) : {};
+            await processExport(bodyParams);
+          } catch (jsonErr) {
+            sendErr(res, 400, 'Malformed JSON payload in request body', ErrorCode.PARSE_ERROR);
+          }
+        });
+        return;
+      }
+    }
+
     // POST /api/schedule
     if (req.method === 'POST' && url.pathname === '/api/schedule') {
       if (!options.notificationAPI) {
@@ -837,11 +944,44 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
       req.on('data', (chunk) => { body += chunk.toString(); });
       req.on('end', async () => {
         try {
-          const data = JSON.parse(body);
-
-          if (!data.executeAt || !data.payload || !data.targetRecipient) {
+          let data: any;
+          try {
+            data = JSON.parse(body);
+          } catch (jsonErr) {
+            logger.warn('Schedule request rejected: malformed JSON', {
+              requestId, correlationId, error: (jsonErr as Error).message,
+            });
             res.writeHead(400, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ error: 'Missing required fields: executeAt, payload, targetRecipient', code: 'MISSING_FIELDS' }));
+            res.end(JSON.stringify({
+              success: false,
+              error: 'Malformed JSON payload in request body',
+              code: 'PARSE_ERROR',
+              details: [{ field: 'body', message: (jsonErr as Error).message }],
+            }));
+            return;
+          }
+
+          const validation = validatePayload(data, Schemas.scheduleNotification);
+          if (!validation.valid) {
+            const firstIssue = validation.issues[0]?.message || 'Validation failed';
+            logger.warn('Schedule request rejected by validation middleware', {
+              requestId, correlationId, issues: validation.issues,
+            });
+            const isMissing = validation.issues.some((i) => i.message.includes('required'));
+            const isInvalidDate = validation.issues.some(
+              (i) => i.field === 'executeAt' && !i.message.includes('required')
+            );
+            const code = isInvalidDate ? 'INVALID_DATE' : (isMissing ? 'MISSING_FIELDS' : 'BAD_REQUEST');
+            const errorMsg = isMissing
+              ? 'Missing required fields: executeAt, payload, targetRecipient'
+              : firstIssue;
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({
+              success: false,
+              error: errorMsg,
+              code,
+              details: validation.issues,
+            }));
             return;
           }
 
@@ -1354,8 +1494,15 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
         void (async () => {
           try {
             const parsed = JSON.parse(body) as CreateNotificationTemplateInput;
-            if (!parsed?.id || !parsed?.name || !parsed?.type || !parsed?.body) {
-              sendErr(res, 400, 'Invalid body: id, name, type, and body are required', ErrorCode.BAD_REQUEST);
+            const validation = validatePayload(parsed, Schemas.createTemplate);
+            if (!validation.valid) {
+              sendErr(
+                res,
+                400,
+                'Invalid body: id, name, type, and body are required',
+                ErrorCode.BAD_REQUEST,
+                validation.issues
+              );
               return;
             }
 

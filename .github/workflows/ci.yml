@@ -1,0 +1,76 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - staging
+  pull_request:
+    branches:
+      - main
+      - staging
+
+permissions:
+  contents: read
+
+jobs:
+  format:
+    name: Formatting & Lint Checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install listener dependencies
+        working-directory: listener
+        run: npm ci
+
+      - name: Check listener formatting
+        working-directory: listener
+        run: npm run format:check
+
+      - name: TypeScript check listener
+        working-directory: listener
+        run: npm run typecheck
+
+  test-database-environment:
+    name: CI Test Database Environment (#859)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+          cache-dependency-path: listener/package-lock.json
+
+      - name: Install dependencies
+        working-directory: listener
+        run: npm ci
+
+      - name: Provision Test Database & Run Migrations Automatically
+        working-directory: listener
+        env:
+          DATABASE_PATH: ./data/test-notifications.db
+        run: npm run db:test:setup
+
+      - name: Verify Clean State & Migrations
+        working-directory: listener
+        run: npm run check-migrations
+
+      - name: Run Integration Tests Against Clean Test DB
+        working-directory: listener
+        env:
+          DATABASE_PATH: ./data/test-notifications.db
+        run: npm test -- src/__tests__/integration.test.ts --silent
+
+      - name: Clean Test Database State
+        working-directory: listener
+        if: always()
+        run: npm run db:test:clean

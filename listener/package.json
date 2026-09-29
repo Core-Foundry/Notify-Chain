@@ -15,7 +15,11 @@
     "migrate": "ts-node src/scripts/migrate-db.ts",
     "migrate:templates": "ts-node src/scripts/migrate-templates.ts",
     "check-migrations": "ts-node src/scripts/check-migrations.ts",
-    "validate:batch": "ts-node src/utils/batch-validator.ts"
+    "validate:batch": "ts-node src/utils/batch-validator.ts",
+    "export:data": "ts-node src/scripts/export-data.ts",
+    "db:test:setup": "ts-node src/scripts/setup-test-db.ts",
+    "db:test:clean": "ts-node src/scripts/clean-test-db.ts",
+    "test:ci-db": "npm run db:test:setup && npm test -- --silent && npm run db:test:clean"
   },
   "keywords": [],
   "author": "",
