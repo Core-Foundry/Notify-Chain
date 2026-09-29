@@ -29,6 +29,7 @@ export class EventSubscriber {
   private eventQueue: EventProcessingQueue | null = null;
   private expirationService: NotificationExpirationService | null = null;
   private lastSuccessfulPollAt: number | null = null;
+  private backfillStartLedger: number | null = null;
 
   constructor(config: Config, deduplicationService?: EventDeduplicationService) {
     this.config = config;
@@ -170,9 +171,6 @@ export class EventSubscriber {
             });
           }
         }
-        const processableEvents = events.filter((event: StellarSDK.rpc.Api.EventResponse) =>
-          this.shouldProcessEvent(event, contractConfig, requestId)
-        );
 
         if (events.length > 0) {
           logger.info('Received events', {
@@ -339,28 +337,6 @@ export class EventSubscriber {
     contractConfig: ContractConfig
   ): Promise<StellarSDK.rpc.Api.GetEventsResponse> {
     const lastCursor = this.lastCursors.get(contractConfig.address);
-    const request: StellarSDK.rpc.Api.GetEventsRequest = lastCursor
-      ? {
-          filters: [
-            {
-              contractIds: [contractConfig.address],
-              type: 'contract',
-            },
-          ],
-          cursor: lastCursor,
-          limit: this.config.eventBatchSize,
-        }
-      : {
-          filters: [
-            {
-              contractIds: [contractConfig.address],
-              type: 'contract',
-            },
-          ],
-          startLedger: 1,
-          limit: this.config.eventBatchSize,
-        };
-
     let request: StellarSDK.rpc.Api.GetEventsRequest;
 
     if (lastCursor) {
@@ -391,9 +367,10 @@ export class EventSubscriber {
   ): Promise<boolean> {
     const eventStart = Date.now();
     const eventName = getEventName(event.topic);
+    const isDryRun = this.config.dryRun === true;
 
     // Check persistent deduplication first (to catch reorg duplicates)
-    if (this.deduplicationService) {
+    if (this.deduplicationService && !isDryRun) {
       const duplicate = await this.deduplicationService.isDuplicate(event.id, contractConfig.address);
       if (duplicate.isDuplicate) {
         logger.warn('Skipping event: already processed (persistent deduplication)', {
@@ -440,12 +417,13 @@ export class EventSubscriber {
       type: displayEvent.type,
       topic: displayEvent.topic,
       value: displayEvent.value,
+      dryRun: isDryRun,
     });
 
     let notificationSent = false;
     let processingError: string | undefined;
 
-    if (this.discordService) {
+    if (this.discordService && !isDryRun) {
       const userId = contractConfig.userId ?? 'global';
       if (!preferenceStore.isCategoryEnabled(userId, 'discord')) {
         logger.info('Skipping Discord notification: category disabled by user preferences', {
@@ -483,8 +461,8 @@ export class EventSubscriber {
       }
     }
 
-    // Record the processed event for persistent deduplication
-    if (this.deduplicationService) {
+    // Record the processed event for persistent deduplication (skip in dry-run)
+    if (this.deduplicationService && !isDryRun) {
       await this.deduplicationService.recordProcessedEvent(
         event.id,
         contractConfig.address,
@@ -502,9 +480,20 @@ export class EventSubscriber {
       correlationId,
       eventId: event.id,
       notificationSent,
-      outcome: !this.discordService || notificationSent ? 'success' : 'failure',
+      outcome: isDryRun ? 'dry_run' : (!this.discordService || notificationSent ? 'success' : 'failure'),
       durationMs: Date.now() - eventStart,
     });
+
+    if (isDryRun) {
+      logger.info('Dry-run: event validated successfully (no persistence or delivery)', {
+        requestId: correlationId,
+        correlationId,
+        eventId: event.id,
+        eventName,
+        contractAddress: contractConfig.address,
+      });
+      return true;
+    }
 
     if (!this.discordService) return true;
     if (notificationSent) return true;

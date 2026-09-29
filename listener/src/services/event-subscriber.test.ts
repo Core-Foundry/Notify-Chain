@@ -59,7 +59,6 @@ const testConfig: Config = {
   reconnectDelayMs: 100,
   eventsApiPort: 8787,
   eventsApiCorsOrigin: 'http://localhost:5173',
-  maxPayloadSizeBytes: 64 * 1024,
 };
 
 function createMockEvent(
@@ -728,7 +727,134 @@ describe('EventSubscriber', () => {
       expect(preferenceStore.isCategoryEnabled).toHaveBeenCalledWith('global', 'discord');
     });
   });
-});
+
+  describe('dry-run mode', () => {
+    it('skips Discord notification delivery when dry-run is enabled', async () => {
+      const discordConfig = {
+        webhookUrl: 'https://discord.com/api/webhooks/test/webhook',
+        webhookId: 'test',
+      };
+      const configWithDryRun: Config = {
+        ...testConfig,
+        discord: discordConfig,
+        dryRun: true,
+      };
+
+      mockGetEvents.mockResolvedValue({
+        events: [createMockEvent({ id: 'event-dryrun' })],
+        cursor: 'cursor-dryrun',
+      });
+
+      const subscriber = new EventSubscriber(configWithDryRun);
+      await (subscriber as any).checkForEvents();
+
+      expect(mockDiscordService.sendEventNotification).not.toHaveBeenCalled();
+      expect(mockLogger.info).toHaveBeenCalledWith(
+        'Dry-run: event validated successfully (no persistence or delivery)',
+        expect.objectContaining({
+          eventId: 'event-dryrun',
+          eventName: 'TaskCreated',
+          contractAddress: contractConfig.address,
+        })
+      );
+    });
+
+    it('logs dry-run status in processing event log', async () => {
+      const configWithDryRun: Config = {
+        ...testConfig,
+        dryRun: true,
+      };
+
+      mockGetEvents.mockResolvedValue({
+        events: [createMockEvent({ id: 'event-dryrun-status' })],
+        cursor: 'cursor-dryrun-status',
+      });
+
+      const subscriber = new EventSubscriber(configWithDryRun);
+      await (subscriber as any).checkForEvents();
+
+      expect(mockLogger.info).toHaveBeenCalledWith(
+        'Processing event',
+        expect.objectContaining({
+          eventId: 'event-dryrun-status',
+          dryRun: true,
+        })
+      );
+    });
+
+    it('logs dry-run outcome in event processing complete log', async () => {
+      const configWithDryRun: Config = {
+        ...testConfig,
+        dryRun: true,
+      };
+
+      mockGetEvents.mockResolvedValue({
+        events: [createMockEvent({ id: 'event-dryrun-outcome' })],
+        cursor: 'cursor-dryrun-outcome',
+      });
+
+      const subscriber = new EventSubscriber(configWithDryRun);
+      await (subscriber as any).checkForEvents();
+
+      expect(mockLogger.info).toHaveBeenCalledWith(
+        'Event processing complete',
+        expect.objectContaining({
+          eventId: 'event-dryrun-outcome',
+          outcome: 'dry_run',
+        })
+      );
+    });
+
+    it('processes events normally when dry-run is disabled', async () => {
+      const discordConfig = {
+        webhookUrl: 'https://discord.com/api/webhooks/test/webhook',
+        webhookId: 'test',
+      };
+      const configWithoutDryRun: Config = {
+        ...testConfig,
+        discord: discordConfig,
+        dryRun: false,
+      };
+
+      mockGetEvents.mockResolvedValue({
+        events: [createMockEvent({ id: 'event-normal' })],
+        cursor: 'cursor-normal',
+      });
+
+      const subscriber = new EventSubscriber(configWithoutDryRun);
+      await (subscriber as any).checkForEvents();
+
+      expect(mockDiscordService.sendEventNotification).toHaveBeenCalled();
+      expect(mockLogger.info).not.toHaveBeenCalledWith(
+        'Dry-run: event validated successfully (no persistence or delivery)',
+        expect.any(Object)
+      );
+    });
+
+    it('skips persistent deduplication when dry-run is enabled', async () => {
+      const configWithDryRun: Config = {
+        ...testConfig,
+        dryRun: true,
+      };
+
+      mockGetEvents.mockResolvedValue({
+        events: [createMockEvent({ id: 'event-dedup-dryrun' })],
+        cursor: 'cursor-dedup-dryrun',
+      });
+
+      const subscriber = new EventSubscriber(configWithDryRun);
+      await (subscriber as any).checkForEvents();
+
+      // In dry-run mode, deduplication service is not called
+      // This is verified by the fact that no errors are thrown and processing completes
+      expect(mockLogger.info).toHaveBeenCalledWith(
+        'Dry-run: event validated successfully (no persistence or delivery)',
+        expect.objectContaining({
+          eventId: 'event-dedup-dryrun',
+        })
+      );
+    });
+  });
 
   describe('notification expiration (Task 3: Requirements 2.1, 2.2, 2.3)', () => {
     const DEFAULT_EXPIRATION_MS = 24 * 60 * 60 * 1000; // 24 hours

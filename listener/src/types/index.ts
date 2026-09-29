@@ -67,6 +67,8 @@ export interface Config {
   backfill?: BackfillConfig;
   logging?: LoggingConfig;
   api?: ApiConfig;
+  /** Dry-run mode: parse and validate events without persisting or delivering notifications. */
+  dryRun?: boolean;
 }
 
 /** Observability settings, sourced from LOG_LEVEL / LOG_FORMAT. */
