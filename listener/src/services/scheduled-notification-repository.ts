@@ -22,6 +22,7 @@ export class ScheduledNotificationRepository {
   constructor(
     private db: Database,
     statsCache?: NotificationStatsCache,
+    private defaultTtlSeconds: number = 0,
   ) {
     this.statsCache = statsCache ?? getStatsCache();
   }
@@ -36,9 +37,9 @@ export class ScheduledNotificationRepository {
 
     const sql = `
       INSERT INTO scheduled_notifications (
-        payload, payload_hash, notification_type, target_recipient, execute_at,
+        payload, payload_hash, notification_type, target_recipient, execute_at, expires_at,
         max_retries, event_id, contract_address, priority, metadata
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
 
     const serializedPayload = compressPayload(input.payload);
@@ -49,6 +50,13 @@ export class ScheduledNotificationRepository {
       input.notificationType,
       input.targetRecipient,
       input.executeAt.toISOString(),
+      input.expiresAt !== undefined
+        ? input.expiresAt === null
+          ? null
+          : this.normalizeExpiration(input.expiresAt)
+        : this.defaultTtlSeconds > 0
+          ? new Date(Date.now() + this.defaultTtlSeconds * 1000).toISOString()
+          : null,
       input.maxRetries ?? 3,
       input.eventId ?? null,
       input.contractAddress ?? null,
@@ -69,6 +77,22 @@ export class ScheduledNotificationRepository {
     });
 
     return result.lastID;
+  }
+
+  private normalizeExpiration(value: Date | string | number): string {
+    const milliseconds =
+      typeof value === 'number' && Math.abs(value) < 100_000_000_000
+        ? value * 1000
+        : value instanceof Date
+          ? value.getTime()
+          : typeof value === 'number'
+            ? value
+            : Date.parse(value);
+    const date = new Date(milliseconds);
+    if (Number.isNaN(date.getTime())) {
+      throw new Error('expiresAt must be a valid ISO-8601 timestamp or epoch');
+    }
+    return date.toISOString();
   }
 
   /**
@@ -242,6 +266,28 @@ export class ScheduledNotificationRepository {
     this.statsCache.invalidate();
 
     logger.info('Notification marked as completed', { requestId, id });
+  }
+
+  /** Mark a notification expired and release its processing lock. */
+  async markAsExpired(id: number): Promise<void> {
+    const now = new Date().toISOString();
+    const errorMessage = 'Notification expired before delivery';
+    await this.db.run(
+      `UPDATE scheduled_notifications
+       SET status = ?, last_error = ?, error_details = ?, processing_completed_at = ?,
+           updated_at = ?, processor_id = NULL, lock_expires_at = NULL, next_retry_at = NULL
+       WHERE id = ? AND status = ?`,
+      [
+        NotificationStatus.EXPIRED,
+        errorMessage,
+        JSON.stringify({ message: errorMessage, timestamp: now }),
+        now,
+        now,
+        id,
+        NotificationStatus.PROCESSING,
+      ],
+    );
+    this.statsCache.invalidate();
   }
 
   /**
@@ -541,7 +587,7 @@ export class ScheduledNotificationRepository {
 
     const sql = `
       DELETE FROM scheduled_notifications
-      WHERE status IN (?, ?, ?)
+      WHERE status IN (?, ?, ?, ?)
         AND updated_at < ?
     `;
 
@@ -549,6 +595,7 @@ export class ScheduledNotificationRepository {
       NotificationStatus.COMPLETED,
       NotificationStatus.FAILED,
       NotificationStatus.CANCELLED,
+      NotificationStatus.EXPIRED,
       cutoff.toISOString(),
     ]);
 
@@ -816,6 +863,7 @@ export class ScheduledNotificationRepository {
       notificationType: row.notification_type as any,
       targetRecipient: row.target_recipient,
       executeAt: parseUtc(row.execute_at) as Date,
+      expiresAt: parseUtc(row.expires_at) ?? null,
       createdAt: parseUtc(row.created_at),
       updatedAt: parseUtc(row.updated_at),
       status: row.status as NotificationStatus,

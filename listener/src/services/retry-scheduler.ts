@@ -217,6 +217,24 @@ export class RetryScheduler {
     const executionAttempt = priorFailures + 1;
     const startMs = Date.now();
 
+    if (notification.expiresAt && notification.expiresAt.getTime() <= startMs) {
+      const errorMessage = 'Notification expired before delivery';
+      await this.repository.markAsExpired(notification.id!);
+      await this.repository.logExecution({
+        scheduledNotificationId: notification.id!,
+        executionAttempt,
+        executionTime: new Date(startMs),
+        status: 'FAILED',
+        errorMessage,
+        durationMs: 0,
+      });
+      logger.info('Expired retry skipped before delivery', {
+        requestId,
+        id: notification.id,
+      });
+      return;
+    }
+
     logger.info('Retrying notification', {
       requestId,
       id: notification.id,

@@ -292,7 +292,7 @@ Declared but not implemented in the scheduler today: `webhook`, `email`, `sms`.
 
 ### 7. Archive / purge
 
-Terminal rows (`COMPLETED`, `FAILED`, `CANCELLED`) are later moved by
+Terminal rows (`COMPLETED`, `FAILED`, `CANCELLED`, `EXPIRED`) are later moved by
 `ArchiveService` into `notification_archive`, then optionally purged after
 retention. See [Completion and Archival](#completion-and-archival).
 

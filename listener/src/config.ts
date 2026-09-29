@@ -48,6 +48,18 @@ function parseIntegerEnv(name: string, defaultValue: string): number {
   return parsed;
 }
 
+function loadNotificationDefaultTtlSeconds(): number {
+  const rawValue = trimEnv('NOTIFICATION_DEFAULT_TTL_SECONDS') ?? '0';
+  if (!/^\d+$/.test(rawValue)) {
+    throw new ConfigError('NOTIFICATION_DEFAULT_TTL_SECONDS must be a non-negative integer');
+  }
+  const seconds = Number(rawValue);
+  if (!Number.isSafeInteger(seconds) || seconds > Math.floor(8.64e15 / 1000)) {
+    throw new ConfigError('NOTIFICATION_DEFAULT_TTL_SECONDS must be a supported non-negative integer');
+  }
+  return seconds;
+}
+
 function parseJsonEnv<T>(name: string, defaultValue: string): T {
   const rawValue = trimEnv(name) ?? defaultValue;
   try {
@@ -303,6 +315,7 @@ export function loadConfig(): Config {
     cleanup: loadCleanupConfig(),
     analytics: loadAnalyticsConfig(),
     expiration: loadExpirationConfig(),
+    notificationDefaultTtlSeconds: loadNotificationDefaultTtlSeconds(),
     backfill: loadBackfillConfig(),
     logging: loadLoggingConfig(),
     api: loadApiConfig(),

@@ -64,6 +64,8 @@ export interface Config {
   cleanup?: AppCleanupConfig;
   analytics?: AnalyticsConfig;
   expiration?: ExpirationConfig;
+  /** Default scheduled-notification lifetime in seconds; zero disables expiry. */
+  notificationDefaultTtlSeconds?: number;
   backfill?: BackfillConfig;
   logging?: LoggingConfig;
   api?: ApiConfig;

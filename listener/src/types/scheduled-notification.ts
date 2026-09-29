@@ -8,6 +8,7 @@ export enum NotificationStatus {
   COMPLETED = 'COMPLETED',
   FAILED = 'FAILED',
   CANCELLED = 'CANCELLED',
+  EXPIRED = 'EXPIRED',
 }
 
 export enum NotificationType {
@@ -24,6 +25,7 @@ export interface ScheduledNotification {
   notificationType: NotificationType;
   targetRecipient: string;
   executeAt: Date;
+  expiresAt?: Date | null;
   createdAt?: Date;
   updatedAt?: Date;
   status: NotificationStatus;
@@ -48,6 +50,7 @@ export interface CreateScheduledNotificationInput {
   notificationType: NotificationType;
   targetRecipient: string;
   executeAt: Date;
+  expiresAt?: Date | string | number | null;
   maxRetries?: number;
   eventId?: string;
   contractAddress?: string;
@@ -62,6 +65,7 @@ export interface ScheduledNotificationRow {
   notification_type: string;
   target_recipient: string;
   execute_at: string;
+  expires_at: string | null;
   created_at: string;
   updated_at: string;
   status: string;

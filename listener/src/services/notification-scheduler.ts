@@ -139,8 +139,15 @@ export class NotificationScheduler {
         return;
       }
 
+      const activeNotifications: ScheduledNotification[] = [];
+      for (const notification of notifications) {
+        if (await this.expireIfPastDeadline(notification, requestId)) continue;
+        activeNotifications.push(notification);
+      }
+      if (activeNotifications.length === 0) return;
+
       const batchRejection = this.batchValidator.rejectIfInvalid(
-        this.toValidationBatch(notifications)
+        this.toValidationBatch(activeNotifications)
       );
 
       if (batchRejection) {
@@ -150,7 +157,7 @@ export class NotificationScheduler {
           errors: batchRejection.errors,
         });
 
-        for (const notification of notifications) {
+        for (const notification of activeNotifications) {
           await this.repository.markAsFailedOrRetry(
             notification.id!,
             new Error(`Batch validation failed: ${batchRejection.errors.map((e) => e.message).join('; ')}`),
@@ -163,7 +170,7 @@ export class NotificationScheduler {
 
       logger.info('Processing batch of scheduled notifications', {
         requestId,
-        count: notifications.length,
+        count: activeNotifications.length,
         processorId: this.processorId,
       });
 
@@ -172,10 +179,10 @@ export class NotificationScheduler {
       if (workerManager.isShutdownInProgress()) {
         logger.info('Shutdown in progress - releasing unprocessed notifications', {
           requestId,
-          count: notifications.length,
+          count: activeNotifications.length,
         });
         // Release locks on unprocessed notifications
-        for (const notification of notifications) {
+        for (const notification of activeNotifications) {
           await this.repository.markAsFailedOrRetry(
             notification.id!,
             new Error('Scheduler shutting down'),
@@ -188,7 +195,7 @@ export class NotificationScheduler {
 
       // Process each notification with job tracking + monitoring
       const jobMonitor = getJobMonitor();
-      for (const notification of notifications) {
+      for (const notification of activeNotifications) {
         const jobId = `notification-${notification.id}`;
         if (!workerManager.startJob(jobId)) {
           // Shutdown is in progress, don't process new jobs
@@ -218,7 +225,7 @@ export class NotificationScheduler {
       logger.info('Scheduler batch complete', {
         requestId,
         processorId: this.processorId,
-        count: notifications.length,
+        count: activeNotifications.length,
         durationMs: Date.now() - batchStart,
       });
     } catch (error) {
@@ -244,6 +251,8 @@ export class NotificationScheduler {
     const jobMonitor = getJobMonitor();
 
     try {
+      if (await this.expireIfPastDeadline(notification, requestId, jobId)) return;
+
       logger.info('Processing scheduled notification', {
         requestId,
         id: notification.id,
@@ -387,6 +396,33 @@ export class NotificationScheduler {
         durationMs,
       });
     }
+  }
+
+  private async expireIfPastDeadline(
+    notification: ScheduledNotification,
+    requestId: string,
+    jobId?: string,
+  ): Promise<boolean> {
+    if (!notification.expiresAt || notification.expiresAt.getTime() > Date.now()) return false;
+
+    const errorMessage = 'Notification expired before delivery';
+    await this.repository.markAsExpired(notification.id!);
+    await this.repository.logExecution({
+      scheduledNotificationId: notification.id!,
+      executionAttempt: notification.retryCount + 1,
+      executionTime: new Date(),
+      status: 'FAILED',
+      errorMessage,
+      durationMs: 0,
+    });
+    if (jobId) {
+      getJobMonitor().failJob(jobId, errorMessage, { notificationId: notification.id });
+    }
+    logger.info('Expired notification skipped before delivery', {
+      requestId,
+      id: notification.id,
+    });
+    return true;
   }
 
   /**
