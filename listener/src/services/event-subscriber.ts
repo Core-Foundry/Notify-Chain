@@ -29,30 +29,31 @@ export class EventSubscriber {
   private eventQueue: EventProcessingQueue | null = null;
   private expirationService: NotificationExpirationService | null = null;
   private lastSuccessfulPollAt: number | null = null;
+  /** Cached backfill floor (ledger number) resolved once per subscriber session (#backfill safety limit). */
+  private backfillStartLedger: number | null = null;
 
   constructor(config: Config, deduplicationService?: EventDeduplicationService) {
     this.config = config;
     this.server = new StellarSDK.rpc.Server(config.stellarRpcUrl);
     this.deduplicationService = deduplicationService ?? null;
-    
+
     // Initialize expiration service if configured
     if (config.expiration) {
       this.expirationService = new NotificationExpirationService(config.expiration);
     }
-    
+
     if (config.discord) {
       this.discordService = new DiscordNotificationService(config.discord);
       this.retryQueue = new NotificationRetryQueue(
         (event, contractConfig, requestId) =>
           this.discordService!.sendEventNotification(event, contractConfig, requestId),
-        config.retryQueue
+        config.retryQueue,
       );
     }
     if (config.eventQueue) {
       this.eventQueue = new EventProcessingQueue(
-        (event, contractConfig, requestId) =>
-          this.processEvent(event, contractConfig, requestId),
-        config.eventQueue
+        (event, contractConfig, requestId) => this.processEvent(event, contractConfig, requestId),
+        config.eventQueue,
       );
     }
   }
@@ -129,14 +130,14 @@ export class EventSubscriber {
         }
 
         const events = response.events || [];
-        
+
         // Detect potential reorg if events exist and we have previous state
         if (this.deduplicationService && events.length > 0) {
           const firstEventLedger = events[0]?.ledger;
           if (firstEventLedger) {
             const reorgDetected = await this.deduplicationService.detectReorg(
               contractConfig.address,
-              firstEventLedger
+              firstEventLedger,
             );
             if (reorgDetected) {
               logger.warn('Potential blockchain reorg detected', {
@@ -170,10 +171,6 @@ export class EventSubscriber {
             });
           }
         }
-        const processableEvents = events.filter((event: StellarSDK.rpc.Api.EventResponse) =>
-          this.shouldProcessEvent(event, contractConfig, requestId)
-        );
-
         if (events.length > 0) {
           logger.info('Received events', {
             requestId,
@@ -206,14 +203,14 @@ export class EventSubscriber {
 
         if (response.cursor) {
           this.lastCursors.set(contractConfig.address, response.cursor);
-          
+
           // Update cursor in deduplication service if available
           if (this.deduplicationService) {
             const lastEventLedger = events.length > 0 ? events[events.length - 1].ledger : 0;
             await this.deduplicationService.updatePollingCursor(
               contractConfig.address,
               response.cursor,
-              lastEventLedger || 0
+              lastEventLedger || 0,
             );
           }
         }
@@ -228,9 +225,7 @@ export class EventSubscriber {
     }
 
     if (totalContracts > 0 && failureCount === totalContracts) {
-      throw new Error(
-        `Failed to fetch events for all ${totalContracts} configured contract(s)`
-      );
+      throw new Error(`Failed to fetch events for all ${totalContracts} configured contract(s)`);
     }
   }
 
@@ -238,7 +233,7 @@ export class EventSubscriber {
     event: StellarSDK.rpc.Api.EventResponse,
     contractConfig: ContractConfig,
     requestId: string = '',
-    correlationId: string = requestId
+    correlationId: string = requestId,
   ): boolean {
     // Check if event has expired
     if (this.expirationService && !this.expirationService.shouldProcess(event)) {
@@ -336,30 +331,9 @@ export class EventSubscriber {
   }
 
   private async getContractEvents(
-    contractConfig: ContractConfig
+    contractConfig: ContractConfig,
   ): Promise<StellarSDK.rpc.Api.GetEventsResponse> {
     const lastCursor = this.lastCursors.get(contractConfig.address);
-    const request: StellarSDK.rpc.Api.GetEventsRequest = lastCursor
-      ? {
-          filters: [
-            {
-              contractIds: [contractConfig.address],
-              type: 'contract',
-            },
-          ],
-          cursor: lastCursor,
-          limit: this.config.eventBatchSize,
-        }
-      : {
-          filters: [
-            {
-              contractIds: [contractConfig.address],
-              type: 'contract',
-            },
-          ],
-          startLedger: 1,
-          limit: this.config.eventBatchSize,
-        };
 
     let request: StellarSDK.rpc.Api.GetEventsRequest;
 
@@ -387,14 +361,17 @@ export class EventSubscriber {
     event: StellarSDK.rpc.Api.EventResponse,
     contractConfig: ContractConfig,
     requestId: string = '',
-    correlationId: string = ''
+    correlationId: string = '',
   ): Promise<boolean> {
     const eventStart = Date.now();
     const eventName = getEventName(event.topic);
 
     // Check persistent deduplication first (to catch reorg duplicates)
     if (this.deduplicationService) {
-      const duplicate = await this.deduplicationService.isDuplicate(event.id, contractConfig.address);
+      const duplicate = await this.deduplicationService.isDuplicate(
+        event.id,
+        contractConfig.address,
+      );
       if (duplicate.isDuplicate) {
         logger.warn('Skipping event: already processed (persistent deduplication)', {
           requestId: correlationId,
@@ -403,7 +380,7 @@ export class EventSubscriber {
           contractAddress: contractConfig.address,
           isReorgDuplicate: duplicate.isReorgDuplicate,
         });
-        
+
         // Record that we detected this duplicate
         await this.deduplicationService.recordProcessedEvent(
           event.id,
@@ -412,9 +389,9 @@ export class EventSubscriber {
           event.txHash,
           event.type,
           false, // No notification sent
-          'SKIPPED'
+          'SKIPPED',
         );
-        
+
         return true;
       }
     }
@@ -458,7 +435,7 @@ export class EventSubscriber {
           const success = await this.discordService.sendEventNotification(
             event,
             contractConfig,
-            requestId
+            requestId,
           );
           notificationSent = success;
 
@@ -474,8 +451,8 @@ export class EventSubscriber {
         } catch (error) {
           processingError = error instanceof Error ? error.message : String(error);
           logger.error('Error sending Discord notification', {
-              requestId: correlationId,
-              correlationId,
+            requestId: correlationId,
+            correlationId,
             eventId: event.id,
             error: processingError,
           });
@@ -493,7 +470,7 @@ export class EventSubscriber {
         event.type,
         notificationSent,
         processingError ? 'ERROR' : 'PROCESSED',
-        processingError
+        processingError,
       );
     }
 
