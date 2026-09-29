@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { Database } from '../database/database';
 import logger from '../utils/logger';
 import { compressPayload, decompressPayload } from '../utils/payload-compression';
@@ -72,8 +73,30 @@ export class ScheduledNotificationRepository {
   }
 
   /**
-   * Fetch pending notifications due for execution with distributed locking
-   * Uses atomic update to prevent race conditions
+   * Persist one delivery identity before an opted-in provider sends anything.
+   */
+  async getOrCreateDeliveryKey(id: number): Promise<string> {
+    // The key is committed before sending. Concurrent processors must reuse
+    // the winner's key, including when the previous sender died after HTTP 200.
+    return this.db.isolatedTransaction(async connection => {
+      await connection.run(
+        `INSERT INTO scheduled_notification_delivery_keys (scheduled_notification_id, delivery_key)
+         VALUES (?, ?) ON CONFLICT(scheduled_notification_id) DO NOTHING`,
+        [id, randomUUID()],
+      );
+      const row = await connection.get<{ delivery_key: string }>(
+        'SELECT delivery_key FROM scheduled_notification_delivery_keys WHERE scheduled_notification_id = ?',
+        [id],
+      );
+      if (!row?.delivery_key) {
+        throw new Error(`No persisted delivery key for scheduled notification ${id}`);
+      }
+      return row.delivery_key;
+    });
+  }
+
+  /**
+   * Fetch and lock due work atomically.
    */
   async fetchAndLockPendingNotifications(
     processorId: string,

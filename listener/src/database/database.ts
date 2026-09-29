@@ -11,6 +11,7 @@ export class Database {
   private db: sqlite3.Database | null = null;
   private dbPath: string;
   private isInitialized: boolean = false;
+  private isolatedWrites: Promise<void> = Promise.resolve();
 
   constructor(dbPath: string = './data/notifications.db') {
     this.dbPath = dbPath;
@@ -234,9 +235,53 @@ export class Database {
   }
 
   /**
-   * Close database connection
+   * Commit a file-backed transaction on a connection owned by this operation.
+   */
+  isolatedTransaction<T>(callback: (connection: Database) => Promise<T>): Promise<T> {
+    // Do not fill sqlite3's native worker pool with connections waiting for the
+    // same write lock while the connection holding it still needs to COMMIT.
+    const transaction = this.isolatedWrites.then(() => this.commitIsolatedTransaction(callback));
+    this.isolatedWrites = transaction.then(() => undefined, () => undefined);
+    return transaction;
+  }
+
+  private async commitIsolatedTransaction<T>(callback: (connection: Database) => Promise<T>): Promise<T> {
+    if (!this.isInitialized) throw new Error('Database not initialized');
+    if (!this.dbPath || this.dbPath === ':memory:') {
+      throw new Error('Isolated durable writes require a file-backed database');
+    }
+
+    // A shared connection may already contain another caller's transaction.
+    // Use a private connection so only our COMMIT can release a delivery key.
+    const connection = new Database(this.dbPath);
+    let started = false;
+    try {
+      await connection.connect();
+      await connection.run('BEGIN IMMEDIATE');
+      started = true;
+      const result = await callback(connection);
+      await connection.run('COMMIT');
+      started = false;
+      return result;
+    } catch (error) {
+      if (started) {
+        try {
+          await connection.run('ROLLBACK');
+        } catch (rollbackError) {
+          logger.error('Isolated transaction rollback failed', { error: rollbackError });
+        }
+      }
+      throw error;
+    } finally {
+      await connection.close();
+    }
+  }
+
+  /**
+   * Close database connection.
    */
   async close(): Promise<void> {
+    await this.isolatedWrites;
     if (!this.db) return;
 
     return new Promise((resolve, reject) => {

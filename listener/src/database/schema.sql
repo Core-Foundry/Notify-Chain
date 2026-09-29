@@ -39,6 +39,14 @@ CREATE TABLE IF NOT EXISTS scheduled_notifications (
   next_retry_at DATETIME                    -- When the next retry should be attempted
 );
 
+-- Durable identity for a logical delivery, shared by initial sends and retries.
+-- Adding a separate table also covers databases created before this feature.
+CREATE TABLE IF NOT EXISTS scheduled_notification_delivery_keys (
+  scheduled_notification_id INTEGER PRIMARY KEY,
+  delivery_key TEXT NOT NULL UNIQUE,
+  FOREIGN KEY (scheduled_notification_id) REFERENCES scheduled_notifications(id) ON DELETE CASCADE
+);
+
 -- Indexes for performance optimization
 CREATE INDEX IF NOT EXISTS idx_scheduled_notifications_status 
   ON scheduled_notifications(status);

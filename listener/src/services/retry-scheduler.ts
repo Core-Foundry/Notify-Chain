@@ -6,6 +6,7 @@ import { ScheduledNotification, NotificationStatus } from '../types/scheduled-no
 import { DiscordNotificationService } from './discord-notification';
 import { WebhookDeliveryService } from './webhook-delivery-service';
 import { getWorkerManager } from './worker-manager';
+import { ProviderRegistry, getProviderRegistry } from './provider-registry';
 
 export interface RetrySchedulerConfig {
   /** Whether the scheduler is enabled. */
@@ -78,18 +79,21 @@ export class RetryScheduler {
   private webhookDeliveryService: WebhookDeliveryService;
   private timer: NodeJS.Timeout | null = null;
   private running = false;
+  private readonly providerRegistry: ProviderRegistry;
 
   constructor(
     repository: ScheduledNotificationRepository,
     config: Partial<RetrySchedulerConfig> = {},
     discordService?: DiscordNotificationService | null,
     webhookDeliveryService?: WebhookDeliveryService,
+    providerRegistry?: ProviderRegistry,
   ) {
     this.config = { ...RETRY_SCHEDULER_DEFAULTS, ...config };
     this.processorId = this.config.processorId ?? `retry-${uuidv4()}`;
     this.repository = repository;
     this.discordService = discordService ?? null;
     this.webhookDeliveryService = webhookDeliveryService ?? new WebhookDeliveryService();
+    this.providerRegistry = providerRegistry ?? getProviderRegistry();
   }
 
   async start(): Promise<void> {
@@ -300,6 +304,23 @@ export class RetryScheduler {
     requestId: string
   ): Promise<boolean> {
     const payload = JSON.parse(notification.payload);
+
+    // Retries must honor the same delivery contract as the initial scheduler.
+    const provider = this.providerRegistry.get(notification.notificationType);
+    if (provider) {
+      const deliveryKey = provider.requiresDeliveryKey
+        ? await this.repository.getOrCreateDeliveryKey(notification.id!)
+        : undefined;
+      const result = await this.providerRegistry.deliver(notification.notificationType, {
+        payload,
+        targetRecipient: notification.targetRecipient,
+        notificationType: notification.notificationType,
+        requestId,
+        ...(deliveryKey ? { deliveryKey } : {}),
+      });
+      if (!result.success) throw new Error(result.errorMessage ?? 'Provider delivery returned failure');
+      return true;
+    }
 
     switch (notification.notificationType) {
       case 'discord':
