@@ -3,6 +3,9 @@ import * as sqlite3 from 'sqlite3';
 const migration = {
   id: '001',
   name: 'initial-schema',
+  // `down` drops every listener table. Re-applying `up` recreates empty
+  // tables, so any notification, template or rate-limit rows are lost for good.
+  destructive: true,
   up: async (db: sqlite3.Database) => {
     const schemaSql = `
       -- Main table for scheduled notifications
@@ -252,10 +255,11 @@ const migration = {
         ON notification_metrics_snapshots(captured_at);
     `;
 
-    const statements = schemaSql.split(';').map(s => s.trim()).filter(s => s);
-    for (const statement of statements) {
-      await db.run(statement);
-    }
+    // The schema contains CREATE TRIGGER ... BEGIN ... END bodies, which
+    // legitimately contain semicolons of their own. Splitting the script on ';'
+    // cut those bodies in half and made every trigger fail to parse, so the
+    // whole script is handed to exec(), which understands statement boundaries.
+    await db.exec(schemaSql);
   },
   down: async (db: sqlite3.Database) => {
     await db.run('DROP TABLE IF EXISTS notification_metrics_snapshots');
@@ -269,7 +273,7 @@ const migration = {
     await db.run('DROP TRIGGER IF EXISTS update_scheduled_notifications_timestamp');
     await db.run('DROP TABLE IF EXISTS notification_execution_log');
     await db.run('DROP TABLE IF EXISTS scheduled_notifications');
-  }
+  },
 };
 
 export default migration;

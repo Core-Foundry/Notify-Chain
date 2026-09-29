@@ -12,6 +12,8 @@ import * as sqlite3 from 'sqlite3';
 const migration = {
   id: '002',
   name: 'query-performance-indexes',
+  // Reverting only drops indexes, which `up` recreates without touching rows.
+  destructive: false,
   up: async (db: sqlite3.Database) => {
     await db.run(`
       CREATE INDEX IF NOT EXISTS idx_scheduled_notifications_claim

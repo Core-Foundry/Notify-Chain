@@ -1,0 +1,77 @@
+name: Migration Safety
+
+# Gates changes to the listener database migrations.
+#
+# A migration that cannot be rolled back, or a destructive one that is not flagged,
+# is a production incident waiting to happen. Both are caught here rather than
+# during a failed deploy.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'listener/src/migrations/**'
+      - 'listener/src/database/migration-system.ts'
+      - 'listener/src/scripts/check-migration-safety.ts'
+      - 'listener/src/scripts/rollback-db.ts'
+      - 'listener/src/database/migration-rollback.test.ts'
+      - '.github/workflows/migration-safety.yml'
+  pull_request:
+    paths:
+      - 'listener/src/migrations/**'
+      - 'listener/src/database/migration-system.ts'
+      - 'listener/src/scripts/check-migration-safety.ts'
+      - 'listener/src/scripts/rollback-db.ts'
+      - 'listener/src/database/migration-rollback.test.ts'
+      - '.github/workflows/migration-safety.yml'
+
+concurrency:
+  group: migration-safety-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  migration-safety:
+    name: Migration rollback safety
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: listener
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: listener/package-lock.json
+
+      - name: Install dependencies
+        run: npm install
+
+      # Fails when a migration has no down(), or when a destructive down() is not
+      # flagged `destructive: true`.
+      - name: Audit migrations for rollback safety
+        run: npm run check-migration-safety
+
+      # Scoped to the migration surface on purpose: the listener carries
+      # pre-existing type errors elsewhere, and this workflow gates migrations,
+      # not the whole app. A repo-wide `tsc --noEmit` would fail on files this
+      # workflow never touches.
+      - name: Typecheck migration surface
+        run: >
+          npx tsc --noEmit
+          --strict
+          --esModuleInterop
+          --skipLibCheck
+          --module CommonJS
+          --target es2020
+          --types node,jest
+          src/database/migration-system.ts
+          src/scripts/check-migration-safety.ts
+
+      - name: Migration rollback tests
+        run: npx jest src/database/migration-rollback.test.ts
