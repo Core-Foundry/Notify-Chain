@@ -14,6 +14,7 @@
  * A delay is added between attempts to reduce load on failing services.
  */
 
+import { classifyWebhookError, classifyWebhookStatus } from './webhook-response-classifier';
 import { sendWebhook, WebhookSendOptions } from './webhook-sender';
 
 /** Maximum number of retry attempts (not counting the initial attempt). */
@@ -23,16 +24,6 @@ const MAX_RETRY_ATTEMPTS = 2;
 const RETRY_DELAY_MS = 1000;
 
 /**
- * HTTP status codes that are considered retryable (transient failures).
- */
-const RETRYABLE_STATUS_CODES = new Set([429, 500, 502, 503, 504]);
-
-/**
- * HTTP status codes that are permanent client errors (not retryable).
- */
-const PERMANENT_CLIENT_ERRORS = new Set([400, 401, 403, 404, 422]);
-
-/**
  * Determines if an error or response should trigger a retry.
  *
  * @param response - The HTTP response, if available
@@ -40,35 +31,14 @@ const PERMANENT_CLIENT_ERRORS = new Set([400, 401, 403, 404, 422]);
  * @returns true if the failure is retryable
  */
 function isRetryable(response?: Response, error?: unknown): boolean {
-  // Network errors and timeouts are retryable
+  // Network errors and timeouts are retryable; the classifier owns the policy.
   if (error) {
-    return true;
+    return classifyWebhookError(error) === 'retryable';
   }
 
-  // Check HTTP status codes
+  // Delegate the HTTP status policy to the shared classifier.
   if (response) {
-    // Success responses don't need retry
-    if (response.ok) {
-      return false;
-    }
-
-    // Permanent client errors should not be retried
-    if (PERMANENT_CLIENT_ERRORS.has(response.status)) {
-      return false;
-    }
-
-    // Explicit retryable status codes
-    if (RETRYABLE_STATUS_CODES.has(response.status)) {
-      return true;
-    }
-
-    // Any other 5xx error is retryable
-    if (response.status >= 500) {
-      return true;
-    }
-
-    // Other status codes (e.g., redirects, other 4xx) are not retried
-    return false;
+    return classifyWebhookStatus(response.status) === 'retryable';
   }
 
   return false;
