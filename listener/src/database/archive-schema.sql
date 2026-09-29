@@ -1,3 +1,6 @@
+  notification_type VARCHAR(50) NOT NULL CHECK (notification_type IN ('discord', 'email', 'webhook', 'sms')),
+  status VARCHAR(20) NOT NULL CHECK (status IN ('COMPLETED', 'FAILED', 'CANCELLED')),
+  retry_count INTEGER NOT NULL DEFAULT 0 CHECK (retry_count >= 0),
 -- Archive table for notifications moved out of active storage.
 -- Records here are read-only for audit purposes and are never modified.
 CREATE TABLE IF NOT EXISTS notification_archive (

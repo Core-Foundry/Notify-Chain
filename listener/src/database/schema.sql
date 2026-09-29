@@ -8,7 +8,7 @@ CREATE TABLE IF NOT EXISTS scheduled_notifications (
   -- Notification content and metadata
   payload TEXT NOT NULL,                    -- JSON payload of the notification (compressed when large)
   payload_hash TEXT,                        -- HMAC hash of the raw JSON payload for integrity checks
-  notification_type VARCHAR(50) NOT NULL,   -- Type: 'discord', 'email', 'webhook', etc.
+  notification_type VARCHAR(50) NOT NULL CHECK (notification_type IN ('discord', 'email', 'webhook', 'sms')),
   target_recipient TEXT NOT NULL,           -- User ID, webhook URL, or recipient identifier
   
   -- Scheduling information
@@ -17,9 +17,9 @@ CREATE TABLE IF NOT EXISTS scheduled_notifications (
   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   
   -- Status tracking
-  status VARCHAR(20) NOT NULL DEFAULT 'PENDING', -- PENDING, PROCESSING, COMPLETED, FAILED, CANCELLED
-  retry_count INTEGER NOT NULL DEFAULT 0,
-  max_retries INTEGER NOT NULL DEFAULT 3,
+  status VARCHAR(20) NOT NULL DEFAULT 'PENDING' CHECK (status IN ('PENDING', 'PROCESSING', 'COMPLETED', 'FAILED', 'CANCELLED')),
+  retry_count INTEGER NOT NULL DEFAULT 0 CHECK (retry_count >= 0),
+  max_retries INTEGER NOT NULL DEFAULT 3 CHECK (max_retries >= 0),
   
   -- Processing metadata
   processing_started_at DATETIME,
@@ -34,7 +34,7 @@ CREATE TABLE IF NOT EXISTS scheduled_notifications (
   -- Additional metadata
   event_id TEXT,                            -- Reference to the original event (if applicable)
   contract_address TEXT,                    -- Stellar contract address (if applicable)
-  priority INTEGER NOT NULL DEFAULT 5,      -- 1-10, lower = higher priority
+  priority INTEGER NOT NULL DEFAULT 5 CHECK (priority BETWEEN 1 AND 10),
   metadata TEXT,                            -- Additional JSON metadata
   next_retry_at DATETIME                    -- When the next retry should be attempted
 );
@@ -71,14 +71,14 @@ CREATE INDEX IF NOT EXISTS idx_scheduled_notifications_target
 CREATE TABLE IF NOT EXISTS dead_letter_queue (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   scheduled_notification_id INTEGER NOT NULL UNIQUE,
-  notification_type VARCHAR(50) NOT NULL,
+  notification_type VARCHAR(50) NOT NULL CHECK (notification_type IN ('discord', 'email', 'webhook', 'sms')),
   target_recipient TEXT NOT NULL,
   payload TEXT NOT NULL,
   failure_reason TEXT NOT NULL,
   error_details TEXT,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   last_retried_at DATETIME,
-  retry_count INTEGER NOT NULL DEFAULT 0,
+  retry_count INTEGER NOT NULL DEFAULT 0 CHECK (retry_count >= 0),
   FOREIGN KEY (scheduled_notification_id) REFERENCES scheduled_notifications(id) ON DELETE CASCADE
 );
 
@@ -92,12 +92,12 @@ CREATE INDEX IF NOT EXISTS idx_dead_letter_queue_notification_type
 CREATE TABLE IF NOT EXISTS notification_execution_log (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   scheduled_notification_id INTEGER NOT NULL,
-  execution_attempt INTEGER NOT NULL,
+  execution_attempt INTEGER NOT NULL CHECK (execution_attempt > 0),
   execution_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  status VARCHAR(20) NOT NULL,              -- SUCCESS, FAILED, RETRY
+  status VARCHAR(20) NOT NULL CHECK (status IN ('SUCCESS', 'FAILED', 'RETRY')),
   error_message TEXT,
   response_data TEXT,                       -- JSON response from notification service
-  duration_ms INTEGER,
+  duration_ms INTEGER CHECK (duration_ms IS NULL OR duration_ms >= 0),
   
   FOREIGN KEY (scheduled_notification_id) REFERENCES scheduled_notifications(id) ON DELETE CASCADE
 );
@@ -127,12 +127,12 @@ END;
 CREATE TABLE IF NOT EXISTS rate_limit_events (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   client_id TEXT NOT NULL,                  -- IP address or API key
-  client_type VARCHAR(20) NOT NULL,         -- 'IP' or 'API_KEY'
+  client_type VARCHAR(20) NOT NULL CHECK (client_type IN ('IP', 'API_KEY')),
   endpoint TEXT NOT NULL,                   -- Request path/method
   method VARCHAR(10) NOT NULL,              -- Request method
   timestamp DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  limit_threshold INTEGER NOT NULL,
-  window_ms INTEGER NOT NULL
+  limit_threshold INTEGER NOT NULL CHECK (limit_threshold > 0),
+  window_ms INTEGER NOT NULL CHECK (window_ms > 0)
 );
 
 CREATE INDEX IF NOT EXISTS idx_rate_limit_events_timestamp 
@@ -171,7 +171,7 @@ CREATE TABLE IF NOT EXISTS notification_template_audit_log (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   template_id TEXT NOT NULL,
   actor TEXT NOT NULL,
-  action TEXT NOT NULL DEFAULT 'UPDATE',
+  action TEXT NOT NULL DEFAULT 'UPDATE' CHECK (action IN ('UPDATE')),
   changed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   previous_snapshot TEXT NOT NULL,
   new_snapshot TEXT NOT NULL,
@@ -209,19 +209,19 @@ CREATE TABLE IF NOT EXISTS processed_events (
   fingerprint TEXT NOT NULL UNIQUE,         -- Composite key: contract_address:event_id (for faster lookups)
   
   -- Processing metadata
-  ledger_number INTEGER NOT NULL,           -- Ledger in which the event occurred
+  ledger_number INTEGER NOT NULL CHECK (ledger_number >= 0),
   tx_hash TEXT,                             -- Transaction hash (if available)
   event_type VARCHAR(50) NOT NULL,          -- Type from RPC (contract, system, etc)
   processed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   
   -- Reorg detection and tracking
-  is_reorg_duplicate BOOLEAN NOT NULL DEFAULT 0, -- Flag indicating this is a duplicate from a reorg
-  reorg_detection_count INTEGER NOT NULL DEFAULT 0, -- Number of times this event was redetected
+  is_reorg_duplicate BOOLEAN NOT NULL DEFAULT 0 CHECK (is_reorg_duplicate IN (0, 1)),
+  reorg_detection_count INTEGER NOT NULL DEFAULT 0 CHECK (reorg_detection_count >= 0),
   last_redetected_at DATETIME,              -- When the event was last detected again (for reorg monitoring)
   
   -- Status and metadata
-  status VARCHAR(20) NOT NULL DEFAULT 'PROCESSED', -- PROCESSED, SKIPPED, ERROR
-  notification_sent BOOLEAN NOT NULL DEFAULT 0,     -- Whether a notification was sent for this event
+  status VARCHAR(20) NOT NULL DEFAULT 'PROCESSED' CHECK (status IN ('PROCESSED', 'SKIPPED', 'ERROR')),
+  notification_sent BOOLEAN NOT NULL DEFAULT 0 CHECK (notification_sent IN (0, 1)),
   error_reason TEXT                         -- If status is ERROR, what went wrong
 );
 
@@ -251,12 +251,12 @@ CREATE TABLE IF NOT EXISTS polling_cursors (
   
   -- Cursor information
   cursor TEXT NOT NULL,                     -- Last known cursor from RPC
-  ledger_number INTEGER NOT NULL,           -- Ledger number associated with this cursor
+  ledger_number INTEGER NOT NULL CHECK (ledger_number >= 0),
   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   
   -- Reorg detection
-  reorg_detected BOOLEAN NOT NULL DEFAULT 0, -- Whether a reorg was detected on the last poll
-  reorg_detection_count INTEGER NOT NULL DEFAULT 0 -- Total number of reorgs detected for this contract
+  reorg_detected BOOLEAN NOT NULL DEFAULT 0 CHECK (reorg_detected IN (0, 1)),
+  reorg_detection_count INTEGER NOT NULL DEFAULT 0 CHECK (reorg_detection_count >= 0)
 );
 
 CREATE INDEX IF NOT EXISTS idx_polling_cursors_contract 
@@ -282,7 +282,7 @@ CREATE TABLE IF NOT EXISTS idempotency_keys (
   expires_at DATETIME NOT NULL,              -- When this key should be purged
 
   -- Status tracking
-  status VARCHAR(20) NOT NULL DEFAULT 'PROCESSED', -- PROCESSED, EXPIRED
+  status VARCHAR(20) NOT NULL DEFAULT 'PROCESSED' CHECK (status IN ('PROCESSED', 'EXPIRED')),
 
   FOREIGN KEY (response_notification_id) REFERENCES scheduled_notifications(id) ON DELETE CASCADE
 );
@@ -301,12 +301,12 @@ CREATE TABLE IF NOT EXISTS backpressure_events (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
 
   -- Event tracking
-  event_type VARCHAR(20) NOT NULL,            -- ACTIVATED or DEACTIVATED
-  queue_size INTEGER NOT NULL,                -- Queue size when event occurred
-  target_throughput_per_sec INTEGER NOT NULL, -- Target throughput limit during this event
+  event_type VARCHAR(20) NOT NULL CHECK (event_type IN ('ACTIVATED', 'DEACTIVATED')),
+  queue_size INTEGER NOT NULL CHECK (queue_size >= 0),
+  target_throughput_per_sec INTEGER NOT NULL CHECK (target_throughput_per_sec >= 0),
 
   -- Duration tracking (for deactivation events)
-  duration_ms INTEGER,                        -- How long backpressure was active
+  duration_ms INTEGER CHECK (duration_ms IS NULL OR duration_ms >= 0),
 
   -- Additional metadata
   reason TEXT,                                -- Optional reason/context for the event
@@ -328,12 +328,39 @@ CREATE TABLE IF NOT EXISTS notification_metrics_snapshots (
   captured_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   window_start INTEGER NOT NULL,
   window_end INTEGER NOT NULL,
-  total_recorded INTEGER NOT NULL,
-  snapshot_json TEXT NOT NULL
+  total_recorded INTEGER NOT NULL CHECK (total_recorded >= 0),
+  snapshot_json TEXT NOT NULL,
+  CHECK (window_start <= window_end)
 );
 
 CREATE INDEX IF NOT EXISTS idx_metrics_snapshots_captured_at
   ON notification_metrics_snapshots(captured_at);
+-- Archived notification rows retain only terminal delivery states
+CREATE TABLE IF NOT EXISTS notification_archive (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  original_id INTEGER NOT NULL,
+  payload TEXT NOT NULL,
+  notification_type VARCHAR(50) NOT NULL CHECK (notification_type IN ('discord', 'email', 'webhook', 'sms')),
+  target_recipient TEXT NOT NULL,
+  execute_at DATETIME NOT NULL,
+  created_at DATETIME NOT NULL,
+  processing_completed_at DATETIME,
+  status VARCHAR(20) NOT NULL CHECK (status IN ('COMPLETED', 'FAILED', 'CANCELLED')),
+  retry_count INTEGER NOT NULL DEFAULT 0 CHECK (retry_count >= 0),
+  last_error TEXT,
+  event_id TEXT,
+  contract_address TEXT,
+  metadata TEXT,
+  archived_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_archive_original_id ON notification_archive(original_id);
+CREATE INDEX IF NOT EXISTS idx_archive_archived_at ON notification_archive(archived_at);
+CREATE INDEX IF NOT EXISTS idx_archive_status ON notification_archive(status);
+CREATE INDEX IF NOT EXISTS idx_archive_contract_address ON notification_archive(contract_address)
+  WHERE contract_address IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_archive_event_id ON notification_archive(event_id)
+  WHERE event_id IS NOT NULL;
 
 -- ===============================================
 -- QUERY PERFORMANCE INDEXES (migration 002)
