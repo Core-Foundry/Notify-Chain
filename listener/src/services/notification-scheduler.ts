@@ -412,11 +412,16 @@ export class NotificationScheduler {
     // Registry-based dispatch (preferred path)
     // ------------------------------------------------------------------
     if (this.providerRegistry.has(type)) {
+      const provider = this.providerRegistry.get(type)!;
+      const deliveryKey = provider.requiresDeliveryKey
+        ? await this.repository.getOrCreateDeliveryKey(notification.id!)
+        : undefined;
       const result = await this.providerRegistry.deliver(type, {
         payload,
         targetRecipient: notification.targetRecipient,
         notificationType: type,
         requestId,
+        ...(deliveryKey ? { deliveryKey } : {}),
       });
 
       if (result.degradedCapabilities.length > 0) {

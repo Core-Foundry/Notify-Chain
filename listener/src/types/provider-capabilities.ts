@@ -90,6 +90,9 @@ export interface DeliveryPayload {
 
   /** Optional correlation ID for structured logging. */
   requestId?: string;
+
+  /** Persisted logical-delivery identity; unchanged across retries and restarts. */
+  deliveryKey?: string;
 }
 
 /**
@@ -121,6 +124,12 @@ export interface DeliveryResult {
  * the implementation with the `ProviderRegistry`.
  */
 export interface NotificationProvider {
+  /**
+   * Require a durable key before dispatch. This is a correctness prerequisite,
+   * not an optional formatting capability that can be silently degraded.
+   */
+  readonly requiresDeliveryKey?: boolean;
+
   /**
    * Metadata describing the provider and its capabilities.
    * This property must be stable and inexpensive to read (no I/O).

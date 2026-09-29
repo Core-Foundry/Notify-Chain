@@ -12,6 +12,8 @@ import logger from '../../utils/logger';
  * Optional configuration for the webhook provider.
  */
 export interface WebhookProviderConfig {
+  /** Enable only for receivers implementing docs/WEBHOOK_IDEMPOTENCY.md. */
+  receiverSupportsIdempotency?: boolean;
   /** Request timeout in milliseconds (default: 5 000). */
   timeoutMs?: number;
   /**
@@ -51,6 +53,7 @@ const WEBHOOK_CAPABILITIES = new Set<ProviderCapability>([
  * `DeliveryResult.degradedCapabilities`.
  */
 export class WebhookNotificationProvider implements NotificationProvider {
+  readonly requiresDeliveryKey: boolean;
   readonly metadata: ProviderMetadata = {
     id: 'webhook',
     name: 'HTTP Webhook',
@@ -63,8 +66,16 @@ export class WebhookNotificationProvider implements NotificationProvider {
   constructor(config: WebhookProviderConfig = {}) {
     this.config = {
       timeoutMs: config.timeoutMs ?? 5_000,
-      defaultHeaders: config.defaultHeaders ?? {},
+      defaultHeaders: { ...(config.defaultHeaders ?? {}) },
+      receiverSupportsIdempotency: config.receiverSupportsIdempotency ?? false,
     };
+    this.requiresDeliveryKey = this.config.receiverSupportsIdempotency;
+    if (
+      this.requiresDeliveryKey &&
+      Object.keys(this.config.defaultHeaders).some(header => header.toLowerCase() === 'idempotency-key')
+    ) {
+      throw new Error('Idempotency-Key must come from the persisted notification, not defaultHeaders');
+    }
   }
 
   hasCapability(capability: ProviderCapability): boolean {
@@ -93,6 +104,17 @@ export class WebhookNotificationProvider implements NotificationProvider {
       timeoutMs: this.config.timeoutMs,
       headers: { ...this.config.defaultHeaders },
     };
+
+    if (this.requiresDeliveryKey) {
+      if (!payload.deliveryKey || !/^[A-Za-z0-9._:-]{1,255}$/.test(payload.deliveryKey)) {
+        return {
+          success: false,
+          degradedCapabilities,
+          errorMessage: 'Idempotent webhook delivery requires a valid persisted delivery key',
+        };
+      }
+      opts.headers!['Idempotency-Key'] = payload.deliveryKey;
+    }
 
     try {
       const response = await sendWebhook(targetRecipient, body, opts);
