@@ -1,7 +1,21 @@
-import { Config, ContractConfig, DiscordConfig, WebhookSecret, AppCleanupConfig, EventQueueConfig, RetrySchedulerOptions, AnalyticsConfig, ExpirationConfig, ApiKey } from './types';
+import {
+  Config,
+  ContractConfig,
+  DiscordConfig,
+  WebhookSecret,
+  AppCleanupConfig,
+  EventQueueConfig,
+  RetrySchedulerOptions,
+  AnalyticsConfig,
+  ExpirationConfig,
+  ApiKey,
+  BackfillConfig,
+  LoggingConfig,
+  ApiConfig,
+} from './types';
 import { validateCorsOrigin, CorsValidationError } from './utils/cors-validator';
 import { ConfigurationSchemaValidator, APP_CONFIG_SCHEMA } from './config-schema';
-import { Config, ContractConfig, DiscordConfig, WebhookSecret, AppCleanupConfig, EventQueueConfig, RetrySchedulerOptions, AnalyticsConfig, ExpirationConfig, ApiKey, BackfillConfig, LoggingConfig, ApiConfig } from './types';
+import { validateSecrets, SecretValidationError } from './config/validate-secrets';
 import {
   SUPPORTED_LOG_FORMATS,
   SUPPORTED_LOG_LEVELS,

@@ -15,8 +15,6 @@ import { sendOk, sendErr, sendJson, ErrorCode } from '../utils/response';
 import { handleApiError, ApiError } from './error-handler';
 import { applyRequestContext } from '../utils/request-id';
 import { applyRequestIdMiddleware } from '../middleware/request-id';
-import { TemplateService } from '../services/template-service';
-import { handleTemplateRoutes } from './template-routes';
 import { NotificationHistoryService } from '../services/notification-history';
 import { SearchSuggestionService } from '../services/search-suggestion';
 import { NotificationSearchService } from '../services/notification-search-service';

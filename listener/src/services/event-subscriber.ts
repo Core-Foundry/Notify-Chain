@@ -29,6 +29,7 @@ export class EventSubscriber {
   private eventQueue: EventProcessingQueue | null = null;
   private expirationService: NotificationExpirationService | null = null;
   private lastSuccessfulPollAt: number | null = null;
+  private backfillStartLedger: number | null = null;
 
   constructor(config: Config, deduplicationService?: EventDeduplicationService) {
     this.config = config;
@@ -170,9 +171,6 @@ export class EventSubscriber {
             });
           }
         }
-        const processableEvents = events.filter((event: StellarSDK.rpc.Api.EventResponse) =>
-          this.shouldProcessEvent(event, contractConfig, requestId)
-        );
 
         if (events.length > 0) {
           logger.info('Received events', {
@@ -204,15 +202,15 @@ export class EventSubscriber {
           }
         }
 
-        if (response.cursor) {
-          this.lastCursors.set(contractConfig.address, response.cursor);
+        if ((response as any).cursor) {
+          this.lastCursors.set(contractConfig.address, (response as any).cursor);
           
           // Update cursor in deduplication service if available
           if (this.deduplicationService) {
             const lastEventLedger = events.length > 0 ? events[events.length - 1].ledger : 0;
             await this.deduplicationService.updatePollingCursor(
               contractConfig.address,
-              response.cursor,
+              (response as any).cursor,
               lastEventLedger || 0
             );
           }
@@ -248,7 +246,7 @@ export class EventSubscriber {
         contractAddress: contractConfig.address,
         eventId: event.id,
         eventName,
-        receivedAt: event.receivedAt,
+        receivedAt: (event as any).receivedAt,
         currentTime: Date.now(),
         reason: 'expired',
       });
@@ -339,29 +337,7 @@ export class EventSubscriber {
     contractConfig: ContractConfig
   ): Promise<StellarSDK.rpc.Api.GetEventsResponse> {
     const lastCursor = this.lastCursors.get(contractConfig.address);
-    const request: StellarSDK.rpc.Api.GetEventsRequest = lastCursor
-      ? {
-          filters: [
-            {
-              contractIds: [contractConfig.address],
-              type: 'contract',
-            },
-          ],
-          cursor: lastCursor,
-          limit: this.config.eventBatchSize,
-        }
-      : {
-          filters: [
-            {
-              contractIds: [contractConfig.address],
-              type: 'contract',
-            },
-          ],
-          startLedger: 1,
-          limit: this.config.eventBatchSize,
-        };
-
-    let request: StellarSDK.rpc.Api.GetEventsRequest;
+    let request: any;
 
     if (lastCursor) {
       // Normal real-time polling: continue from the last known cursor.

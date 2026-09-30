@@ -159,11 +159,11 @@ function checkEventCompatibility(
   // Check 4: Topic structure changes
   // Topics are appended as trailing topics - existing consumers ignore them
   // Breaking change only if the core topic (event name) changes position
-  if (contractEvent.topics.length < consumer.expectedTopics?.length) {
+  if (consumer.expectedTopics && contractEvent.topics.length < consumer.expectedTopics.length) {
     // Contract has fewer topics than consumer expects
     // This could be breaking if the consumer relies on specific topic positions
     const missingTopics = consumer.expectedTopics.filter(
-      (t) => !contractEvent.topics.includes(t)
+      (t: string) => !contractEvent.topics.includes(t)
     );
     if (missingTopics.length > 0) {
       breakingChanges.push(
@@ -175,12 +175,12 @@ function checkEventCompatibility(
   // Check 5: New data fields are safe (backward compatible)
   // Any new data fields in the contract that weren't expected by the consumer
   // are simply ignored - this is the Soroban trailing-topic pattern
-  const newDataFields = dataFields.filter(
-    (f) => !consumer.expectedFields.includes(f.name)
+  const newDataFields = contractEvent.dataFields.filter(
+    (f: { name: string }) => !consumer.expectedFields.includes(f.name)
   );
   safeAdditions.push(
     ...newDataFields.map(
-      (f) => `Safe addition: New data field '${f.name}' in '${contractEvent.name}' (ignored by existing consumers)`
+      (f: { name: string }) => `Safe addition: New data field '${f.name}' in '${contractEvent.name}' (ignored by existing consumers)`
     )
   );
 

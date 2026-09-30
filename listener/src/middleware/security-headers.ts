@@ -10,7 +10,7 @@
  * See: https://owasp.org/www-project-secure-headers/
  */
 
-import type { http.ServerResponse } from 'http';
+import type * as http from 'http';
 
 const isLocalhost = (hostname: string): boolean =>
   hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
