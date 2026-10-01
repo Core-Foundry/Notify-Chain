@@ -399,7 +399,7 @@ describe('RetryScheduler — webhook retry queue', () => {
   // ── Missing targetRecipient ───────────────────────────────────────────────
 
   describe('configuration errors', () => {
-    it('logs error and schedules retry when targetRecipient is missing', async () => {
+    it('logs error and fails permanently when targetRecipient is missing', async () => {
       const notification = makeWebhookNotification({ targetRecipient: '', retryCount: 0, maxRetries: 3 });
       const repo = makeRepo({ fetchDueRetries: jest.fn().mockImplementation(() => Promise.resolve([notification])) });
 
@@ -408,12 +408,20 @@ describe('RetryScheduler — webhook retry queue', () => {
       const scheduler = new RetryScheduler(repo, RETRY_SCHEDULER_DEFAULTS, null, webhookService);
       await scheduler.runOnce();
 
+      // A missing target can never succeed, so it is a permanent configuration
+      // failure: no nextRetryAt is scheduled, and the budget is collapsed to the
+      // attempt that just failed so the row is retired as FAILED instead of
+      // being re-picked with next_retry_at = NULL.
       expect(repo.markAsFailedOrRetry).toHaveBeenCalledWith(
         10,
         expect.objectContaining({ message: expect.stringContaining('targetRecipient') }),
         0,
-        3,
-        expect.any(Date),
+        1,
+        undefined,
+      );
+      expect(logger.error).toHaveBeenCalledWith(
+        'Notification failed permanently, not retried',
+        expect.objectContaining({ id: 10 }),
       );
     });
   });

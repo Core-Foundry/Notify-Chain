@@ -188,7 +188,7 @@ Returns all stored contract events, newest first.
 
 | Name  | Type   | Required | Description                                          |
 |-------|--------|----------|------------------------------------------------------|
-| limit | number | No       | Maximum number of events to return (default: all)    |
+| limit | number | No       | Maximum number of events to return (default: 20, max: 100) |
 
 **Response `200`**
 

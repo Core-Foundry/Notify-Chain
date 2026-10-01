@@ -31,7 +31,8 @@ This document covers:
 9. [Completion and Archival](#completion-and-archival)
 10. [Dashboard Visibility](#dashboard-visibility)
 11. [Developer Notes](#developer-notes)
-12. [Troubleshooting](#troubleshooting)
+12. [Database Cleanup](#database-cleanup)
+13. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -448,6 +449,45 @@ So the dashboard sits **after** off-chain ingestion: contract → listener → A
   in-flight work gracefully.
 - Batch validation: `POST /api/notifications/validate-batch` plus scheduler
   pre-process batch checks.
+
+## Database Cleanup
+
+`DatabaseCleanupJob` runs independently from the notification archiver. It
+removes expired idempotency keys, processed-event fingerprints, old dead-letter
+records, execution-log rows not associated with pending/processing
+notifications, expired rate-limit windows, and old `DEACTIVATED` backpressure
+events. `ACTIVATED` backpressure records and all `PENDING`/`PROCESSING`
+notifications are retained. Scheduled notifications are never directly
+deleted by this job; `ArchiveService` owns their terminal-state archival and
+the age-based, status-agnostic purge of `notification_archive`. Metrics
+snapshots are retained by `NotificationMetricsRunner`.
+
+| Setting | Default | Minimum | Purpose |
+|---------|---------|---------|---------|
+| `CLEANUP_ENABLED` | `true` | `true` / `false` | Enable the scheduled cleanup job |
+| `CLEANUP_INTERVAL_MS` | `3600000` | `60000` | Run interval in milliseconds |
+| `CLEANUP_RETENTION_DAYS` | `30` | `1` | Global age threshold for cleanup-managed tables |
+
+Explicit legacy overrides remain available for processed events
+(`PROCESSED_EVENT_RETENTION_MS`), execution logs
+(`EXECUTION_LOG_RETENTION_MS`), and rate-limit audit records
+(`RATE_LIMIT_EVENT_RETENTION_MS`). Idempotency keys are removed when
+`expires_at` is past, or when status is `EXPIRED` and `created_at` is older
+than retention. A future-dated `PROCESSED` key is never removed.
+
+Each run logs a correlation `runId`, `perTableDeleted` counts, skipped tables,
+failed tables, configured interval and retention, and duration. Missing required
+timestamp columns cause that table to be warned and skipped; a table failure is
+logged and does not prevent remaining tables from being cleaned. Deletes run in
+batches of at most 1,000 rows, each in its own transaction.
+
+Useful checks:
+
+```sql
+SELECT status, COUNT(*) FROM scheduled_notifications GROUP BY status;
+SELECT status, COUNT(*) FROM notification_archive GROUP BY status;
+SELECT COUNT(*) FROM idempotency_keys WHERE datetime(expires_at) < datetime('now');
+```
 
 ---
 

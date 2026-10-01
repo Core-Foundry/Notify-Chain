@@ -383,4 +383,22 @@ CREATE INDEX IF NOT EXISTS idx_execution_log_notification_attempt
 CREATE INDEX IF NOT EXISTS idx_rate_limit_events_client_timestamp
   ON rate_limit_events(client_id, timestamp);
 
+-- ===============================================
+-- EVENT & NOTIFICATION QUERY INDEXES (migration 003)
+-- See docs/DATABASE_QUERY_PERFORMANCE.md
+-- ===============================================
+
+-- Archival / retention cleanup: terminal notifications ordered by completion time
+CREATE INDEX IF NOT EXISTS idx_scheduled_notifications_archivable
+  ON scheduled_notifications(processing_completed_at)
+  WHERE status IN ('COMPLETED','FAILED','CANCELLED');
+
+-- Notification search: case-insensitive type filter + created_at sort
+CREATE INDEX IF NOT EXISTS idx_scheduled_notifications_type_lower_created
+  ON scheduled_notifications(LOWER(notification_type), created_at);
+
+-- Processed-event search: case-insensitive type filter + processed_at sort
+CREATE INDEX IF NOT EXISTS idx_processed_events_type_lower_processed
+  ON processed_events(LOWER(event_type), processed_at);
+
 

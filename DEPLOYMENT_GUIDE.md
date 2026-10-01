@@ -356,6 +356,12 @@ SCHEDULER_ENABLED=true
 RETRY_SCHEDULER_ENABLED=true
 ```
 
+### Production HTTP response headers
+
+With `NODE_ENV=production`, the listener includes `Strict-Transport-Security: max-age=31536000` along with its baseline security headers. Serve the API through HTTPS and configure the TLS-terminating proxy or platform to redirect HTTP to HTTPS; browsers ignore HSTS received over plain HTTP. HSTS is not enabled in local development, and the listener does not add `includeSubDomains` or `preload` because those settings require a separate domain-wide commitment.
+
+The dashboard's Vite development and preview servers set baseline headers, but those settings do not carry over to static production hosting. Configure `X-Content-Type-Options: nosniff`, `X-Frame-Options: SAMEORIGIN`, `Referrer-Policy: strict-origin-when-cross-origin`, and HSTS at the production CDN or web server. Set the dashboard's `VITE_EVENTS_API_URL` to the HTTPS API endpoint; `EVENTS_API_CORS_ORIGIN` controls CORS and is not used to determine HSTS.
+
 ### 3. Run database migrations
 
 Migrations must be applied before starting the listener. Run this once before each deployment:
