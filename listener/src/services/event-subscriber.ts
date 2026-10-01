@@ -31,26 +31,7 @@ export class EventSubscriber {
   private eventQueue: EventProcessingQueue | null = null;
   private expirationService: NotificationExpirationService | null = null;
   private lastSuccessfulPollAt: number | null = null;
-  private circuitBreaker: CircuitBreaker | null = null;
   private backfillStartLedger: number | null = null;
-  /** Cold-start ledger resolved once per session by resolveBackfillStartLedger(). */
-  private backfillStartLedger: number | null = null;
-  private backfillStartLedger: number | null = null;
-
-  public get server(): StellarSDK.rpc.Server {
-    return this.rpcManager.getActiveServer();
-  }
-
-  public set server(val: StellarSDK.rpc.Server) {
-    const activeIndex = (this.rpcManager as any).activeIndex;
-    if ((this.rpcManager as any).endpoints && (this.rpcManager as any).endpoints[activeIndex]) {
-      (this.rpcManager as any).endpoints[activeIndex].server = val;
-    }
-  }
-
-  public getRpcManager(): StellarRpcManager {
-    return this.rpcManager;
-  }
 
   constructor(config: Config, deduplicationService?: EventDeduplicationService) {
     this.config = config;
@@ -382,8 +363,6 @@ export class EventSubscriber {
     contractConfig: ContractConfig
   ): Promise<StellarSDK.rpc.Api.GetEventsResponse> {
     const lastCursor = this.lastCursors.get(contractConfig.address);
-    const limit = this.config.eventBatchSize ?? 100;
-
     let request: StellarSDK.rpc.Api.GetEventsRequest;
 
     if (lastCursor) {
@@ -430,32 +409,6 @@ export class EventSubscriber {
     }
 
     return await this.server.getEvents(request);
-    const request: StellarSDK.rpc.Api.GetEventsRequest = lastCursor
-      ? {
-          filters: [
-            {
-              contractIds: [contractConfig.address],
-              type: 'contract',
-            },
-          ],
-          cursor: lastCursor,
-          limit: this.config.eventBatchSize,
-        }
-      : {
-          filters: [
-            {
-              contractIds: [contractConfig.address],
-              type: 'contract',
-            },
-          ],
-          startLedger: await this.resolveBackfillStartLedger(),
-          limit: this.config.eventBatchSize,
-        };
-
-    return await this.rpcManager.executeWithFallback(
-      (server) => server.getEvents(request),
-      { operationName: `getEvents(${contractConfig.address})` }
-    );
   }
 
   private async processEvent(
@@ -467,22 +420,13 @@ export class EventSubscriber {
     correlationId = correlationId || requestId || generateCorrelationId();
     const eventStart = Date.now();
     const eventName = getEventName(event.topic);
+    const isDryRun = this.config.dryRun === true;
 
-    // Atomically claim the event before doing any work. Only one concurrent
-    // processor (poll cycle, backfill, queue worker or another listener
-    // instance sharing the database) wins the claim; everyone else skips.
-    // A separate isDuplicate() check followed by a later write would leave a
-    // window in which two processors both send the notification.
-    if (this.deduplicationService) {
-      const claim = await this.deduplicationService.claimEvent(
-        event.id,
-        contractConfig.address,
-        event.ledger,
-        event.txHash,
-        event.type,
-      );
-      if (!claim.claimed) {
-        logger.warn('Skipping event: already processed or in progress (persistent deduplication)', {
+    // Check persistent deduplication first (to catch reorg duplicates)
+    if (this.deduplicationService && !isDryRun) {
+      const duplicate = await this.deduplicationService.isDuplicate(event.id, contractConfig.address);
+      if (duplicate.isDuplicate) {
+        logger.warn('Skipping event: already processed (persistent deduplication)', {
           requestId: correlationId,
           correlationId,
           eventId: event.id,
@@ -521,12 +465,13 @@ export class EventSubscriber {
       type: displayEvent.type,
       topic: displayEvent.topic,
       value: displayEvent.value,
+      dryRun: isDryRun,
     });
 
     let notificationSent = false;
     let processingError: string | undefined;
 
-    if (this.discordService) {
+    if (this.discordService && !isDryRun) {
       const userId = contractConfig.userId ?? 'global';
       if (!preferenceStore.isCategoryEnabled(userId, 'discord')) {
         logger.info('Skipping Discord notification: category disabled by user preferences', {
@@ -583,9 +528,20 @@ export class EventSubscriber {
       correlationId,
       eventId: event.id,
       notificationSent,
-      outcome: !this.discordService || notificationSent ? 'success' : 'failure',
+      outcome: isDryRun ? 'dry_run' : (!this.discordService || notificationSent ? 'success' : 'failure'),
       durationMs: Date.now() - eventStart,
     });
+
+    if (isDryRun) {
+      logger.info('Dry-run: event validated successfully (no persistence or delivery)', {
+        requestId: correlationId,
+        correlationId,
+        eventId: event.id,
+        eventName,
+        contractAddress: contractConfig.address,
+      });
+      return true;
+    }
 
     if (!this.discordService) return true;
     if (notificationSent) return true;

@@ -84,35 +84,8 @@ export interface Config {
   backfill?: BackfillConfig;
   logging?: LoggingConfig;
   api?: ApiConfig;
-  circuitBreaker?: CircuitBreakerConfig;
-}
-
-/** Configurable fallback RPC endpoint settings */
-export interface RpcFallbackConfig {
-  /** Array of fallback RPC URLs to try when primary fails */
-  fallbackUrls: string[];
-  /** Number of consecutive failures before marking endpoint unhealthy and failing over (default: 3) */
-  failureThreshold: number;
-  /** Cooldown duration in ms before attempting to reuse a failed endpoint (default: 60000) */
-  cooldownMs: number;
-  /** Timeout for RPC requests in milliseconds (default: 10000) */
-  requestTimeoutMs: number;
-  /** Maximum number of endpoint retries for a single operation across pool (default: pool size) */
-  maxRetries?: number;
-}
-
-/** Operational status metrics for an RPC endpoint */
-export interface RpcEndpointStatus {
-  url: string;
-  isPrimary: boolean;
-  status: 'healthy' | 'degraded' | 'unhealthy';
-  consecutiveFailures: number;
-  totalRequests: number;
-  totalSuccesses: number;
-  totalFailures: number;
-  lastFailureTime: number | null;
-  lastSuccessTime: number | null;
-  lastError: string | null;
+  /** Dry-run mode: parse and validate events without persisting or delivering notifications. */
+  dryRun?: boolean;
 }
 
 /** Observability settings, sourced from LOG_LEVEL / LOG_FORMAT. */
