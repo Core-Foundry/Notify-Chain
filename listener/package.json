@@ -7,7 +7,7 @@
     "build": "node ./node_modules/typescript/bin/tsc",
     "start": "node dist/index.js",
     "test:perf": "vitest run query-performance",
-    "perf:baseline": "UPDATE_PERF_BASELINE=1 vitest run query-performance"
+    "perf:baseline": "UPDATE_PERF_BASELINE=1 vitest run query-performance",
     "typecheck": "node ./node_modules/typescript/bin/tsc --noEmit",
     "lint": "node ./node_modules/typescript/bin/tsc --noEmit",
     "format:check": "node ./node_modules/prettier/bin/prettier.cjs --check \"src/**/*.ts\" --config ../.prettierrc",
