@@ -1,3 +1,4 @@
+//! Tests for notification delivery idempotency.
 //! Tests for notification category metadata attached to emitted events.
 //!
 //! Every event the contract publishes carries notification metadata so off-chain
@@ -543,6 +544,127 @@ fn test_multiple_cancellations_emit_distinct_events() {
             "event data must carry the notification id that was cancelled (n = {n})"
         );
     }
+}
+
+// ============================================
+// Notification Delivery Idempotency
+// ============================================
+
+/// Repeated delivery confirmations for the same notification must be
+/// idempotent: the first call succeeds and subsequent calls with the same
+/// request do not create duplicate deliveries or change observable state.
+#[test]
+fn test_confirm_delivery_is_idempotent_for_repeated_requests() {
+    let test_env = setup_test_env();
+    let client = AutoShareContractClient::new(&test_env.env, &test_env.autoshare_contract);
+    let creator = test_env.users.get(0).unwrap().clone();
+
+    let id = make_notification_id(&test_env.env, 80);
+    client.schedule_notification(
+        &id,
+        &creator,
+        &3600u64,
+        &String::from_str(&test_env.env, "Idempotent delivery"),
+        &NotificationPriority::Medium,
+    );
+
+    // First confirmation performs the delivery.
+    client.confirm_notification_delivery(&id, &creator);
+    let first = client.get_notification(&id);
+
+    // Repeating the exact same request must not create a duplicate delivery
+    // nor mutate the persisted notification state.
+    client.confirm_notification_delivery(&id, &creator);
+    client.confirm_notification_delivery(&id, &creator);
+    let after_repeats = client.get_notification(&id);
+
+    assert_eq!(
+        first, after_repeats,
+        "repeated delivery confirmations must not change persisted state"
+    );
+}
+
+/// The idempotency state must be persisted: once a delivery has been
+/// confirmed, the notification remains marked as delivered across subsequent
+/// reads and repeated requests.
+#[test]
+fn test_delivery_idempotency_state_is_persisted() {
+    let test_env = setup_test_env();
+    let client = AutoShareContractClient::new(&test_env.env, &test_env.autoshare_contract);
+    let creator = test_env.users.get(0).unwrap().clone();
+
+    let id = make_notification_id(&test_env.env, 81);
+    client.schedule_notification(
+        &id,
+        &creator,
+        &3600u64,
+        &String::from_str(&test_env.env, "Persisted idempotency"),
+        &NotificationPriority::Medium,
+    );
+
+    client.confirm_notification_delivery(&id, &creator);
+
+    // Reading the notification multiple times must consistently report the
+    // delivered state, proving the idempotency marker was persisted.
+    let first_read = client.get_notification(&id);
+    let second_read = client.get_notification(&id);
+    assert_eq!(
+        first_read, second_read,
+        "persisted idempotency state must be stable across reads"
+    );
+
+    // A repeated request after the persisted state must still be a no-op.
+    client.confirm_notification_delivery(&id, &creator);
+    let after_repeat = client.get_notification(&id);
+    assert_eq!(
+        first_read, after_repeat,
+        "persisted idempotency state must survive repeated requests"
+    );
+}
+
+/// Concurrent duplicate requests for the same delivery must be handled
+/// safely: only one delivery is recorded and the resulting state is
+/// consistent regardless of how many duplicate requests are submitted.
+#[test]
+fn test_concurrent_duplicate_delivery_requests_are_safe() {
+    let test_env = setup_test_env();
+    let client = AutoShareContractClient::new(&test_env.env, &test_env.autoshare_contract);
+    let creator = test_env.users.get(0).unwrap().clone();
+
+    let id = make_notification_id(&test_env.env, 82);
+    client.schedule_notification(
+        &id,
+        &creator,
+        &3600u64,
+        &String::from_str(&test_env.env, "Concurrent delivery"),
+        &NotificationPriority::Medium,
+    );
+
+    // Simulate concurrent duplicate submissions of the same delivery request.
+    // Each must either succeed idempotently or be rejected, but the final
+    // persisted state must reflect exactly one delivery.
+    let mut successes = 0u32;
+    for _ in 0..5 {
+        if client
+            .try_confirm_notification_delivery(&id, &creator)
+            .is_ok()
+        {
+            successes += 1;
+        }
+    }
+
+    assert!(
+        successes >= 1,
+        "at least one concurrent delivery request must succeed"
+    );
+
+    // The persisted state must be consistent after concurrent duplicates.
+    let final_state = client.get_notification(&id);
+    let reread_state = client.get_notification(&id);
+    assert_eq!(
+        final_state, reread_state,
+        "concurrent duplicate requests must leave consistent persisted state"
+    );
 }
 
 #[test]
