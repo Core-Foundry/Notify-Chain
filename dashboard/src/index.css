@@ -2952,6 +2952,30 @@ body.event-explorer--resizing {
   --event-explorer-columns: 1.5fr 1fr 0.8fr 1.3fr 0.8fr 1fr;
 }
 
+/* Windowed rendering (issue #652): the body becomes the scroll viewport and
+   only the visible slice of rows is mounted into the spacer. */
+.event-explorer__table-body--virtualized {
+  display: block;
+  position: relative;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  max-height: min(70vh, 640px);
+}
+
+.event-explorer__table-spacer {
+  position: relative;
+  width: 100%;
+}
+
+.event-explorer__virtual-row {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 112px;
+  overflow: hidden;
+}
+
 .event-explorer__row {
   display: grid;
   grid-template-columns: var(--event-explorer-columns, 1.5fr 1fr 0.8fr 1.3fr 0.8fr 1fr);
