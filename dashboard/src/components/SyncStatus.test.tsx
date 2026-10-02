@@ -42,4 +42,3 @@ describe('SyncStatus', () => {
     expect(container.firstChild).toBeNull();
   });
 });
-
