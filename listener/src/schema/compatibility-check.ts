@@ -1,290 +1,252 @@
 /**
- * Event Schema Compatibility Check (#700)
- *
- * Automated checks to detect incompatible changes between the contract event
- * schema and off-chain event consumers.  Uses the contract event definitions
- * from the Soroban contract as the authoritative source and validates that
- * off-chain parsers/consumers can still process events after schema changes.
- *
- * Breaking changes that fail validation:
- *   - Removed required fields
- *   - Incompatible field types
- *   - Incompatible changes to existing event structure
- *   - Changes that would prevent existing consumers from processing events
- *
- * Compatible additions that pass validation:
- *   - New optional fields
- *   - New event types (without removing existing ones)
- *   - New enum variants (backward compatible when appended)
- *   - New topics (trailing, ignored by existing consumers)
+ * Checks that contract event changes remain compatible with the off-chain
+ * consumer schema.
  */
 
 import * as fs from 'fs';
 import * as path from 'path';
 
-// ─── Contract Event Schema (authoritative source) ───────────────────────────────
+export interface EventFieldSchema {
+  name: string;
+  type: string;
+}
 
-/**
- * Extracts the event field names and topics from a Soroban contract event.
- * Parses the events.rs file to build the authoritative schema.
- */
-function extractContractEvents(eventsFilePath: string): Map<string, ContractEventSchema> {
+export interface ContractEventSchema {
+  name: string;
+  topics: EventFieldSchema[];
+  dataFields: EventFieldSchema[];
+}
+
+export interface OffConsumerEventSchema {
+  eventName: string;
+  expectedTopics: EventFieldSchema[];
+  expectedFields: EventFieldSchema[];
+}
+
+export interface OffConsumerSchema {
+  events: OffConsumerEventSchema[];
+}
+
+export interface CompatibilityResult {
+  compatible: boolean;
+  breakingChanges: string[];
+  safeAdditions: string[];
+}
+
+export function extractContractEvents(eventsFilePath: string): Map<string, ContractEventSchema> {
   const source = fs.readFileSync(eventsFilePath, 'utf8');
-
-  const eventsMap = new Map<string, ContractEventSchema>();
-
-  // Match event struct definitions: `#[contractevent]#[derive(Clone)] pub struct EventName { ... }`
-  const eventRegex = /#[contractevent[^\]]*\]#[^\n]*\npub struct (\w+) \{([^}]*)\}/gs;
+  const eventRegex = /#\[contractevent[^\]]*\][\s\S]*?\bpub struct (\w+)\s*\{([\s\S]*?)^\}/gm;
+  const events = new Map<string, ContractEventSchema>();
   let match: RegExpExecArray | null;
 
   while ((match = eventRegex.exec(source)) !== null) {
-    const eventName = match[1];
-    const fieldsSection = match[2];
+    const [, eventName, fieldsSection] = match;
+    const topics: EventFieldSchema[] = [];
+    const dataFields: EventFieldSchema[] = [];
+    let nextFieldIsTopic = false;
 
-    const topics: string[] = [];
-    const dataFields: { name: string; type: string }[] = [];
-
-    // Match topic fields: `#[topic] pub fieldName: Type`
-    const topicRegex = /#\[topic\]\s+pub\s+(\w+):\s*(\w+(?:<[^>]+>)?)/gm;
-    let topicMatch: RegExpExecArray | null;
-
-    while ((topicMatch = topicRegex.exec(fieldsSection)) !== null) {
-      topics.push(topicMatch[1]);
-    }
-
-    // Match data fields (non-topic): `pub fieldName: Type`
-    const dataFieldRegex = /pub\s+(\w+):\s*(\w+(?:<[^>]+>)?)(?:\s*[\[\],])/gm;
-    let dataMatch: RegExpExecArray | null;
-
-    while ((dataMatch = dataFieldRegex.exec(fieldsSection)) !== null) {
-      // Skip if this field was already captured as a topic
-      if (!topics.includes(dataMatch[1])) {
-        dataFields.push({
-          name: dataMatch[1],
-          type: dataMatch[2],
-        });
+    for (const line of fieldsSection.split(/\r?\n/)) {
+      const fieldLine = line.trim();
+      if (fieldLine === '#[topic]') {
+        nextFieldIsTopic = true;
+        continue;
       }
+
+      const fieldMatch = fieldLine.match(/^pub\s+(\w+)\s*:\s*(.+)$/);
+      if (!fieldMatch) continue;
+      const field = {
+        name: fieldMatch[1],
+        type: fieldMatch[2].replace(/,\s*$/, '').trim(),
+      };
+      (nextFieldIsTopic ? topics : dataFields).push(field);
+      nextFieldIsTopic = false;
     }
 
-    // Determine if events have category/priority (from the NotifyChain contract)
-    const hasCategory = fieldsSection.includes('category: NotificationCategory');
-    const hasPriority = fieldsSection.includes('priority: NotificationPriority');
-
-    eventsMap.set(eventName, {
-      name: eventName,
-      topics,
-      dataFields,
-      hasCategory,
-      hasPriority,
-    });
+    if (events.has(eventName)) throw new Error(`Duplicate contract event '${eventName}'`);
+    events.set(eventName, { name: eventName, topics, dataFields });
   }
 
-  return eventsMap;
+  return events;
 }
 
-interface ContractEventSchema {
-  name: string;
-  topics: string[];
-  dataFields: { name: string; type: string }[];
-  hasCategory: boolean;
-  hasPriority: boolean;
+function isEventFieldSchema(value: unknown): value is EventFieldSchema {
+  if (typeof value !== 'object' || value === null) return false;
+  const field = value as EventFieldSchema;
+  return typeof field.name === 'string' && !!field.name.trim() &&
+    typeof field.type === 'string' && !!field.type.trim();
 }
 
-// ─── Off-Consumer Event Types ──────────────────────────────────────────────────
-
-/**
- * Minimal representation of what an off-chain consumer expects.
- * In a real implementation, this would be parsed from the consumer TypeScript types.
- */
-interface OffConsumerSchema {
-  eventName: string;
-  expectedFields: string[]; // Field names expected by the consumer
-  expectedTopics?: string[]; // Expected topic names
-  hasCategory?: boolean;
-  hasPriority?: boolean;
+function isConsumerEventSchema(value: unknown): value is OffConsumerEventSchema {
+  if (typeof value !== 'object' || value === null) return false;
+  const event = value as OffConsumerEventSchema;
+  return typeof event.eventName === 'string' && !!event.eventName.trim() &&
+    Array.isArray(event.expectedTopics) && event.expectedTopics.every(isEventFieldSchema) &&
+    Array.isArray(event.expectedFields) && event.expectedFields.every(isEventFieldSchema);
 }
 
-// ─── Compatibility Logic ───────────────────────────────────────────────────────
+export function loadConsumerSchema(schemaFilePath: string): OffConsumerSchema {
+  const parsed: unknown = JSON.parse(fs.readFileSync(schemaFilePath, 'utf8'));
+  if (typeof parsed !== 'object' || parsed === null || !Array.isArray((parsed as OffConsumerSchema).events)) {
+    throw new Error('Consumer schema must be a JSON object with an events array');
+  }
 
-/**
- * Checks if an off-chain consumer can still process a given contract event,
- * given the current contract schema and the consumer's expected schema.
- */
-function checkEventCompatibility(
+  const events = (parsed as OffConsumerSchema).events;
+  if (events.length === 0 || !events.every(isConsumerEventSchema)) {
+    throw new Error('Consumer schema must contain valid event names, topics, and data fields');
+  }
+  const eventNames = events.map((event) => event.eventName);
+  if (new Set(eventNames).size !== eventNames.length) {
+    throw new Error('Consumer schema contains duplicate event names');
+  }
+  return { events };
+}
+
+function compareFields(
   contractEvent: ContractEventSchema,
-  consumer: OffConsumerSchema
-): { compatible: boolean; breakingChanges: string[]; safeAdditions: string[] }
-{
+  actualFields: EventFieldSchema[],
+  expectedFields: EventFieldSchema[],
+  fieldKind: string
+): { compatible: boolean; breakingChanges: string[]; safeAdditions: string[] } {
   const breakingChanges: string[] = [];
   const safeAdditions: string[] = [];
 
-  // Check: consumer expects events that no longer exist in contract
-  if (!contractEvent.name) {
-    breakingChanges.push('Contract event schema is empty or malformed');
-    return { compatible: false, breakingChanges, safeAdditions };
-  }
-
-  // Check 1: Required fields removed
-  // A field is "required" if the consumer expects it and it exists in the contract
-  // A "breaking change" occurs if the contract REMOVED a field that the consumer expects
-  const contractFieldNames = new Set(contractEvent.dataFields.map((f) => f.name));
-  const consumerFieldNames = new Set(consumer.expectedFields);
-
-  for (const field of consumerFieldNames) {
-    if (!contractFieldNames.has(field)) {
-      // Consumer expects this field, but it's no longer in the contract
+  expectedFields.forEach((expectedField, index) => {
+    const actualField = actualFields[index];
+    if (!actualField) {
       breakingChanges.push(
-        `Breaking: Consumer expects field '${field}' for event '${contractEvent.name}', ` +
-          `but it has been removed from the contract schema`
+        `Breaking: Contract event '${contractEvent.name}' is missing expected ${fieldKind} '${expectedField.name}'`
+      );
+    } else if (actualField.name !== expectedField.name) {
+      breakingChanges.push(
+        `Breaking: Expected ${fieldKind} '${expectedField.name}' at position ${index} in '${contractEvent.name}', found '${actualField.name}'`
+      );
+    } else if (actualField.type.replace(/\s+/g, '') !== expectedField.type.replace(/\s+/g, '')) {
+      breakingChanges.push(
+        `Breaking: ${fieldKind} '${expectedField.name}' in '${contractEvent.name}' changed type from '${expectedField.type}' to '${actualField.type}'`
       );
     }
-  }
+  });
 
-  // Check 2: Incompatible field types
-  // This is a simplified check - in practice would need full type resolution
-  // For now, we check if the number/types of topics have changed in breaking ways
-
-  // Check 3: Category/priority removal
-  if (contractEvent.hasPriority && !consumer.hasPriority) {
-    // Contract still has priority but consumer doesn't expect it
-    // This is usually fine (consumer can ignore trailing topic)
-  } else if (!contractEvent.hasPriority && consumer.hasPriority) {
-    // Contract removed priority, consumer still expects it
-    breakingChanges.push(
-      `Breaking: Event '${contractEvent.name}' no longer emits priority topic, ` +
-        `but consumer expects it. Add priority field or update consumer.`
+  if (breakingChanges.length === 0) {
+    safeAdditions.push(
+      ...actualFields.slice(expectedFields.length).map(
+        (field) => `Safe addition: Trailing ${fieldKind} '${field.name}' added to '${contractEvent.name}'`
+      )
     );
   }
-
-  // Check 4: Topic structure changes
-  // Topics are appended as trailing topics - existing consumers ignore them
-  // Breaking change only if the core topic (event name) changes position
-  if (consumer.expectedTopics && contractEvent.topics.length < consumer.expectedTopics.length) {
-    // Contract has fewer topics than consumer expects
-    // This could be breaking if the consumer relies on specific topic positions
-    const missingTopics = consumer.expectedTopics.filter(
-      (t: string) => !contractEvent.topics.includes(t)
-    );
-    if (missingTopics.length > 0) {
-      breakingChanges.push(
-        `Breaking: Contract event '${contractEvent.name}' is missing expected topics: ${missingTopics.join(', ')}`
-      );
-    }
-  }
-
-  // Check 5: New data fields are safe (backward compatible)
-  // Any new data fields in the contract that weren't expected by the consumer
-  // are simply ignored - this is the Soroban trailing-topic pattern
-  const newDataFields = contractEvent.dataFields.filter(
-    (f: { name: string }) => !consumer.expectedFields.includes(f.name)
-  );
-  safeAdditions.push(
-    ...newDataFields.map(
-      (f: { name: string }) => `Safe addition: New data field '${f.name}' in '${contractEvent.name}' (ignored by existing consumers)`
-    )
-  );
-
-  // Determine compatibility
-  const compatible = breakingChanges.length === 0;
-
-  return { compatible, breakingChanges, safeAdditions };
+  return { compatible: breakingChanges.length === 0, breakingChanges, safeAdditions };
 }
 
-// ─── CLI Entry Point ──────────────────────────────────────────────────────────
+export function checkEventCompatibility(
+  contractEvent: ContractEventSchema,
+  consumerEvent: OffConsumerEventSchema
+): CompatibilityResult {
+  const topics = compareFields(
+    contractEvent,
+    contractEvent.topics,
+    consumerEvent.expectedTopics,
+    'topic'
+  );
+  const fields = compareFields(
+    contractEvent,
+    contractEvent.dataFields,
+    consumerEvent.expectedFields,
+    'data field'
+  );
+  return {
+    compatible: topics.compatible && fields.compatible,
+    breakingChanges: [...topics.breakingChanges, ...fields.breakingChanges],
+    safeAdditions: [...topics.safeAdditions, ...fields.safeAdditions],
+  };
+}
 
-function main(): void {
-  const args = process.argv.slice(2);
+export function checkSchemaCompatibility(
+  contractEvents: Map<string, ContractEventSchema>,
+  consumerSchema: OffConsumerSchema
+): CompatibilityResult {
+  const breakingChanges: string[] = [];
+  const safeAdditions: string[] = [];
+  const consumerNames = new Set(consumerSchema.events.map((event) => event.eventName));
 
-  if (args.includes('--help') || args.includes('-h')) {
-    console.log(`
-Event Schema Compatibility Check (Issue #700)
-
-Usage:
-  npx ts-node --project ../tsconfig.json listener/src/schema/compatibility-check.ts [options]
-
-Options:
-  --contract <path>       Path to contract events.rs file (default: contract/contracts/hello-world/src/base/events.rs)
-  --consumer <path>       Path to consumer schema JSON file
-  --output <path>         Output report file (default: stdout)
-  --format <format>       Output format: table|json|summary (default: table)
-  --breakdown             Show detailed breaking change breakdown
-
-The check compares the contract event schema (authoritative source)
-against off-chain consumer expectations and reports:
-  - Compatible changes (safe to proceed)
-  - Breaking changes (CI will fail)
-  - Safe additions (new fields ignored by existing consumers)
-`);
-    process.exit(0);
+  if (consumerSchema.events.length === 0) {
+    breakingChanges.push('Consumer event schema is empty or malformed');
   }
 
-  const contractPath =
-    args[args.indexOf('--contract') + 1] ||
-    'contract/contracts/hello-world/src/base/events.rs';
+  for (const consumerEvent of consumerSchema.events) {
+    const contractEvent = contractEvents.get(consumerEvent.eventName);
+    if (!contractEvent) {
+      breakingChanges.push(
+        `Breaking: Consumer expects event '${consumerEvent.eventName}', but it is missing from the contract schema`
+      );
+      continue;
+    }
+    const result = checkEventCompatibility(contractEvent, consumerEvent);
+    breakingChanges.push(...result.breakingChanges);
+    safeAdditions.push(...result.safeAdditions);
+  }
 
-  // For demonstration, create a mock consumer schema
-  // In practice, this would be parsed from the actual off-chain consumer TypeScript types
-  const mockConsumer: OffConsumerSchema = {
-    eventName: 'AutoshareCreated',
-    expectedFields: ['creator', 'id'],
-    expectedTopics: ['autoshare_created', 'creator', 'category', 'priority'],
-    hasCategory: true,
-    hasPriority: true,
-  };
+  for (const eventName of contractEvents.keys()) {
+    if (!consumerNames.has(eventName)) {
+      safeAdditions.push(`Safe addition: New event '${eventName}' is ignored by existing consumers`);
+    }
+  }
+
+  return { compatible: breakingChanges.length === 0, breakingChanges, safeAdditions };
+}
+
+function optionValue(args: string[], option: string): string | undefined {
+  const index = args.indexOf(option);
+  if (index === -1) return undefined;
+  const value = args[index + 1];
+  if (!value || value.startsWith('--')) throw new Error(`Option ${option} requires a value`);
+  return value;
+}
+
+export function main(): void {
+  const args = process.argv.slice(2);
+  if (args.includes('--help') || args.includes('-h')) {
+    console.log('Usage: npm run check:event-schema -- [--contract path] [--consumer path] [--format table|json|summary]');
+    return;
+  }
 
   try {
-    const contractEvents = extractContractEvents(contractPath);
-
-    console.log('=== Event Schema Compatibility Check ===\n');
-    console.log('Authoritative contract event schema extracted from:', contractPath);
-    console.log('');
-
-    let totalEvents = 0;
-    let compatibleEvents = 0;
-    let breakingEvents = 0;
-
-    for (const [eventName, contractEvent] of contractEvents) {
-      totalEvents++;
-
-      const { compatible, breakingChanges, safeAdditions } = checkEventCompatibility(
-        contractEvent,
-        mockConsumer
-      );
-
-      if (compatible) {
-        compatibleEvents++;
-        console.log(`✅ ${eventName}: COMPATIBLE`);
-        if (safeAdditions.length > 0) {
-          safeAdditions.forEach((a) => console.log(`   + ${a}`));
-        }
-      } else {
-        breakingEvents++;
-        console.log(`❌ ${eventName}: BREAKING CHANGES`);
-        breakingChanges.forEach((bc) => console.log(`   ! ${bc}`));
-        if (safeAdditions.length > 0) {
-          safeAdditions.forEach((a) => console.log(`   + ${a}`));
-        }
-      }
-      console.log('');
+    const contractPath = path.resolve(
+      process.cwd(),
+      optionValue(args, '--contract') ??
+        path.resolve(__dirname, '../../../contract/contracts/hello-world/src/base/events.rs')
+    );
+    const consumerPath = path.resolve(
+      process.cwd(),
+      optionValue(args, '--consumer') ?? path.resolve(__dirname, 'consumer-event-schema.json')
+    );
+    const format = optionValue(args, '--format') ?? 'table';
+    if (!['table', 'json', 'summary'].includes(format)) {
+      throw new Error(`Unsupported output format '${format}'`);
     }
 
-    console.log(`=== Summary ===`);
-    console.log(`Total events checked: ${totalEvents}`);
-    console.log(`Compatible: ${compatibleEvents}`);
-    console.log(`Breaking changes: ${breakingEvents}`);
-    console.log('');
-
-    if (breakingEvents > 0) {
-      console.log('⚠️  Compatibility check FAILED - breaking changes detected');
-      process.exit(1);
+    const result = checkSchemaCompatibility(
+      extractContractEvents(contractPath),
+      loadConsumerSchema(consumerPath)
+    );
+    const report = format === 'json'
+      ? JSON.stringify(result, null, 2)
+      : [
+          `Event Schema Compatibility Check: ${result.compatible ? 'PASS' : 'FAIL'}`,
+          ...(format === 'table' ? result.breakingChanges.map((change) => `! ${change}`) : []),
+          ...(format === 'table' ? result.safeAdditions.map((addition) => `+ ${addition}`) : []),
+          `Breaking changes: ${result.breakingChanges.length}`,
+        ].join('\n');
+    const outputPath = optionValue(args, '--output');
+    if (outputPath) {
+      fs.writeFileSync(path.resolve(process.cwd(), outputPath), `${report}\n`);
     } else {
-      console.log('✅ Compatibility check PASSED - all events are compatible');
-      process.exit(0);
+      console.log(report);
     }
+    process.exitCode = result.compatible ? 0 : 1;
   } catch (error) {
     console.error('Error running compatibility check:', error);
-    process.exit(1);
+    process.exitCode = 1;
   }
 }
 
-main();
+if (require.main === module) main();

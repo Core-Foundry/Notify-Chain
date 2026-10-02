@@ -1,11 +1,10 @@
 name: CI
 
 on:
-  pull_request:
   push:
-    branches:
-      - main
-      - staging
+    branches: [main, staging]
+  pull_request:
+    branches: [main]
 
 jobs:
   format:
@@ -108,11 +107,15 @@ jobs:
         run: npm ci
       - name: Create test database and apply all migrations
         working-directory: listener
+        env:
+          DATABASE_PATH: ./data/notifications.db
         run: |
           mkdir -p ./data
           npm run migrate
       - name: Check for pending migrations
         working-directory: listener
+        env:
+          DATABASE_PATH: ./data/notifications.db
         run: npm run check-migrations
 
   license-check:

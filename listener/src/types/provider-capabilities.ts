@@ -110,6 +110,18 @@ export interface DeliveryResult {
    * `false`.
    */
   errorMessage?: string;
+
+  /** Provider-assigned identifier, when available. */
+  providerMessageId?: string;
+
+  /** Small structured response subset; persistence applies an allowlist. */
+  providerResponse?: Record<string, unknown>;
+
+  /** Stable provider/transport error code, when available. */
+  errorCode?: string;
+
+  /** HTTP response status, when available. */
+  statusCode?: number;
 }
 
 /**
