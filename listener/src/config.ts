@@ -1,7 +1,20 @@
-import { Config, ContractConfig, DiscordConfig, WebhookSecret, AppCleanupConfig, EventQueueConfig, RetrySchedulerOptions, AnalyticsConfig, ExpirationConfig, ApiKey } from './types';
+import { Config, ContractConfig, DiscordConfig, WebhookSecret, AppCleanupConfig, EventQueueConfig, RetrySchedulerOptions, AnalyticsConfig, ExpirationConfig, ApiKey, CircuitBreakerConfig, BackfillConfig, LoggingConfig, ApiConfig } from './types';
+import { Config, ContractConfig, DiscordConfig, WebhookSecret, AppCleanupConfig, EventQueueConfig, RetrySchedulerOptions, AnalyticsConfig, ExpirationConfig, ApiKey, BackfillConfig, LoggingConfig, ApiConfig } from './types';
 import { validateCorsOrigin, CorsValidationError } from './utils/cors-validator';
+import { validateSecrets } from './config/validate-secrets';
 import { ConfigurationSchemaValidator, APP_CONFIG_SCHEMA } from './config-schema';
 import { Config, ContractConfig, DiscordConfig, WebhookSecret, AppCleanupConfig, EventQueueConfig, RetrySchedulerOptions, AnalyticsConfig, ExpirationConfig, ApiKey, BackfillConfig, LoggingConfig, ApiConfig } from './types';
+import { Config, ContractConfig, DiscordConfig, WebhookSecret, AppCleanupConfig, EventQueueConfig, RetrySchedulerOptions, AnalyticsConfig, ExpirationConfig, ApiKey, BackfillConfig, LoggingConfig, ApiConfig, RetryPolicyOptions } from './types';
+import {
+  DEFAULT_RETRYABLE_FAILURE_TYPES,
+  RETRY_FAILURE_TYPES,
+  RetryFailureType,
+  parseRetryableFailureTypes,
+} from './services/retry-policy';
+import { validateCorsOrigin, CorsValidationError } from './utils/cors-validator';
+import { ConfigurationSchemaValidator, APP_CONFIG_SCHEMA } from './config-schema';
+import { Config, ContractConfig, DiscordConfig, WebhookSecret, AppCleanupConfig, EventQueueConfig, RetrySchedulerOptions, AnalyticsConfig, ExpirationConfig, ApiKey, BackfillConfig, LoggingConfig, ApiConfig, RpcFallbackConfig } from './types';
+import { validateSecrets } from './config/validate-secrets';
 import {
   SUPPORTED_LOG_FORMATS,
   SUPPORTED_LOG_LEVELS,
@@ -52,6 +65,27 @@ function parseIntegerEnv(name: string, defaultValue: string): number {
   return parsed;
 }
 
+function parseStrictIntegerEnv(name: string, defaultValue: string): number {
+  const rawValue = trimEnv(name);
+  if (rawValue !== undefined && !/^-?\d+$/.test(rawValue)) {
+    throw new ConfigError(`${name} must be a valid integer, got "${rawValue}"`);
+  }
+  return parseIntegerEnv(name, defaultValue);
+}
+
+function parseBooleanEnv(name: string, defaultValue: boolean): boolean {
+  const rawValue = trimEnv(name);
+  if (rawValue === undefined) return defaultValue;
+  if (rawValue === 'true') return true;
+  if (rawValue === 'false') return false;
+  throw new ConfigError(`${name} must be either "true" or "false", got "${rawValue}"`);
+}
+
+function parseOptionalIntegerEnv(name: string): number | undefined {
+  const rawValue = trimEnv(name);
+  return rawValue ? parseStrictIntegerEnv(name, rawValue) : undefined;
+}
+
 function parseJsonEnv<T>(name: string, defaultValue: string): T {
   const rawValue = trimEnv(name) ?? defaultValue;
   try {
@@ -61,9 +95,32 @@ function parseJsonEnv<T>(name: string, defaultValue: string): T {
   }
 }
 
+function parseStringListEnv(name: string): string[] {
+  const raw = trimEnv(name);
+  if (!raw) return [];
+  if (raw.startsWith('[') && raw.endsWith(']')) {
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        return parsed.map((item) => String(item).trim()).filter(Boolean);
+      }
+    } catch {
+      throw new ConfigError(`${name} must be valid JSON array of URL strings. Received: ${raw}`);
+    }
+  }
+  return raw.split(',').map((s) => s.trim()).filter(Boolean);
+}
+
 function validateContractAddresses(value: unknown): ContractConfig[] {
   if (!Array.isArray(value)) {
     throw new ConfigError('CONTRACT_ADDRESSES must be a JSON array of contract objects.');
+  }
+
+  if (value.length === 0) {
+    throw new ConfigError(
+      'CONTRACT_ADDRESSES is empty. The listener requires at least one contract to monitor. ' +
+        'Add contract configurations or the service will not process any events.'
+    );
   }
 
   return value.map((item, index) => {
@@ -166,19 +223,32 @@ function validateApiKeys(value: unknown): ApiKey[] {
 }
 
 function loadCleanupConfig(): AppCleanupConfig {
+  const processedEventRetentionMs = parseIntegerEnv(
+    'PROCESSED_EVENT_RETENTION_MS',
+    String(30 * 24 * 60 * 60 * 1000),
+  );
+  const executionLogRetentionMs = parseIntegerEnv(
+    'EXECUTION_LOG_RETENTION_MS',
+    String(90 * 24 * 60 * 60 * 1000),
+  );
+  const rateLimitEventRetentionMs = parseIntegerEnv(
+    'RATE_LIMIT_EVENT_RETENTION_MS',
+    String(24 * 60 * 60 * 1000),
+  );
   return {
-    intervalMs: parseIntegerEnv('CLEANUP_INTERVAL_MS', String(60 * 60 * 1000)),
+    enabled: parseBooleanEnv('CLEANUP_ENABLED', true),
+    intervalMs: parseStrictIntegerEnv('CLEANUP_INTERVAL_MS', String(60 * 60 * 1000)),
+    retentionDays: parseStrictIntegerEnv('CLEANUP_RETENTION_DAYS', '30'),
+    retentionOverridesMs: {
+      processedEvents: parseOptionalIntegerEnv('PROCESSED_EVENT_RETENTION_MS'),
+      executionLogs: parseOptionalIntegerEnv('EXECUTION_LOG_RETENTION_MS'),
+      rateLimitEvents: parseOptionalIntegerEnv('RATE_LIMIT_EVENT_RETENTION_MS'),
+    },
     notificationRetentionMs: parseIntegerEnv('NOTIFICATION_RETENTION_MS', String(7 * 24 * 60 * 60 * 1000)),
-    rateLimitEventRetentionMs: parseIntegerEnv('RATE_LIMIT_EVENT_RETENTION_MS', String(24 * 60 * 60 * 1000)),
+    rateLimitEventRetentionMs,
     eventRetentionMs: parseIntegerEnv('EVENT_RETENTION_MS', String(24 * 60 * 60 * 1000)),
-    processedEventRetentionMs: parseIntegerEnv(
-      'PROCESSED_EVENT_RETENTION_MS',
-      String(30 * 24 * 60 * 60 * 1000),
-    ),
-    executionLogRetentionMs: parseIntegerEnv(
-      'EXECUTION_LOG_RETENTION_MS',
-      String(90 * 24 * 60 * 60 * 1000),
-    ),
+    processedEventRetentionMs,
+    executionLogRetentionMs,
   };
 }
 
@@ -193,9 +263,10 @@ function loadAnalyticsConfig(): AnalyticsConfig {
   };
 }
 
-function loadRetrySchedulerConfig(): RetrySchedulerOptions {
+function loadRetrySchedulerConfig(policy: RetryPolicyOptions): RetrySchedulerOptions {
   return {
     enabled: trimEnv('RETRY_SCHEDULER_ENABLED') !== 'false',
+    webhookTimeoutMs: parseIntegerEnv('WEBHOOK_DELIVERY_TIMEOUT_MS', '10000'),
     pollIntervalMs: parseIntegerEnv('RETRY_SCHEDULER_POLL_INTERVAL_MS', '15000'),
     lockTimeoutMs: parseIntegerEnv('RETRY_SCHEDULER_LOCK_TIMEOUT_MS', '60000'),
     processorId: trimEnv('RETRY_SCHEDULER_PROCESSOR_ID'),
@@ -204,11 +275,49 @@ function loadRetrySchedulerConfig(): RetrySchedulerOptions {
     multiplier: parseIntegerEnv('RETRY_MULTIPLIER', '2'),
     maxDelayMs: parseIntegerEnv('RETRY_MAX_DELAY_MS', String(60 * 60 * 1000)),
     jitter: trimEnv('RETRY_JITTER') !== 'false',
+// Policy knobs are owned by the retry policy; fold them in so the scheduler
+    // and the in-memory queues agree on the attempt budget and on which failure
+    // types are worth retrying.
+    maxAttempts: policy.maxAttempts,
+    retryableFailureTypes: policy.retryableFailureTypes,
     webhookTimeoutMs: parseIntegerEnv(
       'WEBHOOK_TIMEOUT_MS',
       String(DEFAULT_WEBHOOK_TIMEOUT_MS)
     ),
   };
+}
+
+/**
+ * Load the notification retry policy (#842).
+ *
+ * The delay curve deliberately reuses `RETRY_BASE_DELAY_MS` / `RETRY_MULTIPLIER`
+ * / `RETRY_MAX_DELAY_MS` / `RETRY_JITTER`, which the retry scheduler and the
+ * in-memory retry queue already share, so there is a single knob per concern.
+ *
+ *   RETRY_POLICY_MAX_ATTEMPTS               - hard ceiling on attempts (unset = no ceiling)
+ *   RETRY_POLICY_RETRYABLE_FAILURE_TYPES    - comma-separated eligible failure types
+ */
+function loadRetryPolicyConfig(): RetryPolicyOptions {
+  const rawMaxAttempts = trimEnv('RETRY_POLICY_MAX_ATTEMPTS');
+  const maxAttempts =
+    rawMaxAttempts === undefined || rawMaxAttempts === ''
+      ? undefined
+      : parseIntegerEnv('RETRY_POLICY_MAX_ATTEMPTS', '1');
+
+  let retryableFailureTypes: RetryFailureType[];
+  try {
+    retryableFailureTypes =
+      parseRetryableFailureTypes(trimEnv('RETRY_POLICY_RETRYABLE_FAILURE_TYPES')) ??
+      [...DEFAULT_RETRYABLE_FAILURE_TYPES];
+  } catch (err) {
+    throw new ConfigError(
+      `RETRY_POLICY_RETRYABLE_FAILURE_TYPES is invalid: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
+  }
+
+  return { maxAttempts, retryableFailureTypes };
 }
 
 function loadExpirationConfig(): ExpirationConfig {
@@ -252,10 +361,57 @@ function loadBackfillConfig(): BackfillConfig {
   };
 }
 
+/**
+ * Load circuit breaker configuration for RPC calls.
+ *
+ * CIRCUIT_BREAKER_FAILURE_THRESHOLD: Number of consecutive failures before opening
+ * CIRCUIT_BREAKER_RECOVERY_TIMEOUT_MS: Time to wait before attempting recovery
+ * CIRCUIT_BREAKER_REQUEST_TIMEOUT_MS: Request timeout in milliseconds
+ */
+function loadCircuitBreakerConfig(): CircuitBreakerConfig | undefined {
+  const failureThreshold = trimEnv('CIRCUIT_BREAKER_FAILURE_THRESHOLD');
+  const recoveryTimeoutMs = trimEnv('CIRCUIT_BREAKER_RECOVERY_TIMEOUT_MS');
+  const requestTimeoutMs = trimEnv('CIRCUIT_BREAKER_REQUEST_TIMEOUT_MS');
+
+  // Only return config if at least one env var is set
+  if (!failureThreshold && !recoveryTimeoutMs && !requestTimeoutMs) {
+    return undefined;
+  }
+
+  return {
+    failureThreshold: failureThreshold ? parseIntegerEnv('CIRCUIT_BREAKER_FAILURE_THRESHOLD', '5') : undefined,
+    recoveryTimeoutMs: recoveryTimeoutMs ? parseIntegerEnv('CIRCUIT_BREAKER_RECOVERY_TIMEOUT_MS', '60000') : undefined,
+    requestTimeoutMs: requestTimeoutMs ? parseIntegerEnv('CIRCUIT_BREAKER_REQUEST_TIMEOUT_MS', '30000') : undefined,
+function loadRpcFallbackConfig(fallbackUrls: string[]): RpcFallbackConfig {
+  const failureThreshold = parseIntegerEnv(
+    'RPC_FAILURE_THRESHOLD',
+    trimEnv('STELLAR_RPC_FAILURE_THRESHOLD') || '3'
+  );
+  const cooldownMs = parseIntegerEnv(
+    'RPC_COOLDOWN_MS',
+    trimEnv('STELLAR_RPC_COOLDOWN_MS') || '60000'
+  );
+  const requestTimeoutMs = parseIntegerEnv(
+    'RPC_REQUEST_TIMEOUT_MS',
+    trimEnv('STELLAR_RPC_REQUEST_TIMEOUT_MS') || '10000'
+  );
+  const maxRetriesRaw = trimEnv('RPC_MAX_RETRIES') || trimEnv('STELLAR_RPC_MAX_RETRIES');
+  const maxRetries = maxRetriesRaw ? parseIntegerEnv('RPC_MAX_RETRIES', maxRetriesRaw) : undefined;
+
+  return {
+    fallbackUrls,
+    failureThreshold,
+    cooldownMs,
+    requestTimeoutMs,
+    maxRetries,
+  };
+}
+
 export function loadConfig(): Config {
   validateRequiredEnvVars();
 
   const discord = loadDiscordConfig();
+  const retryPolicy = loadRetryPolicyConfig();
   const rawContractAddresses = parseJsonEnv<unknown>('CONTRACT_ADDRESSES', '[]');
   const rawWebhookSecrets = parseJsonEnv<unknown>('WEBHOOK_SECRETS', '[]');
   const rawApiKeys = parseJsonEnv<unknown>('API_KEYS', '[]');
@@ -264,10 +420,29 @@ export function loadConfig(): Config {
     '{}'
   );
 
+  const explicitRpcUrl = trimEnv('STELLAR_RPC_URL');
+  const allRpcUrlsFromEnv = parseStringListEnv('STELLAR_RPC_URLS');
+  const explicitFallbacks = parseStringListEnv('STELLAR_RPC_FALLBACK_URLS');
+
+  const primaryRpcUrl =
+    explicitRpcUrl || allRpcUrlsFromEnv[0] || 'https://soroban-testnet.stellar.org:443';
+
+  const combinedFallbacks = Array.from(
+    new Set([
+      ...explicitFallbacks,
+      ...(allRpcUrlsFromEnv.length > 1 ? allRpcUrlsFromEnv.slice(1) : []),
+    ])
+  ).filter((url) => url !== primaryRpcUrl);
+
+  const rpcFallback = loadRpcFallbackConfig(combinedFallbacks);
+  const stellarRpcUrls = [primaryRpcUrl, ...combinedFallbacks];
+
   return {
     stellarNetwork: trimEnv('STELLAR_NETWORK') || 'testnet',
-    stellarRpcUrl:
-      trimEnv('STELLAR_RPC_URL') || 'https://soroban-testnet.stellar.org:443',
+    stellarRpcUrl: primaryRpcUrl,
+    stellarRpcFallbackUrls: combinedFallbacks,
+    stellarRpcUrls,
+    rpcFallback,
     stellarNetworkPassphrase: trimEnv('STELLAR_NETWORK_PASSPHRASE') || 'Test SDF Network ; September 2015',
     contractAddresses: validateContractAddresses(rawContractAddresses),
     pollIntervalMs: parseIntegerEnv('POLL_INTERVAL_MS', '30000'),
@@ -301,7 +476,8 @@ export function loadConfig(): Config {
       batchSize: parseIntegerEnv('SCHEDULER_BATCH_SIZE', '10'),
       timingBufferMs: parseIntegerEnv('SCHEDULER_TIMING_BUFFER_MS', '60000'),
     },
-    retryScheduler: loadRetrySchedulerConfig(),
+    retryScheduler: loadRetrySchedulerConfig(retryPolicy),
+    retryPolicy,
     rateLimit: {
       enabled: trimEnv('RATE_LIMIT_ENABLED') !== 'false',
       windowMs: parseIntegerEnv('RATE_LIMIT_WINDOW_MS', '60000'),
@@ -314,6 +490,7 @@ export function loadConfig(): Config {
     backfill: loadBackfillConfig(),
     logging: loadLoggingConfig(),
     api: loadApiConfig(),
+    circuitBreaker: loadCircuitBreakerConfig(),
   };
 }
 
@@ -368,6 +545,46 @@ export function validateConfig(config: Config): void {
     } catch {
       errors.push(
         `STELLAR_RPC_URL is not a valid URL (received: "${config.stellarRpcUrl}").`,
+      );
+    }
+  }
+
+  // Validate Fallback RPC URLs
+  if (config.stellarRpcFallbackUrls && Array.isArray(config.stellarRpcFallbackUrls)) {
+    for (const [idx, fbUrl] of config.stellarRpcFallbackUrls.entries()) {
+      if (!fbUrl || typeof fbUrl !== 'string' || fbUrl.trim() === '') {
+        errors.push(`Fallback RPC URL at index ${idx} must be a non-empty string.`);
+        continue;
+      }
+      try {
+        const url = new URL(fbUrl);
+        if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+          errors.push(
+            `Fallback RPC URL at index ${idx} must use HTTP or HTTPS protocol (received: "${url.protocol}").`
+          );
+        }
+      } catch {
+        errors.push(
+          `Fallback RPC URL at index ${idx} is not a valid URL (received: "${fbUrl}").`
+        );
+      }
+    }
+  }
+
+  if (config.rpcFallback) {
+    if (config.rpcFallback.failureThreshold < 1) {
+      errors.push(
+        `RPC_FAILURE_THRESHOLD must be >= 1 (received: ${config.rpcFallback.failureThreshold}).`
+      );
+    }
+    if (config.rpcFallback.cooldownMs < 0) {
+      errors.push(
+        `RPC_COOLDOWN_MS must be >= 0 (received: ${config.rpcFallback.cooldownMs}).`
+      );
+    }
+    if (config.rpcFallback.requestTimeoutMs < 500) {
+      errors.push(
+        `RPC_REQUEST_TIMEOUT_MS must be at least 500 ms (received: ${config.rpcFallback.requestTimeoutMs}).`
       );
     }
   }
@@ -578,6 +795,37 @@ export function validateConfig(config: Config): void {
     }
   }
 
+  // ── Retry policy (#842) ───────────────────────────────────────────────────
+  if (config.retryPolicy) {
+    if (
+      config.retryPolicy.maxAttempts !== undefined &&
+      config.retryPolicy.maxAttempts < 1
+    ) {
+      errors.push(
+        `RETRY_POLICY_MAX_ATTEMPTS must be >= 1 (received: ${config.retryPolicy.maxAttempts}). ` +
+          'A value of 1 disables retries entirely.',
+      );
+    }
+    if (!Array.isArray(config.retryPolicy.retryableFailureTypes)) {
+      errors.push('RETRY_POLICY_RETRYABLE_FAILURE_TYPES must be a list of failure types.');
+    } else if (config.retryPolicy.retryableFailureTypes.length === 0) {
+      errors.push(
+        'RETRY_POLICY_RETRYABLE_FAILURE_TYPES must list at least one failure type. ' +
+          'Omit the variable entirely to use the default transient set.',
+      );
+    } else {
+      const unknownTypes = config.retryPolicy.retryableFailureTypes.filter(
+        (type) => !RETRY_FAILURE_TYPES.includes(type),
+      );
+      if (unknownTypes.length > 0) {
+        errors.push(
+          `RETRY_POLICY_RETRYABLE_FAILURE_TYPES contains unknown failure type(s): ` +
+            `${unknownTypes.join(', ')}. Supported values: ${RETRY_FAILURE_TYPES.join(', ')}.`,
+        );
+      }
+    }
+  }
+
   // ── Rate limiting ──────────────────────────────────────────────────────────
   if (config.rateLimit) {
     if (config.rateLimit.windowMs < 1000) {
@@ -631,6 +879,11 @@ export function validateConfig(config: Config): void {
       errors.push(
         `PROCESSED_EVENT_RETENTION_MS must be >= 60000 ms ` +
           `(received: ${config.cleanup.processedEventRetentionMs}).`,
+      );
+    }
+    if (config.cleanup.retentionDays < 1) {
+      errors.push(
+        `CLEANUP_RETENTION_DAYS must be >= 1 (received: ${config.cleanup.retentionDays}).`,
       );
     }
   }

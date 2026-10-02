@@ -331,10 +331,41 @@ describe('Config validation', () => {
       expect(() => validateConfig(config)).not.toThrow();
     });
 
-    it('detects empty CONTRACT_ADDRESSES array', () => {
+    it('accepts multiple contract addresses in configuration', () => {
+      process.env.CONTRACT_ADDRESSES = JSON.stringify([
+        { address: 'CXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX', events: ['TaskCreated'] },
+        { address: 'CXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX', events: ['TaskCompleted', 'TaskFailed'] },
+        { address: 'CXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX', events: ['*'] }
+      ]);
+      process.env.STELLAR_RPC_URL = 'https://soroban-testnet.stellar.org:443';
+      process.env.STELLAR_NETWORK_PASSPHRASE = 'Test SDF Network ; September 2015';
+      process.env.POLL_INTERVAL_MS = '30000';
+      process.env.EVENTS_API_PORT = '8787';
+      process.env.DATABASE_PATH = './data/notifications.db';
+
+      const config = loadConfig();
+      expect(config.contractAddresses).toHaveLength(3);
+      expect(() => validateConfig(config)).not.toThrow();
+    });
+
+    it('detects empty CONTRACT_ADDRESSES array during loadConfig', () => {
       process.env.CONTRACT_ADDRESSES = '[]';
+
+      expect(() => loadConfig()).toThrow(ConfigError);
+      expect(() => loadConfig()).toThrow(
+        'CONTRACT_ADDRESSES is empty. The listener requires at least one contract to monitor'
+      );
+    });
+
+    it('detects empty CONTRACT_ADDRESSES array during validateConfig', () => {
+      process.env.CONTRACT_ADDRESSES = JSON.stringify([
+        { address: 'CXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX', events: ['TaskCreated'] }
+      ]);
       
       const config = loadConfig();
+      // Manually set to empty to test validateConfig path
+      config.contractAddresses = [];
+      
       expect(() => validateConfig(config)).toThrow(ConfigError);
       expect(() => validateConfig(config)).toThrow(
         'CONTRACT_ADDRESSES is empty. The listener requires at least one contract to monitor'
@@ -448,25 +479,26 @@ describe('Config validation', () => {
     });
 
     it('reports multiple configuration errors together', () => {
-      process.env.CONTRACT_ADDRESSES = '[]';
+      process.env.CONTRACT_ADDRESSES = JSON.stringify([
+        { address: 'CXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX', events: ['TaskCreated'] }
+      ]);
       process.env.STELLAR_RPC_URL = 'not-a-url';
       process.env.POLL_INTERVAL_MS = '500';
       process.env.EVENTS_API_PORT = '70000';
-      
+
       const config = loadConfig();
-      
+
       expect(() => validateConfig(config)).toThrow(ConfigError);
-      
+
       try {
         validateConfig(config);
       } catch (error) {
         if (error instanceof ConfigError) {
-          // Verify all 4 errors are reported
-          expect(error.message).toContain('Configuration validation failed with 4 error(s)');
+          // Verify all 3 errors are reported (CONTRACT_ADDRESSES is now valid)
+          expect(error.message).toContain('Configuration validation failed with 3 error(s)');
           expect(error.message).toContain('STELLAR_RPC_URL is not a valid URL');
           expect(error.message).toContain('POLL_INTERVAL_MS must be at least 1000 ms');
           expect(error.message).toContain('EVENTS_API_PORT must be between 1 and 65535');
-          expect(error.message).toContain('CONTRACT_ADDRESSES is empty');
         } else {
           throw error;
         }
@@ -517,6 +549,125 @@ describe('Config validation', () => {
         'RETRY_MAX_DELAY_MS must be >= RETRY_BASE_DELAY_MS'
       );
     });
+
+    describe('Fallback RPC Configuration', () => {
+      it('loads fallback RPC URLs from comma-separated STELLAR_RPC_FALLBACK_URLS', () => {
+        process.env.STELLAR_RPC_URL = 'https://rpc1.stellar.org';
+        process.env.STELLAR_RPC_FALLBACK_URLS = 'https://rpc2.stellar.org, https://rpc3.stellar.org';
+
+        const config = loadConfig();
+        expect(config.stellarRpcUrl).toBe('https://rpc1.stellar.org');
+        expect(config.stellarRpcFallbackUrls).toEqual([
+          'https://rpc2.stellar.org',
+          'https://rpc3.stellar.org',
+        ]);
+        expect(config.stellarRpcUrls).toEqual([
+          'https://rpc1.stellar.org',
+          'https://rpc2.stellar.org',
+          'https://rpc3.stellar.org',
+        ]);
+        expect(() => validateConfig(config)).not.toThrow();
+      });
+
+      it('loads fallback RPC URLs from JSON array STELLAR_RPC_FALLBACK_URLS', () => {
+        process.env.STELLAR_RPC_URL = 'https://rpc1.stellar.org';
+        process.env.STELLAR_RPC_FALLBACK_URLS = JSON.stringify([
+          'https://rpc2.stellar.org',
+          'https://rpc3.stellar.org',
+        ]);
+
+        const config = loadConfig();
+        expect(config.stellarRpcFallbackUrls).toEqual([
+          'https://rpc2.stellar.org',
+          'https://rpc3.stellar.org',
+        ]);
+        expect(() => validateConfig(config)).not.toThrow();
+      });
+
+      it('loads primary and fallbacks from STELLAR_RPC_URLS list', () => {
+        delete process.env.STELLAR_RPC_URL;
+        process.env.STELLAR_RPC_URLS = 'https://primary.stellar.org, https://fallback.stellar.org';
+
+        const config = loadConfig();
+        expect(config.stellarRpcUrl).toBe('https://primary.stellar.org');
+        expect(config.stellarRpcFallbackUrls).toEqual(['https://fallback.stellar.org']);
+        expect(config.stellarRpcUrls).toEqual([
+          'https://primary.stellar.org',
+          'https://fallback.stellar.org',
+        ]);
+      });
+
+      it('deduplicates primary URL if present in fallback URLs', () => {
+        process.env.STELLAR_RPC_URL = 'https://rpc1.stellar.org';
+        process.env.STELLAR_RPC_FALLBACK_URLS = 'https://rpc1.stellar.org, https://rpc2.stellar.org';
+
+        const config = loadConfig();
+        expect(config.stellarRpcFallbackUrls).toEqual(['https://rpc2.stellar.org']);
+      });
+
+      it('loads custom RPC failover threshold, cooldown, and request timeout', () => {
+        process.env.RPC_FAILURE_THRESHOLD = '5';
+        process.env.RPC_COOLDOWN_MS = '120000';
+        process.env.RPC_REQUEST_TIMEOUT_MS = '8000';
+        process.env.RPC_MAX_RETRIES = '4';
+
+        const config = loadConfig();
+        expect(config.rpcFallback?.failureThreshold).toBe(5);
+        expect(config.rpcFallback?.cooldownMs).toBe(120000);
+        expect(config.rpcFallback?.requestTimeoutMs).toBe(8000);
+        expect(config.rpcFallback?.maxRetries).toBe(4);
+      });
+
+      it('detects invalid fallback RPC URL format', () => {
+        process.env.STELLAR_RPC_FALLBACK_URLS = 'invalid-not-a-url';
+
+        const config = loadConfig();
+        expect(() => validateConfig(config)).toThrow(ConfigError);
+        expect(() => validateConfig(config)).toThrow(
+          'Fallback RPC URL at index 0 is not a valid URL'
+        );
+      });
+
+      it('detects fallback RPC URL with invalid protocol', () => {
+        process.env.STELLAR_RPC_FALLBACK_URLS = 'ftp://ftp.stellar.org';
+
+        const config = loadConfig();
+        expect(() => validateConfig(config)).toThrow(ConfigError);
+        expect(() => validateConfig(config)).toThrow(
+          'Fallback RPC URL at index 0 must use HTTP or HTTPS protocol'
+        );
+      });
+
+      it('detects invalid RPC_FAILURE_THRESHOLD (less than 1)', () => {
+        process.env.RPC_FAILURE_THRESHOLD = '0';
+
+        const config = loadConfig();
+        expect(() => validateConfig(config)).toThrow(ConfigError);
+        expect(() => validateConfig(config)).toThrow(
+          'RPC_FAILURE_THRESHOLD must be >= 1'
+        );
+      });
+
+      it('detects invalid RPC_COOLDOWN_MS (less than 0)', () => {
+        process.env.RPC_COOLDOWN_MS = '-10';
+
+        const config = loadConfig();
+        expect(() => validateConfig(config)).toThrow(ConfigError);
+        expect(() => validateConfig(config)).toThrow(
+          'RPC_COOLDOWN_MS must be >= 0'
+        );
+      });
+
+      it('detects invalid RPC_REQUEST_TIMEOUT_MS (less than 500)', () => {
+        process.env.RPC_REQUEST_TIMEOUT_MS = '200';
+
+        const config = loadConfig();
+        expect(() => validateConfig(config)).toThrow(ConfigError);
+        expect(() => validateConfig(config)).toThrow(
+          'RPC_REQUEST_TIMEOUT_MS must be at least 500 ms'
+        );
+      });
+    });
   });
 
   describe('WEBHOOK_TIMEOUT_MS', () => {
@@ -566,3 +717,6 @@ describe('Config validation', () => {
     });
   });
 });
+});
+
+

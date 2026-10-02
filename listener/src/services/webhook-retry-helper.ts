@@ -1,47 +1,58 @@
 /**
  * Bounded retry helper for transient API failures.
  *
- * Wraps the sendWebhook function with automatic retry logic for
- * transient failures such as:
+ * Wraps the sendWebhook function with retry logic driven by a {@link RetryPolicy},
+ * so the attempt budget, the delay curve and the set of eligible failure types
+ * are all configurable rather than hard-coded here.
+ *
+ * The shipped default policy retries:
  *   - Network/connection errors
  *   - Timeout (AbortError)
  *   - HTTP 429 (Too Many Requests)
  *   - HTTP 500, 502, 503, 504 (Server errors)
  *
- * Permanent client errors (400, 401, 403, 404, 422) are NOT retried.
- *
- * Retry attempts are bounded by MAX_RETRY_ATTEMPTS to prevent infinite loops.
- * A delay is added between attempts to reduce load on failing services.
+ * Permanent client errors (400, 401, 403, 404, 410, 422) are NOT retried: a
+ * later attempt would produce the identical rejection, so the response is
+ * returned to the caller immediately.
  */
 
 import { sendWebhook, WebhookSendOptions, WebhookFailureReason, isWebhookTimeoutError } from './webhook-sender';
+import { RetryFailureType, RetryPolicy, classifyError, classifyHttpStatus } from './retry-policy';
 
 /** Maximum number of retry attempts (not counting the initial attempt). */
 const MAX_RETRY_ATTEMPTS = 2;
 
-/** Delay in milliseconds between retry attempts. */
+/** Delay in milliseconds before the first retry. */
 const RETRY_DELAY_MS = 1000;
 
-/**
- * HTTP status codes that are considered retryable (transient failures).
- */
-const RETRYABLE_STATUS_CODES = new Set([429, 500, 502, 503, 504]);
+export interface WebhookRetryOptions extends WebhookSendOptions {
+  /**
+   * Retry policy overrides. Defaults to
+   * `{ maxAttempts: 1 + MAX_RETRY_ATTEMPTS, baseDelayMs: RETRY_DELAY_MS, multiplier: 1, jitter: false }`
+   * so the historical behaviour is preserved unless a policy is supplied.
+   */
+  retryPolicy?: ConstructorParameters<typeof RetryPolicy>[0];
+}
 
-/**
- * HTTP status codes that are permanent client errors (not retryable).
- */
-const PERMANENT_CLIENT_ERRORS = new Set([400, 401, 403, 404, 422]);
+const DEFAULT_RETRY_POLICY = new RetryPolicy({
+  maxAttempts: 1 + MAX_RETRY_ATTEMPTS,
+  baseDelayMs: RETRY_DELAY_MS,
+  multiplier: 1,
+  maxDelayMs: RETRY_DELAY_MS,
+  jitter: false,
+});
 
 /**
  * Classify a webhook attempt as a specific failure reason, or `null` when it
  * succeeded / did not fail.
  *
- * A request timeout is reported as its own `'timeout'` reason rather than
+* A request timeout is reported as its own `'timeout'` reason rather than
  * being folded into a generic network error, so retry logic and observability
  * can treat (and count) the two separately.
  *
  * @param response - The HTTP response, if one was received
  * @param error - The error thrown, if the request failed before/without a response
+ * @param policy - Policy deciding which failure types are retryable
  * @returns the failure reason, or null when the attempt did not fail
  */
 export function classifyWebhookFailure(
@@ -96,29 +107,32 @@ async function delay(ms: number): Promise<void> {
 /**
  * Send a webhook with bounded retry logic for transient failures.
  *
- * Makes an initial attempt, then retries up to MAX_RETRY_ATTEMPTS times
- * if the failure is retryable. Adds a delay between attempts.
+ * Makes an initial attempt, then retries while the policy allows: while the
+ * attempt budget is not exhausted *and* the failure type is eligible for retry.
+ * Each retry is preceded by the policy's backoff delay.
  *
  * @param url - Target webhook URL
  * @param payload - JSON-serializable payload
- * @param opts - Webhook send options (timeout, headers)
+ * @param opts - Webhook send options (timeout, headers) plus optional retry policy
  * @returns Response object or throws the final error
  * @throws The last error encountered after all retry attempts are exhausted
  */
 export async function sendWebhookWithRetry(
   url: string,
   payload: any,
-  opts: WebhookSendOptions = {},
+  opts: WebhookRetryOptions = {},
 ): Promise<Response> {
+  const { retryPolicy, ...sendOpts } = opts;
+  const policy = retryPolicy ? new RetryPolicy(retryPolicy) : DEFAULT_RETRY_POLICY;
+
+  const maxAttempts = policy.resolveMaxAttempts(1 + MAX_RETRY_ATTEMPTS);
+
   let lastError: unknown;
   let lastResponse: Response | undefined;
 
-  // Initial attempt + retry attempts
-  const maxAttempts = 1 + MAX_RETRY_ATTEMPTS;
-
-  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
-      const response = await sendWebhook(url, payload, opts);
+      const response = await sendWebhook(url, payload, sendOpts);
 
       // Success case
       if (response.ok) {
@@ -126,26 +140,31 @@ export async function sendWebhookWithRetry(
       }
 
       // Non-retryable failure (permanent client error)
-      if (!isRetryable(response, undefined)) {
+      if (!isRetryable(response, undefined, policy)) {
         return response;
       }
 
       // Retryable failure - store response and retry if attempts remain
       lastResponse = response;
 
-      if (attempt < maxAttempts - 1) {
-        await delay(RETRY_DELAY_MS);
+      if (attempt < maxAttempts) {
+        await delay(policy.computeDelayMs(attempt - 1));
       }
     } catch (error) {
       lastError = error;
 
+      // Permanent failures are returned/raised immediately rather than retried.
+      if (!policy.isRetryable(classifyError(error))) {
+        throw error;
+      }
+
       // If this was the last attempt, throw the error
-      if (attempt === maxAttempts - 1) {
+      if (attempt === maxAttempts) {
         throw error;
       }
 
       // Otherwise, delay and retry
-      await delay(RETRY_DELAY_MS);
+      await delay(policy.computeDelayMs(attempt - 1));
     }
   }
 
@@ -158,3 +177,8 @@ export async function sendWebhookWithRetry(
   // This should not happen, but handle it gracefully
   throw lastError ?? new Error('All retry attempts failed');
 }
+
+/** The failure types the default webhook policy considers retryable. */
+export const WEBHOOK_RETRYABLE_FAILURE_TYPES: readonly RetryFailureType[] = DEFAULT_RETRY_POLICY
+  .getConfig()
+  .retryableFailureTypes;

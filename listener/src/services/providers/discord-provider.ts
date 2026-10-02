@@ -79,32 +79,42 @@ export class DiscordNotificationProvider implements NotificationProvider {
     try {
       const message = this.buildMessage(body);
       const response = await sendWebhook(targetRecipient, message, { timeoutMs: 5_000 });
+      const providerMessageId = response.headers.get('x-message-id') ?? undefined;
+      const providerResponse = { statusCode: response.status };
 
       if (!response.ok) {
-        const errorText = await response.text().catch(() => '');
         logger.warn('Discord provider: webhook responded with non-OK status', {
           requestId,
           targetRecipient,
           status: response.status,
-          body: errorText,
         });
         return {
           success: false,
           degradedCapabilities,
-          errorMessage: `HTTP ${response.status}: ${errorText}`,
+          errorMessage: `HTTP ${response.status}`,
+          errorCode: `HTTP_${response.status}`,
+          statusCode: response.status,
+          providerMessageId,
+          providerResponse,
         };
       }
 
       logger.info('Discord provider: message delivered', { requestId, targetRecipient });
-      return { success: true, degradedCapabilities };
+      return { success: true, degradedCapabilities, providerMessageId, providerResponse };
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
       logger.error('Discord provider: delivery error', {
         requestId,
         targetRecipient,
-        error: errorMessage,
+        error: error instanceof Error ? error.name : 'Unknown provider error',
       });
-      return { success: false, degradedCapabilities, errorMessage };
+      return {
+        success: false,
+        degradedCapabilities,
+        errorCode: error instanceof Error && error.name === 'AbortError' ? 'TIMEOUT' : 'TRANSPORT_ERROR',
+        errorMessage: error instanceof Error && error.name === 'AbortError'
+          ? 'Provider request timed out'
+          : 'Provider transport error',
+      };
     }
   }
 

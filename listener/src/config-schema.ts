@@ -174,6 +174,17 @@ export const APP_CONFIG_SCHEMA: ConfigSchema = {
     required: true,
     pattern: /^https?:\/\//,
   },
+  stellarRpcFallbackUrls: {
+    type: 'array',
+  },
+  stellarRpcUrls: {
+    type: 'array',
+  },
+  rpcFallback: {
+    failureThreshold: { type: 'number', min: 1 },
+    cooldownMs: { type: 'number', min: 0 },
+    requestTimeoutMs: { type: 'number', min: 500 },
+  },
   stellarNetworkPassphrase: {
     type: 'string',
     required: true,
@@ -235,7 +246,14 @@ export const APP_CONFIG_SCHEMA: ConfigSchema = {
     snapshotRetentionDays: { type: 'number', min: 1 },
   },
   cleanup: {
+    enabled: { type: 'boolean' },
     intervalMs: { type: 'number', min: 60000 },
+    retentionDays: { type: 'number', min: 1 },
+    retentionOverridesMs: {
+      processedEvents: { type: 'number', min: 60000 },
+      executionLogs: { type: 'number', min: 60000 },
+      rateLimitEvents: { type: 'number', min: 60000 },
+    },
     notificationRetentionMs: { type: 'number', min: 60000 },
     rateLimitEventRetentionMs: { type: 'number', min: 60000 },
     eventRetentionMs: { type: 'number', min: 60000 },

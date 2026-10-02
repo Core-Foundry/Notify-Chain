@@ -17,6 +17,7 @@ import {
   validationErrorBody,
 } from '../utils/validation';
 import { sendOk, sendErr, ErrorCode } from '../utils/response';
+import { validateContentType } from '../middleware/content-type';
 
 interface TemplateRouteContext {
   req: http.IncomingMessage;
@@ -49,6 +50,7 @@ async function parseBody(req: http.IncomingMessage): Promise<any> {
  * Send JSON response
  */
 function sendJson(res: http.ServerResponse, statusCode: number, data: any): void {
+  res.setHeader('Content-Type', 'application/json');
   res.writeHead(statusCode, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify(data));
 }
@@ -96,19 +98,31 @@ function respondWithError(
 export async function handleCreateTemplate(ctx: TemplateRouteContext): Promise<void> {
   const { req, res, requestId, templateService } = ctx;
 
+  if (!validateContentType(req, res, ['application/json'])) {
+    return;
+  }
+
   try {
     const body = await parseBody(req);
 
     // Validate required fields are present and are strings before handing off to the service
     const v = new InputValidator();
-    v.check(isNonEmptyString(body.uniqueKey), 'uniqueKey', 'is required and must be a non-empty string');
+    v.check(
+      isNonEmptyString(body.uniqueKey),
+      'uniqueKey',
+      'is required and must be a non-empty string',
+    );
     v.check(isNonEmptyString(body.name), 'name', 'is required and must be a non-empty string');
     v.check(
       isOneOf(body.channelType, Object.values(TemplateChannelType)),
       'channelType',
       `must be one of: ${Object.values(TemplateChannelType).join(', ')}`,
     );
-    v.check(isNonEmptyString(body.bodyTemplate), 'bodyTemplate', 'is required and must be a non-empty string');
+    v.check(
+      isNonEmptyString(body.bodyTemplate),
+      'bodyTemplate',
+      'is required and must be a non-empty string',
+    );
     v.throwIfInvalid();
 
     const result = await templateService.createTemplate({
@@ -125,11 +139,19 @@ export async function handleCreateTemplate(ctx: TemplateRouteContext): Promise<v
 
     if (!result.success) {
       sendJson(res, 400, { error: result.error, validation: result.validation });
-      logger.warn('Template creation rejected', { requestId, uniqueKey: body.uniqueKey, error: result.error });
+      logger.warn('Template creation rejected', {
+        requestId,
+        uniqueKey: body.uniqueKey,
+        error: result.error,
+      });
       return;
     }
 
-    sendJson(res, 201, { id: result.templateId, uniqueKey: body.uniqueKey, validation: result.validation });
+    sendJson(res, 201, {
+      id: result.templateId,
+      uniqueKey: body.uniqueKey,
+      validation: result.validation,
+    });
 
     logger.info('Template created via API', {
       requestId,
@@ -151,7 +173,10 @@ export async function handleListTemplates(ctx: TemplateRouteContext): Promise<vo
   try {
     const url = new URL(req.url!, 'http://localhost');
     const channelTypeParam = url.searchParams.get('channelType') || undefined;
-    if (channelTypeParam !== undefined && !isOneOf(channelTypeParam, Object.values(TemplateChannelType))) {
+    if (
+      channelTypeParam !== undefined &&
+      !isOneOf(channelTypeParam, Object.values(TemplateChannelType))
+    ) {
       throw new ValidationError({
         field: 'channelType',
         message: `must be one of: ${Object.values(TemplateChannelType).join(', ')}`,
@@ -160,10 +185,18 @@ export async function handleListTemplates(ctx: TemplateRouteContext): Promise<vo
     const channelType = channelTypeParam as TemplateChannelType | undefined;
     const activeOnly = url.searchParams.get('activeOnly') === 'true';
 
-    const templates = await templateService.listTemplates({ channelType, isActive: activeOnly || undefined });
+    const templates = await templateService.listTemplates({
+      channelType,
+      isActive: activeOnly || undefined,
+    });
 
     sendOk(res, 200, { count: templates.length, templates });
-    logger.info('Listed templates via API', { requestId, count: templates.length, channelType, activeOnly });
+    logger.info('Listed templates via API', {
+      requestId,
+      count: templates.length,
+      channelType,
+      activeOnly,
+    });
   } catch (error) {
     logger.error('Failed to list templates', { error, requestId });
     respondWithError(res, error);
@@ -230,6 +263,10 @@ export async function handleGetTemplateByKey(ctx: TemplateRouteContext): Promise
 export async function handleUpdateTemplate(ctx: TemplateRouteContext): Promise<void> {
   const { req, res, requestId, templateService } = ctx;
 
+  if (!validateContentType(req, res, ['application/json'])) {
+    return;
+  }
+
   try {
     const id = parseInt(req.url!.split('/').pop() || '', 10);
     if (isNaN(id)) {
@@ -248,7 +285,11 @@ export async function handleUpdateTemplate(ctx: TemplateRouteContext): Promise<v
       return;
     }
 
-    sendJson(res, 200, { id, message: 'Template updated successfully', validation: result.validation });
+    sendJson(res, 200, {
+      id,
+      message: 'Template updated successfully',
+      validation: result.validation,
+    });
     logger.info('Updated template via API', { requestId, templateId: id });
   } catch (error) {
     logger.error('Failed to update template', { error, requestId });
@@ -294,6 +335,10 @@ export async function handleDeleteTemplate(ctx: TemplateRouteContext): Promise<v
  */
 export async function handleRenderTemplate(ctx: TemplateRouteContext): Promise<void> {
   const { req, res, requestId, templateService } = ctx;
+
+  if (!validateContentType(req, res, ['application/json'])) {
+    return;
+  }
 
   try {
     const body = await parseBody(req);
@@ -354,9 +399,10 @@ export async function handleGetTemplateStats(ctx: TemplateRouteContext): Promise
       templateId = parsed;
     }
 
-    const stats = templateId !== undefined
-      ? await templateService.getTemplateStats(templateId)
-      : await templateService.getOverviewStats();
+    const stats =
+      templateId !== undefined
+        ? await templateService.getTemplateStats(templateId)
+        : await templateService.getOverviewStats();
 
     sendJson(res, 200, stats);
 
@@ -374,7 +420,7 @@ export async function handleTemplateRoutes(
   req: http.IncomingMessage,
   res: http.ServerResponse,
   requestId: string,
-  templateService: TemplateService
+  templateService: TemplateService,
 ): Promise<boolean> {
   const url = req.url || '';
   const method = req.method || 'GET';
