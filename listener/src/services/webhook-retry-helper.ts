@@ -15,6 +15,10 @@
  */
 
 import { sendWebhook, WebhookSendOptions } from './webhook-sender';
+import {
+  classifyWebhookResponse,
+  isRetryableClassification,
+} from './webhook-response-classifier';
 
 /** Maximum number of retry attempts (not counting the initial attempt). */
 const MAX_RETRY_ATTEMPTS = 2;
@@ -23,55 +27,20 @@ const MAX_RETRY_ATTEMPTS = 2;
 const RETRY_DELAY_MS = 1000;
 
 /**
- * HTTP status codes that are considered retryable (transient failures).
- */
-const RETRYABLE_STATUS_CODES = new Set([429, 500, 502, 503, 504]);
-
-/**
- * HTTP status codes that are permanent client errors (not retryable).
- */
-const PERMANENT_CLIENT_ERRORS = new Set([400, 401, 403, 404, 422]);
-
-/**
  * Determines if an error or response should trigger a retry.
+ *
+ * Delegates to the shared classifier (issue #643) so the retry helper and the
+ * delivery service agree on what "retryable" means. Only responses classified
+ * as retryable are retried; success and permanent failures are returned.
  *
  * @param response - The HTTP response, if available
  * @param error - The error thrown, if any
  * @returns true if the failure is retryable
  */
 function isRetryable(response?: Response, error?: unknown): boolean {
-  // Network errors and timeouts are retryable
-  if (error) {
-    return true;
-  }
-
-  // Check HTTP status codes
-  if (response) {
-    // Success responses don't need retry
-    if (response.ok) {
-      return false;
-    }
-
-    // Permanent client errors should not be retried
-    if (PERMANENT_CLIENT_ERRORS.has(response.status)) {
-      return false;
-    }
-
-    // Explicit retryable status codes
-    if (RETRYABLE_STATUS_CODES.has(response.status)) {
-      return true;
-    }
-
-    // Any other 5xx error is retryable
-    if (response.status >= 500) {
-      return true;
-    }
-
-    // Other status codes (e.g., redirects, other 4xx) are not retried
-    return false;
-  }
-
-  return false;
+  return isRetryableClassification(
+    classifyWebhookResponse({ statusCode: response?.status, error }),
+  );
 }
 
 /**

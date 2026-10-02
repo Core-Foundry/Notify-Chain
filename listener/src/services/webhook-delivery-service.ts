@@ -18,6 +18,10 @@
 
 import logger from '../utils/logger';
 import { sendWebhook, WebhookSendOptions } from './webhook-sender';
+import {
+  classifyWebhookResponse,
+  type WebhookResponseClassification,
+} from './webhook-response-classifier';
 
 export interface WebhookDeliveryOptions {
   /** Request timeout in milliseconds (default: 10 000). */
@@ -29,6 +33,8 @@ export interface WebhookDeliveryOptions {
 export interface WebhookDeliveryResult {
   /** True when the server responded with a 2xx status code. */
   success: boolean;
+  /** Explicit outcome category (issue #643): success | retryable | permanent. */
+  classification: WebhookResponseClassification;
   /** HTTP status code, or undefined when a network error occurred. */
   statusCode?: number;
   /** Human-readable failure reason for logging. */
@@ -73,19 +79,25 @@ export class WebhookDeliveryService {
     try {
       const response = await sendWebhook(targetUrl, payload, sendOpts);
       const durationMs = Date.now() - startMs;
+      const classification = classifyWebhookResponse({ statusCode: response.status });
 
-      if (response.ok) {
+      if (classification === 'success') {
         logger.info('Webhook delivered successfully', {
           ...logCtx,
           statusCode: response.status,
           durationMs,
         });
-        return { success: true, statusCode: response.status };
+        return { success: true, statusCode: response.status, classification };
       }
 
-      // 5xx — transient server error, worth retrying
-      if (response.status >= 500) {
-        logger.warn('Webhook delivery failed with server error (5xx) — will retry', {
+      if (classification === 'retryable') {
+        // 5xx keeps its historical message; other transient codes (408/425/429)
+        // get a code-accurate message.
+        const message =
+          response.status >= 500
+            ? 'Webhook delivery failed with server error (5xx) — will retry'
+            : `Webhook delivery failed with a transient error (HTTP ${response.status}) — will retry`;
+        logger.warn(message, {
           ...logCtx,
           statusCode: response.status,
           durationMs,
@@ -93,11 +105,12 @@ export class WebhookDeliveryService {
         return {
           success: false,
           statusCode: response.status,
+          classification,
           errorReason: `HTTP ${response.status}`,
         };
       }
 
-      // 4xx — client error, permanent failure
+      // permanent — a client error that retrying cannot fix
       logger.error('Webhook delivery failed with client error (4xx) — no retry', {
         ...logCtx,
         statusCode: response.status,
@@ -106,6 +119,7 @@ export class WebhookDeliveryService {
       return {
         success: false,
         statusCode: response.status,
+        classification,
         errorReason: `HTTP ${response.status}`,
       };
     } catch (err) {
@@ -131,7 +145,7 @@ export class WebhookDeliveryService {
         });
       }
 
-      return { success: false, errorReason };
+      return { success: false, classification: 'retryable', errorReason };
     }
   }
 }
