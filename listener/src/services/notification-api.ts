@@ -1,6 +1,10 @@
 import { ScheduledNotificationRepository } from './scheduled-notification-repository';
+import { QueueOperationalMetrics, NotificationStats } from './notification-stats-cache';
 import { IdempotencyKeyService } from './idempotency-key-service';
-import { CreateScheduledNotificationInput, NotificationType } from '../types/scheduled-notification';
+import {
+  CreateScheduledNotificationInput,
+  NotificationType,
+} from '../types/scheduled-notification';
 import {
   validatePayloadSize,
   DEFAULT_MAX_PAYLOAD_SIZE_BYTES,
@@ -54,15 +58,21 @@ export class NotificationAPI {
   async scheduleNotification(
     input: CreateScheduledNotificationInput,
     requestId?: string,
-    idempotencyKey?: string
+    idempotencyKey?: string,
   ): Promise<number> {
     // Validate input
-    if (!input.executeAt || !(input.executeAt instanceof Date) || isNaN(input.executeAt.getTime())) {
+    if (
+      !input.executeAt ||
+      !(input.executeAt instanceof Date) ||
+      isNaN(input.executeAt.getTime())
+    ) {
       throw new Error('executeAt must be a valid date');
     }
 
     if (input.executeAt <= new Date()) {
-      throw new Error('executeAt must be a future timestamp — the provided date has already expired');
+      throw new Error(
+        'executeAt must be a future timestamp — the provided date has already expired',
+      );
     }
 
     if (!isPlainObject(input.payload)) {
@@ -80,7 +90,11 @@ export class NotificationAPI {
       `must be one of: ${Object.values(NotificationType).join(', ')}`,
     );
     if (input.maxRetries !== undefined) {
-      v.check(isNonNegativeInteger(input.maxRetries), 'maxRetries', 'must be a non-negative integer');
+      v.check(
+        isNonNegativeInteger(input.maxRetries),
+        'maxRetries',
+        'must be a non-negative integer',
+      );
     }
     if (input.priority !== undefined) {
       v.check(
@@ -93,7 +107,11 @@ export class NotificationAPI {
       v.check(isNonEmptyString(input.eventId), 'eventId', 'must be a non-empty string');
     }
     if (input.contractAddress !== undefined) {
-      v.check(isNonEmptyString(input.contractAddress), 'contractAddress', 'must be a non-empty string');
+      v.check(
+        isNonEmptyString(input.contractAddress),
+        'contractAddress',
+        'must be a non-empty string',
+      );
     }
     if (input.metadata !== undefined) {
       v.check(isPlainObject(input.metadata), 'metadata', 'must be an object');
@@ -123,13 +141,9 @@ export class NotificationAPI {
     // If idempotency service is available, use it for deduplication
     if (this.idempotencyService && idempotencyKey) {
       const { result, isDuplicate, notificationId } =
-        await this.idempotencyService.processWithIdempotency(
-          idempotencyKey,
-          input,
-          async () => {
-            return await this.repository.create(input, requestId);
-          }
-        );
+        await this.idempotencyService.processWithIdempotency(idempotencyKey, input, async () => {
+          return await this.repository.create(input, requestId);
+        });
 
       if (isDuplicate) {
         logger.info('Returned duplicate notification response', {
@@ -156,7 +170,7 @@ export class NotificationAPI {
       maxRetries?: number;
       priority?: number;
       metadata?: Record<string, any>;
-    }
+    },
   ): Promise<number> {
     return await this.scheduleNotification({
       payload: { message, webhookUrl },
@@ -189,7 +203,7 @@ export class NotificationAPI {
       maxRetries?: number;
       priority?: number;
       metadata?: Record<string, any>;
-    }
+    },
   ): Promise<number> {
     return await this.scheduleNotification({
       payload,
@@ -204,10 +218,13 @@ export class NotificationAPI {
 
   /**
    * Cancel a scheduled notification.
+   * @param id - The ID of the notification
+   * @param reason - An optional reason for cancellation
+   * @param requestId - Optional request ID for logging
    */
-  async cancelNotification(id: number, requestId?: string): Promise<boolean> {
-    logger.info('Cancelling scheduled notification', { requestId, id });
-    return await this.repository.cancel(id);
+  async cancelNotification(id: number, reason?: string, requestId?: string): Promise<boolean> {
+    logger.info('Cancelling scheduled notification', { requestId, id, reason });
+    return await this.repository.cancel(id, reason);
   }
 
   /**
@@ -220,8 +237,15 @@ export class NotificationAPI {
   /**
    * Get scheduler statistics.
    */
-  async getStatistics() {
+  async getStatistics(): Promise<NotificationStats> {
     return await this.repository.getStats();
+  }
+
+  /**
+   * Get operational metrics for notification queue activity (#797).
+   */
+  async getQueueOperationalMetrics(): Promise<QueueOperationalMetrics> {
+    return await this.repository.getQueueOperationalMetrics();
   }
 
   /**
