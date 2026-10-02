@@ -206,7 +206,7 @@ export class ScheduledNotificationRepository {
         const model = this.rowToModel(row);
         const newRetryCount = model.retryCount + 1;
         const isFailed = newRetryCount >= model.maxRetries;
-        const newStatus = isFailed ? NotificationStatus.FAILED : NotificationStatus.PENDING;
+        const newStatus = isFailed ? NotificationStatus.DEAD_LETTERED : NotificationStatus.PENDING;
 
         const updateSql = `
           UPDATE scheduled_notifications
@@ -243,7 +243,7 @@ export class ScheduledNotificationRepository {
           scheduledNotificationId: model.id!,
           executionAttempt: newRetryCount,
           executionTime: now,
-          status: isFailed ? 'FAILED' : 'RETRY',
+          status: isFailed ? 'DEAD_LETTERED' : 'RETRY',
           errorMessage: errorMsg,
         });
       }
@@ -292,7 +292,7 @@ export class ScheduledNotificationRepository {
   ): Promise<void> {
     const nextRetryCount = currentRetryCount + 1;
     const isFailed = nextRetryCount >= maxRetries;
-    const newStatus = isFailed ? NotificationStatus.FAILED : NotificationStatus.PENDING;
+    const newStatus = isFailed ? NotificationStatus.DEAD_LETTERED : NotificationStatus.PENDING;
     // When permanently failing, preserve currentRetryCount so the distribution
     // reflects actual retries performed (not an incremented-past-max value).
     const storedRetryCount = isFailed ? currentRetryCount : nextRetryCount;
