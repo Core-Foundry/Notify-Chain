@@ -67,9 +67,7 @@ export function DashboardLayout({
         </main>
 
         <footer className="app__footer" role="contentinfo" aria-label="Dashboard footer">
-          <p className="app__footer-text">
-            NotifyChain Dashboard — {NAV_ITEMS.length} sections
-          </p>
+          <p className="app__footer-text">NotifyChain Dashboard — {NAV_ITEMS.length} sections</p>
         </footer>
       </div>
     </>

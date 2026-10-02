@@ -5,6 +5,7 @@ import { generateCorrelationId } from '../utils/request-id';
 import { getEventName } from '../utils/event-utils';
 import { getNotificationAnalyticsAggregator, NotificationAnalyticsAggregator } from './notification-analytics-aggregator';
 import { NotificationType } from '../types/scheduled-notification';
+import { RetryFailureType, RetryPolicy, RetryPolicyConfig, classifyError } from './retry-policy';
 
 export enum Priority {
   Low = 0,
@@ -19,6 +20,15 @@ export interface RetryQueueOptions {
   maxRetries?: number;
   processIntervalMs?: number;
   priorityWeights?: { high: number; medium: number; low: number };
+  /**
+   * Retry policy overrides for attempt budgeting and failure eligibility.
+   * Anything omitted falls back to `RETRY_POLICY_DEFAULTS`.
+   *
+   * Note: this queue keeps its own backoff curve (`calculateDelay`), so only
+   * the `maxAttempts` and `retryableFailureTypes` knobs are taken from the
+   * policy here — the delay knobs are ignored by design.
+   */
+  retryPolicy?: Pick<Partial<RetryPolicyConfig>, 'maxAttempts' | 'retryableFailureTypes'>;
 }
 
 interface RetryItem {
@@ -66,8 +76,11 @@ export class NotificationRetryQueue {
     totalProcessed: 0,
     totalSucceeded: 0,
     totalFailed: 0,
+    totalSkippedPermanent: 0,
     processingTimes: [] as number[],
   };
+
+  private readonly policy: RetryPolicy;
 
   constructor(notificationFn: NotificationFn, options?: RetryQueueOptions) {
     this.notificationFn = notificationFn;
@@ -78,6 +91,12 @@ export class NotificationRetryQueue {
     this.processIntervalMs = options?.processIntervalMs ?? DEFAULTS.processIntervalMs;
     this.priorityWeights = options?.priorityWeights ?? DEFAULTS.priorityWeights;
     this.analytics = getNotificationAnalyticsAggregator();
+    this.policy = new RetryPolicy(options?.retryPolicy);
+  }
+
+  /** The policy governing every retry decision made by this queue. */
+  getRetryPolicy(): RetryPolicy {
+    return this.policy;
   }
 
   enqueue(
@@ -198,10 +217,10 @@ export class NotificationRetryQueue {
       timestamp: retryStart,
     });
 
-    const success = await this.notificationFn(item.event, item.contractConfig, item.requestId);
+    const outcome = await this.tryNotify(item, attempt);
     const duration = Date.now() - retryStart;
 
-    if (success) {
+    if (outcome.success) {
       this.queuedFingerprints.delete(fingerprint);
       this.metrics.totalProcessed++;
       this.metrics.totalSucceeded++;
@@ -223,25 +242,48 @@ export class NotificationRetryQueue {
       return;
     }
 
-    if (attempt >= this.maxRetries) {
+    const failureType = classifyError(outcome.error);
+    const decision = this.policy.evaluate(failureType, attempt, this.maxRetries);
+
+    if (!decision.shouldRetry) {
       this.queuedFingerprints.delete(fingerprint);
       this.metrics.totalProcessed++;
       this.metrics.totalFailed++;
+      if (decision.reason === 'permanent') {
+        this.metrics.totalSkippedPermanent++;
+      }
       this.metrics.processingTimes.push(duration);
       this.analytics?.record({
         notificationType: NotificationType.DISCORD,
         contractAddress: item.contractConfig.address,
         outcome: 'failure',
         durationMs: duration,
-        errorReason: `exhausted ${this.maxRetries} retries`,
+        errorReason:
+          decision.reason === 'permanent'
+            ? `permanent failure (${failureType})`
+            : `exhausted ${decision.maxAttempts} retries`,
         timestamp: Date.now(),
       });
+
+      if (decision.reason === 'permanent') {
+        logger.error('Notification failed permanently, not retried', {
+          requestId: item.requestId,
+          correlationId: item.requestId,
+          eventId: item.event.id,
+          contractAddress: item.contractConfig.address,
+          totalAttempts: attempt,
+          failureType,
+        });
+        return;
+      }
+
       logger.error('Notification permanently failed after max retries', {
         requestId: item.requestId,
         correlationId: item.requestId,
         eventId: item.event.id,
         contractAddress: item.contractConfig.address,
         totalAttempts: attempt,
+        failureType,
       });
       return;
     }
@@ -256,10 +298,45 @@ export class NotificationRetryQueue {
       contractAddress: item.contractConfig.address,
       attempt,
       delayMs,
+      failureType,
       nextRetryAt: new Date(nextRetryAt).toISOString(),
     });
 
     this.queue.push({ ...item, retryCount: attempt, nextRetryAt });
+  }
+
+  /**
+   * Invoke the notification function, capturing any thrown error so the retry
+   * policy can classify it. A thrown permanent failure is reported separately
+   * from a plain `false` return so the caller can log why no further attempt
+   * will be made.
+   */
+  private async tryNotify(
+    item: RetryItem,
+    attempt: number,
+  ): Promise<{ success: boolean; error?: unknown }> {
+    try {
+      return { success: await this.notificationFn(item.event, item.contractConfig, item.requestId) };
+    } catch (error) {
+      const failureType = classifyError(error);
+      const logCtx = {
+        requestId: item.requestId,
+        correlationId: item.requestId,
+        eventId: item.event.id,
+        contractAddress: item.contractConfig.address,
+        attempt,
+        failureType,
+      };
+
+      logger.error(
+        this.policy.isPermanent(failureType)
+          ? 'Notification delivery raised a permanent failure, not retried'
+          : 'Notification delivery threw, scheduling retry',
+        { ...logCtx, error },
+      );
+
+      return { success: false, error };
+    }
   }
 
   getMetrics() {
@@ -290,6 +367,6 @@ function buildRetryFingerprint(
   contractAddress: string
 ): string {
   const eventName =
-    getEventName(event.topic) ?? event.topic.map((entry) => entry.toString()).join('|');
+    getEventName(event.topic) ?? event.topic.map((entry: { toString(): string }) => entry.toString()).join('|');
   return `${contractAddress}:${event.id}:${eventName}:${event.txHash ?? ''}`;
 }

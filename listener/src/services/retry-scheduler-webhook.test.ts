@@ -80,6 +80,38 @@ describe('RetryScheduler — webhook retry queue', () => {
   // ── Successful retry ──────────────────────────────────────────────────────
 
   describe('successful delivery', () => {
+    it('persists a delivered receipt for a successful retry', async () => {
+      const notification = makeWebhookNotification();
+      const repo = makeRepo({ fetchDueRetries: jest.fn().mockImplementation(() => Promise.resolve([notification])) });
+      const webhookService = {
+        deliver: jest.fn<() => Promise<any>>().mockResolvedValue({
+          success: true,
+          statusCode: 204,
+          providerMessageId: 'retry-message-1',
+          providerResponse: { statusCode: 204 },
+        }),
+      } as unknown as WebhookDeliveryService;
+      const receiptRepository = { create: jest.fn().mockImplementation(() => Promise.resolve(1)) };
+
+      const scheduler = new RetryScheduler(
+        repo,
+        RETRY_SCHEDULER_DEFAULTS,
+        null,
+        webhookService,
+        receiptRepository as any,
+      );
+      await scheduler.runOnce();
+
+      expect(receiptRepository.create).toHaveBeenCalledWith(expect.objectContaining({
+        notificationId: 10,
+        channel: 'webhook',
+        status: 'delivered',
+        attemptCount: 2,
+        providerMessageId: 'retry-message-1',
+        providerResponse: { statusCode: 204 },
+      }));
+    });
+
     it('marks the notification COMPLETED when the webhook succeeds', async () => {
       const notification = makeWebhookNotification();
       const repo = makeRepo({ fetchDueRetries: jest.fn().mockImplementation(() => Promise.resolve([notification])) });
@@ -399,7 +431,7 @@ describe('RetryScheduler — webhook retry queue', () => {
   // ── Missing targetRecipient ───────────────────────────────────────────────
 
   describe('configuration errors', () => {
-    it('logs error and schedules retry when targetRecipient is missing', async () => {
+    it('logs error and fails permanently when targetRecipient is missing', async () => {
       const notification = makeWebhookNotification({ targetRecipient: '', retryCount: 0, maxRetries: 3 });
       const repo = makeRepo({ fetchDueRetries: jest.fn().mockImplementation(() => Promise.resolve([notification])) });
 
@@ -408,12 +440,20 @@ describe('RetryScheduler — webhook retry queue', () => {
       const scheduler = new RetryScheduler(repo, RETRY_SCHEDULER_DEFAULTS, null, webhookService);
       await scheduler.runOnce();
 
+      // A missing target can never succeed, so it is a permanent configuration
+      // failure: no nextRetryAt is scheduled, and the budget is collapsed to the
+      // attempt that just failed so the row is retired as FAILED instead of
+      // being re-picked with next_retry_at = NULL.
       expect(repo.markAsFailedOrRetry).toHaveBeenCalledWith(
         10,
         expect.objectContaining({ message: expect.stringContaining('targetRecipient') }),
         0,
-        3,
-        expect.any(Date),
+        1,
+        undefined,
+      );
+      expect(logger.error).toHaveBeenCalledWith(
+        'Notification failed permanently, not retried',
+        expect.objectContaining({ id: 10 }),
       );
     });
   });

@@ -9,7 +9,7 @@ import { NotificationTemplateService } from './services/notification-template-se
 import { TemplateAuditTrail } from './services/template-audit-trail';
 import { getTemplateCache } from './services/notification-template-cache';
 import { NotificationAPI } from './services/notification-api';
-import { CleanupService } from './services/cleanup-service';
+import { DatabaseCleanupJob } from './services/database-cleanup-job';
 import { ArchiveService } from './services/archive-service';
 import { ArchiveStore } from './services/archive-store';
 import { loadArchiveConfig } from './services/archive-config';
@@ -31,6 +31,7 @@ import { SecretValidationError } from './config/validate-secrets';
 import { NotificationHealthMonitor } from './services/notification-health-monitor';
 import { getWorkerManager } from './services/worker-manager';
 import { EventDeduplicationService } from './services/event-deduplication-service';
+import { DeliveryReceiptRepository } from './services/delivery-receipt-repository';
 
 dotenv.config();
 
@@ -49,7 +50,7 @@ async function main() {
 
   let templateService: NotificationTemplateService | null = null;
   let legacyTemplateService: TemplateService | null = null;
-  let cleanupService: CleanupService | null = null;
+  let databaseCleanupJob: DatabaseCleanupJob | null = null;
   let repository: ScheduledNotificationRepository | null = null;
   let reconciliationEngine: IndexingReconciliationEngine | null = null;
   let archiveService: ArchiveService | null = null;
@@ -57,6 +58,7 @@ async function main() {
   let metricsRunner: NotificationMetricsRunner | null = null;
   let metricsStore: NotificationMetricsStore | null = null;
   let deduplicationService: EventDeduplicationService | null = null;
+  let deliveryReceiptRepository: DeliveryReceiptRepository | null = null;
 
   if (config.analytics?.enabled) {
     initNotificationAnalyticsAggregator(config.analytics);
@@ -67,17 +69,13 @@ async function main() {
     const db = await initializeDatabase(config.databasePath);
 
     repository = new ScheduledNotificationRepository(db);
+    deliveryReceiptRepository = new DeliveryReceiptRepository(db);
     
+
     healthMonitor = new NotificationHealthMonitor(null, getWorkerManager(), {
       repository,
       getLastSuccessfulPoll: () => subscriber?.getLastSuccessfulPoll() ?? null,
-    });
-
       getUptimeMs: () => Date.now() - PROCESS_START_TIME,
-    });
-
-    healthMonitor = new NotificationHealthMonitor(null, getWorkerManager(), {
-      repository,
     });
 
     // Rebuild registry with configured event TTL
@@ -85,8 +83,10 @@ async function main() {
       eventRegistry.setTtlMs(config.cleanup.eventRetentionMs);
     }
 
-    cleanupService = new CleanupService(db, eventRegistry, config.cleanup);
-    cleanupService.start();
+    if (config.cleanup) {
+      databaseCleanupJob = new DatabaseCleanupJob(db, config.cleanup, eventRegistry);
+      databaseCleanupJob.start();
+    }
 
     reconciliationEngine = new IndexingReconciliationEngine({
       db,
@@ -132,13 +132,26 @@ async function main() {
         discordService = new DiscordNotificationService(config.discord);
       }
 
-      scheduler = new NotificationScheduler(repository, config.scheduler, discordService);
+      scheduler = new NotificationScheduler(
+        repository,
+        config.scheduler,
+        discordService,
+        undefined,
+        undefined,
+        deliveryReceiptRepository,
+      );
       await scheduler.start();
 
       logger.info('Notification scheduler started successfully');
 
       if (config.retryScheduler?.enabled) {
-        retryScheduler = new RetryScheduler(repository, config.retryScheduler, discordService);
+        retryScheduler = new RetryScheduler(
+          repository,
+          config.retryScheduler,
+          discordService,
+          undefined,
+          deliveryReceiptRepository,
+        );
         await retryScheduler.start();
         logger.info('Retry scheduler started successfully');
       }
@@ -165,14 +178,14 @@ async function main() {
     archiveService,
     metricsStore,
     healthMonitor,
+    deliveryReceiptRepository,
   });
 
   if (healthMonitor) {
     healthMonitor.start();
   }
 
-  subscriber = new EventSubscriber(config, deduplicationService);
-  const subscriber = new EventSubscriber(config, deduplicationService ?? undefined);
+  subscriber = new EventSubscriber(config, deduplicationService ?? undefined);
   await subscriber.start();
 
   let isShuttingDown = false;
@@ -192,8 +205,8 @@ async function main() {
         healthMonitor.stop();
       }
 
-      if (cleanupService) {
-        await cleanupService.stop();
+      if (databaseCleanupJob) {
+        await databaseCleanupJob.stop();
       }
 
       if (reconciliationEngine) {
@@ -216,11 +229,11 @@ async function main() {
         await retryScheduler.stop();
       }
 
-    if (subscriber) {
-      await subscriber.stop();
-    }
+      if (subscriber) {
+        await subscriber.stop();
+      }
 
-    eventsServer.close();
+      eventsServer.close();
 
       logger.info('Graceful shutdown completed successfully', { signal });
       process.exit(0);

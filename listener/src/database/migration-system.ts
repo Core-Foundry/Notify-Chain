@@ -51,7 +51,7 @@ export class MigrationRunner {
     const rows = await this.db.all<{ id: string }>(
       'SELECT id FROM migrations ORDER BY applied_at'
     );
-    return rows.map((row) => row.id);
+    return (rows as unknown as { id: string }[]).map((row) => row.id);
   }
 
   async applyMigration(migration: Migration): Promise<void> {
@@ -67,7 +67,7 @@ export class MigrationRunner {
         logger.info(`Migration ${migration.id} (${migration.name}) applied successfully`);
       } catch (error) {
         await this.db.run('ROLLBACK');
-        logger.error(`Migration ${migration.id} failed, rolling back:`, error);
+        logger.error(`Migration ${migration.id} failed, rolling back: ${(error as Error)?.message ?? String(error)}`);
         throw error;
       }
     });
