@@ -23,7 +23,7 @@
     "@stellar/stellar-sdk": "^13.3.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
-    "zustand": "^5.0.6"
+    "zustand": "^5.0.15"
   },
   "devDependencies": {
     "@storybook/addon-essentials": "^8.6.14",
