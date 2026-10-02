@@ -1,11 +1,8 @@
-import { memo, useMemo } from 'react';
 import type { BlockchainEvent } from '../types/event';
 import type { ContractStatus } from '../services/eventsApi';
-import { formatTimestamp, parseToDate } from '../utils/formatTime';
 import { formatTimestamp } from '../utils/formatTime';
+import { getEventKindClass, getEventKindLabel, isKnownEventType } from '../utils/eventTypeMapping';
 import { CopyButton } from './CopyButton';
-
-import { getEventKindClass, getEventKindLabel } from '../utils/eventTypeMapping';
 
 function shortenAddress(address: string) {
   if (address.length <= 14) {
@@ -20,7 +17,6 @@ interface EventExplorerCardProps {
   onCopyContract: (contractAddress: string) => void;
   isCopied: boolean;
   onSelect?: (event: BlockchainEvent) => void;
-  contractStatuses: ContractStatus[];
   contractStatuses?: ContractStatus[];
 }
 
@@ -36,7 +32,7 @@ export function EventExplorerCard({
   const label = event.eventName ?? event.type;
   const badgeClass = getEventKindClass(event.type);
   const kindLabel = getEventKindLabel(event.type);
-  const receivedAt = parseToDate(event.receivedAt);
+  const isUnknown = !isKnownEventType(event.type);
 
   return (
     <article
@@ -44,6 +40,7 @@ export function EventExplorerCard({
       role={onSelect ? 'button' : 'row'}
       tabIndex={onSelect ? 0 : undefined}
       data-event-id={event.eventId}
+      data-event-type-known={isUnknown ? 'false' : 'true'}
       onClick={onSelect ? () => onSelect(event) : undefined}
       onKeyDown={
         onSelect
@@ -60,16 +57,24 @@ export function EventExplorerCard({
       <div className="event-explorer__cell" data-label="Contract" role="cell">
         <div className="event-explorer__contract-block">
           <p className="event-explorer__contract" title={event.contractAddress}>
-            {shortenedContract}
+            {shortenAddress(event.contractAddress)}
           </p>
-          <button
-            type="button"
-            className="event-explorer__copy-button"
-            onClick={handleCopyClick}
-            aria-label={`Copy contract address ${event.contractAddress}`}
-          >
-            {isCopied ? 'Copied' : 'Copy'}
-          </button>
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+            <button
+              type="button"
+              className="event-explorer__copy-button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onCopyContract(event.contractAddress);
+              }}
+              aria-label={`Copy contract address ${event.contractAddress}`}
+            >
+              {isCopied ? 'Copied' : 'Copy'}
+            </button>
+            {isPaused && (
+              <span className="event-explorer__badge event-explorer__badge--paused">Paused</span>
+            )}
+          </div>
         </div>
       </div>
 
@@ -78,14 +83,17 @@ export function EventExplorerCard({
       </div>
 
       <div className="event-explorer__cell" data-label="Kind" role="cell">
-        <span className={`event-explorer__badge ${badgeClass}`}>{kindLabel}</span>
+        <span
+          className={`event-explorer__badge ${badgeClass}`}
+          title={isUnknown ? `Unrecognized event kind: ${event.type}` : undefined}
+        >
+          {kindLabel}
+        </span>
       </div>
 
       <div className="event-explorer__cell" data-label="Received" role="cell">
-        <time dateTime={receivedAt?.toISOString()}>
-          {formatTimestamp(event.receivedAt)}
         <time dateTime={new Date(event.receivedAt).toISOString()}>
-          {formattedTime}
+          {formatTimestamp(event.receivedAt)}
         </time>
       </div>
 
@@ -108,4 +116,4 @@ export function EventExplorerCard({
       </div>
     </article>
   );
-});
+}
