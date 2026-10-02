@@ -48,6 +48,7 @@ jest.mock('../store/preference-store', () => ({
 jest.mock('../utils/event-utils', () => ({
   validateRpcResponse: jest.fn().mockReturnValue({ valid: true }),
   validateEventPayload: jest.fn().mockReturnValue({ valid: true }),
+  validateRpcResponse: jest.fn().mockReturnValue({ valid: true }),
   getEventName: jest.fn().mockReturnValue('TaskCreated'),
   matchesEventFilter: jest.fn().mockReturnValue(true),
 }));

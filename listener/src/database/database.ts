@@ -3,6 +3,9 @@ import * as fs from 'fs';
 import * as path from 'path';
 import logger from '../utils/logger';
 
+/** How long a write waits for a competing connection's lock before failing. */
+export const DATABASE_BUSY_TIMEOUT_MS = 5_000;
+
 /**
  * SQLite Database Service
  * Handles all database operations with promise-based interface
@@ -58,6 +61,11 @@ export class Database {
           reject(err);
         } else {
           logger.info('Connected to SQLite database', { path: this.dbPath });
+          // Wait (instead of failing with SQLITE_BUSY) when another connection
+          // — e.g. a second listener instance on the same file — holds the
+          // write lock. Without this, contended atomic claims would error and
+          // fail open, re-introducing duplicate event processing.
+          this.db!.configure('busyTimeout', DATABASE_BUSY_TIMEOUT_MS);
           // Enable foreign keys
           this.db!.run('PRAGMA foreign_keys = ON', (err) => {
             if (err) reject(err);

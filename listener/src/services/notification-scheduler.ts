@@ -10,6 +10,8 @@ import { getWorkerManager } from './worker-manager';
 import { getJobMonitor } from './job-monitor';
 import { ProviderRegistry, getProviderRegistry } from './provider-registry';
 import { verifyPayloadIntegrity } from '../utils/payload-integrity';
+import { DeliveryReceiptRepository } from './delivery-receipt-repository';
+import { DeliveryResult } from '../types/provider-capabilities';
 
 /**
  * Background scheduler that processes scheduled notifications
@@ -32,13 +34,15 @@ export class NotificationScheduler {
    * When not supplied the module-level singleton is used.
    */
   private providerRegistry: ProviderRegistry;
+  private deliveryReceiptRepository?: DeliveryReceiptRepository;
 
   constructor(
     repository: ScheduledNotificationRepository,
     config: SchedulerConfig,
     discordService?: DiscordNotificationService | null,
     batchValidator?: BatchValidationService,
-    providerRegistry?: ProviderRegistry
+    providerRegistry?: ProviderRegistry,
+    deliveryReceiptRepository?: DeliveryReceiptRepository
   ) {
     this.repository = repository;
     this.config = { retryDelayMs: 5_000, ...config };
@@ -46,6 +50,7 @@ export class NotificationScheduler {
     this.processorId = config.processorId || uuidv4();
     this.batchValidator = batchValidator ?? new BatchValidationService();
     this.providerRegistry = providerRegistry ?? getProviderRegistry();
+    this.deliveryReceiptRepository = deliveryReceiptRepository;
   }
 
   /**
@@ -242,6 +247,7 @@ export class NotificationScheduler {
     const startTime = Date.now();
     const executionAttempt = notification.retryCount + 1;
     const jobMonitor = getJobMonitor();
+    let receiptRecorded = false;
 
     try {
       logger.info('Processing scheduled notification', {
@@ -318,7 +324,10 @@ export class NotificationScheduler {
       }
 
       // Execute notification based on type
-      const success = await this.executeNotification(notification, requestId);
+      const deliveryResult = await this.executeNotification(notification, requestId);
+      await this.recordDeliveryReceipt(notification, executionAttempt, deliveryResult);
+      receiptRecorded = true;
+      const success = deliveryResult.success;
 
       const durationMs = Date.now() - startTime;
 
@@ -346,7 +355,7 @@ export class NotificationScheduler {
           durationMs,
         });
       } else {
-        throw new Error('Notification delivery returned false');
+        throw new Error(deliveryResult.errorMessage ?? 'Notification delivery returned false');
       }
     } catch (error) {
       const durationMs = Date.now() - startTime;
@@ -357,6 +366,23 @@ export class NotificationScheduler {
         attempt: executionAttempt,
         durationMs,
       });
+
+      if (!receiptRecorded) {
+        const providerCode = (error as NodeJS.ErrnoException)?.code;
+        const isTimeout = (error as Error)?.name === 'AbortError';
+        await this.recordDeliveryReceipt(notification, executionAttempt, {
+          success: false,
+          degradedCapabilities: [],
+          errorCode: isTimeout ? 'TIMEOUT' : typeof providerCode === 'string' ? providerCode : 'DELIVERY_FAILED',
+          errorMessage: isTimeout ? 'Provider request timed out' : 'Provider delivery failed',
+        }).catch((receiptError) => {
+          logger.error('Failed to persist delivery receipt', {
+            requestId,
+            notificationId: notification.id,
+            error: receiptError,
+          });
+        });
+      }
 
       if (jobId) {
         jobMonitor.failJob(jobId, (error as Error).message, {
@@ -404,7 +430,7 @@ export class NotificationScheduler {
   private async executeNotification(
     notification: ScheduledNotification,
     requestId: string
-  ): Promise<boolean> {
+  ): Promise<DeliveryResult> {
     const payload = JSON.parse(notification.payload);
     const type = notification.notificationType;
 
@@ -428,11 +454,7 @@ export class NotificationScheduler {
         });
       }
 
-      if (!result.success) {
-        throw new Error(result.errorMessage ?? 'Provider delivery returned failure');
-      }
-
-      return true;
+      return result;
     }
 
     // ------------------------------------------------------------------
@@ -445,11 +467,14 @@ export class NotificationScheduler {
             'Discord service not configured and no Discord provider registered in the registry'
           );
         }
-        return await this.discordService.sendEventNotification(
+        return {
+          success: await this.discordService.sendEventNotification(
           payload.event,
           payload.contractConfig,
           `scheduler-${notification.id}-${requestId}`
-        );
+          ),
+          degradedCapabilities: [],
+        };
 
       case 'webhook':
         throw new Error(
@@ -502,5 +527,25 @@ export class NotificationScheduler {
     } catch {
       return payloadJson.slice(0, 200) || 'scheduled-notification';
     }
+  }
+
+  private async recordDeliveryReceipt(
+    notification: ScheduledNotification,
+    attemptCount: number,
+    result: DeliveryResult,
+  ): Promise<void> {
+    if (!this.deliveryReceiptRepository || notification.id == null) return;
+    await this.deliveryReceiptRepository.create({
+      notificationId: notification.id,
+      channel: notification.notificationType,
+      status: result.success ? 'delivered' : result.statusCode && result.statusCode >= 400 && result.statusCode < 500
+        ? 'rejected'
+        : 'failed',
+      attemptCount,
+      providerMessageId: result.providerMessageId ?? null,
+      providerResponse: result.providerResponse ?? null,
+      errorCode: result.errorCode ?? null,
+      errorMessage: result.success ? null : result.errorMessage ?? 'Provider delivery failed',
+    });
   }
 }
