@@ -357,6 +357,28 @@ export class EventSubscriber {
 
       if (tip !== null) {
         const startLedger = Math.max(1, tip - maxLedgers);
+
+        // Validate that the computed start ledger is a positive integer within
+        // the valid ledger range before caching.  The range-width cap that
+        // applies to external HTTP callers is NOT enforced here because the
+        // internal backfill limit is already governed by `maxLedgers`.
+        const rangeCheck = safeLedgerRangeValidation(startLedger, tip);
+        if (!rangeCheck.valid && startLedger > 1) {
+          // Only fall back when the start ledger itself is invalid (e.g. it
+          // somehow ended up <= 0 or > MAX_LEDGER_VALUE).  A range-too-large
+          // result is expected for long bacfills and is intentionally ignored.
+          const isRangeSizeError = rangeCheck.issues?.every((i) => i.field === 'endLedger');
+          if (!isRangeSizeError) {
+            logger.warn('Backfill start ledger failed range validation; falling back to ledger 1', {
+              startLedger,
+              networkTipLedger: tip,
+              reason: rangeCheck.reason,
+            });
+            this.backfillStartLedger = 1;
+            return 1;
+          }
+        }
+
         this.backfillStartLedger = startLedger;
 
         logger.warn('Backfill safety limit applied: starting historical replay from ledger', {

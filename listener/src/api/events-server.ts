@@ -608,6 +608,56 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
       return;
     }
 
+    // GET /api/events/history?fromLedger=<n>&toLedger=<n>
+    //
+    // Returns events from the in-process registry whose ledger number falls
+    // within the requested inclusive range.  Both query parameters are
+    // required; the range must be well-formed and must not exceed
+    // MAX_LEDGER_RANGE (10 000) ledgers.
+    if (req.method === 'GET' && url.pathname === '/api/events/history') {
+      const fromParam = url.searchParams.get('fromLedger');
+      const toParam = url.searchParams.get('toLedger');
+
+      let range: { startLedger: number; endLedger: number };
+      try {
+        range = parseLedgerRangeParams(fromParam, toParam);
+      } catch (err) {
+        if (err instanceof ValidationError) {
+          sendErr(res, 400, 'Invalid ledger range', ErrorCode.BAD_REQUEST, validationErrorBody(err));
+        } else {
+          sendErr(res, 400, 'Invalid ledger range', ErrorCode.BAD_REQUEST);
+        }
+        return;
+      }
+
+      const events = eventRegistry.getEventsByLedgerRange(range.startLedger, range.endLedger);
+
+      logger.info('Handling GET /api/events/history', {
+        requestId,
+        correlationId,
+        startLedger: range.startLedger,
+        endLedger: range.endLedger,
+        returned: events.length,
+      });
+
+      sendOk(res, 200, {
+        count: events.length,
+        startLedger: range.startLedger,
+        endLedger: range.endLedger,
+        events,
+      });
+
+      logger.info('GET /api/events/history complete', {
+        requestId,
+        correlationId,
+        startLedger: range.startLedger,
+        endLedger: range.endLedger,
+        returned: events.length,
+        durationMs: Date.now() - startTime,
+      });
+      return;
+    }
+
     // GET /api/events
     if (req.method === 'GET' && url.pathname.startsWith('/api/events')) {
       const limitParam = url.searchParams.get('limit');
