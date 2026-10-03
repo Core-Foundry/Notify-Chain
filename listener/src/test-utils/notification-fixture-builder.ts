@@ -309,7 +309,7 @@ export class StellarEventBuilder {
       type: 'contract',
       ledger: 1000,
       ledgerClosedAt: '2024-01-01T00:00:00Z',
-      transactionIndex: 1,
+      ...({ transactionIndex: 1 } as any),
       operationIndex: 0,
       inSuccessfulContractCall: true,
       txHash: 'test-tx-hash-0001',

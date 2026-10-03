@@ -63,11 +63,6 @@ export function sanitizeForDiscord(text: string): string {
   return text.replace(MENTION_PATTERN, '[mention removed]').replace(MARKDOWN_CHARS, '\\$1');
 }
 
-  return text
-    .replace(MENTION_PATTERN, '[mention removed]')
-    .replace(MARKDOWN_CHARS, '\\$1');
-}
-
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
@@ -407,7 +402,6 @@ export class DiscordNotificationService implements NotificationProvider {
       const originalLength = embed.title?.length ?? title.length;
       title = title.slice(0, MAX_DISCORD_EMBED_TITLE_LENGTH - 3) + '...';
       logger.warn('Discord embed title truncated', {
-        originalLength: title.length + 3,
         originalLength,
         maxLength: MAX_DISCORD_EMBED_TITLE_LENGTH,
       });
@@ -432,7 +426,6 @@ export class DiscordNotificationService implements NotificationProvider {
       footer = { text: footer.text.slice(0, MAX_DISCORD_FOOTER_TEXT_LENGTH - 3) + '...' };
       logger.warn('Discord footer text truncated', {
         originalLength,
-        originalLength: footer.text.length,
         maxLength: MAX_DISCORD_FOOTER_TEXT_LENGTH,
       });
     }
@@ -490,21 +483,13 @@ export class DiscordNotificationService implements NotificationProvider {
           return String(value.i64());
         case StellarSDK.xdr.ScValType.scvString(): {
           const strVal = value.str().toString();
-          const truncated =
-            strVal.length > MAX_DISCORD_FIELD_VALUE_LENGTH
-              ? strVal.slice(0, MAX_DISCORD_FIELD_VALUE_LENGTH) + '...'
-          return strVal.length > MAX_DISCORD_FIELD_VALUE_LENGTH
-            ? strVal.slice(0, MAX_DISCORD_FIELD_VALUE_LENGTH) + '...'
-            : strVal;
-          const truncated = strVal.length > 500 ? strVal.slice(0, 500) + '...' : strVal;
           // Leave headroom for markdown escapes added by sanitizeForDiscord.
           const limit = Math.floor(MAX_DISCORD_FIELD_VALUE_LENGTH / 2);
           const truncated = strVal.length > limit ? strVal.slice(0, limit) + '...' : strVal;
-          const truncated =
-            strVal.length > MAX_DISCORD_FIELD_VALUE_LENGTH
-              ? `${strVal.slice(0, MAX_DISCORD_FIELD_VALUE_LENGTH)}...`
-              : strVal;
-          return sanitizeForDiscord(truncated);
+          const sanitized = sanitizeForDiscord(truncated);
+          return sanitized.length > MAX_DISCORD_FIELD_VALUE_LENGTH
+            ? sanitized.slice(0, MAX_DISCORD_FIELD_VALUE_LENGTH - 3) + '...'
+            : sanitized;
         }
         case StellarSDK.xdr.ScValType.scvSymbol():
           return `🔹 ${sanitizeForDiscord(value.sym().toString())}`;

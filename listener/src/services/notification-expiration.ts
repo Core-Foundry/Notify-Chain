@@ -36,7 +36,7 @@ export class NotificationExpirationService {
     
     // Calculate when this event should expire
     // receivedAt is in milliseconds (Unix timestamp)
-    const expiresAtMs = event.receivedAt + expirationTimeMs;
+    const expiresAtMs = (event as any).receivedAt + expirationTimeMs;
 
     // Check if current time exceeds the expiration time
     const currentTimeMs = Date.now();
@@ -66,7 +66,7 @@ export class NotificationExpirationService {
     if (expired) {
       logger.warn('Event skipped due to expiration', {
         eventId: event.id,
-        receivedAt: event.receivedAt,
+        receivedAt: (event as any).receivedAt,
         eventType,
         currentTime: Date.now(),
       });

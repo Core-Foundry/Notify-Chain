@@ -251,7 +251,7 @@ export class ResourceMonitor {
 
   stop(): void {
     if (this.intervalId) {
-      clearInterval(this.intervalId);
+      clearInterval(this.intervalId as unknown as NodeJS.Timeout);
       this.intervalId = undefined;
     }
   }

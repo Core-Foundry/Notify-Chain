@@ -31,11 +31,8 @@ export class EventSubscriber {
   private eventQueue: EventProcessingQueue | null = null;
   private expirationService: NotificationExpirationService | null = null;
   private lastSuccessfulPollAt: number | null = null;
-  private backfillStartLedger: number | null = null;
   private circuitBreaker: CircuitBreaker | null = null;
-  private backfillStartLedger: number | null = null;
   /** Cold-start ledger resolved once per session by resolveBackfillStartLedger(). */
-  private backfillStartLedger: number | null = null;
   private backfillStartLedger: number | null = null;
 
   public get server(): StellarSDK.rpc.Server {
@@ -246,15 +243,15 @@ export class EventSubscriber {
           }
         }
 
-        if (response.cursor) {
-          this.lastCursors.set(contractConfig.address, response.cursor);
+        if ((response as any).cursor) {
+          this.lastCursors.set(contractConfig.address, (response as any).cursor);
           
           // Update cursor in deduplication service if available
           if (this.deduplicationService) {
             const lastEventLedger = events.length > 0 ? events[events.length - 1].ledger : 0;
             await this.deduplicationService.updatePollingCursor(
               contractConfig.address,
-              response.cursor,
+              (response as any).cursor,
               lastEventLedger || 0
             );
           }
@@ -290,7 +287,7 @@ export class EventSubscriber {
         contractAddress: contractConfig.address,
         eventId: event.id,
         eventName,
-        receivedAt: event.receivedAt,
+        receivedAt: (event as any).receivedAt,
         currentTime: Date.now(),
         reason: 'expired',
       });
@@ -407,84 +404,29 @@ export class EventSubscriber {
     const lastCursor = this.lastCursors.get(contractConfig.address);
     const limit = this.config.eventBatchSize ?? 100;
 
-    let request: StellarSDK.rpc.Api.GetEventsRequest;
+    const request: StellarSDK.rpc.Api.GetEventsRequest = lastCursor
+      ? {
+          filters: [{ contractIds: [contractConfig.address], type: 'contract' }],
+          cursor: lastCursor,
+          limit,
+        }
+      : {
+          filters: [{ contractIds: [contractConfig.address], type: 'contract' }],
+          startLedger: await this.resolveBackfillStartLedger(),
+          limit,
+        };
 
-    if (lastCursor) {
-      // Normal real-time polling: continue from the last known cursor.
-      request = {
-        filters: [{ contractIds: [contractConfig.address], type: 'contract' }],
-        cursor: lastCursor,
-        limit: 100,
-        filters: [
-          {
-            contractIds: [contractConfig.address],
-            type: 'contract',
-          },
-        ],
-        cursor: lastCursor,
-        limit: this.config.eventBatchSize,
-        filters: [{ contractIds: [contractConfig.address], type: 'contract' }],
-        cursor: lastCursor,
-        limit,
-      };
-    } else {
-      // Cold start: apply the backfill safety limit.
-      const startLedger = await this.resolveBackfillStartLedger();
-      request = {
-        filters: [{ contractIds: [contractConfig.address], type: 'contract' }],
-        startLedger,
-        limit: 100,
-        filters: [
-          {
-            contractIds: [contractConfig.address],
-            type: 'contract',
-          },
-        ],
-        startLedger,
-        limit: this.config.eventBatchSize,
-      };
-    }
-
-    const rpcCall = async () => this.server.getEvents(request);
+    const rpcCall = async () =>
+      this.rpcManager.executeWithFallback(
+        (server) => server.getEvents(request),
+        { operationName: `getEvents(${contractConfig.address})` }
+      );
 
     if (this.circuitBreaker) {
       return await this.circuitBreaker.execute(rpcCall);
     }
 
     return await rpcCall();
-        filters: [{ contractIds: [contractConfig.address], type: 'contract' }],
-        startLedger,
-        limit,
-      };
-    }
-
-    return await this.server.getEvents(request);
-    const request: StellarSDK.rpc.Api.GetEventsRequest = lastCursor
-      ? {
-          filters: [
-            {
-              contractIds: [contractConfig.address],
-              type: 'contract',
-            },
-          ],
-          cursor: lastCursor,
-          limit: this.config.eventBatchSize,
-        }
-      : {
-          filters: [
-            {
-              contractIds: [contractConfig.address],
-              type: 'contract',
-            },
-          ],
-          startLedger: await this.resolveBackfillStartLedger(),
-          limit: this.config.eventBatchSize,
-        };
-
-    return await this.rpcManager.executeWithFallback(
-      (server) => server.getEvents(request),
-      { operationName: `getEvents(${contractConfig.address})` }
-    );
   }
 
   private async processEvent(

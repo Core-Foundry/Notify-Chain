@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "type": "module",
   "engines": {
-    "node": ">=22"
+    "node": ">=20"
   },
   "scripts": {
     "build": "node ./node_modules/typescript/bin/tsc --noEmit && node ./node_modules/vite/bin/vite.js build",
@@ -16,7 +16,8 @@
     "test:wallet": "node ./node_modules/jest/bin/jest.js src/__tests__/wallet-integration.test.tsx",
     "benchmark": "node ./node_modules/jest/bin/jest.js src/benchmark",
     "storybook": "node ./node_modules/storybook/bin/index.cjs dev -p 6006",
-    "build-storybook": "node ./node_modules/storybook/bin/index.cjs build"
+    "build-storybook": "node ./node_modules/storybook/bin/index.cjs build",
+    "license:check": "license-checker --onlyAllow 'MIT;ISC;Apache-2.0;BSD-2-Clause;BSD-3-Clause;0BSD;CC0-1.0;CC-BY-3.0;CC-BY-4.0;Python-2.0;Unlicense;BlueOak-1.0.0' --excludePrivatePackages --production"
   },
   "dependencies": {
     "@creit.tech/stellar-wallets-kit": "^2.3.0",

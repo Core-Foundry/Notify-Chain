@@ -70,7 +70,6 @@ async function main() {
 
     repository = new ScheduledNotificationRepository(db);
     deliveryReceiptRepository = new DeliveryReceiptRepository(db);
-    
 
     healthMonitor = new NotificationHealthMonitor(null, getWorkerManager(), {
       repository,

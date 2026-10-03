@@ -1,20 +1,30 @@
-import { Config, ContractConfig, DiscordConfig, WebhookSecret, AppCleanupConfig, EventQueueConfig, RetrySchedulerOptions, AnalyticsConfig, ExpirationConfig, ApiKey, CircuitBreakerConfig, BackfillConfig, LoggingConfig, ApiConfig } from './types';
-import { Config, ContractConfig, DiscordConfig, WebhookSecret, AppCleanupConfig, EventQueueConfig, RetrySchedulerOptions, AnalyticsConfig, ExpirationConfig, ApiKey, BackfillConfig, LoggingConfig, ApiConfig } from './types';
+import {
+  Config,
+  ContractConfig,
+  DiscordConfig,
+  WebhookSecret,
+  AppCleanupConfig,
+  EventQueueConfig,
+  RetrySchedulerOptions,
+  AnalyticsConfig,
+  ExpirationConfig,
+  ApiKey,
+  CircuitBreakerConfig,
+  BackfillConfig,
+  LoggingConfig,
+  ApiConfig,
+  RetryPolicyOptions,
+  RpcFallbackConfig,
+} from './types';
 import { validateCorsOrigin, CorsValidationError } from './utils/cors-validator';
 import { validateSecrets } from './config/validate-secrets';
 import { ConfigurationSchemaValidator, APP_CONFIG_SCHEMA } from './config-schema';
-import { Config, ContractConfig, DiscordConfig, WebhookSecret, AppCleanupConfig, EventQueueConfig, RetrySchedulerOptions, AnalyticsConfig, ExpirationConfig, ApiKey, BackfillConfig, LoggingConfig, ApiConfig } from './types';
-import { Config, ContractConfig, DiscordConfig, WebhookSecret, AppCleanupConfig, EventQueueConfig, RetrySchedulerOptions, AnalyticsConfig, ExpirationConfig, ApiKey, BackfillConfig, LoggingConfig, ApiConfig, RetryPolicyOptions } from './types';
 import {
   DEFAULT_RETRYABLE_FAILURE_TYPES,
   RETRY_FAILURE_TYPES,
   RetryFailureType,
   parseRetryableFailureTypes,
 } from './services/retry-policy';
-import { validateCorsOrigin, CorsValidationError } from './utils/cors-validator';
-import { ConfigurationSchemaValidator, APP_CONFIG_SCHEMA } from './config-schema';
-import { Config, ContractConfig, DiscordConfig, WebhookSecret, AppCleanupConfig, EventQueueConfig, RetrySchedulerOptions, AnalyticsConfig, ExpirationConfig, ApiKey, BackfillConfig, LoggingConfig, ApiConfig, RpcFallbackConfig } from './types';
-import { validateSecrets } from './config/validate-secrets';
 import {
   SUPPORTED_LOG_FORMATS,
   SUPPORTED_LOG_LEVELS,
@@ -374,6 +384,19 @@ function loadCircuitBreakerConfig(): CircuitBreakerConfig | undefined {
     failureThreshold: failureThreshold ? parseIntegerEnv('CIRCUIT_BREAKER_FAILURE_THRESHOLD', '5') : undefined,
     recoveryTimeoutMs: recoveryTimeoutMs ? parseIntegerEnv('CIRCUIT_BREAKER_RECOVERY_TIMEOUT_MS', '60000') : undefined,
     requestTimeoutMs: requestTimeoutMs ? parseIntegerEnv('CIRCUIT_BREAKER_REQUEST_TIMEOUT_MS', '30000') : undefined,
+  };
+}
+
+/**
+ * Load RPC fallback/resilience configuration.
+ *
+ * RPC_FAILURE_THRESHOLD / STELLAR_RPC_FAILURE_THRESHOLD: consecutive failures
+ * before an endpoint is marked unhealthy and the manager falls back.
+ * RPC_COOLDOWN_MS / STELLAR_RPC_COOLDOWN_MS: how long an unhealthy endpoint
+ * is skipped before being retried.
+ * RPC_REQUEST_TIMEOUT_MS / STELLAR_RPC_REQUEST_TIMEOUT_MS: per-request timeout.
+ * RPC_MAX_RETRIES / STELLAR_RPC_MAX_RETRIES: optional retry cap per call.
+ */
 function loadRpcFallbackConfig(fallbackUrls: string[]): RpcFallbackConfig {
   const failureThreshold = parseIntegerEnv(
     'RPC_FAILURE_THRESHOLD',
@@ -954,4 +977,3 @@ export function validateConfig(config: Config): void {
     }))),
   ]);
 }
-

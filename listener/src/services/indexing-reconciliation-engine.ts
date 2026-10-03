@@ -136,7 +136,7 @@ async function fetchOnChainEvents(args: {
   let cursor: string | undefined;
 
   for (let page = 0; page < args.maxPages; page++) {
-    const request: StellarSDK.rpc.Api.GetEventsRequest = cursor
+    const request: any = cursor
       ? {
           filters: [{ contractIds: [args.contractAddress], type: 'contract' }],
           cursor,
@@ -163,11 +163,11 @@ async function fetchOnChainEvents(args: {
       }
     }
 
-    if (!response.cursor || batch.length === 0) {
+    if (!(response as any).cursor || batch.length === 0) {
       return events;
     }
 
-    cursor = response.cursor;
+    cursor = (response as any).cursor;
   }
 
   return events;

@@ -48,7 +48,7 @@ export class MigrationRunner {
   }
 
   async getAppliedMigrations(): Promise<string[]> {
-    const rows = await this.db.all<{ id: string }>(
+    const rows: any = await this.db.all<{ id: string }>(
       'SELECT id FROM migrations ORDER BY applied_at'
     );
     return (rows as unknown as { id: string }[]).map((row) => row.id);

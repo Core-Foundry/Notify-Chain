@@ -8,6 +8,7 @@ import { PaginationControls } from '../components/PaginationControls';
 import { NotificationDetailsDrawer } from '../components/NotificationDetailsDrawer';
 import { IndexingHealthPanel } from '../components/IndexingHealthPanel';
 import { NotificationHealthPanel } from '../components/NotificationHealthPanel';
+import { NotificationSummaryCards } from '../components/NotificationSummaryCards';
 import { EmptyState } from '../components/EmptyState';
 import {
   useEventFilters,
@@ -18,6 +19,7 @@ import { useEventStore } from '../store/eventStore';
 import { fetchEvents, fetchStatus, type ContractStatus } from '../services/eventsApi';
 import { resolveIndexingHealthUrl } from '../services/indexingHealthApi';
 import { resolveNotificationHealthUrl } from '../services/notificationHealthApi';
+import { useNotificationStats } from '../hooks/useNotificationStats';
 import { generateMockEvents } from '../utils/eventData';
 import { restoreWalletSession } from '../services/wallet';
 import type { BlockchainEvent } from '../types/event';
@@ -60,6 +62,7 @@ function replaceSelectedEventInUrl(eventId: string | null) {
 export function EventExplorerPage() {
   const initialSearch = typeof window !== 'undefined' ? window.location.search : '';
   const [page, setPage] = useState(() => parsePageParam(initialSearch));
+  const notifStats = useNotificationStats(NOTIFICATION_HEALTH_URL);
   const [limit, setLimit] = useState(() => parseLimitParam(initialSearch));
   const [selectedNotification, setSelectedNotification] = useState<BlockchainEvent | null>(null);
   const [contractStatuses, setContractStatuses] = useState<ContractStatus[]>([]);
@@ -324,6 +327,11 @@ export function EventExplorerPage() {
         </section>
       )}
       <IndexingHealthPanel healthUrl={INDEXING_HEALTH_URL} />
+      <NotificationSummaryCards
+        stats={notifStats.stats}
+        isLoading={notifStats.isLoading}
+        isMockData={notifStats.isMockData}
+      />
       <NotificationHealthPanel healthUrl={NOTIFICATION_HEALTH_URL} />
 
       <EventFiltersBar />

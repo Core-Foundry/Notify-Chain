@@ -162,7 +162,6 @@ export class NotificationStatsCache {
    */
   has(): boolean {
     return this.cache.get(this.CACHE_KEY) !== undefined;
-    return (this.cache as any).has(this.CACHE_KEY);
   }
 
   /**
