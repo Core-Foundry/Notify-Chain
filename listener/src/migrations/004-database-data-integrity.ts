@@ -25,7 +25,8 @@ const tables = [
       contract_address TEXT,
       priority INTEGER NOT NULL DEFAULT 5 CHECK (priority BETWEEN 1 AND 10),
       metadata TEXT,
-      next_retry_at DATETIME
+      next_retry_at DATETIME,
+      deduplication_key TEXT
     )`,
   },
   {

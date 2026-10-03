@@ -1,4 +1,6 @@
 import * as sqlite3 from 'sqlite3';
+import { readFileSync } from 'fs';
+import { join } from 'path';
 import { Database } from '../database/database';
 import { MigrationRunner } from '../database/migration-system';
 import migration from './004-database-data-integrity';
@@ -48,7 +50,8 @@ async function createLegacySchema(db: sqlite3.Database): Promise<void> {
       retry_count INTEGER NOT NULL DEFAULT 0, max_retries INTEGER NOT NULL DEFAULT 3,
       processing_started_at DATETIME, processing_completed_at DATETIME, processor_id VARCHAR(100),
       lock_expires_at DATETIME, last_error TEXT, error_details TEXT, event_id TEXT,
-      contract_address TEXT, priority INTEGER NOT NULL DEFAULT 5, metadata TEXT, next_retry_at DATETIME
+      contract_address TEXT, priority INTEGER NOT NULL DEFAULT 5, metadata TEXT, next_retry_at DATETIME,
+      deduplication_key TEXT
     );
     CREATE TABLE notification_execution_log (
       id INTEGER PRIMARY KEY AUTOINCREMENT, scheduled_notification_id INTEGER NOT NULL,
@@ -124,10 +127,10 @@ async function seedValidRows(db: sqlite3.Database): Promise<void> {
       (id, payload, payload_hash, notification_type, target_recipient, execute_at, created_at,
        updated_at, status, retry_count, max_retries, processing_started_at, processing_completed_at,
        processor_id, lock_expires_at, last_error, error_details, event_id, contract_address, priority,
-       metadata, next_retry_at)
+       metadata, next_retry_at, deduplication_key)
      VALUES (1, '{"n":1}', 'hash', 'discord', 'user-1', '2026-01-01', 'created', 'updated',
        'FAILED', 1, 3, NULL, 'completed', 'worker-1', NULL, 'error', NULL, 'event-1', 'contract-1',
-       5, '{"meta":true}', NULL)`,
+       5, '{"meta":true}', NULL, 'dedupe-key-1')`,
   );
   await run(
     db,
@@ -186,6 +189,19 @@ const PRESERVED_TABLES = [
   'notification_archive',
 ];
 
+function bootstrapScheduledNotificationColumns(): string[] {
+  const schema = readFileSync(join(__dirname, '../database/schema.sql'), 'utf8');
+  const tableDefinition = schema.match(
+    /CREATE TABLE IF NOT EXISTS scheduled_notifications \(([\s\S]*?)\n\);/i,
+  );
+  if (!tableDefinition) throw new Error('scheduled_notifications missing from bootstrap schema');
+
+  return Array.from(
+    tableDefinition[1].matchAll(/^\s{2}([a-z][a-z0-9_]*)\s+/gim),
+    (match) => match[1],
+  );
+}
+
 describe('migration 004 database data integrity', () => {
   let db: sqlite3.Database;
 
@@ -219,6 +235,17 @@ describe('migration 004 database data integrity', () => {
     for (const table of PRESERVED_TABLES) {
       expect(await all(db, `SELECT * FROM ${table} ORDER BY id`)).toEqual(before[table]);
     }
+    expect(
+      (await all<{ name: string }>(db, 'PRAGMA table_info(scheduled_notifications)')).map(
+        ({ name }) => name,
+      ),
+    ).toEqual(bootstrapScheduledNotificationColumns());
+    expect(
+      await all<{ deduplication_key: string }>(
+        db,
+        'SELECT deduplication_key FROM scheduled_notifications WHERE id = 1',
+      ),
+    ).toEqual([{ deduplication_key: 'dedupe-key-1' }]);
 
     const foreignKeyViolations = await all(db, 'PRAGMA foreign_key_check');
     expect(foreignKeyViolations).toHaveLength(0);
