@@ -12,9 +12,13 @@ import { generateRequestId, resolveCorrelationId } from '../utils/request-id';
 import { TemplateService } from '../services/template-service';
 import { handleTemplateRoutes } from './template-routes';
 import { sendOk, sendErr, sendJson, ErrorCode } from '../utils/response';
+import { normalizePaginationParams } from '../utils/pagination';
 import { handleApiError, ApiError } from './error-handler';
-import { applyRequestContext } from '../utils/request-id';
 import { applyRequestIdMiddleware } from '../middleware/request-id';
+import { TemplateService } from '../services/template-service';
+import { handleTemplateRoutes } from './template-routes';
+import { sendOk, sendErr, sendJson, ErrorCode } from '../utils/response';
+import { validateContentType, getMimeType } from '../middleware/content-type';
 import { NotificationHistoryService } from '../services/notification-history';
 import { SearchSuggestionService } from '../services/search-suggestion';
 import { NotificationSearchService } from '../services/notification-search-service';
@@ -23,6 +27,8 @@ import {
   IdempotencyKeyService,
   IdempotencyKeyReuseError,
 } from '../services/idempotency-key-service';
+import { WebhookReplayCache } from '../services/webhook-replay-cache';
+import { IdempotencyKeyService, IdempotencyKeyReuseError } from '../services/idempotency-key-service';
 import { WebhookSecret, RateLimitConfig, ContractConfig } from '../types';
 import { RateLimiter } from './rate-limiter';
 import { getDatabase } from '../database/database';
@@ -53,13 +59,20 @@ import { NotificationHealthMonitor } from '../services/notification-health-monit
 import { getJobMonitor } from '../services/job-monitor';
 import { NotificationImportService } from '../services/notification-import-service';
 import { ResponseTimeMiddleware } from '../middleware/response-time';
+import { addSecurityHeaders } from '../middleware/security-headers';
 import { DEFAULT_MAX_BODY_BYTES, enforceBodyLimit } from '../middleware/body-limit';
 import { sanitizeUrl } from '../utils/logger';
+import { sanitizeCredentials } from '../utils/credential-sanitizer';
+import { DiscordNotificationProvider } from '../services/providers/discord-provider';
+import { WebhookNotificationProvider } from '../services/providers/webhook-provider';
+import { ProviderHealthResult } from '../types/provider-capabilities';
 
 export interface EventsServerOptions {
   port: number;
   corsOrigin?: string;
+  isProduction?: boolean;
   stellarRpcUrl: string;
+  stellarNetwork?: string;
   stellarNetworkPassphrase?: string;
   contractAddresses?: ContractConfig[];
   discordWebhookUrl?: string;
@@ -86,8 +99,21 @@ export interface EventsServerOptions {
   metricsStore?: NotificationMetricsStore | null;
   /** Maximum age of signed requests in seconds (default: 300 = 5 minutes). */
   signatureExpirationSeconds?: number;
+  /**
+   * Require `X-Webhook-Timestamp` on inbound webhooks (default: true).
+   * Without it a captured request is signed over the bare body and remains
+   * valid forever. Set to false only for legacy senders that cannot be changed.
+   */
+  requireWebhookTimestamp?: boolean;
+  /**
+   * Maximum number of recently accepted webhook signatures retained by the
+   * replay cache (default: 10000).
+   */
+  webhookReplayCacheMaxEntries?: number;
   /** Optional health monitor — exposes its last report at GET /api/notifications/health. */
   healthMonitor?: NotificationHealthMonitor | null;
+  /** Receipt repository for the notification delivery status endpoint. */
+  deliveryReceiptRepository?: DeliveryReceiptRepository | null;
   /**
    * Requests slower than this threshold (ms) are logged at WARN level (#491).
    * Defaults to 1 000 ms.
@@ -103,6 +129,8 @@ export interface EventsServerOptions {
    * are never parsed. Defaults to {@link DEFAULT_MAX_BODY_BYTES}.
    */
   maxBodyBytes?: number;
+  /** Optional DataExportService override for administrative exports (#850). */
+  dataExportService?: DataExportService | null;
 }
 
 type ServiceStatus = 'ok' | 'error' | 'not_configured';
@@ -119,6 +147,7 @@ interface HealthResponse {
   version: string;
   timestamp: string;
   uptimeSeconds: number;
+  network: string;
   services: {
     stellarRpc: ServiceHealth;
     discord: ServiceHealth;
@@ -394,6 +423,7 @@ async function buildHealthResponse(options: EventsServerOptions): Promise<Health
     version: APP_VERSION,
     timestamp: new Date().toISOString(),
     uptimeSeconds: process.uptime(),
+    network: options.stellarNetwork ?? 'unknown',
     services: {
       stellarRpc,
       discord,
@@ -413,6 +443,13 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
   const suggestionService = new SearchSuggestionService();
   const notificationSearchService = new NotificationSearchService();
   const rateLimiter = options.rateLimit ? new RateLimiter(options.rateLimit) : undefined;
+  // Replay protection (#853): remembers every signature we accepted inside the
+  // freshness window so a captured request cannot be resubmitted. Kept
+  // independent of the optional client-supplied `Idempotency-Key` header,
+  // which an attacker replaying a request would simply omit.
+  const webhookReplayCache = new WebhookReplayCache({
+    maxEntries: options.webhookReplayCacheMaxEntries ?? 10_000,
+  });
   // Response-time tracking (#491)
   const responseTime =
     options.responseTimeMiddleware !== undefined && options.responseTimeMiddleware !== null
@@ -420,6 +457,10 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
       : new ResponseTimeMiddleware({ slowRequestThresholdMs: options.slowRequestThresholdMs });
 
   const server = http.createServer(async (req, res) => {
+    addSecurityHeaders(res, {
+      isProduction: options.isProduction ?? process.env.NODE_ENV === 'production',
+    });
+
     // Request-ID middleware (#686): assigns (or validates+reuses) a requestId
     // and resolves a correlationId for every request, stamping both onto the
     // response headers. See listener/src/middleware/request-id.ts.
@@ -480,6 +521,29 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
     // Add X-API-Version response header so callers can inspect active version
     res.setHeader('X-API-Version', 'v1');
 
+    // Standardize response Content-Type for all API responses (#647)
+    if (req.method !== 'OPTIONS') {
+      res.setHeader('Content-Type', 'application/json');
+    }
+    /**
+     * Enforces X-API-Key auth for protected endpoints. Sends a 401 and returns
+     * false when the request is not authenticated.
+     */
+    const requireApiKey = (): boolean => {
+      const auth = authenticateApiKey(req, options.apiKeys);
+      if (auth.authenticated) return true;
+      logger.warn('API key authentication failed', {
+        requestId,
+        correlationId,
+        method: req.method,
+        path: url.pathname,
+        reason: auth.reason,
+      });
+      res.setHeader('WWW-Authenticate', 'ApiKey header="X-API-Key"');
+      sendErr(res, 401, API_KEY_AUTH_MESSAGES[auth.reason], ErrorCode.UNAUTHORIZED);
+      return false;
+    };
+
     // The rate-limit metrics endpoint is an observability route and must stay
     // reachable even after a client exhausts its quota — otherwise callers
     // can't read the very metrics that explain why they are being throttled.
@@ -492,6 +556,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
     }
 
     if (req.method === 'OPTIONS') {
+      res.removeHeader('Content-Type');
       res.writeHead(204);
       res.end();
       return;
@@ -549,16 +614,66 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
       return;
     }
 
+    // GET /api/events/history?fromLedger=<n>&toLedger=<n>
+    //
+    // Returns events from the in-process registry whose ledger number falls
+    // within the requested inclusive range.  Both query parameters are
+    // required; the range must be well-formed and must not exceed
+    // MAX_LEDGER_RANGE (10 000) ledgers.
+    if (req.method === 'GET' && url.pathname === '/api/events/history') {
+      const fromParam = url.searchParams.get('fromLedger');
+      const toParam = url.searchParams.get('toLedger');
+
+      let range: { startLedger: number; endLedger: number };
+      try {
+        range = parseLedgerRangeParams(fromParam, toParam);
+      } catch (err) {
+        if (err instanceof ValidationError) {
+          sendErr(res, 400, 'Invalid ledger range', ErrorCode.BAD_REQUEST, validationErrorBody(err));
+        } else {
+          sendErr(res, 400, 'Invalid ledger range', ErrorCode.BAD_REQUEST);
+        }
+        return;
+      }
+
+      const events = eventRegistry.getEventsByLedgerRange(range.startLedger, range.endLedger);
+
+      logger.info('Handling GET /api/events/history', {
+        requestId,
+        correlationId,
+        startLedger: range.startLedger,
+        endLedger: range.endLedger,
+        returned: events.length,
+      });
+
+      sendOk(res, 200, {
+        count: events.length,
+        startLedger: range.startLedger,
+        endLedger: range.endLedger,
+        events,
+      });
+
+      logger.info('GET /api/events/history complete', {
+        requestId,
+        correlationId,
+        startLedger: range.startLedger,
+        endLedger: range.endLedger,
+        returned: events.length,
+        durationMs: Date.now() - startTime,
+      });
+      return;
+    }
+
     // GET /api/events
     if (req.method === 'GET' && url.pathname.startsWith('/api/events')) {
       const limitParam = url.searchParams.get('limit');
-      const limit = limitParam ? parseInt(limitParam, 10) : undefined;
-      const events =
-        limit !== undefined && !Number.isNaN(limit)
-          ? eventRegistry.getEvents(limit)
-          : eventRegistry.getEvents();
+      const parsedLimit = limitParam ? parseInt(limitParam, 10) : undefined;
+      const paginationParams = normalizePaginationParams(
+        parsedLimit !== undefined && !Number.isNaN(parsedLimit) ? parsedLimit : undefined
+      );
+      const events = eventRegistry.getEvents(paginationParams.limit);
 
-      logger.info('Handling GET /api/events', { requestId, correlationId, limit: limit ?? 'all' });
+      logger.info('Handling GET /api/events', { requestId, correlationId, limit: paginationParams.limit });
 
       sendOk(res, 200, { count: eventRegistry.count(), events });
 
@@ -660,6 +775,18 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
       return;
     }
 
+    // GET /api/notifications/health
+    if (req.method === 'GET' && url.pathname === '/api/notifications/health') {
+      const report = options.healthMonitor?.getLastReport() ?? null;
+      if (!report) {
+        sendJson(res, 503, { error: 'Health monitor not configured or no report yet' });
+        return;
+      }
+      const httpStatus = report.status === 'unhealthy' ? 503 : 200;
+      sendJson(res, httpStatus, report);
+      return;
+    }
+
     // GET /api/rate-limit/metrics
     if (req.method === 'GET' && url.pathname === '/api/rate-limit/metrics') {
       if (!rateLimiter) {
@@ -679,6 +806,10 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
 
     // POST /api/webhooks
     if (req.method === 'POST' && url.pathname === '/api/webhooks') {
+      if (!validateContentType(req, res, ['application/json'])) {
+        return;
+      }
+
       const idempotencyKey = IdempotencyKeyService.extractKey(req.headers) ?? undefined;
 
       const writeAuthFailure = (statusCode: number, message: string, code: string): void => {
@@ -694,6 +825,27 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
 
           const secrets = options.webhookSecrets ?? [];
           const maxAgeSeconds = options.signatureExpirationSeconds ?? 300;
+        const secrets = options.webhookSecrets ?? [];
+        const maxAgeSeconds = options.signatureExpirationSeconds ?? 300;
+        
+        // Use default database for audit log or mock one if not available.
+        // Actually since SecurityAuditService requires Database, let's pass a real one.
+        const db = getDatabase();
+        const { SecurityAuditService } = require('../services/security-audit');
+        const auditService = new SecurityAuditService(db);
+
+        const auth = await verifyWebhookRequest({
+          headers: req.headers as Record<string, string | string[] | undefined>,
+          rawBody,
+          secrets,
+          sourceIp,
+          requestId,
+          correlationId,
+          maxAgeSeconds,
+          requireTimestamp: options.requireWebhookTimestamp !== false,
+          replayCache: webhookReplayCache,
+          auditService,
+        });
 
           const auth = verifyWebhookRequest({
             headers: req.headers as Record<string, string | string[] | undefined>,
@@ -782,6 +934,10 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
 
     // POST /api/notifications/validate-batch
     if (req.method === 'POST' && url.pathname === '/api/notifications/validate-batch') {
+      if (!validateContentType(req, res, ['application/json'])) {
+        return;
+      }
+
       let body = '';
       req.on('data', (chunk) => {
         body += chunk.toString();
@@ -829,8 +985,15 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
 
     // POST /api/notifications/import — bulk import from JSON or CSV
     if (req.method === 'POST' && url.pathname === '/api/notifications/import') {
+      // Authenticate before revealing anything about service availability.
+      if (!requireApiKey()) return;
+
       if (!options.notificationAPI) {
         sendErr(res, 503, 'Scheduler not enabled', ErrorCode.SERVICE_UNAVAILABLE);
+        return;
+      }
+
+      if (!validateContentType(req, res, ['application/json', 'text/csv', 'application/csv'])) {
         return;
       }
 
@@ -868,10 +1031,117 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
       return;
     }
 
+    // GET & POST /api/admin/export (and /api/export) — Data Export Utility (#850)
+    if (
+      (req.method === 'GET' || req.method === 'POST') &&
+      (url.pathname === '/api/admin/export' || url.pathname === '/api/export')
+    ) {
+      const apiKeyHeader = req.headers['x-api-key'];
+      if (options.apiKeys && options.apiKeys.length > 0) {
+        const provided = Array.isArray(apiKeyHeader) ? apiKeyHeader[0] : apiKeyHeader;
+        const allowed = options.apiKeys.some((k) => k.key === provided);
+        if (!allowed) {
+          sendErr(res, 401, 'Unauthorized', ErrorCode.UNAUTHORIZED);
+          return;
+        }
+      }
+
+      const processExport = async (rawFilters: Record<string, unknown>) => {
+        try {
+          const exportService =
+            options.dataExportService ?? new DataExportService(getDatabase());
+
+          const validation = validatePayload(rawFilters, Schemas.dataExport);
+          if (!validation.valid) {
+            sendErr(
+              res,
+              400,
+              `Validation failed: ${validation.issues[0]?.message}`,
+              ErrorCode.BAD_REQUEST,
+              validation.issues
+            );
+            return;
+          }
+
+          const type = (rawFilters.type as 'notifications' | 'events' | 'all') || 'all';
+          const format = (rawFilters.format as 'json' | 'csv') || 'json';
+          const includeSensitive =
+            rawFilters.includeSensitive === true || rawFilters.includeSensitive === 'true';
+
+          const limit = rawFilters.limit ? Number(rawFilters.limit) : undefined;
+          const offset = rawFilters.offset ? Number(rawFilters.offset) : undefined;
+
+          const result = await exportService.exportData({
+            type,
+            format,
+            includeSensitive,
+            notificationFilters: {
+              status: rawFilters.status as string | undefined,
+              notificationType: (rawFilters.channel || rawFilters.notificationType) as string | undefined,
+              targetRecipient: (rawFilters.recipient || rawFilters.targetRecipient) as string | undefined,
+              contractAddress: (rawFilters.contract || rawFilters.contractAddress) as string | undefined,
+              fromDate: (rawFilters.from || rawFilters.fromDate) as string | undefined,
+              toDate: (rawFilters.to || rawFilters.toDate) as string | undefined,
+              limit,
+              offset,
+            },
+            eventFilters: {
+              status: rawFilters.status as string | undefined,
+              eventType: rawFilters.eventType as string | undefined,
+              contractAddress: (rawFilters.contract || rawFilters.contractAddress) as string | undefined,
+              fromDate: (rawFilters.from || rawFilters.fromDate) as string | undefined,
+              toDate: (rawFilters.to || rawFilters.toDate) as string | undefined,
+              limit,
+              offset,
+            },
+          });
+
+          if (format === 'csv') {
+            res.writeHead(200, {
+              'Content-Type': 'text/csv',
+              'Content-Disposition': 'attachment; filename="notifychain-export.csv"',
+            });
+            res.end(result.csvContent || '');
+            return;
+          }
+
+          sendOk(res, 200, result);
+        } catch (error) {
+          logger.error('Failed to export data', { error, requestId, correlationId });
+          handleApiError(res, error, requestId, correlationId);
+        }
+      };
+
+      if (req.method === 'GET') {
+        const queryParams: Record<string, unknown> = {};
+        url.searchParams.forEach((val, key) => {
+          queryParams[key] = val;
+        });
+        await processExport(queryParams);
+        return;
+      } else {
+        let body = '';
+        req.on('data', (chunk) => { body += chunk.toString(); });
+        req.on('end', async () => {
+          try {
+            const bodyParams = body ? JSON.parse(body) : {};
+            await processExport(bodyParams);
+          } catch (jsonErr) {
+            sendErr(res, 400, 'Malformed JSON payload in request body', ErrorCode.PARSE_ERROR);
+          }
+        });
+        return;
+      }
+    }
+
     // POST /api/schedule
     if (req.method === 'POST' && url.pathname === '/api/schedule') {
       if (!options.notificationAPI) {
         sendErr(res, 503, 'Scheduler not enabled', ErrorCode.SERVICE_UNAVAILABLE);
+        return;
+      }
+
+      if (!validateContentType(req, res, ['application/json'])) {
         return;
       }
 
@@ -881,9 +1151,21 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
         body += chunk.toString();
       });
       req.on('end', async () => {
+        let data: any;
         try {
-          const data = JSON.parse(body);
+          data = JSON.parse(body);
+        } catch {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(
+            JSON.stringify({
+              error: 'Request body must be valid JSON.',
+              code: ErrorCode.PARSE_ERROR,
+            }),
+          );
+          return;
+        }
 
+        try {
           if (!data.executeAt || !data.payload || !data.targetRecipient) {
             res.writeHead(400, { 'Content-Type': 'application/json' });
             res.end(
@@ -910,6 +1192,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
               notificationType: data.notificationType || NotificationType.DISCORD,
               targetRecipient: data.targetRecipient,
               executeAt,
+              expiresAt: data.expiresAt,
               maxRetries: data.maxRetries,
               priority: data.priority,
               eventId: data.eventId,
@@ -1119,6 +1402,39 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
       return;
     }
 
+    // GET /api/schedule/queue/metrics — operational metrics for notification queue activity (#797)
+    if (
+      req.method === 'GET' &&
+      (url.pathname === '/api/schedule/queue/metrics' ||
+        url.pathname === '/api/schedule/queue-metrics' ||
+        url.pathname === '/api/notifications/queue-metrics')
+    ) {
+      if (!options.notificationAPI) {
+        sendErr(res, 503, 'Scheduler not enabled', ErrorCode.SERVICE_UNAVAILABLE);
+        return;
+      }
+
+      options.notificationAPI
+        .getQueueOperationalMetrics()
+        .then((metrics) => {
+          logger.info('Handling GET /api/schedule/queue/metrics', {
+            requestId,
+            correlationId,
+            durationMs: Date.now() - startTime,
+          });
+          sendOk(res, 200, metrics);
+        })
+        .catch((error) => {
+          logger.error('Failed to get queue operational metrics', {
+            error,
+            requestId,
+            correlationId,
+          });
+          handleApiError(res, error, requestId, correlationId);
+        });
+      return;
+    }
+
     // GET /api/schedule/:id
     if (req.method === 'GET' && url.pathname.startsWith('/api/schedule/')) {
       if (!options.notificationAPI) {
@@ -1148,6 +1464,49 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
       return;
     }
 
+    // POST /api/notifications/:id/cancel
+    const cancelMatch = url.pathname.match(/^\/api\/notifications\/([^/]+)\/cancel$/);
+    if (req.method === 'POST' && cancelMatch) {
+      if (!options.notificationAPI) {
+        sendErr(res, 503, 'Scheduler not enabled', ErrorCode.SERVICE_UNAVAILABLE);
+        return;
+      }
+
+      const id = parseInt(cancelMatch[1], 10);
+      if (isNaN(id)) {
+        sendErr(res, 400, 'Invalid notification ID', ErrorCode.BAD_REQUEST);
+        return;
+      }
+
+      let body = '';
+      req.on('data', (chunk) => { body += chunk; });
+      req.on('end', () => {
+        void (async () => {
+          try {
+            const parsed = body ? JSON.parse(body) as { reason?: string } : {};
+            const ok = await options.notificationAPI!.cancelNotification(id, parsed.reason, requestId);
+            
+            if (!ok) {
+              sendErr(res, 400, 'Unable to cancel notification', ErrorCode.BAD_REQUEST);
+              return;
+            }
+            
+            const notification = await options.notificationAPI!.getNotification(id);
+            sendOk(res, 200, notification);
+          } catch (error) {
+            if (error instanceof SyntaxError) {
+              sendErr(res, 400, 'Invalid JSON', ErrorCode.PARSE_ERROR);
+              return;
+            }
+            logger.error('Failed to cancel notification', { error, requestId, correlationId, id });
+            sendErr(res, 500, (error as Error).message, ErrorCode.INTERNAL_ERROR);
+          }
+        })();
+      });
+      return;
+    }
+
+    function isValidApiKey(apiKey: string | undefined, allowedKeys: Array<{ key: string; name?: string }> | undefined): boolean {
     function isValidApiKey(
       apiKey: string | undefined,
       allowedKeys: Array<{ key: string; name?: string }> | undefined,
@@ -1160,6 +1519,37 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
         return false;
       }
       return allowedKeys.some((k) => k.key === apiKey);
+    }
+
+    // Get delivery receipts for a scheduled notification
+    const receiptPath = url.pathname.match(/^\/api\/notifications\/(\d+)\/receipts$/);
+    if (req.method === 'GET' && receiptPath) {
+      const apiKey = req.headers['x-api-key'] as string | undefined;
+      if (!isValidApiKey(apiKey, options.apiKeys)) {
+        sendErr(res, 401, 'Unauthorized: Invalid or missing API key', ErrorCode.UNAUTHORIZED);
+        return;
+      }
+
+      if (!options.deliveryReceiptRepository) {
+        sendErr(res, 503, 'Delivery receipt storage is not configured', ErrorCode.SERVICE_UNAVAILABLE);
+        return;
+      }
+
+      const rawStatus = url.searchParams.get('status');
+      const statuses: DeliveryReceiptStatus[] = ['delivered', 'failed', 'rejected', 'pending'];
+      if (rawStatus && !statuses.includes(rawStatus as DeliveryReceiptStatus)) {
+        sendErr(res, 400, 'Invalid delivery receipt status', ErrorCode.BAD_REQUEST);
+        return;
+      }
+
+      options.deliveryReceiptRepository
+        .findByNotificationId(Number(receiptPath[1]), rawStatus as DeliveryReceiptStatus | undefined)
+        .then((receipts) => sendOk(res, 200, { receipts }))
+        .catch((error) => {
+          logger.error('Failed to retrieve delivery receipts', { error, requestId, correlationId });
+          sendErr(res, 500, 'Failed to retrieve delivery receipts', ErrorCode.INTERNAL_ERROR);
+        });
+      return;
     }
 
     // Get notification delivery history endpoint
@@ -1177,6 +1567,13 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
       const offset = url.searchParams.get('offset')
         ? parseInt(url.searchParams.get('offset')!, 10)
         : undefined;
+    // Get notification delivery history endpoint.
+    // Matched on the rewritten pathname so /api/v1/notifications/history is
+    // routed (and authenticated) the same as the unversioned path.
+    if (req.method === 'GET' && url.pathname === '/api/notifications/history') {
+      if (!requireApiKey()) return;
+      const limit = url.searchParams.get('limit') ? parseInt(url.searchParams.get('limit')!, 10) : undefined;
+      const offset = url.searchParams.get('offset') ? parseInt(url.searchParams.get('offset')!, 10) : undefined;
       const cursor = url.searchParams.get('cursor') || undefined;
       const status = url.searchParams.get('status') as 'SUCCESS' | 'FAILED' | 'RETRY' | null;
       const startDate = url.searchParams.get('startDate');
@@ -1407,6 +1804,10 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
         return;
       }
 
+      if (!validateContentType(req, res, ['application/json'])) {
+        return;
+      }
+
       const templateId = decodeURIComponent(getTemplateMatch[1]);
       const actor = resolveRequestActor(req);
       logger.info('Handling PUT /api/templates/:id', {
@@ -1503,6 +1904,10 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
         return;
       }
 
+      if (!validateContentType(req, res, ['application/json'])) {
+        return;
+      }
+
       logger.info('Handling POST /api/templates', { requestId, correlationId });
       let body = '';
       req.on('data', (chunk) => {
@@ -1546,6 +1951,10 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
     if (req.method === 'POST' && templateRenderMatch) {
       if (!options.templateService) {
         sendErr(res, 503, 'Template service not enabled', ErrorCode.SERVICE_UNAVAILABLE);
+        return;
+      }
+
+      if (!validateContentType(req, res, ['application/json'])) {
         return;
       }
 
@@ -1606,6 +2015,10 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
     // PUT /api/preferences/:userId
     const putPrefsMatch = url.pathname.match(/^\/api\/preferences\/([^/]+)$/);
     if (req.method === 'PUT' && putPrefsMatch) {
+      if (!validateContentType(req, res, ['application/json'])) {
+        return;
+      }
+
       const userId = decodeURIComponent(putPrefsMatch[1]);
       logger.info('Handling PUT /api/preferences/:userId', { requestId, correlationId, userId });
       let body = '';

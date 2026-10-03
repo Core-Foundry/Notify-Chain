@@ -11,6 +11,12 @@
  */
 
 import type { ServerResponse } from 'http';
+import type http from 'http';
+import type { ServerResponse } from 'http';
+
+export function addSecurityHeaders(
+  res: ServerResponse,
+  options: { isProduction?: boolean } = {},
 
 const isLocalhost = (hostname: string): boolean =>
   hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
@@ -19,13 +25,6 @@ export function addSecurityHeaders(
   res: ServerResponse,
   options: { productionOrigin?: string } = {},
 ): void {
-  const origin = res.getHeader('Access-Control-Allow-Origin') as string | undefined;
-
-  // ⛔ Content-Security-Policy: omitted for dashboard/SSE compatibility.
-  // If needed, configure via a dedicated CSP middleware instead.
-
-  // ✅ X-Content-Type-Options: prevent MIME-type sniffing.
-  // Safe for all endpoints including API clients and file uploads.
   res.setHeader('X-Content-Type-Options', 'nosniff');
 
   // ✅ X-Frame-Options: prevent clickjacking.
@@ -54,5 +53,10 @@ export function addSecurityHeaders(
   // Skipped for localhost/development to avoid breaking HTTP local testing.
   if (options.productionOrigin && !isLocalhost(origin || '')) {
     res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains; preload');
+  res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+
+  if (options.isProduction) {
+    res.setHeader('Strict-Transport-Security', 'max-age=31536000');
   }
 }

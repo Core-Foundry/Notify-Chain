@@ -1,6 +1,6 @@
 import * as StellarSDK from '@stellar/stellar-sdk';
 import logger from '../utils/logger';
-import { ContractConfig, DiscordConfig } from '../types';
+import { ContractConfig, DiscordConfig, NotificationProvider } from '../types';
 import { getEventName } from '../utils/event-utils';
 import { NotificationDeduplicator, generateFingerprint } from './notification-deduplicator';
 import {
@@ -10,6 +10,8 @@ import {
 import { sendWebhook } from './webhook-sender';
 import { NotificationType } from '../types/scheduled-notification';
 import { generateCorrelationId } from '../utils/request-id';
+import { getDatabase } from '../database/database';
+import { SecurityAuditService } from './security-audit';
 
 export const MAX_DISCORD_EMBED_LENGTH = 6000;
 export const MAX_DISCORD_FIELD_VALUE_LENGTH = 1024;
@@ -61,6 +63,11 @@ export function sanitizeForDiscord(text: string): string {
   return text.replace(MENTION_PATTERN, '[mention removed]').replace(MARKDOWN_CHARS, '\\$1');
 }
 
+  return text
+    .replace(MENTION_PATTERN, '[mention removed]')
+    .replace(MARKDOWN_CHARS, '\\$1');
+}
+
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
@@ -91,7 +98,7 @@ async function safeReadResponseBody(response: Response, maxLength = 300): Promis
   }
 }
 
-export class DiscordNotificationService {
+export class DiscordNotificationService implements NotificationProvider {
   private config: DiscordConfig;
   private deduplicator: NotificationDeduplicator;
   private timeoutCount: number = 0;
@@ -192,6 +199,19 @@ export class DiscordNotificationService {
           durationMs,
           attempt,
         });
+
+        if (responseCategory === 'auth_error') {
+          const auditService = new SecurityAuditService(getDatabase());
+          await auditService.record({
+            action: 'auth_failure',
+            actor: correlationId,
+            sourceIp: undefined,
+            requestId: correlationId,
+            correlationId,
+            outcome: 'http_' + response.status,
+            details: { url: this.config.webhookUrl },
+          });
+        }
       } catch (error) {
         const durationMs = Date.now() - attemptStart;
         logger.error('Discord webhook request error', {
@@ -384,9 +404,11 @@ export class DiscordNotificationService {
   sanitizeEmbed(embed: DiscordEmbed): DiscordEmbed {
     let title = embed.title ?? '';
     if (title.length > MAX_DISCORD_EMBED_TITLE_LENGTH) {
+      const originalLength = embed.title?.length ?? title.length;
       title = title.slice(0, MAX_DISCORD_EMBED_TITLE_LENGTH - 3) + '...';
       logger.warn('Discord embed title truncated', {
-        originalLength: embed.title.length,
+        originalLength: title.length + 3,
+        originalLength,
         maxLength: MAX_DISCORD_EMBED_TITLE_LENGTH,
       });
     }
@@ -406,9 +428,11 @@ export class DiscordNotificationService {
 
     let footer = embed.footer;
     if (footer?.text && footer.text.length > MAX_DISCORD_FOOTER_TEXT_LENGTH) {
+      const originalLength = footer.text.length;
       footer = { text: footer.text.slice(0, MAX_DISCORD_FOOTER_TEXT_LENGTH - 3) + '...' };
       logger.warn('Discord footer text truncated', {
-        originalLength: embed.footer.text.length,
+        originalLength,
+        originalLength: footer.text.length,
         maxLength: MAX_DISCORD_FOOTER_TEXT_LENGTH,
       });
     }
@@ -466,10 +490,20 @@ export class DiscordNotificationService {
           return String(value.i64());
         case StellarSDK.xdr.ScValType.scvString(): {
           const strVal = value.str().toString();
+          const truncated =
+            strVal.length > MAX_DISCORD_FIELD_VALUE_LENGTH
+              ? strVal.slice(0, MAX_DISCORD_FIELD_VALUE_LENGTH) + '...'
           return strVal.length > MAX_DISCORD_FIELD_VALUE_LENGTH
             ? strVal.slice(0, MAX_DISCORD_FIELD_VALUE_LENGTH) + '...'
             : strVal;
           const truncated = strVal.length > 500 ? strVal.slice(0, 500) + '...' : strVal;
+          // Leave headroom for markdown escapes added by sanitizeForDiscord.
+          const limit = Math.floor(MAX_DISCORD_FIELD_VALUE_LENGTH / 2);
+          const truncated = strVal.length > limit ? strVal.slice(0, limit) + '...' : strVal;
+          const truncated =
+            strVal.length > MAX_DISCORD_FIELD_VALUE_LENGTH
+              ? `${strVal.slice(0, MAX_DISCORD_FIELD_VALUE_LENGTH)}...`
+              : strVal;
           return sanitizeForDiscord(truncated);
         }
         case StellarSDK.xdr.ScValType.scvSymbol():
