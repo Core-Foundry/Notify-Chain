@@ -4,24 +4,14 @@ import {
   NotificationProvider,
   DeliveryPayload,
   DeliveryResult,
+  ProviderHealthResult,
 } from '../../types/provider-capabilities';
 import { DiscordNotificationService, DiscordMessage } from '../discord-notification';
 import { DiscordConfig } from '../../types';
 import { sendWebhook } from '../webhook-sender';
+import { sanitizeCredentials } from '../../utils/credential-sanitizer';
 import logger from '../../utils/logger';
 
-/**
- * Capabilities declared by the Discord Webhook provider.
- *
- * - RICH_FORMATTING: embeds with colour, fields, timestamp, footer.
- * - ATTACHMENTS: file/image uploads via multipart form (Discord Files API).
- * - MESSAGE_UPDATES: PATCH /webhooks/:id/:token/messages/:msgId to edit.
- * - THREADING: post into an existing forum/text thread via `thread_id`.
- * - INTERACTIVE_COMPONENTS: action rows (buttons, select menus) in messages.
- *
- * NATIVE_SCHEDULING is not declared because Discord does not offer
- * first-party scheduled message delivery; the pipeline handles scheduling.
- */
 const DISCORD_CAPABILITIES = new Set<ProviderCapability>([
   ProviderCapability.RICH_FORMATTING,
   ProviderCapability.ATTACHMENTS,
@@ -30,16 +20,6 @@ const DISCORD_CAPABILITIES = new Set<ProviderCapability>([
   ProviderCapability.INTERACTIVE_COMPONENTS,
 ]);
 
-/**
- * Wraps `DiscordNotificationService` behind the `NotificationProvider`
- * interface so the core pipeline never imports a concrete Discord class.
- *
- * Capability handling:
- * - Requested features that Discord supports are attempted.
- * - Requested features that are not in `DISCORD_CAPABILITIES` are logged
- *   and listed in `DeliveryResult.degradedCapabilities`; delivery still
- *   succeeds for the features that are supported.
- */
 export class DiscordNotificationProvider implements NotificationProvider {
   readonly metadata: ProviderMetadata = {
     id: 'discord',
@@ -49,9 +29,11 @@ export class DiscordNotificationProvider implements NotificationProvider {
   };
 
   private readonly service: DiscordNotificationService;
+  private readonly defaultWebhookUrl?: string;
 
   constructor(config: DiscordConfig, service?: DiscordNotificationService) {
     this.service = service ?? new DiscordNotificationService(config);
+    this.defaultWebhookUrl = config.webhookUrl;
   }
 
   hasCapability(capability: ProviderCapability): boolean {
@@ -61,7 +43,6 @@ export class DiscordNotificationProvider implements NotificationProvider {
   async deliver(payload: DeliveryPayload): Promise<DeliveryResult> {
     const { payload: body, targetRecipient, requestedFeatures, requestId } = payload;
 
-    // Collect features that were requested but are not supported.
     const degradedCapabilities: ProviderCapability[] = [];
     if (requestedFeatures) {
       for (const feature of requestedFeatures) {
@@ -79,63 +60,105 @@ export class DiscordNotificationProvider implements NotificationProvider {
     try {
       const message = this.buildMessage(body);
       const response = await sendWebhook(targetRecipient, message, { timeoutMs: 5_000 });
+      const providerMessageId = response.headers.get('x-message-id') ?? undefined;
+      const providerResponse = { statusCode: response.status };
 
       if (!response.ok) {
-        const errorText = await response.text().catch(() => '');
         logger.warn('Discord provider: webhook responded with non-OK status', {
           requestId,
-          targetRecipient,
+          targetRecipient: sanitizeCredentials(targetRecipient),
           status: response.status,
-          body: errorText,
+          body: sanitizeCredentials(errorText),
         });
         return {
           success: false,
           degradedCapabilities,
-          errorMessage: `HTTP ${response.status}: ${errorText}`,
+          errorMessage: `HTTP ${response.status}: ${sanitizeCredentials(errorText)}`,
         };
       }
 
-      logger.info('Discord provider: message delivered', { requestId, targetRecipient });
+      logger.info('Discord provider: message delivered', {
+        requestId,
+        targetRecipient: sanitizeCredentials(targetRecipient),
+      });
       return { success: true, degradedCapabilities };
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
+      const sanitized = sanitizeCredentials(errorMessage);
       logger.error('Discord provider: delivery error', {
         requestId,
-        targetRecipient,
-        error: errorMessage,
+        targetRecipient: sanitizeCredentials(targetRecipient),
+        error: sanitized,
       });
-      return { success: false, degradedCapabilities, errorMessage };
+      return { success: false, degradedCapabilities, errorMessage: sanitized };
     }
   }
 
-  // ---------------------------------------------------------------------------
-  // Helpers
-  // ---------------------------------------------------------------------------
-
   /**
-   * Build a `DiscordMessage` from the generic JSON payload.
-   *
-   * Supported payload shapes (in order of precedence):
-   * 1. `{ message: DiscordMessage }` — produced by
-   *    `NotificationAPI.scheduleDiscordNotification()`.
-   * 2. `{ embeds: [...] }` — the caller already built an embed array.
-   * 3. `{ content: string }` — plain-text message.
-   * 4. `{ text: string }` — alias for `content`.
-   * 5. Fallback: serialise the entire payload as a JSON string (truncated
-   *    to Discord's 2 000-character limit).
+   * Independently checks Discord provider reachability.
+   * Redacts any webhook token or credential from failure details.
    */
+  async checkHealth(targetRecipient?: string): Promise<ProviderHealthResult> {
+    const url = targetRecipient || this.defaultWebhookUrl;
+    const checkedAt = new Date().toISOString();
+
+    if (!url) {
+      return {
+        providerId: this.metadata.id,
+        providerName: this.metadata.name,
+        status: 'not_configured',
+        detail: 'No Discord webhook URL configured',
+        checkedAt,
+      };
+    }
+
+    const start = Date.now();
+    try {
+      // Discord Webhook GET endpoint returns metadata (id, name, guild_id) without posting a message
+      const response = await fetch(url, { method: 'GET' });
+      const latencyMs = Date.now() - start;
+
+      if (response.ok) {
+        return {
+          providerId: this.metadata.id,
+          providerName: this.metadata.name,
+          status: 'ok',
+          latencyMs,
+          checkedAt,
+        };
+      }
+
+      return {
+        providerId: this.metadata.id,
+        providerName: this.metadata.name,
+        status: 'error',
+        latencyMs,
+        detail: `HTTP ${response.status}`,
+        checkedAt,
+      };
+    } catch (err: any) {
+      const latencyMs = Date.now() - start;
+      const rawDetail = err instanceof Error ? err.message : String(err);
+      return {
+        providerId: this.metadata.id,
+        providerName: this.metadata.name,
+        status: 'error',
+        latencyMs,
+        detail: sanitizeCredentials(rawDetail),
+        checkedAt,
+      };
+    }
+  }
+
   private buildMessage(body: Record<string, unknown>): DiscordMessage {
-    // Shape 1 – pre-built DiscordMessage nested under `message` key
     if (body.message && typeof body.message === 'object') {
       return body.message as DiscordMessage;
     }
 
-    // Shape 2 – top-level embeds array
     if (Array.isArray(body.embeds)) {
       return { embeds: body.embeds as DiscordMessage['embeds'] };
     }
 
-    // Shapes 3 & 4 – plain text
     const text =
       typeof body.content === 'string'
         ? body.content
@@ -146,7 +169,6 @@ export class DiscordNotificationProvider implements NotificationProvider {
     return { content: text };
   }
 
-  /** Expose deduplication / timeout metrics from the underlying service. */
   getMetrics() {
     return this.service.getMetrics();
   }
