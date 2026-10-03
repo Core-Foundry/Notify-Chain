@@ -46,7 +46,9 @@ jest.mock('../store/preference-store', () => ({
 // Stub out payload validation and event-name extraction so tests that pass
 // plain-object events don't need real XDR values.
 jest.mock('../utils/event-utils', () => ({
+  validateRpcResponse: jest.fn().mockReturnValue({ valid: true }),
   validateEventPayload: jest.fn().mockReturnValue({ valid: true }),
+  validateRpcResponse: jest.fn().mockReturnValue({ valid: true }),
   getEventName: jest.fn().mockReturnValue('TaskCreated'),
   matchesEventFilter: jest.fn().mockReturnValue(true),
 }));

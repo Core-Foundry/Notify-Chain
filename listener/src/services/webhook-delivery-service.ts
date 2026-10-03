@@ -33,6 +33,9 @@ export interface WebhookDeliveryResult {
   statusCode?: number;
   /** Human-readable failure reason for logging. */
   errorReason?: string;
+  providerMessageId?: string;
+  providerResponse?: Record<string, unknown>;
+  errorCode?: string;
 }
 
 export class WebhookDeliveryService {
@@ -73,6 +76,8 @@ export class WebhookDeliveryService {
     try {
       const response = await sendWebhook(targetUrl, payload, sendOpts);
       const durationMs = Date.now() - startMs;
+      const providerMessageId = response.headers.get('x-message-id') ?? undefined;
+      const providerResponse = { statusCode: response.status };
 
       if (response.ok) {
         logger.info('Webhook delivered successfully', {
@@ -80,7 +85,7 @@ export class WebhookDeliveryService {
           statusCode: response.status,
           durationMs,
         });
-        return { success: true, statusCode: response.status };
+        return { success: true, statusCode: response.status, providerMessageId, providerResponse };
       }
 
       // 5xx — transient server error, worth retrying
@@ -94,6 +99,9 @@ export class WebhookDeliveryService {
           success: false,
           statusCode: response.status,
           errorReason: `HTTP ${response.status}`,
+          errorCode: `HTTP_${response.status}`,
+          providerMessageId,
+          providerResponse,
         };
       }
 
@@ -107,6 +115,9 @@ export class WebhookDeliveryService {
         success: false,
         statusCode: response.status,
         errorReason: `HTTP ${response.status}`,
+        errorCode: `HTTP_${response.status}`,
+        providerMessageId,
+        providerResponse,
       };
     } catch (err) {
       const durationMs = Date.now() - startMs;
@@ -131,7 +142,13 @@ export class WebhookDeliveryService {
         });
       }
 
-      return { success: false, errorReason };
+          return { success: false, errorReason,
+            errorCode: isTimeout
+              ? 'TIMEOUT'
+              : typeof (err as NodeJS.ErrnoException)?.code === 'string'
+                ? (err as NodeJS.ErrnoException).code
+                : 'TRANSPORT_ERROR',
+          };
     }
   }
 }
