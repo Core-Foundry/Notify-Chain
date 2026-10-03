@@ -10,7 +10,12 @@ import {
   DeadLetterQueueEntry,
 } from '../types/scheduled-notification';
 import { hashPayload } from '../utils/payload-integrity';
-import { NotificationStatsCache, getStatsCache } from './notification-stats-cache';
+import {
+  NotificationStatsCache,
+  getStatsCache,
+  NotificationStats,
+  QueueOperationalMetrics,
+} from './notification-stats-cache';
 
 /**
  * Repository for scheduled notifications database operations
@@ -27,7 +32,9 @@ export class ScheduledNotificationRepository {
   }
 
   /**
-   * Create a new scheduled notification
+   * Create a new scheduled notification.
+   * If a deduplicationKey is provided and a notification with that key already
+   * exists, the existing notification's id is returned without creating a duplicate.
    */
   async create(input: CreateScheduledNotificationInput, requestId?: string): Promise<number> {
     const payloadJson = JSON.stringify(input.payload);
@@ -37,8 +44,8 @@ export class ScheduledNotificationRepository {
     const sql = `
       INSERT INTO scheduled_notifications (
         payload, payload_hash, notification_type, target_recipient, execute_at,
-        max_retries, event_id, contract_address, priority, metadata
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        max_retries, event_id, contract_address, priority, metadata, deduplication_key
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
 
     const serializedPayload = compressPayload(input.payload);
@@ -54,13 +61,25 @@ export class ScheduledNotificationRepository {
       input.contractAddress ?? null,
       input.priority ?? 5,
       input.metadata ? JSON.stringify(input.metadata) : null,
+      input.deduplicationKey ?? null,
     ];
 
+    try {
+      const result = await this.db.run(sql, params);
+
+      this.statsCache.invalidate();
+
+      logger.info('Scheduled notification created', {
+        requestId,
+        id: result.lastID,
+        executeAt: input.executeAt,
+        type: input.notificationType,
+      });
     const result = await this.db.run(sql, params);
-    
+
     // Invalidate stats cache after creation
     this.statsCache.invalidate();
-    
+
     logger.info('Scheduled notification created', {
       requestId,
       id: result.lastID,
@@ -68,7 +87,29 @@ export class ScheduledNotificationRepository {
       type: input.notificationType,
     });
 
-    return result.lastID;
+      return result.lastID;
+    } catch (err) {
+      if (
+        input.deduplicationKey &&
+        (err as any)?.message?.includes('UNIQUE constraint failed')
+      ) {
+        const existing = await this.db.get<{ id: number }>(
+          'SELECT id FROM scheduled_notifications WHERE deduplication_key = ?',
+          [input.deduplicationKey],
+        );
+
+        if (existing) {
+          logger.info('Duplicate notification skipped — deduplication key already exists', {
+            requestId,
+            deduplicationKey: input.deduplicationKey,
+            existingId: existing.id,
+          });
+          return existing.id;
+        }
+      }
+
+      throw err;
+    }
   }
 
   /**
@@ -79,7 +120,7 @@ export class ScheduledNotificationRepository {
     processorId: string,
     lockTimeoutMs: number,
     batchSize: number = 10,
-    requestId?: string
+    requestId?: string,
   ): Promise<ScheduledNotification[]> {
     const now = new Date();
     const lockExpiresAt = new Date(now.getTime() + lockTimeoutMs);
@@ -165,7 +206,7 @@ export class ScheduledNotificationRepository {
         const model = this.rowToModel(row);
         const newRetryCount = model.retryCount + 1;
         const isFailed = newRetryCount >= model.maxRetries;
-        const newStatus = isFailed ? NotificationStatus.FAILED : NotificationStatus.PENDING;
+        const newStatus = isFailed ? NotificationStatus.DEAD_LETTERED : NotificationStatus.PENDING;
 
         const updateSql = `
           UPDATE scheduled_notifications
@@ -202,7 +243,7 @@ export class ScheduledNotificationRepository {
           scheduledNotificationId: model.id!,
           executionAttempt: newRetryCount,
           executionTime: now,
-          status: isFailed ? 'FAILED' : 'RETRY',
+          status: isFailed ? 'DEAD_LETTERED' : 'RETRY',
           errorMessage: errorMsg,
         });
       }
@@ -231,12 +272,7 @@ export class ScheduledNotificationRepository {
     `;
 
     const now = new Date().toISOString();
-    await this.db.run(sql, [
-      NotificationStatus.COMPLETED,
-      now,
-      now,
-      id,
-    ]);
+    await this.db.run(sql, [NotificationStatus.COMPLETED, now, now, id]);
 
     // Invalidate stats cache after completion
     this.statsCache.invalidate();
@@ -252,11 +288,11 @@ export class ScheduledNotificationRepository {
     error: Error,
     currentRetryCount: number,
     maxRetries: number,
-    nextRetryAt?: Date
+    nextRetryAt?: Date,
   ): Promise<void> {
     const nextRetryCount = currentRetryCount + 1;
     const isFailed = nextRetryCount >= maxRetries;
-    const newStatus = isFailed ? NotificationStatus.FAILED : NotificationStatus.PENDING;
+    const newStatus = isFailed ? NotificationStatus.DEAD_LETTERED : NotificationStatus.PENDING;
     // When permanently failing, preserve currentRetryCount so the distribution
     // reflects actual retries performed (not an incremented-past-max value).
     const storedRetryCount = isFailed ? currentRetryCount : nextRetryCount;
@@ -316,7 +352,7 @@ export class ScheduledNotificationRepository {
     error: Error,
     errorDetails: string,
     retryCount: number,
-    requestId?: string
+    requestId?: string,
   ): Promise<boolean> {
     const notification = await this.getById(id);
     if (!notification) {
@@ -338,7 +374,9 @@ export class ScheduledNotificationRepository {
       id,
       notification.notificationType,
       notification.targetRecipient,
-      typeof notification.payload === 'string' ? notification.payload : JSON.stringify(notification.payload),
+      typeof notification.payload === 'string'
+        ? notification.payload
+        : JSON.stringify(notification.payload),
       error.message,
       errorDetails,
       retryCount,
@@ -391,7 +429,7 @@ export class ScheduledNotificationRepository {
   async retryDeadLetterNotification(id: number, requestId?: string): Promise<boolean> {
     const entry = await this.db.get<{ scheduled_notification_id: number }>(
       'SELECT scheduled_notification_id FROM dead_letter_queue WHERE id = ?',
-      [id]
+      [id],
     );
 
     if (!entry) {
@@ -405,16 +443,20 @@ export class ScheduledNotificationRepository {
           SET status = ?, next_retry_at = NULL, updated_at = ?, retry_count = 0, last_error = NULL, error_details = NULL
           WHERE id = ?
         `,
-        [NotificationStatus.PENDING, new Date().toISOString(), entry.scheduled_notification_id]
+        [NotificationStatus.PENDING, new Date().toISOString(), entry.scheduled_notification_id],
       );
 
       await this.db.run(
         `UPDATE dead_letter_queue SET last_retried_at = ?, retry_count = retry_count + 1 WHERE id = ?`,
-        [new Date().toISOString(), id]
+        [new Date().toISOString(), id],
       );
     });
 
-    logger.info('Dead-letter notification requeued', { requestId, id, notificationId: entry.scheduled_notification_id });
+    logger.info('Dead-letter notification requeued', {
+      requestId,
+      id,
+      notificationId: entry.scheduled_notification_id,
+    });
     return true;
   }
 
@@ -426,7 +468,7 @@ export class ScheduledNotificationRepository {
     processorId: string,
     lockTimeoutMs: number,
     batchSize: number = 10,
-    requestId?: string
+    requestId?: string,
   ): Promise<ScheduledNotification[]> {
     const now = new Date();
     const lockExpiresAt = new Date(now.getTime() + lockTimeoutMs);
@@ -489,22 +531,26 @@ export class ScheduledNotificationRepository {
   /**
    * Cancel a scheduled notification
    */
-  async cancel(id: number): Promise<boolean> {
+  async cancel(id: number, reason?: string): Promise<boolean> {
+    // Store cancellation reason inside error_details as JSON.
+    const errorDetails = reason ? JSON.stringify({ cancellationReason: reason }) : null;
+
     const sql = `
       UPDATE scheduled_notifications
-      SET status = ?, updated_at = ?
+      SET status = ?, updated_at = ?, error_details = ?
       WHERE id = ? AND status = ?
     `;
 
     const result = await this.db.run(sql, [
       NotificationStatus.CANCELLED,
       new Date().toISOString(),
+      errorDetails,
       id,
       NotificationStatus.PENDING,
     ]);
 
     if (result.changes > 0) {
-      logger.info('Notification cancelled', { id });
+      logger.info('Notification cancelled', { id, reason });
       return true;
     }
 
@@ -631,14 +677,7 @@ export class ScheduledNotificationRepository {
   /**
    * Get statistics about scheduled notifications
    */
-  async getStats(): Promise<{
-    pending: number;
-    processing: number;
-    completed: number;
-    failed: number;
-    overdue: number;
-    deadLetterQueue: number;
-  }> {
+  async getStats(): Promise<NotificationStats> {
     // Use cache with getOrLoad pattern
     return await this.statsCache.getOrLoad(async () => {
       const now = new Date().toISOString();
@@ -661,17 +700,45 @@ export class ScheduledNotificationRepository {
           AND execute_at < ?
       `;
 
-      const counts = await this.db.all<{ adjusted_status: string; count: number }>(countBySql, [now]);
+      const counts = await this.db.all<{ adjusted_status: string; count: number }>(countBySql, [
+        now,
+      ]);
       const overdueResult = await this.db.get<{ count: number }>(overdueSql, [now, now]);
-      const dlqResult = await this.db.get<{ count: number }>('SELECT COUNT(*) as count FROM dead_letter_queue');
+      const dlqResult = await this.db.get<{ count: number }>(
+        'SELECT COUNT(*) as count FROM dead_letter_queue',
+      );
 
-      const stats = {
+      let retryAttempts = 0;
+      try {
+        const retryResult = await this.db.get<{ log_retries: number; sn_retries: number }>(`
+          SELECT
+            COALESCE((SELECT COUNT(*) FROM notification_execution_log WHERE status = 'RETRY'), 0) as log_retries,
+            COALESCE((SELECT SUM(retry_count) FROM scheduled_notifications), 0) as sn_retries
+        `);
+        retryAttempts = Math.max(retryResult?.log_retries ?? 0, retryResult?.sn_retries ?? 0);
+      } catch {
+        try {
+          const snRetry = await this.db.get<{ sn_retries: number }>(
+            'SELECT COALESCE(SUM(retry_count), 0) as sn_retries FROM scheduled_notifications',
+          );
+          retryAttempts = snRetry?.sn_retries ?? 0;
+        } catch {
+          retryAttempts = 0;
+        }
+      }
+
+      const stats: NotificationStats = {
         pending: 0,
         processing: 0,
         completed: 0,
         failed: 0,
         overdue: overdueResult?.count ?? 0,
         deadLetterQueue: dlqResult?.count ?? 0,
+        pendingNotifications: 0,
+        processingNotifications: 0,
+        successfulDeliveries: 0,
+        failedDeliveries: 0,
+        retryAttempts,
       };
 
       counts.forEach((row) => {
@@ -681,8 +748,34 @@ export class ScheduledNotificationRepository {
         }
       });
 
+      stats.pendingNotifications = stats.pending;
+      stats.processingNotifications = stats.processing;
+      stats.successfulDeliveries = stats.completed;
+      stats.failedDeliveries = stats.failed;
+
       return stats;
     });
+  }
+
+  /**
+   * Get operational metrics for notification queue activity (#797).
+   */
+  async getQueueOperationalMetrics(): Promise<QueueOperationalMetrics> {
+    const stats = await this.getStats();
+    return {
+      pendingNotifications: stats.pendingNotifications ?? 0,
+      processingNotifications: stats.processingNotifications ?? 0,
+      successfulDeliveries: stats.successfulDeliveries ?? 0,
+      failedDeliveries: stats.failedDeliveries ?? 0,
+      retryAttempts: stats.retryAttempts ?? 0,
+    };
+  }
+
+  /**
+   * Get cached notification stats synchronously if present.
+   */
+  getStatsCached(): NotificationStats | undefined {
+    return this.statsCache.get();
   }
 
   /**
@@ -805,7 +898,8 @@ export class ScheduledNotificationRepository {
     // which prevents timezone-shifted timestamps in rowToModel output.
     const parseUtc = (value: string | null | undefined): Date | undefined => {
       if (!value) return undefined;
-      const normalized = value.includes('T') || value.endsWith('Z') ? value : value.replace(' ', 'T') + 'Z';
+      const normalized =
+        value.includes('T') || value.endsWith('Z') ? value : value.replace(' ', 'T') + 'Z';
       return new Date(normalized);
     };
 
@@ -827,11 +921,24 @@ export class ScheduledNotificationRepository {
       lockExpiresAt: parseUtc(row.lock_expires_at) ?? null,
       lastError: row.last_error,
       errorDetails: row.error_details,
+      // Parse cancellation reason from stored JSON, if present.
+      cancellationReason: (() => {
+        if (!row.error_details) return null;
+        try {
+          const parsed = JSON.parse(row.error_details);
+          return typeof parsed.cancellationReason === 'string'
+            ? parsed.cancellationReason
+            : null;
+        } catch {
+          return null;
+        }
+      })(),
       eventId: row.event_id,
       contractAddress: row.contract_address,
       priority: row.priority,
       metadata: row.metadata,
       nextRetryAt: row.next_retry_at ? new Date(row.next_retry_at) : null,
+      deduplicationKey: row.deduplication_key ?? null,
     };
   }
 }

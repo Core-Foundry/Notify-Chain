@@ -46,6 +46,7 @@ jest.mock('../store/event-registry', () => ({
 jest.mock('../utils/logger', () => ({
   __esModule: true,
   default: { info: jest.fn(), error: jest.fn(), warn: jest.fn() },
+  sanitizeUrl: jest.fn((url: string) => url),
 }));
 
 const mockStore = preferenceStore as jest.Mocked<typeof preferenceStore>;

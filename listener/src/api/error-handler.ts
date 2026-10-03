@@ -44,6 +44,10 @@ export class ApiError extends Error {
     return new ApiError(message, 413, ErrorCode.PAYLOAD_TOO_LARGE, details);
   }
 
+  static unsupportedMediaType(message: string, details?: unknown): ApiError {
+    return new ApiError(message, 415, ErrorCode.UNSUPPORTED_MEDIA_TYPE, details);
+  }
+
   static rateLimited(message: string): ApiError {
     return new ApiError(message, 429, ErrorCode.RATE_LIMITED);
   }
