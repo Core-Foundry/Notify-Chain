@@ -75,17 +75,6 @@ export class ScheduledNotificationRepository {
         executeAt: input.executeAt,
         type: input.notificationType,
       });
-    const result = await this.db.run(sql, params);
-
-    // Invalidate stats cache after creation
-    this.statsCache.invalidate();
-
-    logger.info('Scheduled notification created', {
-      requestId,
-      id: result.lastID,
-      executeAt: input.executeAt,
-      type: input.notificationType,
-    });
 
       return result.lastID;
     } catch (err) {

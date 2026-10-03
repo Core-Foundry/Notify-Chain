@@ -1,7 +1,31 @@
-import { Config, ContractConfig, DiscordConfig, WebhookSecret, AppCleanupConfig, EventQueueConfig, RetrySchedulerOptions, AnalyticsConfig, ExpirationConfig, ApiKey, BackfillConfig, LoggingConfig, ApiConfig, RpcRateLimitConfig } from './types';
+import {
+  Config,
+  ContractConfig,
+  DiscordConfig,
+  WebhookSecret,
+  AppCleanupConfig,
+  EventQueueConfig,
+  RetrySchedulerOptions,
+  RetryPolicyOptions,
+  AnalyticsConfig,
+  ExpirationConfig,
+  ApiKey,
+  BackfillConfig,
+  LoggingConfig,
+  ApiConfig,
+  RpcFallbackConfig,
+  RpcRateLimitConfig,
+} from './types';
+import { CircuitBreakerConfig } from './services/circuit-breaker';
 import { validateCorsOrigin, CorsValidationError } from './utils/cors-validator';
 import { validateSecrets } from './config/validate-secrets';
 import { ConfigurationSchemaValidator, APP_CONFIG_SCHEMA } from './config-schema';
+import {
+  DEFAULT_RETRYABLE_FAILURE_TYPES,
+  RETRY_FAILURE_TYPES,
+  RetryFailureType,
+  parseRetryableFailureTypes,
+} from './services/retry-policy';
 import {
   SUPPORTED_LOG_FORMATS,
   SUPPORTED_LOG_LEVELS,
@@ -355,6 +379,24 @@ function loadRpcRateLimitConfig(): RpcRateLimitConfig {
     maxRequestsPerSecond: parseIntegerEnv('RPC_RATE_LIMIT_MAX_REQUESTS_PER_SECOND', '10'),
     burstSize: parseIntegerEnv('RPC_RATE_LIMIT_BURST_SIZE', '20'),
     throttleDelayMs: parseIntegerEnv('RPC_RATE_LIMIT_THROTTLE_DELAY_MS', '1000'),
+  };
+}
+
+function loadRpcFallbackConfig(fallbackUrls: string[]): RpcFallbackConfig {
+  return {
+    fallbackUrls,
+    failureThreshold: parseIntegerEnv('RPC_FAILURE_THRESHOLD', '3'),
+    cooldownMs: parseIntegerEnv('RPC_COOLDOWN_MS', '60000'),
+    requestTimeoutMs: parseIntegerEnv('RPC_REQUEST_TIMEOUT_MS', '10000'),
+    maxRetries: parseOptionalIntegerEnv('RPC_MAX_RETRIES'),
+  };
+}
+
+function loadCircuitBreakerConfig(): CircuitBreakerConfig {
+  return {
+    failureThreshold: parseIntegerEnv('CIRCUIT_BREAKER_FAILURE_THRESHOLD', '5'),
+    recoveryTimeoutMs: parseIntegerEnv('CIRCUIT_BREAKER_RECOVERY_TIMEOUT_MS', '60000'),
+    successThreshold: parseIntegerEnv('CIRCUIT_BREAKER_SUCCESS_THRESHOLD', '2'),
   };
 }
 

@@ -143,6 +143,7 @@ export interface SchedulerConfig {
   lockTimeoutMs: number;
   processorId?: string;
   batchSize: number;
+  concurrency: number;
   timingBufferMs: number;
 }
 
@@ -277,4 +278,3 @@ export interface RpcRateLimitConfig {
   /** Delay in ms to apply when throttled (default: 1000). */
   throttleDelayMs: number;
 }
-
