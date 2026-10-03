@@ -17,7 +17,7 @@ function getCount(db: sqlite3.Database, sql: string): Promise<number> {
 
 function getRows(db: sqlite3.Database, sql: string): Promise<unknown[]> {
   return new Promise((resolve, reject) => {
-    db.all(sql, (error, rows) => (error ? reject(error) : resolve(rows));
+    db.all(sql, (error, rows) => (error ? reject(error) : resolve(rows)));
   });
 }
 
@@ -142,7 +142,8 @@ const migration = {
         contract_address TEXT,
         priority INTEGER NOT NULL DEFAULT 5 CHECK (priority BETWEEN 1 AND 10),
         metadata TEXT,
-        next_retry_at DATETIME
+        next_retry_at DATETIME,
+        deduplication_key TEXT
       )`,
     );
     await run(
@@ -151,11 +152,12 @@ const migration = {
         id, payload, payload_hash, notification_type, target_recipient, execute_at, expires_at,
         created_at, updated_at, status, retry_count, max_retries, processing_started_at,
         processing_completed_at, processor_id, lock_expires_at, last_error, error_details,
-        event_id, contract_address, priority, metadata, next_retry_at
+        event_id, contract_address, priority, metadata, next_retry_at, deduplication_key
       ) SELECT id, payload, payload_hash, notification_type, target_recipient, execute_at,
         ${notificationExpiresAt}, created_at, updated_at, status, retry_count, max_retries,
         processing_started_at, processing_completed_at, processor_id, lock_expires_at,
-        last_error, error_details, event_id, contract_address, priority, metadata, next_retry_at
+        last_error, error_details, event_id, contract_address, priority, metadata, next_retry_at,
+        deduplication_key
       FROM scheduled_notifications`,
     );
 
@@ -173,7 +175,10 @@ const migration = {
         FOREIGN KEY (scheduled_notification_id) REFERENCES scheduled_notifications_v005(id) ON DELETE CASCADE
       )`,
     );
-    await run(db, 'INSERT INTO notification_execution_log_v005 SELECT * FROM notification_execution_log');
+    await run(
+      db,
+      'INSERT INTO notification_execution_log_v005 SELECT * FROM notification_execution_log',
+    );
 
     await run(
       db,
@@ -253,7 +258,10 @@ const migration = {
     }
 
     await run(db, 'ALTER TABLE scheduled_notifications_v005 RENAME TO scheduled_notifications');
-    await run(db, 'ALTER TABLE notification_execution_log_v005 RENAME TO notification_execution_log');
+    await run(
+      db,
+      'ALTER TABLE notification_execution_log_v005 RENAME TO notification_execution_log',
+    );
     await run(db, 'ALTER TABLE dead_letter_queue_v005 RENAME TO dead_letter_queue');
     await run(db, 'ALTER TABLE idempotency_keys_v005 RENAME TO idempotency_keys');
     await run(db, 'ALTER TABLE notification_archive_v005 RENAME TO notification_archive');
@@ -305,7 +313,9 @@ const migration = {
     }
   },
   down: async () => {
-    throw new Error('Migration 005 cannot be safely rolled back; restore a database backup instead');
+    throw new Error(
+      'Migration 005 cannot be safely rolled back; restore a database backup instead',
+    );
   },
 };
 
