@@ -62,9 +62,10 @@ import { ResponseTimeMiddleware } from '../middleware/response-time';
 import { addSecurityHeaders } from '../middleware/security-headers';
 import { DEFAULT_MAX_BODY_BYTES, enforceBodyLimit } from '../middleware/body-limit';
 import { sanitizeUrl } from '../utils/logger';
-import { DeliveryReceiptRepository } from '../services/delivery-receipt-repository';
-import { DeliveryReceiptStatus } from '../types/delivery-receipt';
-import { API_KEY_AUTH_MESSAGES, authenticateApiKey } from './api-key-auth';
+import { sanitizeCredentials } from '../utils/credential-sanitizer';
+import { DiscordNotificationProvider } from '../services/providers/discord-provider';
+import { WebhookNotificationProvider } from '../services/providers/webhook-provider';
+import { ProviderHealthResult } from '../types/provider-capabilities';
 
 export interface EventsServerOptions {
   port: number;
