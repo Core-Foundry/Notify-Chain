@@ -72,6 +72,7 @@ export interface EventsServerOptions {
   corsOrigin?: string;
   isProduction?: boolean;
   stellarRpcUrl: string;
+  stellarNetwork?: string;
   stellarNetworkPassphrase?: string;
   contractAddresses?: ContractConfig[];
   discordWebhookUrl?: string;
@@ -146,6 +147,7 @@ interface HealthResponse {
   version: string;
   timestamp: string;
   uptimeSeconds: number;
+  network: string;
   services: {
     stellarRpc: ServiceHealth;
     discord: ServiceHealth;
@@ -421,6 +423,7 @@ async function buildHealthResponse(options: EventsServerOptions): Promise<Health
     version: APP_VERSION,
     timestamp: new Date().toISOString(),
     uptimeSeconds: process.uptime(),
+    network: options.stellarNetwork ?? 'unknown',
     services: {
       stellarRpc,
       discord,
