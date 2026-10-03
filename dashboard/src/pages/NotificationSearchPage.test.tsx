@@ -14,7 +14,9 @@ jest.mock('../services/eventsApi', () => ({
   searchNotifications: jest.fn(),
 }));
 jest.mock('../services/eventsApi', () => {
-  const actual = jest.requireActual('../services/eventsApi') as typeof import('../services/eventsApi');
+  const actual = jest.requireActual(
+    '../services/eventsApi',
+  ) as typeof import('../services/eventsApi');
   return {
     ...actual,
     searchNotifications: jest.fn(),
@@ -189,7 +191,7 @@ describe('NotificationSearchPage filters', () => {
 
   it('appends type, status, startDate, and endDate to the URL', async () => {
     const { searchNotifications: realSearch } = jest.requireActual(
-      '../services/eventsApi'
+      '../services/eventsApi',
     ) as typeof import('../services/eventsApi');
 
     await waitFor(() => {
@@ -197,9 +199,7 @@ describe('NotificationSearchPage filters', () => {
     });
   });
 
-    expect(global.fetch).toHaveBeenCalledWith(
-      expect.stringContaining('type=webhook')
-    );
+    expect(global.fetch).toHaveBeenCalledWith(expect.stringContaining('type=webhook'));
     const calledUrl = (global.fetch as jest.Mock).mock.calls[0][0] as string;
     expect(calledUrl).toContain('status=COMPLETED');
     expect(calledUrl).toContain('startDate=2026-01-01');
@@ -243,7 +243,7 @@ describe('NotificationSearchPage loading skeletons', () => {
       () =>
         new Promise((resolve) => {
           resolveSearch = resolve;
-        })
+        }),
     );
 
     render(<NotificationSearchPage />);

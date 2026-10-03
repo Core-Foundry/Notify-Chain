@@ -1,3 +1,17 @@
+import type { RetryFailureType } from '../services/retry-policy';
+import type { CircuitBreakerConfig } from '../services/circuit-breaker';
+import * as StellarSDK from '@stellar/stellar-sdk';
+
+export interface NotificationProvider {
+  sendEventNotification(
+    event: StellarSDK.rpc.Api.EventResponse,
+    contractConfig: ContractConfig,
+    requestId?: string
+  ): Promise<boolean>;
+
+  sendTestMessage(requestId?: string): Promise<boolean>;
+}
+
 export interface ContractConfig {
   address: string;
   events: string[];
@@ -43,6 +57,9 @@ export interface ApiKey {
 export interface Config {
   stellarNetwork: string;
   stellarRpcUrl: string;
+  stellarRpcFallbackUrls?: string[];
+  stellarRpcUrls?: string[];
+  rpcFallback?: RpcFallbackConfig;
   stellarNetworkPassphrase: string;
   contractAddresses: ContractConfig[];
   pollIntervalMs: number;
@@ -59,14 +76,47 @@ export interface Config {
   apiKeys?: ApiKey[];
   scheduler?: SchedulerConfig;
   retryScheduler?: RetrySchedulerOptions;
+  retryPolicy?: RetryPolicyOptions;
   databasePath?: string;
   rateLimit?: RateLimitConfig;
+  rpcRateLimit?: RpcRateLimitConfig;
   cleanup?: AppCleanupConfig;
   analytics?: AnalyticsConfig;
   expiration?: ExpirationConfig;
+  /** Default scheduled-notification lifetime in seconds; zero disables expiry. */
+  notificationDefaultTtlSeconds?: number;
   backfill?: BackfillConfig;
   logging?: LoggingConfig;
   api?: ApiConfig;
+  circuitBreaker?: CircuitBreakerConfig;
+}
+
+/** Configurable fallback RPC endpoint settings */
+export interface RpcFallbackConfig {
+  /** Array of fallback RPC URLs to try when primary fails */
+  fallbackUrls: string[];
+  /** Number of consecutive failures before marking endpoint unhealthy and failing over (default: 3) */
+  failureThreshold: number;
+  /** Cooldown duration in ms before attempting to reuse a failed endpoint (default: 60000) */
+  cooldownMs: number;
+  /** Timeout for RPC requests in milliseconds (default: 10000) */
+  requestTimeoutMs: number;
+  /** Maximum number of endpoint retries for a single operation across pool (default: pool size) */
+  maxRetries?: number;
+}
+
+/** Operational status metrics for an RPC endpoint */
+export interface RpcEndpointStatus {
+  url: string;
+  isPrimary: boolean;
+  status: 'healthy' | 'degraded' | 'unhealthy';
+  consecutiveFailures: number;
+  totalRequests: number;
+  totalSuccesses: number;
+  totalFailures: number;
+  lastFailureTime: number | null;
+  lastSuccessTime: number | null;
+  lastError: string | null;
 }
 
 /** Observability settings, sourced from LOG_LEVEL / LOG_FORMAT. */
@@ -96,6 +146,7 @@ export interface SchedulerConfig {
   lockTimeoutMs: number;
   processorId?: string;
   batchSize: number;
+  concurrency: number;
   timingBufferMs: number;
 }
 
@@ -111,8 +162,18 @@ export interface EventQueueConfig {
 }
 
 export interface AppCleanupConfig {
+  /** Whether scheduled database cleanup is enabled. */
+  enabled: boolean;
   /** How often to run cleanup jobs (ms). */
   intervalMs: number;
+  /** Global retention period for database cleanup (days). */
+  retentionDays: number;
+  /** Explicit legacy per-table overrides, when supplied. */
+  retentionOverridesMs?: {
+    processedEvents?: number;
+    executionLogs?: number;
+    rateLimitEvents?: number;
+  };
   /** Retain completed/failed/cancelled notifications for this long (ms). */
   notificationRetentionMs: number;
   /** Retain rate-limit audit rows for this long (ms). */
@@ -135,6 +196,39 @@ export interface RetrySchedulerOptions {
   multiplier: number;
   maxDelayMs: number;
   jitter: boolean;
+/**
+   * Timeout (ms) for outbound webhook requests (`WEBHOOK_TIMEOUT_MS`).
+   * Defaults to `DEFAULT_WEBHOOK_TIMEOUT_MS` (10 000 ms).
+   */
+  webhookTimeoutMs: number;
+  /**
+   * Retry-policy ceiling on total attempts. Mirrors `RetrySchedulerConfig`;
+   * `undefined` leaves each notification's own `maxRetries` in control.
+   */
+  maxAttempts?: number;
+  /** Failure types eligible for retry. Mirrors `RetrySchedulerConfig`. */
+  retryableFailureTypes?: RetryFailureType[];
+}
+
+/**
+ * Retry policy settings (#842).
+ *
+ * Controls the three knobs that decide whether a failed notification delivery
+ * is attempted again:
+ *   - `maxAttempts` — hard ceiling on total attempts. `undefined` leaves each
+ *     notification's own `max_retries` in control; `1` disables retries.
+ *   - `retryableFailureTypes` — the failure types eligible for retry. Anything
+ *     not listed fails on its first attempt.
+ *
+ * The delay curve reuses the existing `RETRY_BASE_DELAY_MS`,
+ * `RETRY_MULTIPLIER`, `RETRY_MAX_DELAY_MS` and `RETRY_JITTER` variables, which
+ * the retry scheduler and the in-memory retry queue already share.
+ */
+export interface RetryPolicyOptions {
+  /** Hard ceiling on delivery attempts; `undefined` means no ceiling. */
+  maxAttempts?: number;
+  /** Failure types eligible for retry. */
+  retryableFailureTypes: RetryFailureType[];
 }
 
 export interface AnalyticsConfig {
@@ -176,3 +270,17 @@ export interface BackfillConfig {
   maxLedgers: number;
 }
 
+/**
+ * Rate limiting configuration for RPC event ingestion to prevent
+ * excessive RPC requests and resource consumption.
+ */
+export interface RpcRateLimitConfig {
+  /** Whether RPC rate limiting is enabled (default: true). */
+  enabled: boolean;
+  /** Maximum RPC requests per second (default: 10). */
+  maxRequestsPerSecond: number;
+  /** Burst size - allows short bursts above the sustained rate (default: 20). */
+  burstSize: number;
+  /** Delay in ms to apply when throttled (default: 1000). */
+  throttleDelayMs: number;
+}
