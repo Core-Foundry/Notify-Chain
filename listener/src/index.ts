@@ -21,6 +21,8 @@ import {
   IndexingReconciliationEngine,
   createDefaultAlertSink,
 } from './services/indexing-reconciliation-engine';
+import { HistoricalBackfillService } from './services/historical-backfill-service';
+import { EventDeduplicationService } from './services/event-deduplication-service';
 import { initNotificationAnalyticsAggregator } from './services/notification-analytics-aggregator';
 import { NotificationMetricsStore } from './services/notification-metrics-store';
 import { NotificationMetricsRunner } from './services/notification-metrics-runner';
@@ -68,7 +70,11 @@ async function main() {
     logger.info('Initializing database');
     const db = await initializeDatabase(config.databasePath);
 
-    repository = new ScheduledNotificationRepository(db);
+    repository = new ScheduledNotificationRepository(
+      db,
+      undefined,
+      config.notificationDefaultTtlSeconds ?? 0,
+    );
     deliveryReceiptRepository = new DeliveryReceiptRepository(db);
     
 
@@ -165,6 +171,7 @@ async function main() {
     port: config.eventsApiPort,
     corsOrigin: config.eventsApiCorsOrigin,
     stellarRpcUrl: config.stellarRpcUrl,
+    stellarNetwork: config.stellarNetwork,
     stellarNetworkPassphrase: config.stellarNetworkPassphrase,
     contractAddresses: config.contractAddresses,
     discordWebhookUrl: config.discord?.webhookUrl,

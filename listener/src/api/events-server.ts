@@ -62,15 +62,17 @@ import { ResponseTimeMiddleware } from '../middleware/response-time';
 import { addSecurityHeaders } from '../middleware/security-headers';
 import { DEFAULT_MAX_BODY_BYTES, enforceBodyLimit } from '../middleware/body-limit';
 import { sanitizeUrl } from '../utils/logger';
-import { DeliveryReceiptRepository } from '../services/delivery-receipt-repository';
-import { DeliveryReceiptStatus } from '../types/delivery-receipt';
-import { API_KEY_AUTH_MESSAGES, authenticateApiKey } from './api-key-auth';
+import { sanitizeCredentials } from '../utils/credential-sanitizer';
+import { DiscordNotificationProvider } from '../services/providers/discord-provider';
+import { WebhookNotificationProvider } from '../services/providers/webhook-provider';
+import { ProviderHealthResult } from '../types/provider-capabilities';
 
 export interface EventsServerOptions {
   port: number;
   corsOrigin?: string;
   isProduction?: boolean;
   stellarRpcUrl: string;
+  stellarNetwork?: string;
   stellarNetworkPassphrase?: string;
   contractAddresses?: ContractConfig[];
   discordWebhookUrl?: string;
@@ -127,6 +129,8 @@ export interface EventsServerOptions {
    * are never parsed. Defaults to {@link DEFAULT_MAX_BODY_BYTES}.
    */
   maxBodyBytes?: number;
+  /** Optional DataExportService override for administrative exports (#850). */
+  dataExportService?: DataExportService | null;
 }
 
 type ServiceStatus = 'ok' | 'error' | 'not_configured';
@@ -143,6 +147,7 @@ interface HealthResponse {
   version: string;
   timestamp: string;
   uptimeSeconds: number;
+  network: string;
   services: {
     stellarRpc: ServiceHealth;
     discord: ServiceHealth;
@@ -418,6 +423,7 @@ async function buildHealthResponse(options: EventsServerOptions): Promise<Health
     version: APP_VERSION,
     timestamp: new Date().toISOString(),
     uptimeSeconds: process.uptime(),
+    network: options.stellarNetwork ?? 'unknown',
     services: {
       stellarRpc,
       discord,
@@ -1025,6 +1031,109 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
       return;
     }
 
+    // GET & POST /api/admin/export (and /api/export) — Data Export Utility (#850)
+    if (
+      (req.method === 'GET' || req.method === 'POST') &&
+      (url.pathname === '/api/admin/export' || url.pathname === '/api/export')
+    ) {
+      const apiKeyHeader = req.headers['x-api-key'];
+      if (options.apiKeys && options.apiKeys.length > 0) {
+        const provided = Array.isArray(apiKeyHeader) ? apiKeyHeader[0] : apiKeyHeader;
+        const allowed = options.apiKeys.some((k) => k.key === provided);
+        if (!allowed) {
+          sendErr(res, 401, 'Unauthorized', ErrorCode.UNAUTHORIZED);
+          return;
+        }
+      }
+
+      const processExport = async (rawFilters: Record<string, unknown>) => {
+        try {
+          const exportService =
+            options.dataExportService ?? new DataExportService(getDatabase());
+
+          const validation = validatePayload(rawFilters, Schemas.dataExport);
+          if (!validation.valid) {
+            sendErr(
+              res,
+              400,
+              `Validation failed: ${validation.issues[0]?.message}`,
+              ErrorCode.BAD_REQUEST,
+              validation.issues
+            );
+            return;
+          }
+
+          const type = (rawFilters.type as 'notifications' | 'events' | 'all') || 'all';
+          const format = (rawFilters.format as 'json' | 'csv') || 'json';
+          const includeSensitive =
+            rawFilters.includeSensitive === true || rawFilters.includeSensitive === 'true';
+
+          const limit = rawFilters.limit ? Number(rawFilters.limit) : undefined;
+          const offset = rawFilters.offset ? Number(rawFilters.offset) : undefined;
+
+          const result = await exportService.exportData({
+            type,
+            format,
+            includeSensitive,
+            notificationFilters: {
+              status: rawFilters.status as string | undefined,
+              notificationType: (rawFilters.channel || rawFilters.notificationType) as string | undefined,
+              targetRecipient: (rawFilters.recipient || rawFilters.targetRecipient) as string | undefined,
+              contractAddress: (rawFilters.contract || rawFilters.contractAddress) as string | undefined,
+              fromDate: (rawFilters.from || rawFilters.fromDate) as string | undefined,
+              toDate: (rawFilters.to || rawFilters.toDate) as string | undefined,
+              limit,
+              offset,
+            },
+            eventFilters: {
+              status: rawFilters.status as string | undefined,
+              eventType: rawFilters.eventType as string | undefined,
+              contractAddress: (rawFilters.contract || rawFilters.contractAddress) as string | undefined,
+              fromDate: (rawFilters.from || rawFilters.fromDate) as string | undefined,
+              toDate: (rawFilters.to || rawFilters.toDate) as string | undefined,
+              limit,
+              offset,
+            },
+          });
+
+          if (format === 'csv') {
+            res.writeHead(200, {
+              'Content-Type': 'text/csv',
+              'Content-Disposition': 'attachment; filename="notifychain-export.csv"',
+            });
+            res.end(result.csvContent || '');
+            return;
+          }
+
+          sendOk(res, 200, result);
+        } catch (error) {
+          logger.error('Failed to export data', { error, requestId, correlationId });
+          handleApiError(res, error, requestId, correlationId);
+        }
+      };
+
+      if (req.method === 'GET') {
+        const queryParams: Record<string, unknown> = {};
+        url.searchParams.forEach((val, key) => {
+          queryParams[key] = val;
+        });
+        await processExport(queryParams);
+        return;
+      } else {
+        let body = '';
+        req.on('data', (chunk) => { body += chunk.toString(); });
+        req.on('end', async () => {
+          try {
+            const bodyParams = body ? JSON.parse(body) : {};
+            await processExport(bodyParams);
+          } catch (jsonErr) {
+            sendErr(res, 400, 'Malformed JSON payload in request body', ErrorCode.PARSE_ERROR);
+          }
+        });
+        return;
+      }
+    }
+
     // POST /api/schedule
     if (req.method === 'POST' && url.pathname === '/api/schedule') {
       if (!options.notificationAPI) {
@@ -1083,6 +1192,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
               notificationType: data.notificationType || NotificationType.DISCORD,
               targetRecipient: data.targetRecipient,
               executeAt,
+              expiresAt: data.expiresAt,
               maxRetries: data.maxRetries,
               priority: data.priority,
               eventId: data.eventId,

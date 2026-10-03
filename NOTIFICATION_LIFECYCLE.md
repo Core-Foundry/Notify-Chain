@@ -310,7 +310,7 @@ Service-level callers can query through `DeliveryReceiptRepository` using
 
 ### 7. Archive / purge
 
-Terminal rows (`COMPLETED`, `FAILED`, `CANCELLED`) are later moved by
+Terminal rows (`COMPLETED`, `FAILED`, `CANCELLED`, `EXPIRED`) are later moved by
 `ArchiveService` into `notification_archive`, then optionally purged after
 retention. See [Completion and Archival](#completion-and-archival).
 
@@ -410,6 +410,26 @@ consumer acknowledgment.
 before returning failure to the caller.
 
 Details: [NOTIFICATION_FAILURE_RECOVERY.md](NOTIFICATION_FAILURE_RECOVERY.md).
+
+## Database Integrity Constraints
+
+The active SQLite schema rejects unknown notification types/statuses, event
+states, idempotency states, backpressure event types, and invalid counters or
+boolean values. Notification execution logs, dead-letter entries, and
+idempotency records reference their scheduled notification with `ON DELETE
+CASCADE`; template audit records reference their template with `ON DELETE
+RESTRICT`. Processed-event fingerprints, cursor contract addresses,
+idempotency keys, and dead-letter notification references retain their unique
+keys.
+
+Fresh databases receive these constraints from
+`listener/src/database/schema.sql`. Run `npm run migrate` to apply migration
+004 to an existing database. The migration audits legacy rows before rebuilding
+tables in a transaction. If it finds invalid state, an orphaned reference, or a
+duplicate unique key, it aborts and reports the affected table and row count;
+it never deletes or rewrites invalid data automatically. Repair the listed rows
+and rerun the migration. SQLite foreign-key checks are enabled on application
+database connections and verified by the migration runner.
 
 ---
 

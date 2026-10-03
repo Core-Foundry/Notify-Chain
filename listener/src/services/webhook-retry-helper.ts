@@ -16,7 +16,7 @@
  * returned to the caller immediately.
  */
 
-import { sendWebhook, WebhookSendOptions } from './webhook-sender';
+import { sendWebhook, WebhookSendOptions, WebhookFailureReason, isWebhookTimeoutError } from './webhook-sender';
 import { RetryFailureType, RetryPolicy, classifyError, classifyHttpStatus } from './retry-policy';
 
 /** Maximum number of retry attempts (not counting the initial attempt). */
@@ -43,31 +43,56 @@ const DEFAULT_RETRY_POLICY = new RetryPolicy({
 });
 
 /**
+ * Classify a webhook attempt as a specific failure reason, or `null` when it
+ * succeeded / did not fail.
+ *
+* A request timeout is reported as its own `'timeout'` reason rather than
+ * being folded into a generic network error, so retry logic and observability
+ * can treat (and count) the two separately.
+ *
+ * @param response - The HTTP response, if one was received
+ * @param error - The error thrown, if the request failed before/without a response
+ * @param policy - Policy deciding which failure types are retryable
+ * @returns the failure reason, or null when the attempt did not fail
+ */
+export function classifyWebhookFailure(
+  response?: Response,
+  error?: unknown
+): WebhookFailureReason | null {
+  // A thrown error means no HTTP response was available. Timeouts are their
+  // own reason; everything else is a network-level failure.
+  if (error) {
+    return isWebhookTimeoutError(error) ? 'timeout' : 'network';
+  }
+
+  if (!response || response.ok) {
+    return null;
+  }
+
+  // Permanent client errors are not worth retrying.
+  if (PERMANENT_CLIENT_ERRORS.has(response.status)) {
+    return 'http_permanent';
+  }
+
+  // Explicit retryable status codes, plus any other 5xx.
+  if (RETRYABLE_STATUS_CODES.has(response.status) || response.status >= 500) {
+    return 'http_retryable';
+  }
+
+  // Other status codes (e.g. redirects, unlisted 4xx) are non-retryable.
+  return 'http_permanent';
+}
+
+/**
  * Determines if an error or response should trigger a retry.
  *
  * @param response - The HTTP response, if available
  * @param error - The error thrown, if any
- * @param policy - Policy deciding which failure types are retryable
  * @returns true if the failure is retryable
  */
-export function isRetryable(
-  response?: Response,
-  error?: unknown,
-  policy: RetryPolicy = DEFAULT_RETRY_POLICY,
-): boolean {
-  // An explicit status code is the most precise signal available.
-  if (response) {
-    if (response.ok) {
-      return false;
-    }
-    return policy.isRetryable(classifyHttpStatus(response.status));
-  }
-
-  if (error !== undefined && error !== null) {
-    return policy.isRetryable(classifyError(error));
-  }
-
-  return false;
+function isRetryable(response?: Response, error?: unknown): boolean {
+  const reason = classifyWebhookFailure(response, error);
+  return reason === 'timeout' || reason === 'network' || reason === 'http_retryable';
 }
 
 /**

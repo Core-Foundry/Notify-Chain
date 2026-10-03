@@ -167,6 +167,7 @@ export class Database {
           }
           reject(err);
         } else {
+          this.db = handle;
           logger.info('Connected to SQLite database', { path: this.dbPath });
           // Wait (instead of failing with SQLITE_BUSY) when another connection
           // — e.g. a second listener instance on the same file — holds the
@@ -178,7 +179,6 @@ export class Database {
             if (pragmaErr) {
               reject(pragmaErr);
             } else {
-              this.db = handle;
               resolve();
             }
           });

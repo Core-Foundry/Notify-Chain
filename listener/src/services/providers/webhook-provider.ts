@@ -4,52 +4,23 @@ import {
   NotificationProvider,
   DeliveryPayload,
   DeliveryResult,
+  ProviderHealthResult,
 } from '../../types/provider-capabilities';
 import { sendWebhook, WebhookSendOptions } from '../webhook-sender';
+import { sanitizeCredentials } from '../../utils/credential-sanitizer';
 import logger from '../../utils/logger';
 
-/**
- * Optional configuration for the webhook provider.
- */
 export interface WebhookProviderConfig {
-  /** Request timeout in milliseconds (default: 5 000). */
   timeoutMs?: number;
-  /**
-   * Static headers added to every outgoing request.
-   * Useful for Authorization tokens, custom content-type overrides, etc.
-   */
   defaultHeaders?: Record<string, string>;
+  /** Optional health probe URL for diagnostic verification */
+  healthCheckUrl?: string;
 }
 
-/**
- * Capabilities declared by the generic HTTP Webhook provider.
- *
- * Generic webhooks are essentially plain JSON POSTs, so only a small
- * set of capabilities is meaningful:
- *
- * - ATTACHMENTS: callers can embed base64-encoded binary data in the JSON
- *   payload and the provider will forward it as-is.
- *
- * What webhooks do NOT support natively:
- * - RICH_FORMATTING — the receiving endpoint decides how to render the JSON;
- *   the provider itself imposes no formatting conventions.
- * - MESSAGE_UPDATES — HTTP POST semantics don't include editing sent messages.
- * - THREADING — no conversation model.
- * - INTERACTIVE_COMPONENTS — not applicable to generic HTTP.
- * - NATIVE_SCHEDULING — handled by the pipeline, not the endpoint.
- */
 const WEBHOOK_CAPABILITIES = new Set<ProviderCapability>([
   ProviderCapability.ATTACHMENTS,
 ]);
 
-/**
- * Generic HTTP Webhook notification provider.
- *
- * POSTs the notification payload as JSON to `DeliveryPayload.targetRecipient`
- * (the full URL). Any `requestedFeatures` that are not in
- * `WEBHOOK_CAPABILITIES` are silently skipped and reported back in
- * `DeliveryResult.degradedCapabilities`.
- */
 export class WebhookNotificationProvider implements NotificationProvider {
   readonly metadata: ProviderMetadata = {
     id: 'webhook',
@@ -58,12 +29,15 @@ export class WebhookNotificationProvider implements NotificationProvider {
     capabilities: WEBHOOK_CAPABILITIES,
   };
 
-  private readonly config: Required<WebhookProviderConfig>;
+  private readonly config: Required<Omit<WebhookProviderConfig, 'healthCheckUrl'>> & {
+    healthCheckUrl?: string;
+  };
 
   constructor(config: WebhookProviderConfig = {}) {
     this.config = {
       timeoutMs: config.timeoutMs ?? 5_000,
       defaultHeaders: config.defaultHeaders ?? {},
+      healthCheckUrl: config.healthCheckUrl,
     };
   }
 
@@ -74,7 +48,6 @@ export class WebhookNotificationProvider implements NotificationProvider {
   async deliver(payload: DeliveryPayload): Promise<DeliveryResult> {
     const { payload: body, targetRecipient, requestedFeatures, requestId } = payload;
 
-    // Collect features that were requested but are not supported.
     const degradedCapabilities: ProviderCapability[] = [];
     if (requestedFeatures) {
       for (const feature of requestedFeatures) {
@@ -101,27 +74,90 @@ export class WebhookNotificationProvider implements NotificationProvider {
         const errorText = await response.text().catch(() => '');
         logger.warn('Webhook provider: endpoint responded with non-OK status', {
           requestId,
-          targetRecipient,
+          targetRecipient: sanitizeCredentials(targetRecipient),
           status: response.status,
-          body: errorText,
+          body: sanitizeCredentials(errorText),
         });
         return {
           success: false,
           degradedCapabilities,
-          errorMessage: `HTTP ${response.status}: ${errorText}`,
+          errorMessage: `HTTP ${response.status}: ${sanitizeCredentials(errorText)}`,
         };
       }
 
-      logger.info('Webhook provider: payload delivered', { requestId, targetRecipient });
+      logger.info('Webhook provider: payload delivered', {
+        requestId,
+        targetRecipient: sanitizeCredentials(targetRecipient),
+      });
       return { success: true, degradedCapabilities };
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
+      const sanitized = sanitizeCredentials(errorMessage);
       logger.error('Webhook provider: delivery error', {
         requestId,
-        targetRecipient,
-        error: errorMessage,
+        targetRecipient: sanitizeCredentials(targetRecipient),
+        error: sanitized,
       });
-      return { success: false, degradedCapabilities, errorMessage };
+      return { success: false, degradedCapabilities, errorMessage: sanitized };
+    }
+  }
+
+  /**
+   * Independently checks Webhook provider reachability.
+   * Redacts any credential or token from failure reports.
+   */
+  async checkHealth(targetRecipient?: string): Promise<ProviderHealthResult> {
+    const url = targetRecipient || this.config.healthCheckUrl;
+    const checkedAt = new Date().toISOString();
+
+    if (!url) {
+      return {
+        providerId: this.metadata.id,
+        providerName: this.metadata.name,
+        status: 'not_configured',
+        detail: 'No destination or health probe URL configured',
+        checkedAt,
+      };
+    }
+
+    const start = Date.now();
+    try {
+      const response = await fetch(url, {
+        method: 'HEAD',
+        headers: this.config.defaultHeaders,
+      });
+      const latencyMs = Date.now() - start;
+
+      if (response.ok || response.status === 405) {
+        // 2xx or 405 (Method Not Allowed for HEAD) proves endpoint is alive
+        return {
+          providerId: this.metadata.id,
+          providerName: this.metadata.name,
+          status: 'ok',
+          latencyMs,
+          checkedAt,
+        };
+      }
+
+      return {
+        providerId: this.metadata.id,
+        providerName: this.metadata.name,
+        status: 'error',
+        latencyMs,
+        detail: `HTTP ${response.status}`,
+        checkedAt,
+      };
+    } catch (err: any) {
+      const latencyMs = Date.now() - start;
+      const rawDetail = err instanceof Error ? err.message : String(err);
+      return {
+        providerId: this.metadata.id,
+        providerName: this.metadata.name,
+        status: 'error',
+        latencyMs,
+        detail: sanitizeCredentials(rawDetail),
+        checkedAt,
+      };
     }
   }
 }

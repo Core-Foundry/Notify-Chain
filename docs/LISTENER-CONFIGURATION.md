@@ -222,6 +222,16 @@ Also used by the DB-backed retry scheduler for `baseDelayMs` / `multiplier` / `j
 | `RETRY_SCHEDULER_BATCH_SIZE` | integer | `10` | No (defaulted) | Jobs per tick |
 | `RETRY_MAX_DELAY_MS` | integer (ms) | `3600000` (1h) | No (defaulted) | Max backoff clamp for retry scheduler |
 
+### Outbound webhook requests
+
+| Name | Type | Default | Required | Purpose / effect |
+|------|------|---------|----------|------------------|
+| `WEBHOOK_TIMEOUT_MS` | integer (ms) | `10000` | No (defaulted) | Timeout for outbound webhook POSTs, applied independently of other network operations |
+
+`WEBHOOK_TIMEOUT_MS` is validated at startup: non-numeric values abort startup with a `ConfigError`, and values below `1` or above `300000` (5 minutes) are rejected. When a webhook does not respond within the configured timeout the request is aborted and recorded as a distinct **timeout** failure (rather than a generic network or HTTP error), so it is visible separately in logs and retry handling.
+
+**Recommended (guidance):** leave the `10000` ms default for typical endpoints; lower it when the receiver is expected to be fast and you want to fail over sooner, and raise it (up to `300000`) only for endpoints with a known long processing time.
+
 ### Scheduled notification scheduler
 
 | Name | Type | Default | Required | Purpose / effect |

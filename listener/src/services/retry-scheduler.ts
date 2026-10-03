@@ -4,7 +4,7 @@ import { generateRequestId } from '../utils/request-id';
 import { ScheduledNotificationRepository } from './scheduled-notification-repository';
 import { ScheduledNotification, NotificationStatus } from '../types/scheduled-notification';
 import { DiscordNotificationService } from './discord-notification';
-import { WebhookDeliveryService } from './webhook-delivery-service';
+import { WebhookDeliveryService, DEFAULT_WEBHOOK_TIMEOUT_MS } from './webhook-delivery-service';
 import { getWorkerManager } from './worker-manager';
 import { DeliveryReceiptRepository } from './delivery-receipt-repository';
 import { DeliveryResult } from '../types/provider-capabilities';
@@ -16,6 +16,7 @@ import {
   classifyError,
   classifyHttpStatus,
 } from './retry-policy';
+import { startClaimLease } from './notification-claim-lease';
 
 export interface RetrySchedulerConfig {
   /** Whether the scheduler is enabled. */
@@ -36,7 +37,10 @@ export interface RetrySchedulerConfig {
   maxDelayMs: number;
   /** Add ±25 % random jitter to prevent thundering herd. Default: true. */
   jitter: boolean;
-  /** Request timeout for outbound webhook delivery (ms). Default: 10 000. */
+/**
+   * Timeout (ms) applied to outbound webhook requests (`WEBHOOK_TIMEOUT_MS`).
+   * Default: DEFAULT_WEBHOOK_TIMEOUT_MS.
+   */
   webhookTimeoutMs: number;
   /**
    * Hard ceiling on total delivery attempts, including the first one.
@@ -69,7 +73,7 @@ export const RETRY_SCHEDULER_DEFAULTS: Readonly<Omit<RetrySchedulerConfig, 'back
   multiplier: 2,
   maxDelayMs: 60 * 60 * 1_000,
   jitter: true,
-  webhookTimeoutMs: 10_000,
+webhookTimeoutMs: DEFAULT_WEBHOOK_TIMEOUT_MS,
 };
 
 /**
@@ -136,9 +140,9 @@ export class RetryScheduler {
     this.processorId = this.config.processorId ?? `retry-${uuidv4()}`;
     this.repository = repository;
     this.discordService = discordService ?? null;
-    this.webhookDeliveryService =
-      webhookDeliveryService ?? new WebhookDeliveryService({ timeoutMs: this.config.webhookTimeoutMs });
-    this.webhookDeliveryService = webhookDeliveryService ?? new WebhookDeliveryService();
+this.webhookDeliveryService =
+      webhookDeliveryService ??
+      new WebhookDeliveryService({ timeoutMs: this.config.webhookTimeoutMs });
     this.deliveryReceiptRepository = deliveryReceiptRepository;
   }
 
@@ -255,9 +259,27 @@ export class RetryScheduler {
           continue;
         }
 
+        const lease = startClaimLease({
+          repository: this.repository,
+          notificationId: notification.id!,
+          processorId: this.processorId,
+          lockTimeoutMs: this.config.lockTimeoutMs,
+          onLeaseLost: (id) => {
+            logger.warn('Retry claim lease was lost before delivery finished', {
+              requestId,
+              id,
+              processorId: this.processorId,
+            });
+          },
+          onRenewalError: (id, error) => {
+            logger.warn('Failed to renew retry claim lease', { requestId, id, error });
+          },
+        });
+
         try {
           await this.processRetry(notification, requestId);
         } finally {
+          await lease?.stop();
           workerManager.completeJob(jobId);
         }
       }
@@ -274,6 +296,24 @@ export class RetryScheduler {
     const executionAttempt = priorFailures + 1;
     const startMs = Date.now();
     let receiptRecorded = false;
+
+    if (notification.expiresAt && notification.expiresAt.getTime() <= startMs) {
+      const errorMessage = 'Notification expired before delivery';
+      await this.repository.markAsExpired(notification.id!);
+      await this.repository.logExecution({
+        scheduledNotificationId: notification.id!,
+        executionAttempt,
+        executionTime: new Date(startMs),
+        status: 'FAILED',
+        errorMessage,
+        durationMs: 0,
+      });
+      logger.info('Expired retry skipped before delivery', {
+        requestId,
+        id: notification.id,
+      });
+      return;
+    }
 
     logger.info('Retrying notification', {
       requestId,
@@ -322,20 +362,6 @@ export class RetryScheduler {
           });
         });
       }
-      const isFinalAttempt = priorFailures + 1 >= notification.maxRetries;
-
-      const nextRetryAt = isFinalAttempt
-        ? undefined
-        : new Date(
-            Date.now() +
-              calculateBackoffDelay(
-                priorFailures,
-                this.config.baseDelayMs,
-                this.config.multiplier,
-                this.config.maxDelayMs,
-                this.config.jitter
-              )
-          );
       const failureType = classifyError(err);
 
       const decision = this.policy.evaluate(
@@ -420,17 +446,6 @@ export class RetryScheduler {
           ),
           degradedCapabilities: [],
         };
-        if (!this.discordService) {
-          throw new DeliveryError(
-            'Discord service not configured',
-            RetryFailureType.ConfigurationError,
-          );
-        }
-        return this.discordService.sendEventNotification(
-          payload.event,
-          payload.contractConfig,
-          `retry-${notification.id}-${requestId}`
-        );
 
       case 'webhook': {
         const targetUrl: string = notification.targetRecipient;
@@ -445,6 +460,14 @@ export class RetryScheduler {
           payload,
           `retry-${notification.id}-${requestId}`,
         );
+        if (!result.success) {
+          const failureType = classifyHttpStatus(result.statusCode);
+          throw new DeliveryError(
+            result.errorReason ?? `Webhook delivery failed (HTTP ${result.statusCode ?? 'unknown'})`,
+            failureType,
+            { statusCode: result.statusCode },
+          );
+        }
         return {
           success: result.success,
           degradedCapabilities: [],
@@ -454,18 +477,6 @@ export class RetryScheduler {
           errorCode: result.errorCode,
           errorMessage: result.errorReason,
         };
-        if (!result.success) {
-          // Surface the specific reason so it lands in markAsFailedOrRetry's
-          // error details, and tag it with a failure type so the retry policy
-          // can tell permanent rejections (4xx) from transient ones (5xx).
-          const failureType = classifyHttpStatus(result.statusCode);
-          throw new DeliveryError(
-            result.errorReason ?? `Webhook delivery failed (HTTP ${result.statusCode ?? 'unknown'})`,
-            failureType,
-            { statusCode: result.statusCode },
-          );
-        }
-        return true;
       }
 
       default:

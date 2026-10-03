@@ -27,6 +27,7 @@ export class ScheduledNotificationRepository {
   constructor(
     private db: Database,
     statsCache?: NotificationStatsCache,
+    private defaultTtlSeconds: number = 0,
   ) {
     this.statsCache = statsCache ?? getStatsCache();
   }
@@ -40,12 +41,15 @@ export class ScheduledNotificationRepository {
     const payloadJson = JSON.stringify(input.payload);
     const secret = process.env.PAYLOAD_INTEGRITY_SECRET;
     const payloadHash = secret ? hashPayload(payloadJson, secret) : null;
+    const now = new Date().toISOString();
 
     const sql = `
       INSERT INTO scheduled_notifications (
-        payload, payload_hash, notification_type, target_recipient, execute_at,
-        max_retries, event_id, contract_address, priority, metadata, deduplication_key
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        payload, payload_hash, notification_type, target_recipient, execute_at, expires_at,
+        created_at, updated_at, status, retry_count, max_retries, processing_started_at,
+        processing_completed_at, processor_id, lock_expires_at, last_error, error_details,
+        event_id, contract_address, priority, metadata, next_retry_at, deduplication_key
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
 
     const serializedPayload = compressPayload(input.payload);
@@ -56,11 +60,29 @@ export class ScheduledNotificationRepository {
       input.notificationType,
       input.targetRecipient,
       input.executeAt.toISOString(),
+      input.expiresAt !== undefined
+        ? input.expiresAt === null
+          ? null
+          : this.normalizeExpiration(input.expiresAt)
+        : this.defaultTtlSeconds > 0
+          ? new Date(Date.now() + this.defaultTtlSeconds * 1000).toISOString()
+          : null,
+      now,
+      now,
+      NotificationStatus.PENDING,
+      0,
       input.maxRetries ?? 3,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
       input.eventId ?? null,
       input.contractAddress ?? null,
       input.priority ?? 5,
       input.metadata ? JSON.stringify(input.metadata) : null,
+      null,
       input.deduplicationKey ?? null,
     ];
 
@@ -75,17 +97,6 @@ export class ScheduledNotificationRepository {
         executeAt: input.executeAt,
         type: input.notificationType,
       });
-    const result = await this.db.run(sql, params);
-
-    // Invalidate stats cache after creation
-    this.statsCache.invalidate();
-
-    logger.info('Scheduled notification created', {
-      requestId,
-      id: result.lastID,
-      executeAt: input.executeAt,
-      type: input.notificationType,
-    });
 
       return result.lastID;
     } catch (err) {
@@ -112,9 +123,32 @@ export class ScheduledNotificationRepository {
     }
   }
 
+  private normalizeExpiration(value: Date | string | number): string {
+    const milliseconds =
+      typeof value === 'number' && Math.abs(value) < 100_000_000_000
+        ? value * 1000
+        : value instanceof Date
+          ? value.getTime()
+          : typeof value === 'number'
+            ? value
+            : Date.parse(value);
+    const date = new Date(milliseconds);
+    if (Number.isNaN(date.getTime())) {
+      throw new Error('expiresAt must be a valid ISO-8601 timestamp or epoch');
+    }
+    return date.toISOString();
+  }
+
   /**
-   * Fetch pending notifications due for execution with distributed locking
-   * Uses atomic update to prevent race conditions
+   * Dequeue pending notifications due for execution with distributed locking.
+   * Uses a single atomic UPDATE ... WHERE id IN (SELECT ...) so two workers
+   * polling at the same time can never claim the same row.
+   *
+   * A job whose `next_retry_at` is still in the future is deliberately skipped:
+   * it is waiting out its exponential backoff and is claimed by the retry path
+   * (`fetchDueRetries`) once that window has elapsed. Claiming it here would
+   * discard the persisted backoff state and let the main scheduler race the
+   * retry scheduler for the same row.
    */
   async fetchAndLockPendingNotifications(
     processorId: string,
@@ -137,6 +171,7 @@ export class ScheduledNotificationRepository {
         SELECT id FROM scheduled_notifications
         WHERE status = ?
           AND execute_at <= ?
+          AND (next_retry_at IS NULL OR next_retry_at <= ?)
         ORDER BY priority ASC, execute_at ASC
         LIMIT ?
       )
@@ -148,6 +183,7 @@ export class ScheduledNotificationRepository {
       lockExpiresAt.toISOString(),
       now.toISOString(),
       NotificationStatus.PENDING,
+      now.toISOString(),
       now.toISOString(),
       batchSize,
     ];
@@ -177,6 +213,50 @@ export class ScheduledNotificationRepository {
     });
 
     return rows.map(this.rowToModel);
+  }
+
+  /**
+   * Renew the claim lease on an in-flight notification (heartbeat).
+   *
+   * Extends `lock_expires_at` only while this processor still owns the row, so a
+   * worker that lost its claim can never take it back. Returns false when the
+   * lease is no longer held — the job has already reached a terminal state, was
+   * recovered by `recoverStaleLocks`, or was claimed by another worker.
+   *
+   * Without this heartbeat a delivery that outlives `lockTimeoutMs` is reset to
+   * PENDING by the next `recoverStaleLocks` poll (both schedulers call it) while
+   * the original worker is still sending, which is exactly how one job gets
+   * processed by two workers at once.
+   */
+  async renewLock(
+    id: number,
+    processorId: string,
+    lockTimeoutMs: number,
+    requestId?: string
+  ): Promise<boolean> {
+    const lockExpiresAt = new Date(Date.now() + lockTimeoutMs).toISOString();
+
+    const result = await this.db.run(
+      `
+        UPDATE scheduled_notifications
+        SET lock_expires_at = ?
+        WHERE id = ? AND processor_id = ? AND status = ?
+      `,
+      [lockExpiresAt, id, processorId, NotificationStatus.PROCESSING]
+    );
+
+    const renewed = result.changes > 0;
+
+    if (renewed) {
+      logger.debug('Renewed notification claim lease', {
+        requestId,
+        id,
+        processorId,
+        lockExpiresAt,
+      });
+    }
+
+    return renewed;
   }
 
   /**
@@ -278,6 +358,28 @@ export class ScheduledNotificationRepository {
     this.statsCache.invalidate();
 
     logger.info('Notification marked as completed', { requestId, id });
+  }
+
+  /** Mark a notification expired and release its processing lock. */
+  async markAsExpired(id: number): Promise<void> {
+    const now = new Date().toISOString();
+    const errorMessage = 'Notification expired before delivery';
+    await this.db.run(
+      `UPDATE scheduled_notifications
+       SET status = ?, last_error = ?, error_details = ?, processing_completed_at = ?,
+           updated_at = ?, processor_id = NULL, lock_expires_at = NULL, next_retry_at = NULL
+       WHERE id = ? AND status = ?`,
+      [
+        NotificationStatus.EXPIRED,
+        errorMessage,
+        JSON.stringify({ message: errorMessage, timestamp: now }),
+        now,
+        now,
+        id,
+        NotificationStatus.PROCESSING,
+      ],
+    );
+    this.statsCache.invalidate();
   }
 
   /**
@@ -587,14 +689,16 @@ export class ScheduledNotificationRepository {
 
     const sql = `
       DELETE FROM scheduled_notifications
-      WHERE status IN (?, ?, ?)
+      WHERE status IN (?, ?, ?, ?, ?)
         AND updated_at < ?
     `;
 
     const result = await this.db.run(sql, [
       NotificationStatus.COMPLETED,
       NotificationStatus.FAILED,
+      NotificationStatus.DEAD_LETTERED,
       NotificationStatus.CANCELLED,
+      NotificationStatus.EXPIRED,
       cutoff.toISOString(),
     ]);
 
@@ -910,6 +1014,7 @@ export class ScheduledNotificationRepository {
       notificationType: row.notification_type as any,
       targetRecipient: row.target_recipient,
       executeAt: parseUtc(row.execute_at) as Date,
+      expiresAt: parseUtc(row.expires_at) ?? null,
       createdAt: parseUtc(row.created_at),
       updatedAt: parseUtc(row.updated_at),
       status: row.status as NotificationStatus,
