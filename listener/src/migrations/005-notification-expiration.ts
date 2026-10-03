@@ -37,7 +37,7 @@ async function auditLegacyRows(db: sqlite3.Database): Promise<void> {
       sql: `SELECT COUNT(*) AS count FROM scheduled_notifications
         WHERE payload IS NULL OR notification_type NOT IN ('discord', 'email', 'webhook', 'sms')
           OR target_recipient IS NULL OR execute_at IS NULL
-          OR status NOT IN ('PENDING', 'PROCESSING', 'COMPLETED', 'FAILED', 'CANCELLED', 'EXPIRED')
+          OR status NOT IN ('PENDING', 'PROCESSING', 'COMPLETED', 'FAILED', 'CANCELLED', 'EXPIRED', 'DEAD_LETTERED')
           OR retry_count < 0 OR max_retries < 0 OR priority NOT BETWEEN 1 AND 10`,
     },
     {
@@ -78,7 +78,7 @@ async function auditLegacyRows(db: sqlite3.Database): Promise<void> {
         WHERE original_id IS NULL OR payload IS NULL
           OR notification_type NOT IN ('discord', 'email', 'webhook', 'sms')
           OR target_recipient IS NULL OR execute_at IS NULL OR created_at IS NULL
-          OR status NOT IN ('COMPLETED', 'FAILED', 'CANCELLED', 'EXPIRED')
+          OR status NOT IN ('COMPLETED', 'FAILED', 'CANCELLED', 'EXPIRED', 'DEAD_LETTERED')
           OR retry_count < 0 OR archived_at IS NULL`,
     },
   ];
@@ -226,7 +226,7 @@ const migration = {
         expires_at DATETIME,
         created_at DATETIME NOT NULL,
         processing_completed_at DATETIME,
-        status VARCHAR(20) NOT NULL CHECK (status IN ('COMPLETED', 'FAILED', 'CANCELLED', 'EXPIRED')),
+        status VARCHAR(20) NOT NULL CHECK (status IN ('COMPLETED', 'FAILED', 'CANCELLED', 'EXPIRED', 'DEAD_LETTERED')),
         retry_count INTEGER NOT NULL DEFAULT 0 CHECK (retry_count >= 0),
         last_error TEXT,
         event_id TEXT,

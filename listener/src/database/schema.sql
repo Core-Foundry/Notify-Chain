@@ -18,7 +18,7 @@ CREATE TABLE IF NOT EXISTS scheduled_notifications (
   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   
   -- Status tracking
-  status VARCHAR(20) NOT NULL DEFAULT 'PENDING' CHECK (status IN ('PENDING', 'PROCESSING', 'COMPLETED', 'FAILED', 'DEAD_LETTERED', 'CANCELLED', 'EXPIRED')),
+  status VARCHAR(20) NOT NULL DEFAULT 'PENDING' CHECK (status IN ('PENDING', 'PROCESSING', 'COMPLETED', 'FAILED', 'CANCELLED', 'EXPIRED', 'DEAD_LETTERED')),
   retry_count INTEGER NOT NULL DEFAULT 0 CHECK (retry_count >= 0),
   max_retries INTEGER NOT NULL DEFAULT 3 CHECK (max_retries >= 0),
   
@@ -372,7 +372,7 @@ CREATE TABLE IF NOT EXISTS notification_archive (
   expires_at DATETIME,
   created_at DATETIME NOT NULL,
   processing_completed_at DATETIME,
-  status VARCHAR(20) NOT NULL CHECK (status IN ('COMPLETED', 'FAILED', 'CANCELLED', 'EXPIRED')),
+  status VARCHAR(20) NOT NULL CHECK (status IN ('COMPLETED', 'FAILED', 'CANCELLED', 'EXPIRED', 'DEAD_LETTERED')),
   retry_count INTEGER NOT NULL DEFAULT 0 CHECK (retry_count >= 0),
   last_error TEXT,
   event_id TEXT,
@@ -454,4 +454,3 @@ CREATE INDEX IF NOT EXISTS idx_scheduled_notifications_type_lower_created
 -- Processed-event search: case-insensitive type filter + processed_at sort
 CREATE INDEX IF NOT EXISTS idx_processed_events_type_lower_processed
   ON processed_events(LOWER(event_type), processed_at);
-

@@ -252,6 +252,17 @@ describe('migration 004 database data integrity', () => {
         VALUES ('{}', 'discord', 'user-2', '2026-01-01', 'UNKNOWN')`,
       ),
     ).rejects.toThrow(/CHECK constraint failed/);
+    await run(
+      db,
+      `INSERT INTO scheduled_notifications (payload, notification_type, target_recipient, execute_at, status)
+       VALUES ('{}', 'discord', 'user-dead-lettered', '2026-01-01', 'DEAD_LETTERED')`,
+    );
+    await run(
+      db,
+      `INSERT INTO notification_archive
+       (original_id, payload, notification_type, target_recipient, execute_at, created_at, status)
+       VALUES (2, '{}', 'discord', 'user-archive-dead-lettered', '2026-01-01', '2026-01-01', 'DEAD_LETTERED')`,
+    );
     await expect(
       run(
         db,
@@ -285,6 +296,12 @@ describe('migration 004 database data integrity', () => {
     try {
       const pragma = await freshDb.get<{ foreign_keys: number }>('PRAGMA foreign_keys');
       expect(pragma?.foreign_keys).toBe(1);
+      await freshDb.run(`INSERT INTO scheduled_notifications
+        (payload, notification_type, target_recipient, execute_at, status)
+        VALUES ('{}', 'discord', 'user-dead-lettered', '2026-01-01', 'DEAD_LETTERED')`);
+      await freshDb.run(`INSERT INTO notification_archive
+        (original_id, payload, notification_type, target_recipient, execute_at, created_at, status)
+        VALUES (1, '{}', 'discord', 'user-archive-dead-lettered', '2026-01-01', '2026-01-01', 'DEAD_LETTERED')`);
       await expect(
         freshDb.run(`INSERT INTO scheduled_notifications
           (payload, notification_type, target_recipient, execute_at, status)

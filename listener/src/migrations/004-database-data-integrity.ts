@@ -165,7 +165,7 @@ const tables = [
       execute_at DATETIME NOT NULL,
       created_at DATETIME NOT NULL,
       processing_completed_at DATETIME,
-      status VARCHAR(20) NOT NULL CHECK (status IN ('COMPLETED', 'FAILED', 'CANCELLED')),
+      status VARCHAR(20) NOT NULL CHECK (status IN ('COMPLETED', 'FAILED', 'CANCELLED', 'DEAD_LETTERED')),
       retry_count INTEGER NOT NULL DEFAULT 0 CHECK (retry_count >= 0),
       last_error TEXT,
       event_id TEXT,
@@ -182,7 +182,7 @@ const audits: Array<{ table: string; sql: string }> = [
     sql: `SELECT COUNT(*) AS count FROM scheduled_notifications
       WHERE payload IS NULL OR notification_type IS NULL OR notification_type NOT IN ('discord', 'email', 'webhook', 'sms')
         OR target_recipient IS NULL OR execute_at IS NULL
-        OR status IS NULL OR status NOT IN ('PENDING', 'PROCESSING', 'COMPLETED', 'FAILED', 'CANCELLED')
+        OR status IS NULL OR status NOT IN ('PENDING', 'PROCESSING', 'COMPLETED', 'FAILED', 'DEAD_LETTERED', 'CANCELLED')
         OR retry_count IS NULL OR retry_count < 0 OR max_retries IS NULL OR max_retries < 0
         OR priority IS NULL OR priority NOT BETWEEN 1 AND 10`,
   },
@@ -288,7 +288,7 @@ const audits: Array<{ table: string; sql: string }> = [
       WHERE original_id IS NULL OR payload IS NULL OR notification_type IS NULL
         OR notification_type NOT IN ('discord', 'email', 'webhook', 'sms')
         OR target_recipient IS NULL OR execute_at IS NULL OR created_at IS NULL
-        OR status IS NULL OR status NOT IN ('COMPLETED', 'FAILED', 'CANCELLED')
+        OR status IS NULL OR status NOT IN ('COMPLETED', 'FAILED', 'CANCELLED', 'DEAD_LETTERED')
         OR retry_count IS NULL OR retry_count < 0 OR archived_at IS NULL`,
   },
 ];

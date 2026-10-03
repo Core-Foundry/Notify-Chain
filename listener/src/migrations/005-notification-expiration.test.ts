@@ -211,6 +211,17 @@ describe('migration 005 notification expiration', () => {
       `INSERT INTO scheduled_notifications (payload, notification_type, target_recipient, execute_at, status)
        VALUES ('{}', 'discord', 'user-2', '2026-01-01', 'EXPIRED')`,
     );
+    await run(
+      db,
+      `INSERT INTO scheduled_notifications (payload, notification_type, target_recipient, execute_at, status)
+       VALUES ('{}', 'discord', 'user-dead-lettered', '2026-01-01', 'DEAD_LETTERED')`,
+    );
+    await run(
+      db,
+      `INSERT INTO notification_archive
+       (original_id, payload, notification_type, target_recipient, execute_at, created_at, status)
+       VALUES (2, '{}', 'discord', 'user-archive-dead-lettered', '2026-01-01', '2026-01-01', 'DEAD_LETTERED')`,
+    );
     await expect(
       run(
         db,
