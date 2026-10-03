@@ -1,6 +1,4 @@
 import * as sqlite3 from 'sqlite3';
-import { readFileSync } from 'fs';
-import { join } from 'path';
 import { Database } from '../database/database';
 import { MigrationRunner } from '../database/migration-system';
 import migration from './004-database-data-integrity';
@@ -189,19 +187,6 @@ const PRESERVED_TABLES = [
   'notification_archive',
 ];
 
-function bootstrapScheduledNotificationColumns(): string[] {
-  const schema = readFileSync(join(__dirname, '../database/schema.sql'), 'utf8');
-  const tableDefinition = schema.match(
-    /CREATE TABLE IF NOT EXISTS scheduled_notifications \(([\s\S]*?)\n\);/i,
-  );
-  if (!tableDefinition) throw new Error('scheduled_notifications missing from bootstrap schema');
-
-  return Array.from(
-    tableDefinition[1].matchAll(/^\s{2}([a-z][a-z0-9_]*)\s+/gim),
-    (match) => match[1],
-  );
-}
-
 describe('migration 004 database data integrity', () => {
   let db: sqlite3.Database;
 
@@ -223,6 +208,9 @@ describe('migration 004 database data integrity', () => {
     for (const table of PRESERVED_TABLES) {
       before[table] = await all(db, `SELECT * FROM ${table} ORDER BY id`);
     }
+    const sourceColumns = (
+      await all<{ name: string }>(db, 'PRAGMA table_info(scheduled_notifications)')
+    ).map(({ name }) => name);
 
     await run(db, 'PRAGMA foreign_keys = OFF');
     const runner = new MigrationRunner(db, '');
@@ -235,11 +223,11 @@ describe('migration 004 database data integrity', () => {
     for (const table of PRESERVED_TABLES) {
       expect(await all(db, `SELECT * FROM ${table} ORDER BY id`)).toEqual(before[table]);
     }
-    expect(
-      (await all<{ name: string }>(db, 'PRAGMA table_info(scheduled_notifications)')).map(
-        ({ name }) => name,
-      ),
-    ).toEqual(bootstrapScheduledNotificationColumns());
+    const rebuiltColumns = (
+      await all<{ name: string }>(db, 'PRAGMA table_info(scheduled_notifications)')
+    ).map(({ name }) => name);
+    // Compare to pre-004 columns; later migration 005 owns expires_at.
+    expect(rebuiltColumns.sort()).toEqual(sourceColumns.sort());
     expect(
       await all<{ deduplication_key: string }>(
         db,
