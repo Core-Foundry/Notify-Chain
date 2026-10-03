@@ -1,8 +1,4 @@
-<<<<<<< HEAD
 jest.mock('../utils/request-id', () => ({ generateRequestId: () => 'test-request-id' }));
-=======
-jest.mock('../utils/request-id', () => ({ generateRequestId: () => 'scheduler-test-request-id' }));
->>>>>>> upstream/main
 
 import { Database } from '../database/database';
 import { ScheduledNotificationRepository } from '../services/scheduled-notification-repository';
@@ -491,8 +487,8 @@ describe('NotificationScheduler', () => {
       await repository.markAsFailedOrRetry(id, error, 2, 3);
 
       const notification = await repository.getById(id);
-      expect(notification!.status).toBe(NotificationStatus.FAILED);
-      expect(notification!.retryCount).toBe(3);
+      expect(notification!.status).toBe(NotificationStatus.DEAD_LETTERED);
+      expect(notification!.retryCount).toBe(2);
     });
 
     test('should cancel pending notification', async () => {
@@ -728,7 +724,7 @@ describe('Stale cache regression tests', () => {
     await repository.markAsFailedOrRetry(id, new Error('Max retries exceeded'), 2, 2);
 
     const notification = await repository.getById(id);
-    expect(notification?.status).toBe(NotificationStatus.FAILED);
+    expect(notification?.status).toBe(NotificationStatus.DEAD_LETTERED);
     expect(notification?.updatedAt).toBeDefined();
     expect(notification?.updatedAt).toBeInstanceOf(Date);
     expect(isNaN(notification?.updatedAt?.getTime() ?? NaN)).toBe(false);

@@ -1,4 +1,5 @@
 import type { RetryFailureType } from '../services/retry-policy';
+import type { CircuitBreakerConfig } from '../services/circuit-breaker';
 import * as StellarSDK from '@stellar/stellar-sdk';
 
 export interface NotificationProvider {
@@ -78,6 +79,7 @@ export interface Config {
   retryPolicy?: RetryPolicyOptions;
   databasePath?: string;
   rateLimit?: RateLimitConfig;
+  rpcRateLimit?: RpcRateLimitConfig;
   cleanup?: AppCleanupConfig;
   analytics?: AnalyticsConfig;
   expiration?: ExpirationConfig;
@@ -144,6 +146,7 @@ export interface SchedulerConfig {
   lockTimeoutMs: number;
   processorId?: string;
   batchSize: number;
+  concurrency: number;
   timingBufferMs: number;
 }
 
@@ -265,15 +268,16 @@ export interface BackfillConfig {
 }
 
 /**
- * Circuit breaker configuration for RPC calls to prevent continuous requests
- * to an unavailable endpoint.
+ * Rate limiting configuration for RPC event ingestion to prevent
+ * excessive RPC requests and resource consumption.
  */
-export interface CircuitBreakerConfig {
-  /** Number of consecutive failures required to open the circuit (default: 5) */
-  failureThreshold?: number;
-  /** Time in milliseconds to wait before attempting recovery (default: 60000) */
-  recoveryTimeoutMs?: number;
-  /** Time in milliseconds to consider a request as timed out (default: 30000) */
-  requestTimeoutMs?: number;
+export interface RpcRateLimitConfig {
+  /** Whether RPC rate limiting is enabled (default: true). */
+  enabled: boolean;
+  /** Maximum RPC requests per second (default: 10). */
+  maxRequestsPerSecond: number;
+  /** Burst size - allows short bursts above the sustained rate (default: 20). */
+  burstSize: number;
+  /** Delay in ms to apply when throttled (default: 1000). */
+  throttleDelayMs: number;
 }
-

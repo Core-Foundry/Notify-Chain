@@ -12,7 +12,7 @@ const tables = [
       execute_at DATETIME NOT NULL,
       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      status VARCHAR(20) NOT NULL DEFAULT 'PENDING' CHECK (status IN ('PENDING', 'PROCESSING', 'COMPLETED', 'FAILED', 'CANCELLED')),
+      status VARCHAR(20) NOT NULL DEFAULT 'PENDING' CHECK (status IN ('PENDING', 'PROCESSING', 'COMPLETED', 'FAILED', 'DEAD_LETTERED', 'CANCELLED')),
       retry_count INTEGER NOT NULL DEFAULT 0 CHECK (retry_count >= 0),
       max_retries INTEGER NOT NULL DEFAULT 3 CHECK (max_retries >= 0),
       processing_started_at DATETIME,

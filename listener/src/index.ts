@@ -21,6 +21,8 @@ import {
   IndexingReconciliationEngine,
   createDefaultAlertSink,
 } from './services/indexing-reconciliation-engine';
+import { HistoricalBackfillService } from './services/historical-backfill-service';
+import { EventDeduplicationService } from './services/event-deduplication-service';
 import { initNotificationAnalyticsAggregator } from './services/notification-analytics-aggregator';
 import { NotificationMetricsStore } from './services/notification-metrics-store';
 import { NotificationMetricsRunner } from './services/notification-metrics-runner';
@@ -68,16 +70,12 @@ async function main() {
     logger.info('Initializing database');
     const db = await initializeDatabase(config.databasePath);
 
-<<<<<<< HEAD
     repository = new ScheduledNotificationRepository(
       db,
       undefined,
       config.notificationDefaultTtlSeconds ?? 0,
     );
-=======
-    repository = new ScheduledNotificationRepository(db);
     deliveryReceiptRepository = new DeliveryReceiptRepository(db);
->>>>>>> upstream/main
     
 
     healthMonitor = new NotificationHealthMonitor(null, getWorkerManager(), {

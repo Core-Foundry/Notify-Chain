@@ -1,6 +1,7 @@
 import http from 'http';
 import logger from '../utils/logger';
 import { sendErr, ErrorCode } from '../utils/response';
+import { ValidationError } from '../utils/validation';
 
 export class ApiError extends Error {
   public readonly statusCode: number;
@@ -76,6 +77,22 @@ export function handleApiError(
       message: error.message,
     });
     sendErr(res, error.statusCode, error.message, error.errorCode, error.details);
+    return;
+  }
+
+  if (error instanceof ValidationError) {
+    logger.warn('Validation error', {
+      requestId,
+      correlationId,
+      issues: error.issues,
+    });
+    sendErr(
+      res,
+      400,
+      `Validation failed: ${error.message}`,
+      ErrorCode.BAD_REQUEST,
+      error.issues
+    );
     return;
   }
 
