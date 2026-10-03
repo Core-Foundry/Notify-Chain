@@ -1,20 +1,7 @@
-import { Config, ContractConfig, DiscordConfig, WebhookSecret, AppCleanupConfig, EventQueueConfig, RetrySchedulerOptions, AnalyticsConfig, ExpirationConfig, ApiKey, CircuitBreakerConfig, BackfillConfig, LoggingConfig, ApiConfig } from './types';
-import { Config, ContractConfig, DiscordConfig, WebhookSecret, AppCleanupConfig, EventQueueConfig, RetrySchedulerOptions, AnalyticsConfig, ExpirationConfig, ApiKey, BackfillConfig, LoggingConfig, ApiConfig } from './types';
+import { Config, ContractConfig, DiscordConfig, WebhookSecret, AppCleanupConfig, EventQueueConfig, RetrySchedulerOptions, AnalyticsConfig, ExpirationConfig, ApiKey, BackfillConfig, LoggingConfig, ApiConfig, RpcRateLimitConfig } from './types';
 import { validateCorsOrigin, CorsValidationError } from './utils/cors-validator';
 import { validateSecrets } from './config/validate-secrets';
 import { ConfigurationSchemaValidator, APP_CONFIG_SCHEMA } from './config-schema';
-import { Config, ContractConfig, DiscordConfig, WebhookSecret, AppCleanupConfig, EventQueueConfig, RetrySchedulerOptions, AnalyticsConfig, ExpirationConfig, ApiKey, BackfillConfig, LoggingConfig, ApiConfig } from './types';
-import { Config, ContractConfig, DiscordConfig, WebhookSecret, AppCleanupConfig, EventQueueConfig, RetrySchedulerOptions, AnalyticsConfig, ExpirationConfig, ApiKey, BackfillConfig, LoggingConfig, ApiConfig, RetryPolicyOptions } from './types';
-import {
-  DEFAULT_RETRYABLE_FAILURE_TYPES,
-  RETRY_FAILURE_TYPES,
-  RetryFailureType,
-  parseRetryableFailureTypes,
-} from './services/retry-policy';
-import { validateCorsOrigin, CorsValidationError } from './utils/cors-validator';
-import { ConfigurationSchemaValidator, APP_CONFIG_SCHEMA } from './config-schema';
-import { Config, ContractConfig, DiscordConfig, WebhookSecret, AppCleanupConfig, EventQueueConfig, RetrySchedulerOptions, AnalyticsConfig, ExpirationConfig, ApiKey, BackfillConfig, LoggingConfig, ApiConfig, RpcFallbackConfig } from './types';
-import { validateSecrets } from './config/validate-secrets';
 import {
   SUPPORTED_LOG_FORMATS,
   SUPPORTED_LOG_LEVELS,
@@ -354,48 +341,20 @@ function loadBackfillConfig(): BackfillConfig {
 }
 
 /**
- * Load circuit breaker configuration for RPC calls.
+ * Load RPC rate limiting configuration for event ingestion.
  *
- * CIRCUIT_BREAKER_FAILURE_THRESHOLD: Number of consecutive failures before opening
- * CIRCUIT_BREAKER_RECOVERY_TIMEOUT_MS: Time to wait before attempting recovery
- * CIRCUIT_BREAKER_REQUEST_TIMEOUT_MS: Request timeout in milliseconds
+ * RPC_RATE_LIMIT_ENABLED controls whether rate limiting is applied to RPC
+ * requests during event ingestion. This prevents excessive RPC requests and
+ * resource consumption.
+ *
+ * Default: enabled, 10 requests per second, burst of 20, 1s throttle delay.
  */
-function loadCircuitBreakerConfig(): CircuitBreakerConfig | undefined {
-  const failureThreshold = trimEnv('CIRCUIT_BREAKER_FAILURE_THRESHOLD');
-  const recoveryTimeoutMs = trimEnv('CIRCUIT_BREAKER_RECOVERY_TIMEOUT_MS');
-  const requestTimeoutMs = trimEnv('CIRCUIT_BREAKER_REQUEST_TIMEOUT_MS');
-
-  // Only return config if at least one env var is set
-  if (!failureThreshold && !recoveryTimeoutMs && !requestTimeoutMs) {
-    return undefined;
-  }
-
+function loadRpcRateLimitConfig(): RpcRateLimitConfig {
   return {
-    failureThreshold: failureThreshold ? parseIntegerEnv('CIRCUIT_BREAKER_FAILURE_THRESHOLD', '5') : undefined,
-    recoveryTimeoutMs: recoveryTimeoutMs ? parseIntegerEnv('CIRCUIT_BREAKER_RECOVERY_TIMEOUT_MS', '60000') : undefined,
-    requestTimeoutMs: requestTimeoutMs ? parseIntegerEnv('CIRCUIT_BREAKER_REQUEST_TIMEOUT_MS', '30000') : undefined,
-function loadRpcFallbackConfig(fallbackUrls: string[]): RpcFallbackConfig {
-  const failureThreshold = parseIntegerEnv(
-    'RPC_FAILURE_THRESHOLD',
-    trimEnv('STELLAR_RPC_FAILURE_THRESHOLD') || '3'
-  );
-  const cooldownMs = parseIntegerEnv(
-    'RPC_COOLDOWN_MS',
-    trimEnv('STELLAR_RPC_COOLDOWN_MS') || '60000'
-  );
-  const requestTimeoutMs = parseIntegerEnv(
-    'RPC_REQUEST_TIMEOUT_MS',
-    trimEnv('STELLAR_RPC_REQUEST_TIMEOUT_MS') || '10000'
-  );
-  const maxRetriesRaw = trimEnv('RPC_MAX_RETRIES') || trimEnv('STELLAR_RPC_MAX_RETRIES');
-  const maxRetries = maxRetriesRaw ? parseIntegerEnv('RPC_MAX_RETRIES', maxRetriesRaw) : undefined;
-
-  return {
-    fallbackUrls,
-    failureThreshold,
-    cooldownMs,
-    requestTimeoutMs,
-    maxRetries,
+    enabled: trimEnv('RPC_RATE_LIMIT_ENABLED') !== 'false',
+    maxRequestsPerSecond: parseIntegerEnv('RPC_RATE_LIMIT_MAX_REQUESTS_PER_SECOND', '10'),
+    burstSize: parseIntegerEnv('RPC_RATE_LIMIT_BURST_SIZE', '20'),
+    throttleDelayMs: parseIntegerEnv('RPC_RATE_LIMIT_THROTTLE_DELAY_MS', '1000'),
   };
 }
 
@@ -466,6 +425,7 @@ export function loadConfig(): Config {
       lockTimeoutMs: parseIntegerEnv('SCHEDULER_LOCK_TIMEOUT_MS', '60000'),
       processorId: trimEnv('SCHEDULER_PROCESSOR_ID'),
       batchSize: parseIntegerEnv('SCHEDULER_BATCH_SIZE', '10'),
+      concurrency: parseIntegerEnv('WORKER_CONCURRENCY', '1'),
       timingBufferMs: parseIntegerEnv('SCHEDULER_TIMING_BUFFER_MS', '60000'),
     },
     retryScheduler: loadRetrySchedulerConfig(retryPolicy),
@@ -480,6 +440,7 @@ export function loadConfig(): Config {
     analytics: loadAnalyticsConfig(),
     expiration: loadExpirationConfig(),
     backfill: loadBackfillConfig(),
+    rpcRateLimit: loadRpcRateLimitConfig(),
     logging: loadLoggingConfig(),
     api: loadApiConfig(),
     circuitBreaker: loadCircuitBreakerConfig(),
@@ -740,6 +701,12 @@ export function validateConfig(config: Config): void {
           'SCHEDULER_POLL_INTERVAL_MS.',
       );
     }
+    if (config.scheduler.concurrency < 1) {
+      errors.push(
+        `WORKER_CONCURRENCY must be >= 1 (received: ${config.scheduler.concurrency}). ` +
+          'Set the number of notifications processed concurrently per poll cycle.'
+      );
+    }
     if (config.scheduler.batchSize < 1) {
       errors.push(`SCHEDULER_BATCH_SIZE must be >= 1 (received: ${config.scheduler.batchSize}).`);
     }
@@ -880,6 +847,28 @@ export function validateConfig(config: Config): void {
     }
   }
 
+  // ── RPC Rate Limiting ───────────────────────────────────────────────────────
+  if (config.rpcRateLimit) {
+    if (config.rpcRateLimit.maxRequestsPerSecond < 1) {
+      errors.push(
+        `RPC_RATE_LIMIT_MAX_REQUESTS_PER_SECOND must be >= 1 ` +
+          `(received: ${config.rpcRateLimit.maxRequestsPerSecond}).`,
+      );
+    }
+    if (config.rpcRateLimit.burstSize < 1) {
+      errors.push(
+        `RPC_RATE_LIMIT_BURST_SIZE must be >= 1 ` +
+          `(received: ${config.rpcRateLimit.burstSize}).`,
+      );
+    }
+    if (config.rpcRateLimit.throttleDelayMs < 0) {
+      errors.push(
+        `RPC_RATE_LIMIT_THROTTLE_DELAY_MS must be >= 0 ` +
+          `(received: ${config.rpcRateLimit.throttleDelayMs}).`,
+      );
+    }
+  }
+
   // ── Logging ────────────────────────────────────────────────────────────────
   // Rejected rather than silently downgraded: a typo in LOG_LEVEL that quietly
   // resolves to "info" hides debug output an operator explicitly asked for, and
@@ -954,4 +943,3 @@ export function validateConfig(config: Config): void {
     }))),
   ]);
 }
-

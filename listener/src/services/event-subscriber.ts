@@ -16,8 +16,7 @@ import { EventDeduplicationService } from './event-deduplication-service';
 import { EventProcessingQueue } from './event-processing-queue';
 import { NotificationExpirationService } from './notification-expiration';
 import { pollingMetrics } from './polling-metrics';
-import { CircuitBreaker } from '../utils/circuit-breaker';
-import { StellarRpcManager } from './stellar-rpc-manager';
+import { RpcRateLimiter } from './rpc-rate-limiter';
 
 export class EventSubscriber {
   private config: Config;
@@ -31,27 +30,8 @@ export class EventSubscriber {
   private eventQueue: EventProcessingQueue | null = null;
   private expirationService: NotificationExpirationService | null = null;
   private lastSuccessfulPollAt: number | null = null;
+  private rpcRateLimiter: RpcRateLimiter | null = null;
   private backfillStartLedger: number | null = null;
-  private circuitBreaker: CircuitBreaker | null = null;
-  private backfillStartLedger: number | null = null;
-  /** Cold-start ledger resolved once per session by resolveBackfillStartLedger(). */
-  private backfillStartLedger: number | null = null;
-  private backfillStartLedger: number | null = null;
-
-  public get server(): StellarSDK.rpc.Server {
-    return this.rpcManager.getActiveServer();
-  }
-
-  public set server(val: StellarSDK.rpc.Server) {
-    const activeIndex = (this.rpcManager as any).activeIndex;
-    if ((this.rpcManager as any).endpoints && (this.rpcManager as any).endpoints[activeIndex]) {
-      (this.rpcManager as any).endpoints[activeIndex].server = val;
-    }
-  }
-
-  public getRpcManager(): StellarRpcManager {
-    return this.rpcManager;
-  }
 
   constructor(config: Config, deduplicationService?: EventDeduplicationService) {
     this.config = config;
@@ -65,25 +45,15 @@ export class EventSubscriber {
     });
     this.deduplicationService = deduplicationService ?? null;
 
-    // Initialize circuit breaker if configured
-    if (config.circuitBreaker) {
-      this.circuitBreaker = new CircuitBreaker(config.circuitBreaker);
+    // Initialize RPC rate limiter if configured
+    if (config.rpcRateLimit) {
+      this.rpcRateLimiter = new RpcRateLimiter(config.rpcRateLimit);
     }
 
     // Initialize expiration service if configured
     if (config.expiration) {
       this.expirationService = new NotificationExpirationService(config.expiration);
     }
-    
-    // Retry policy (#842): attempt budget and eligible failure types are
-    // shared by both in-memory queues so a permanent failure is not retried
-    // regardless of which path a notification took.
-    const retryPolicy = config.retryPolicy
-      ? {
-          maxAttempts: config.retryPolicy.maxAttempts,
-          retryableFailureTypes: config.retryPolicy.retryableFailureTypes,
-        }
-      : undefined;
 
     if (config.discord) {
       this.discordService = new DiscordNotificationService(config.discord);
@@ -404,8 +374,12 @@ export class EventSubscriber {
   private async getContractEvents(
     contractConfig: ContractConfig
   ): Promise<StellarSDK.rpc.Api.GetEventsResponse> {
+    // Apply rate limiting before making RPC request
+    if (this.rpcRateLimiter) {
+      await this.rpcRateLimiter.acquire();
+    }
+
     const lastCursor = this.lastCursors.get(contractConfig.address);
-    const limit = this.config.eventBatchSize ?? 100;
 
     let request: StellarSDK.rpc.Api.GetEventsRequest;
 
