@@ -30,11 +30,15 @@ export interface DiscordConfig {
 }
 
 export interface RetryQueueConfig {
-  baseDelayMs?: number;
-  multiplier?: number;
-  jitter?: boolean;
-  maxRetries?: number;
+  /**
+   * Provider-independent retry backoff parameters for the in-memory
+   * notification retry queue.  Defaults from `RETRY_BACKOFF_DEFAULTS` are
+   * applied to any omitted field; the merged result is strictly validated
+   * by the shared `resolveRetryBackoffConfig` validator.
+   */
+  backoff?: PartialRetryBackoffConfig;
   processIntervalMs?: number;
+  priorityWeights?: { high: number; medium: number; low: number };
 }
 
 export interface WebhookSecret {

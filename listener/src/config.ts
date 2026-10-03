@@ -467,10 +467,13 @@ export function loadConfig(): Config {
     databasePath: trimEnv('DATABASE_PATH') || './data/notifications.db',
     discord,
     retryQueue: {
-      baseDelayMs: parseIntegerEnv('RETRY_BASE_DELAY_MS', '5000'),
-      maxRetries: parseIntegerEnv('RETRY_MAX_RETRIES', '5'),
-      multiplier: parseIntegerEnv('RETRY_MULTIPLIER', '2'),
-      jitter: trimEnv('RETRY_JITTER') !== 'false',
+      backoff: {
+        initialDelayMs: parseIntegerEnv('RETRY_BASE_DELAY_MS', '5000'),
+        maxRetries: parseIntegerEnv('RETRY_MAX_RETRIES', '5'),
+        multiplier: parseIntegerEnv('RETRY_MULTIPLIER', '2'),
+        jitter: trimEnv('RETRY_JITTER') !== 'false',
+        maxDelayMs: parseIntegerEnv('RETRY_MAX_DELAY_MS', String(60 * 60 * 1000)),
+      },
       processIntervalMs: parseIntegerEnv('RETRY_QUEUE_PROCESS_INTERVAL_MS', '5000'),
     },
     eventQueue: {

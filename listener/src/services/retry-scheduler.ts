@@ -56,7 +56,15 @@ export interface RetrySchedulerConfig {
   retryableFailureTypes?: readonly RetryFailureType[];
 }
 
-export const RETRY_SCHEDULER_DEFAULTS: RetrySchedulerConfig = {
+/**
+ * Defaults for the DB-backed scheduler. Scheduling-specific fields are
+ * retained here; backoff defaults are inherited from the shared
+ * `RETRY_BACKOFF_DEFAULTS` and can still be overridden per-instance via
+ * `RetrySchedulerConfig.backoff`.
+ */
+export const RETRY_SCHEDULER_DEFAULTS: Readonly<Omit<RetrySchedulerConfig, 'backoff'> & {
+  backoff: Readonly<RetryBackoffConfig>;
+}> = {
   enabled: true,
   pollIntervalMs: 15_000,
   lockTimeoutMs: 60_000,
