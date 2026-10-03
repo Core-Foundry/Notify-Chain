@@ -1189,6 +1189,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
               notificationType: data.notificationType || NotificationType.DISCORD,
               targetRecipient: data.targetRecipient,
               executeAt,
+              expiresAt: data.expiresAt,
               maxRetries: data.maxRetries,
               priority: data.priority,
               eventId: data.eventId,

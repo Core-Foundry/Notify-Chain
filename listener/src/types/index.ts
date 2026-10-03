@@ -1,4 +1,5 @@
 import type { RetryFailureType } from '../services/retry-policy';
+import type { CircuitBreakerConfig } from '../services/circuit-breaker';
 import * as StellarSDK from '@stellar/stellar-sdk';
 
 export interface NotificationProvider {
@@ -82,6 +83,8 @@ export interface Config {
   cleanup?: AppCleanupConfig;
   analytics?: AnalyticsConfig;
   expiration?: ExpirationConfig;
+  /** Default scheduled-notification lifetime in seconds; zero disables expiry. */
+  notificationDefaultTtlSeconds?: number;
   backfill?: BackfillConfig;
   logging?: LoggingConfig;
   api?: ApiConfig;
@@ -143,6 +146,7 @@ export interface SchedulerConfig {
   lockTimeoutMs: number;
   processorId?: string;
   batchSize: number;
+  concurrency: number;
   timingBufferMs: number;
 }
 
@@ -277,4 +281,3 @@ export interface RpcRateLimitConfig {
   /** Delay in ms to apply when throttled (default: 1000). */
   throttleDelayMs: number;
 }
-

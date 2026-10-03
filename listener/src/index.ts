@@ -70,7 +70,11 @@ async function main() {
     logger.info('Initializing database');
     const db = await initializeDatabase(config.databasePath);
 
-    repository = new ScheduledNotificationRepository(db);
+    repository = new ScheduledNotificationRepository(
+      db,
+      undefined,
+      config.notificationDefaultTtlSeconds ?? 0,
+    );
     deliveryReceiptRepository = new DeliveryReceiptRepository(db);
     
 

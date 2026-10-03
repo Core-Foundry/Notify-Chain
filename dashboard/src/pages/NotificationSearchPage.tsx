@@ -29,6 +29,7 @@ export const NOTIFICATION_DELIVERY_STATUS_OPTIONS = [
   { value: 'COMPLETED', label: 'Completed' },
   { value: 'FAILED', label: 'Failed' },
   { value: 'CANCELLED', label: 'Cancelled' },
+  { value: 'EXPIRED', label: 'Expired' },
   { value: 'PROCESSED', label: 'Processed' },
 ];
 
