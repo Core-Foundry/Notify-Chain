@@ -12,6 +12,7 @@ import { ProviderRegistry, getProviderRegistry } from './provider-registry';
 import { verifyPayloadIntegrity } from '../utils/payload-integrity';
 import { DeliveryReceiptRepository } from './delivery-receipt-repository';
 import { DeliveryResult } from '../types/provider-capabilities';
+import { NotificationClaimLease, startClaimLease } from './notification-claim-lease';
 
 /**
  * Background scheduler that processes scheduled notifications
@@ -218,9 +219,12 @@ export class NotificationScheduler {
           requestId,
         });
 
+        const lease = this.startClaimLease(notification, requestId);
+
         try {
           await this.processNotification(notification, requestId, jobId);
         } finally {
+          await lease?.stop();
           workerManager.completeJob(jobId);
         }
       };
@@ -251,6 +255,38 @@ export class NotificationScheduler {
         durationMs: Date.now() - batchStart,
       });
     }
+  }
+
+  /**
+   * Keep the claim on `notification` alive for as long as this worker is
+   * actually delivering it.
+   *
+   * The lease is renewed at a third of the lock window, so a delivery that
+   * outlives `lockTimeoutMs` is no longer handed back to the queue by the
+   * `recoverStaleLocks()` call that opens every poll cycle. Renewal is
+   * owner-checked, so a worker that did lose its claim stops renewing rather
+   * than taking the job back from its new owner.
+   */
+  private startClaimLease(
+    notification: ScheduledNotification,
+    requestId: string
+  ): NotificationClaimLease | null {
+    return startClaimLease({
+      repository: this.repository,
+      notificationId: notification.id!,
+      processorId: this.processorId,
+      lockTimeoutMs: this.config.lockTimeoutMs,
+      onLeaseLost: (id) => {
+        logger.warn('Notification claim lease was lost before delivery finished', {
+          requestId,
+          id,
+          processorId: this.processorId,
+        });
+      },
+      onRenewalError: (id, error) => {
+        logger.warn('Failed to renew notification claim lease', { requestId, id, error });
+      },
+    });
   }
 
   /**

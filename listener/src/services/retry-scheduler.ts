@@ -16,6 +16,7 @@ import {
   classifyError,
   classifyHttpStatus,
 } from './retry-policy';
+import { startClaimLease } from './notification-claim-lease';
 
 export interface RetrySchedulerConfig {
   /** Whether the scheduler is enabled. */
@@ -247,9 +248,27 @@ export class RetryScheduler {
           continue;
         }
 
+        const lease = startClaimLease({
+          repository: this.repository,
+          notificationId: notification.id!,
+          processorId: this.processorId,
+          lockTimeoutMs: this.config.lockTimeoutMs,
+          onLeaseLost: (id) => {
+            logger.warn('Retry claim lease was lost before delivery finished', {
+              requestId,
+              id,
+              processorId: this.processorId,
+            });
+          },
+          onRenewalError: (id, error) => {
+            logger.warn('Failed to renew retry claim lease', { requestId, id, error });
+          },
+        });
+
         try {
           await this.processRetry(notification, requestId);
         } finally {
+          await lease?.stop();
           workerManager.completeJob(jobId);
         }
       }
