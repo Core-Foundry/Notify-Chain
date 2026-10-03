@@ -1,5 +1,8 @@
 import { xdr } from '@stellar/stellar-sdk';
 import {
+  EventParseErrorCategory,
+  classifyEvent,
+  describeEventParseError,
   getEventName,
   matchesEventFilter,
   validateEventPayload,
@@ -167,278 +170,190 @@ describe('event-utils', () => {
     });
   });
 
-  // ---------------------------------------------------------------------------
-  // Version constants
-  // ---------------------------------------------------------------------------
+  // -------------------------------------------------------------------------
+  // Error classification (#832)
+  // -------------------------------------------------------------------------
 
-  describe('version constants', () => {
-    it('CURRENT_EVENT_VERSION is 1', () => {
-      expect(CURRENT_EVENT_VERSION).toBe(1);
-    });
+  describe('validateEventPayload error classification', () => {
+    it('classifies a field that is present but of the wrong type as invalid_type', () => {
+      const result = validateEventPayload(createValidEvent({ id: 42 }) as any);
 
-    it('SUPPORTED_EVENT_VERSIONS contains version 1', () => {
-      expect(SUPPORTED_EVENT_VERSIONS.has(1)).toBe(true);
-    });
-
-    it('SUPPORTED_EVENT_VERSIONS does not contain version 0', () => {
-      expect(SUPPORTED_EVENT_VERSIONS.has(0)).toBe(false);
-    });
-  });
-
-  // ---------------------------------------------------------------------------
-  // parseEventVersion
-  // ---------------------------------------------------------------------------
-
-  describe('parseEventVersion', () => {
-    describe('ScvMap payloads (NotificationScheduled-style)', () => {
-      it('extracts payload_version from an ScvMap built with the fixture helper', () => {
-        const event = NotificationFixtureBuilder.aStellarEvent()
-          .withPayloadVersion(1)
-          .build();
-
-        const result = parseEventVersion(event.value);
-
-        expect(result.found).toBe(true);
-        expect(result.version).toBe(1);
-        expect(result.parseError).toBeUndefined();
-      });
-
-      it('returns found=false when the map contains no payload_version key', () => {
-        // A map with an unrelated key
-        const value = xdr.ScVal.scvMap([
-          new xdr.ScMapEntry({
-            key: xdr.ScVal.scvSymbol('notification_id'),
-            val: xdr.ScVal.scvU32(42),
-          }),
-        ]);
-
-        const result = parseEventVersion(value);
-
-        expect(result.found).toBe(false);
-        expect(result.version).toBeUndefined();
-      });
-
-      it('returns a parseError when payload_version value is zero (invalid)', () => {
-        const value = xdr.ScVal.scvMap([
-          new xdr.ScMapEntry({
-            key: xdr.ScVal.scvSymbol('payload_version'),
-            val: xdr.ScVal.scvU32(0),
-          }),
-        ]);
-
-        const result = parseEventVersion(value);
-
-        expect(result.found).toBe(true);
-        expect(result.version).toBeUndefined();
-        expect(result.parseError).toMatch(/not a positive integer/i);
-      });
-
-      it('handles a map that also contains other fields alongside payload_version', () => {
-        const value = xdr.ScVal.scvMap([
-          new xdr.ScMapEntry({
-            key: xdr.ScVal.scvSymbol('notification_id'),
-            val: xdr.ScVal.scvU32(99),
-          }),
-          new xdr.ScMapEntry({
-            key: xdr.ScVal.scvSymbol('payload_version'),
-            val: xdr.ScVal.scvU32(1),
-          }),
-        ]);
-
-        const result = parseEventVersion(value);
-
-        expect(result.found).toBe(true);
-        expect(result.version).toBe(1);
+      expect(result.valid).toBe(false);
+      expect(result.error).toEqual({
+        category: EventParseErrorCategory.InvalidType,
+        field: 'id',
+        detail: 'Missing or invalid event id',
       });
     });
 
-    describe('bare integer payloads', () => {
-      it('extracts version from a bare ScvU32', () => {
-        const result = parseEventVersion(xdr.ScVal.scvU32(1));
+    it.each([
+      ['id', { id: undefined }, 'id'],
+      ['an empty id', { id: '' }, 'id'],
+      ['type', { type: undefined }, 'type'],
+      ['ledger', { ledger: undefined }, 'ledger'],
+      ['topic', { topic: undefined }, 'topic'],
+      ['value', { value: undefined }, 'value'],
+    ])('classifies %s as missing_field', (_label, overrides, field) => {
+      const result = validateEventPayload(createValidEvent(overrides as any) as any);
 
-        expect(result.found).toBe(true);
-        expect(result.version).toBe(1);
-      });
-
-      it('returns a parseError for a bare ScvU32 of zero', () => {
-        const result = parseEventVersion(xdr.ScVal.scvU32(0));
-
-        expect(result.found).toBe(true);
-        expect(result.version).toBeUndefined();
-        expect(result.parseError).toMatch(/not a positive integer/i);
-      });
+      expect(result.valid).toBe(false);
+      expect(result.error?.category).toBe(EventParseErrorCategory.MissingField);
+      expect(result.error?.field).toBe(field);
     });
 
-    describe('pre-versioned / legacy event payloads', () => {
-      it('returns found=false for a bare string value (pre-versioned event)', () => {
-        const result = parseEventVersion(xdr.ScVal.scvString('legacy-payload'));
+    it('classifies a right-typed but out-of-range ledger as malformed_payload', () => {
+      const negative = validateEventPayload(createValidEvent({ ledger: -1 }) as any);
+      const fractional = validateEventPayload(createValidEvent({ ledger: 1.5 }) as any);
 
-        expect(result.found).toBe(false);
-        expect(result.version).toBeUndefined();
-      });
-
-      it('returns found=false for a symbol value (pre-versioned event)', () => {
-        const result = parseEventVersion(xdr.ScVal.scvSymbol('AutoshareCreated'));
-
-        expect(result.found).toBe(false);
-        expect(result.version).toBeUndefined();
-      });
-
-      it('returns found=false for an empty map', () => {
-        const result = parseEventVersion(xdr.ScVal.scvMap([]));
-
-        expect(result.found).toBe(false);
-        expect(result.version).toBeUndefined();
-      });
+      expect(negative.error?.category).toBe(EventParseErrorCategory.MalformedPayload);
+      expect(negative.error?.field).toBe('ledger');
+      expect(fractional.error?.category).toBe(EventParseErrorCategory.MalformedPayload);
     });
 
-    describe('representative event fixtures via StellarEventBuilder', () => {
-      it('returns found=false for a default StellarEventBuilder event (string value)', () => {
-        const event = NotificationFixtureBuilder.aStellarEvent().build();
+    it('classifies a non-object payload as malformed_payload without a field', () => {
+      const result = validateEventPayload(null as any);
 
-        const result = parseEventVersion(event.value);
+      expect(result.error?.category).toBe(EventParseErrorCategory.MalformedPayload);
+      expect(result.error?.field).toBeNull();
+    });
 
-        expect(result.found).toBe(false);
-      });
+    it('still exposes a human-readable reason alongside the category', () => {
+      const result = validateEventPayload(createValidEvent({ value: undefined }) as any);
 
-      it('parses version 1 from a NotificationScheduled-style fixture', () => {
-        const event = NotificationFixtureBuilder.aStellarEvent()
-          .withTopicSymbol('NotificationScheduled')
-          .withPayloadVersion(1)
-          .build();
+      // Backward compatibility: callers that only log `reason` keep working.
+      expect(result.reason).toMatch(/value/i);
+      expect(result.error?.detail).toBe(result.reason);
+    });
 
-        const result = parseEventVersion(event.value);
+    it('omits the classification entirely when the payload is valid', () => {
+      const result = validateEventPayload(createValidEvent() as any);
 
-        expect(result.found).toBe(true);
-        expect(result.version).toBe(1);
-      });
+      expect(result).toEqual({ valid: true });
+      expect(result.error).toBeUndefined();
     });
   });
 
-  // ---------------------------------------------------------------------------
-  // validateEventVersion
-  // ---------------------------------------------------------------------------
+  describe('validateRpcResponse error classification', () => {
+    it('classifies a missing events field as missing_field', () => {
+      const result = validateRpcResponse(createValidRpcResponse({ events: undefined }) as any);
 
-  describe('validateEventVersion', () => {
-    describe('supported versions', () => {
-      it('accepts version 1 (current supported version)', () => {
-        const event = NotificationFixtureBuilder.aStellarEvent()
-          .withPayloadVersion(1)
-          .build();
-
-        expect(validateEventVersion(event.value)).toEqual({ valid: true });
-      });
-
-      it('accepts version 1 built from a bare ScvU32', () => {
-        expect(validateEventVersion(xdr.ScVal.scvU32(1))).toEqual({ valid: true });
+      expect(result.error).toEqual({
+        category: EventParseErrorCategory.MissingField,
+        field: 'events',
+        detail: 'RPC response is missing the events field',
       });
     });
 
-    describe('backward compatibility — no version field', () => {
-      it('accepts a pre-versioned string payload (no payload_version key)', () => {
-        const event = NotificationFixtureBuilder.aStellarEvent()
-          .withStringValue('legacy')
-          .build();
+    it('classifies a non-array events field as invalid_type', () => {
+      const result = validateRpcResponse(createValidRpcResponse({ events: 'nope' }) as any);
 
-        expect(validateEventVersion(event.value)).toEqual({ valid: true });
-      });
+      expect(result.error?.category).toBe(EventParseErrorCategory.InvalidType);
+      expect(result.error?.field).toBe('events');
+    });
 
-      it('accepts a pre-versioned symbol payload', () => {
-        expect(validateEventVersion(xdr.ScVal.scvSymbol('AutoshareCreated'))).toEqual({
-          valid: true,
-        });
-      });
+    it('classifies a non-string cursor as invalid_type', () => {
+      const result = validateRpcResponse(createValidRpcResponse({ cursor: 123 }) as any);
 
-      it('accepts a map that has no payload_version key', () => {
-        const value = xdr.ScVal.scvMap([
-          new xdr.ScMapEntry({
-            key: xdr.ScVal.scvSymbol('notification_id'),
-            val: xdr.ScVal.scvU32(7),
-          }),
-        ]);
+      expect(result.error?.category).toBe(EventParseErrorCategory.InvalidType);
+      expect(result.error?.field).toBe('cursor');
+    });
 
-        expect(validateEventVersion(value)).toEqual({ valid: true });
-      });
+    it('classifies a non-object response as malformed_payload', () => {
+      expect(validateRpcResponse(null).error?.category).toBe(
+        EventParseErrorCategory.MalformedPayload
+      );
+      expect(validateRpcResponse('nope' as any).error?.category).toBe(
+        EventParseErrorCategory.MalformedPayload
+      );
+    });
+  });
 
-      it('accepts an empty map (pre-versioned event data)', () => {
-        expect(validateEventVersion(xdr.ScVal.scvMap([]))).toEqual({ valid: true });
+  describe('classifyEvent', () => {
+    it('processes a valid, allow-listed event', () => {
+      const result = classifyEvent(createValidEvent() as any, ['TaskCreated']);
+
+      expect(result).toEqual({
+        action: 'process',
+        category: null,
+        eventName: 'TaskCreated',
       });
     });
 
-    describe('unsupported versions — actionable errors', () => {
-      it('rejects a future version with a descriptive reason', () => {
-        const value = xdr.ScVal.scvMap([
-          new xdr.ScMapEntry({
-            key: xdr.ScVal.scvSymbol('payload_version'),
-            val: xdr.ScVal.scvU32(999),
-          }),
-        ]);
-
-        const result = validateEventVersion(value);
-
-        expect(result.valid).toBe(false);
-        expect(result.reason).toMatch(/unsupported event payload version 999/i);
-        expect(result.reason).toMatch(/supported versions are \[1\]/i);
-      });
-
-      it('rejects version 2 when only version 1 is supported', () => {
-        const value = xdr.ScVal.scvMap([
-          new xdr.ScMapEntry({
-            key: xdr.ScVal.scvSymbol('payload_version'),
-            val: xdr.ScVal.scvU32(2),
-          }),
-        ]);
-
-        const result = validateEventVersion(value);
-
-        expect(result.valid).toBe(false);
-        expect(result.reason).toMatch(/2/);
-      });
-
-      it('rejects a zero payload_version with a descriptive reason', () => {
-        const value = xdr.ScVal.scvMap([
-          new xdr.ScMapEntry({
-            key: xdr.ScVal.scvSymbol('payload_version'),
-            val: xdr.ScVal.scvU32(0),
-          }),
-        ]);
-
-        const result = validateEventVersion(value);
-
-        expect(result.valid).toBe(false);
-        expect(result.reason).toMatch(/unsupported event payload version/i);
-      });
-
-      it('rejects a bare ScvU32 of zero', () => {
-        const result = validateEventVersion(xdr.ScVal.scvU32(0));
-
-        expect(result.valid).toBe(false);
-        expect(result.reason).toMatch(/unsupported event payload version/i);
-      });
+    it('processes any event when the allow-list is a wildcard', () => {
+      expect(classifyEvent(createValidEvent() as any, ['*']).action).toBe('process');
+      expect(classifyEvent(createValidEvent() as any, []).action).toBe('process');
     });
 
-    describe('existing event formats remain supported', () => {
-      it('accepts a default StellarEventBuilder event unchanged', () => {
-        const event = NotificationFixtureBuilder.aStellarEvent().build();
+    it('distinguishes a named but unsupported event from a parse failure', () => {
+      const result = classifyEvent(createValidEvent() as any, ['WorkSubmitted']);
 
-        expect(validateEventVersion(event.value)).toEqual({ valid: true });
-      });
+      expect(result.action).toBe('skip');
+      expect(result.category).toBe(EventParseErrorCategory.UnsupportedEvent);
+      expect(result.eventName).toBe('TaskCreated');
+      expect(result.error?.detail).toMatch(/not in the configured allow-list/);
+      // A filter outcome is not a payload defect, so no field is blamed.
+      expect(result.error?.field).toBeNull();
+    });
 
-      it('accepts events built with withStringValue (legacy format)', () => {
-        const event = NotificationFixtureBuilder.aStellarEvent()
-          .withStringValue('some-legacy-payload')
-          .build();
+    it('classifies an undecodable topic as malformed_payload, not unsupported_event', () => {
+      // A topic the listener cannot decode is a format mismatch, not a routine
+      // filtering outcome -- conflating them would hide real ingestion faults.
+      const event = createValidEvent({ topic: [xdr.ScVal.scvU32(7)] });
+      const result = classifyEvent(event as any, ['TaskCreated']);
 
-        expect(validateEventVersion(event.value)).toEqual({ valid: true });
-      });
+      expect(result.action).toBe('skip');
+      expect(result.category).toBe(EventParseErrorCategory.MalformedPayload);
+      expect(result.eventName).toBeNull();
+      expect(result.error?.field).toBe('topic');
+    });
 
-      it('accepts events built with withSymbolValue (legacy format)', () => {
-        const event = NotificationFixtureBuilder.aStellarEvent()
-          .withSymbolValue('AutoshareCreated')
-          .build();
+    it('reports the payload classification for an invalid event', () => {
+      const result = classifyEvent(createValidEvent({ ledger: undefined }) as any, ['*']);
 
-        expect(validateEventVersion(event.value)).toEqual({ valid: true });
-      });
+      expect(result.action).toBe('skip');
+      expect(result.category).toBe(EventParseErrorCategory.MissingField);
+      expect(result.error?.field).toBe('ledger');
+    });
+
+    it('never echoes untrusted field values into the classification', () => {
+      const untrusted = 'attacker-controlled-content';
+      const result = classifyEvent(createValidEvent({ type: 99, txHash: untrusted }) as any, ['*']);
+
+      expect(result.action).toBe('skip');
+      expect(result.category).toBe(EventParseErrorCategory.InvalidType);
+      // Diagnostics name the field, never its contents.
+      expect(JSON.stringify(result)).not.toContain(untrusted);
+    });
+  });
+
+  describe('describeEventParseError', () => {
+    it('renders a stable token for log fields and metric labels', () => {
+      expect(
+        describeEventParseError({
+          category: EventParseErrorCategory.MissingField,
+          field: 'ledger',
+          detail: 'Missing or invalid ledger',
+        })
+      ).toBe('missing_field:ledger');
+
+      expect(
+        describeEventParseError({
+          category: EventParseErrorCategory.UnsupportedEvent,
+          field: null,
+          detail: 'nope',
+        })
+      ).toBe('unsupported_event');
+    });
+
+    it('produces four distinct tokens for the four categories', () => {
+      const tokens = new Set([
+        EventParseErrorCategory.MissingField,
+        EventParseErrorCategory.InvalidType,
+        EventParseErrorCategory.MalformedPayload,
+        EventParseErrorCategory.UnsupportedEvent,
+      ]);
+
+      expect(tokens.size).toBe(4);
     });
   });
 });

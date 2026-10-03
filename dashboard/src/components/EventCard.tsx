@@ -128,6 +128,8 @@ function CompactCard({ event, onClick }: { event: BlockchainEvent; onClick?: (e:
         </span>
       </div>
       <div className="event-card__details">
+        <span>Value: {event.value}</span>
+        {event.txHash && <span title={event.txHash}>Tx: {shortenAddress(event.txHash)}</span>}
         <span className="event-card__value-preview" title={event.value}>
           Value: {event.value}
         </span>
