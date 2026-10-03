@@ -15,7 +15,12 @@ import {
   useFilteredEvents,
 } from '../hooks/useEventSelectors';
 import { useEventStore } from '../store/eventStore';
-import { fetchEvents, fetchStatus, type ContractStatus } from '../services/eventsApi';
+import {
+  fetchEvents,
+  fetchStatus,
+  isListenerApiTimeoutError,
+  type ContractStatus,
+} from '../services/eventsApi';
 import { resolveIndexingHealthUrl } from '../services/indexingHealthApi';
 import { resolveNotificationHealthUrl } from '../services/notificationHealthApi';
 import { generateMockEvents } from '../utils/eventData';
@@ -108,7 +113,7 @@ export function EventExplorerPage() {
           setEvents(remoteEvents);
           markSyncSuccess();
         }
-      } catch {
+      } catch (error) {
         if (!cancelled) {
           setEvents(generateMockEvents(DEFAULT_EVENT_COUNT));
           setError('Listener API unavailable — showing mock events for demo.');
@@ -170,7 +175,7 @@ export function EventExplorerPage() {
         setEvents(remoteEvents);
         markSyncSuccess();
       })
-      .catch(() => {
+      .catch((error) => {
         setEvents(generateMockEvents(DEFAULT_EVENT_COUNT));
         setError('Listener API unavailable — showing mock events for demo.');
         markSyncFailure('Wallet refresh failed');
