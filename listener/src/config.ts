@@ -33,6 +33,10 @@ import {
   parseLogLevel,
 } from './utils/logger';
 import { DEFAULT_MAX_BODY_BYTES } from './middleware/body-limit';
+import {
+  DEFAULT_WEBHOOK_TIMEOUT_MS,
+  MAX_WEBHOOK_TIMEOUT_MS,
+} from './services/webhook-delivery-service';
 
 export class ConfigError extends Error {
   constructor(message: string) {
@@ -294,11 +298,15 @@ function loadRetrySchedulerConfig(policy: RetryPolicyOptions): RetrySchedulerOpt
     multiplier: parseIntegerEnv('RETRY_MULTIPLIER', '2'),
     maxDelayMs: parseIntegerEnv('RETRY_MAX_DELAY_MS', String(60 * 60 * 1000)),
     jitter: trimEnv('RETRY_JITTER') !== 'false',
-    // Policy knobs are owned by the retry policy; fold them in so the scheduler
+// Policy knobs are owned by the retry policy; fold them in so the scheduler
     // and the in-memory queues agree on the attempt budget and on which failure
     // types are worth retrying.
     maxAttempts: policy.maxAttempts,
     retryableFailureTypes: policy.retryableFailureTypes,
+    webhookTimeoutMs: parseIntegerEnv(
+      'WEBHOOK_TIMEOUT_MS',
+      String(DEFAULT_WEBHOOK_TIMEOUT_MS)
+    ),
   };
 }
 
@@ -795,6 +803,16 @@ export function validateConfig(config: Config): void {
     if (config.retryScheduler.batchSize < 1) {
       errors.push(
         `RETRY_SCHEDULER_BATCH_SIZE must be >= 1 (received: ${config.retryScheduler.batchSize}).`,
+      );
+    }
+    if (config.retryScheduler.webhookTimeoutMs < 1) {
+      errors.push(
+        `WEBHOOK_TIMEOUT_MS must be >= 1 ms (received: ${config.retryScheduler.webhookTimeoutMs}).`,
+      );
+    } else if (config.retryScheduler.webhookTimeoutMs > MAX_WEBHOOK_TIMEOUT_MS) {
+      errors.push(
+        `WEBHOOK_TIMEOUT_MS must be <= ${MAX_WEBHOOK_TIMEOUT_MS} ms ` +
+          `(received: ${config.retryScheduler.webhookTimeoutMs}).`,
       );
     }
   }

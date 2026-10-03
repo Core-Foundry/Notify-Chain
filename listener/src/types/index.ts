@@ -196,7 +196,10 @@ export interface RetrySchedulerOptions {
   multiplier: number;
   maxDelayMs: number;
   jitter: boolean;
-  /** Request timeout for outbound webhook delivery (ms). Default: 10 000. */
+/**
+   * Timeout (ms) for outbound webhook requests (`WEBHOOK_TIMEOUT_MS`).
+   * Defaults to `DEFAULT_WEBHOOK_TIMEOUT_MS` (10 000 ms).
+   */
   webhookTimeoutMs: number;
   /**
    * Retry-policy ceiling on total attempts. Mirrors `RetrySchedulerConfig`;
