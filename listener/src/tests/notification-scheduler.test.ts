@@ -1,7 +1,10 @@
+jest.mock('../utils/request-id', () => ({ generateRequestId: () => 'scheduler-test-request-id' }));
+
 import { Database } from '../database/database';
 import { ScheduledNotificationRepository } from '../services/scheduled-notification-repository';
 import { NotificationScheduler } from '../services/notification-scheduler';
 import { NotificationAPI } from '../services/notification-api';
+import { DeliveryReceiptRepository } from '../services/delivery-receipt-repository';
 import {
   NotificationType,
   NotificationStatus,
@@ -15,6 +18,7 @@ describe('NotificationScheduler', () => {
   let repository: ScheduledNotificationRepository;
   let scheduler: NotificationScheduler;
   let api: NotificationAPI;
+  let receiptRepository: DeliveryReceiptRepository;
 
   const testDbPath = './data/test-notifications.db';
 
@@ -32,6 +36,7 @@ describe('NotificationScheduler', () => {
     db = new Database(testDbPath);
     await db.initialize();
     repository = new ScheduledNotificationRepository(db);
+    receiptRepository = new DeliveryReceiptRepository(db);
     api = new NotificationAPI(repository);
   });
 
@@ -44,11 +49,104 @@ describe('NotificationScheduler', () => {
 
   beforeEach(async () => {
     // Clear tables before each test
+    await db.run('DELETE FROM delivery_receipts');
     await db.run('DELETE FROM notification_execution_log');
     await db.run('DELETE FROM scheduled_notifications');
   });
 
   describe('ScheduledNotificationRepository', () => {
+    test('persists successful provider delivery with sanitized response metadata', async () => {
+      const id = await repository.create({
+        payload: { message: 'Receipt test' },
+        notificationType: NotificationType.WEBHOOK,
+        targetRecipient: 'https://example.com/hook',
+        executeAt: new Date(Date.now() - 1000),
+      });
+      const providerRegistry = {
+        has: () => true,
+        deliver: jest.fn().mockResolvedValue({
+          success: true,
+          degradedCapabilities: [],
+          providerMessageId: 'provider-message-12',
+          providerResponse: {
+            statusCode: 202,
+            messageId: 'provider-message-12',
+            authorization: 'Bearer never-store-this',
+          },
+        }),
+      };
+      scheduler = new NotificationScheduler(
+        repository,
+        {
+          enabled: true,
+          pollIntervalMs: 1000,
+          lockTimeoutMs: 30000,
+          processorId: 'receipt-success-test',
+          batchSize: 10,
+          timingBufferMs: 1000,
+        },
+        null,
+        undefined,
+        providerRegistry as any,
+        receiptRepository,
+      );
+
+      await (scheduler as any).processPendingNotifications();
+
+      const receipts = await receiptRepository.findByNotificationId(id);
+      expect(receipts).toHaveLength(1);
+      expect(receipts[0]).toMatchObject({
+        status: 'delivered',
+        channel: 'webhook',
+        attemptCount: 1,
+        providerMessageId: 'provider-message-12',
+        providerResponse: { statusCode: 202, messageId: 'provider-message-12' },
+      });
+      expect(await receiptRepository.findByNotificationId(id, 'failed')).toHaveLength(0);
+    });
+
+    test('persists a failed receipt with timeout details when provider transport throws', async () => {
+      const id = await repository.create({
+        payload: { message: 'Timeout receipt test' },
+        notificationType: NotificationType.WEBHOOK,
+        targetRecipient: 'https://example.com/hook',
+        executeAt: new Date(Date.now() - 1000),
+      });
+      const timeoutError = Object.assign(new Error('secret token=should-not-persist'), {
+        name: 'AbortError',
+      });
+      const providerRegistry = {
+        has: () => true,
+        deliver: jest.fn().mockRejectedValue(timeoutError),
+      };
+      scheduler = new NotificationScheduler(
+        repository,
+        {
+          enabled: true,
+          pollIntervalMs: 1000,
+          lockTimeoutMs: 30000,
+          processorId: 'receipt-failure-test',
+          batchSize: 10,
+          timingBufferMs: 1000,
+        },
+        null,
+        undefined,
+        providerRegistry as any,
+        receiptRepository,
+      );
+
+      await (scheduler as any).processPendingNotifications();
+
+      const failed = await receiptRepository.findByNotificationId(id, 'failed');
+      expect(failed).toHaveLength(1);
+      expect(failed[0]).toMatchObject({
+        status: 'failed',
+        errorCode: 'TIMEOUT',
+        errorMessage: 'Provider request timed out',
+      });
+      expect(await receiptRepository.findByNotificationId(id, 'delivered')).toHaveLength(0);
+    });
+
     test('should create a scheduled notification', async () => {
       const input: CreateScheduledNotificationInput = {
         payload: { message: 'Test notification' },
@@ -284,6 +382,22 @@ describe('NotificationScheduler', () => {
 
       const notification = await repository.getById(id);
       expect(notification!.status).toBe(NotificationStatus.CANCELLED);
+    });
+
+    test('cancels with a reason and stores it', async () => {
+      const id = await repository.create({
+        payload: { message: 'Test' },
+        notificationType: NotificationType.DISCORD,
+        targetRecipient: 'test-webhook',
+        executeAt: new Date(Date.now() + 60000),
+      });
+      const reason = 'User requested cancellation';
+      const ok = await repository.cancel(id, reason);
+      expect(ok).toBe(true);
+
+      const fetched = await repository.getById(id);
+      expect(fetched!.status).toBe(NotificationStatus.CANCELLED);
+      expect(fetched!.cancellationReason).toBe(reason);
     });
 
     test('should get statistics', async () => {

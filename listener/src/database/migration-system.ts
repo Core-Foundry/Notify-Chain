@@ -89,8 +89,15 @@ export class MigrationRunner {
   }
 
   async getAppliedMigrations(): Promise<string[]> {
+<<<<<<< HEAD
     const rows = await this.all<{ id: string }>('SELECT id FROM migrations ORDER BY applied_at');
     return rows.map((row) => row.id);
+=======
+    const rows = await this.db.all<{ id: string }>(
+      'SELECT id FROM migrations ORDER BY applied_at'
+    );
+    return (rows as unknown as { id: string }[]).map((row) => row.id);
+>>>>>>> upstream/main
   }
 
   async applyMigration(migration: Migration): Promise<void> {
@@ -103,9 +110,23 @@ export class MigrationRunner {
       logger.info(`Migration ${migration.id} (${migration.name}) applied successfully`);
     } catch (error) {
       try {
+<<<<<<< HEAD
         await this.run('ROLLBACK');
       } catch (rollbackError) {
         logger.error(`Migration ${migration.id} rollback failed`, { error: rollbackError });
+=======
+        await migration.up(this.db);
+        await this.db.run(
+          'INSERT INTO migrations (id, name) VALUES (?, ?)',
+          [migration.id, migration.name]
+        );
+        await this.db.run('COMMIT');
+        logger.info(`Migration ${migration.id} (${migration.name}) applied successfully`);
+      } catch (error) {
+        await this.db.run('ROLLBACK');
+        logger.error(`Migration ${migration.id} failed, rolling back: ${(error as Error)?.message ?? String(error)}`);
+        throw error;
+>>>>>>> upstream/main
       }
       logger.error(`Migration ${migration.id} failed, rolling back`, { error });
       throw error;

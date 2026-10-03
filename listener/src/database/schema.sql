@@ -36,7 +36,8 @@ CREATE TABLE IF NOT EXISTS scheduled_notifications (
   contract_address TEXT,                    -- Stellar contract address (if applicable)
   priority INTEGER NOT NULL DEFAULT 5 CHECK (priority BETWEEN 1 AND 10),
   metadata TEXT,                            -- Additional JSON metadata
-  next_retry_at DATETIME                    -- When the next retry should be attempted
+  next_retry_at DATETIME,                   -- When the next retry should be attempted
+  deduplication_key TEXT                    -- Caller-supplied key; duplicate inserts with the same key are silently skipped
 );
 
 -- Indexes for performance optimization
@@ -61,6 +62,10 @@ CREATE INDEX IF NOT EXISTS idx_scheduled_notifications_created_at
 
 CREATE INDEX IF NOT EXISTS idx_scheduled_notifications_event_id 
   ON scheduled_notifications(event_id);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_scheduled_notifications_dedup_key
+  ON scheduled_notifications(deduplication_key)
+  WHERE deduplication_key IS NOT NULL;
 
 CREATE INDEX IF NOT EXISTS idx_scheduled_notifications_target 
   ON scheduled_notifications(target_recipient, status);
@@ -110,6 +115,26 @@ CREATE INDEX IF NOT EXISTS idx_execution_log_execution_time
 
 CREATE INDEX IF NOT EXISTS idx_execution_log_status_execution_time 
   ON notification_execution_log(status, execution_time);
+
+-- One immutable receipt per provider delivery attempt
+CREATE TABLE IF NOT EXISTS delivery_receipts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  notification_id INTEGER NOT NULL,
+  channel TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('delivered', 'failed', 'rejected', 'pending')),
+  attempt_count INTEGER NOT NULL CHECK (attempt_count > 0),
+  provider_message_id TEXT,
+  provider_response TEXT,
+  error_code TEXT,
+  error_message TEXT,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_delivery_receipts_notification_attempt
+  ON delivery_receipts(notification_id, attempt_count, id);
+CREATE INDEX IF NOT EXISTS idx_delivery_receipts_status_created
+  ON delivery_receipts(status, created_at);
 
 -- Migration: add next_retry_at for explicit retry scheduling (no-op when column exists in CREATE TABLE)
 -- SQLite does not support IF NOT EXISTS for ADD COLUMN; runMigrations tolerates duplicate-column errors.
@@ -409,5 +434,23 @@ CREATE INDEX IF NOT EXISTS idx_execution_log_notification_attempt
 -- Rate-limit audit by client + time
 CREATE INDEX IF NOT EXISTS idx_rate_limit_events_client_timestamp
   ON rate_limit_events(client_id, timestamp);
+
+-- ===============================================
+-- EVENT & NOTIFICATION QUERY INDEXES (migration 003)
+-- See docs/DATABASE_QUERY_PERFORMANCE.md
+-- ===============================================
+
+-- Archival / retention cleanup: terminal notifications ordered by completion time
+CREATE INDEX IF NOT EXISTS idx_scheduled_notifications_archivable
+  ON scheduled_notifications(processing_completed_at)
+  WHERE status IN ('COMPLETED','FAILED','CANCELLED');
+
+-- Notification search: case-insensitive type filter + created_at sort
+CREATE INDEX IF NOT EXISTS idx_scheduled_notifications_type_lower_created
+  ON scheduled_notifications(LOWER(notification_type), created_at);
+
+-- Processed-event search: case-insensitive type filter + processed_at sort
+CREATE INDEX IF NOT EXISTS idx_processed_events_type_lower_processed
+  ON processed_events(LOWER(event_type), processed_at);
 
 
