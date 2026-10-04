@@ -1,5 +1,5 @@
 /**
- * Bounded retry helper for transient API failures.
+ * Bounded retry helper for transient webhook API failures.
  *
  * Wraps the sendWebhook function with retry logic driven by a {@link RetryPolicy},
  * so the attempt budget, the delay curve and the set of eligible failure types
@@ -97,15 +97,14 @@ function isRetryable(response?: Response, error?: unknown): boolean {
 
 /**
  * Delay execution for the specified number of milliseconds.
- *
- * @param ms - Milliseconds to delay
  */
 async function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 /**
- * Send a webhook with bounded retry logic for transient failures.
+ * Send a webhook with bounded, configurable retry logic for transient
+ * failures.
  *
  * Makes an initial attempt, then retries while the policy allows: while the
  * attempt budget is not exhausted *and* the failure type is eligible for retry.
@@ -144,7 +143,6 @@ export async function sendWebhookWithRetry(
         return response;
       }
 
-      // Retryable failure - store response and retry if attempts remain
       lastResponse = response;
 
       if (attempt < maxAttempts) {
@@ -168,13 +166,7 @@ export async function sendWebhookWithRetry(
     }
   }
 
-  // If we got here, we have a failed response (not an exception)
-  // Return the last response
-  if (lastResponse) {
-    return lastResponse;
-  }
-
-  // This should not happen, but handle it gracefully
+  if (lastResponse) return lastResponse;
   throw lastError ?? new Error('All retry attempts failed');
 }
 
