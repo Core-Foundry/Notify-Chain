@@ -6,6 +6,7 @@ import { useDebounce } from '../hooks/useDebounce';
 import { EmptyState } from '../components/EmptyState';
 import { CopyButton } from '../components/CopyButton';
 import {
+  isListenerApiTimeoutError,
   searchNotifications,
   type NotificationSearchResult,
   type NotificationSearchResponse,
@@ -125,7 +126,13 @@ export function NotificationSearchPage() {
       setResponse(result);
     } catch (err: unknown) {
       if (err instanceof Error && err.name === 'AbortError') return;
-      setError(err instanceof Error ? err.message : 'Search failed');
+      setError(
+        isListenerApiTimeoutError(err)
+          ? 'The notification search timed out. Please try again.'
+          : err instanceof Error
+            ? err.message
+            : 'Search failed'
+      );
     } finally {
       setLoading(false);
     }

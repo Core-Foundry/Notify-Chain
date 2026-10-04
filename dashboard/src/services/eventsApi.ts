@@ -74,8 +74,52 @@ export interface NotificationSearchParams {
   sortBy?: 'newest' | 'oldest' | 'status';
 }
 
+export const LISTENER_API_TIMEOUT_MS = 10_000;
+
+export function isListenerApiTimeoutError(error: unknown): boolean {
+  return error instanceof Error && /timed out|timeout/i.test(error.message);
+}
+
+async function fetchWithTimeout(
+  input: RequestInfo | URL,
+  init: RequestInit = {},
+  timeoutMs = LISTENER_API_TIMEOUT_MS
+): Promise<Response> {
+  const controller = new AbortController();
+  const signal = init.signal;
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+  let abortListener: (() => void) | null = null;
+  if (signal) {
+    if (signal.aborted) {
+      controller.abort();
+    } else {
+      abortListener = () => controller.abort();
+      signal.addEventListener('abort', abortListener, { once: true });
+    }
+  }
+
+  try {
+    return await fetch(input, {
+      ...init,
+      signal: controller.signal,
+    });
+  } catch (error) {
+    const err = error as { name?: string };
+    if (controller.signal.aborted && err?.name === 'AbortError') {
+      throw new Error(`Listener API request timed out after ${timeoutMs}ms.`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+    if (abortListener && signal) {
+      signal.removeEventListener('abort', abortListener);
+    }
+  }
+}
+
 export async function fetchEvents(apiUrl: string): Promise<BlockchainEvent[]> {
-  const response = await fetch(apiUrl);
+  const response = await fetchWithTimeout(apiUrl);
   if (!response.ok) {
     throw new Error(`Failed to fetch events: ${response.status}`);
   }

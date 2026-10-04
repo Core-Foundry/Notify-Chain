@@ -179,33 +179,25 @@ describe('NotificationSearchPage filters', () => {
     expect(screen.getByLabelText(/filter from date/i)).toHaveValue('');
     expect(screen.queryByRole('button', { name: /clear all filters/i })).not.toBeInTheDocument();
   });
-});
 
-describe('searchNotifications query params', () => {
-  const originalFetch = global.fetch;
+  it('shows a friendly timeout message when the listener search request expires', async () => {
+    mockedSearch.mockRejectedValue(new Error('Listener API request timed out after 10000ms.'));
 
-  beforeEach(() => {
-    global.fetch = jest.fn().mockResolvedValue({
-      ok: true,
-      json: async () => emptyResponse(),
+    render(<NotificationSearchPage />);
+
+    fireEvent.change(screen.getByLabelText(/free-text search/i), {
+      target: { value: 'payment' },
     });
-  });
-
-  afterEach(() => {
-    global.fetch = originalFetch;
-  });
 
   it('appends type, status, startDate, and endDate to the URL', async () => {
     const { searchNotifications: realSearch } = jest.requireActual(
       '../services/eventsApi',
     ) as typeof import('../services/eventsApi');
 
-    await realSearch('http://localhost:8787', {
-      type: 'webhook',
-      status: 'COMPLETED',
-      startDate: '2026-01-01',
-      endDate: '2026-01-31',
+    await waitFor(() => {
+      expect(screen.getByText(/The notification search timed out\. Please try again\./i)).toBeInTheDocument();
     });
+  });
 
     expect(global.fetch).toHaveBeenCalledWith(expect.stringContaining('type=webhook'));
     const calledUrl = (global.fetch as jest.Mock).mock.calls[0][0] as string;
