@@ -77,7 +77,7 @@ export function NotificationDetailsDrawer({
 
   const resolvedFetcher = useMemo(
     () => fetchMetadata ?? (async (e: BlockchainEvent) => defaultMetadata(e)),
-    [fetchMetadata]
+    [fetchMetadata],
   );
 
   useEffect(() => {
@@ -154,10 +154,7 @@ export function NotificationDetailsDrawer({
       ? fetchState.data.sender
       : { address: notification.contractAddress, metadata: undefined };
 
-  const statusHistory =
-    fetchState.status === 'success'
-      ? fetchState.data.statusHistory
-      : [];
+  const statusHistory = fetchState.status === 'success' ? fetchState.data.statusHistory : [];
 
   const title = notification.eventName ?? notification.type;
 
@@ -174,7 +171,12 @@ export function NotificationDetailsDrawer({
             </div>
             <h2 className="drawer__title">{title}</h2>
           </div>
-          <button type="button" className="drawer__close" onClick={onClose} aria-label="Close drawer">
+          <button
+            type="button"
+            className="drawer__close"
+            onClick={onClose}
+            aria-label="Close drawer"
+          >
             ×
           </button>
         </header>
@@ -189,7 +191,9 @@ export function NotificationDetailsDrawer({
           <h3 className="drawer__section-title">Sender Details</h3>
           <div className="drawer__row">
             <span className="drawer__label">Address</span>
-            <span className="drawer__value" title={sender.address}>{shorten(sender.address)}</span>
+            <span className="drawer__value" title={sender.address}>
+              {shorten(sender.address)}
+            </span>
             <button
               type="button"
               className="drawer__action"
@@ -233,7 +237,9 @@ export function NotificationDetailsDrawer({
           </div>
           <div className="drawer__row">
             <span className="drawer__label">Event ID</span>
-            <span className="drawer__value" title={notification.eventId}>{shorten(notification.eventId, 10, 6)}</span>
+            <span className="drawer__value" title={notification.eventId}>
+              {shorten(notification.eventId, 10, 6)}
+            </span>
             <button
               type="button"
               className="drawer__action"
@@ -345,8 +351,12 @@ export function NotificationDetailsDrawer({
                     <div className="drawer__timeline-dot" aria-hidden="true" />
                     <div className="drawer__timeline-body">
                       <div className="drawer__timeline-title">{entry.label}</div>
-                      <div className="drawer__timeline-time">{formatTimestamp(entry.timestampMs)}</div>
-                      {entry.detail && <div className="drawer__timeline-detail">{entry.detail}</div>}
+                      <div className="drawer__timeline-time">
+                        {formatTimestamp(entry.timestampMs)}
+                      </div>
+                      {entry.detail && (
+                        <div className="drawer__timeline-detail">{entry.detail}</div>
+                      )}
                     </div>
                   </li>
                 ))}

@@ -48,10 +48,7 @@ describe('EventExplorerTable column resizing helpers', () => {
   });
 
   it('clamps widths below the minimum when loading', () => {
-    localStorage.setItem(
-      STORAGE_KEY,
-      JSON.stringify([40, 180, 120, 200, 110, 170])
-    );
+    localStorage.setItem(STORAGE_KEY, JSON.stringify([40, 180, 120, 200, 110, 170]));
     const loaded = loadColumnWidths();
     expect(loaded[0]).toBe(DEFAULT_COLUMN_WIDTHS[0]);
     expect(loaded[0]).toBeGreaterThanOrEqual(MIN_COLUMN_WIDTH);
@@ -68,9 +65,7 @@ describe('EventExplorerTable resizing UI', () => {
   });
 
   it('renders resize handles and keeps layout stable while resizing', () => {
-    const { getByLabelText, container } = render(
-      <EventExplorerTable events={[sampleEvent]} />
-    );
+    const { getByLabelText, container } = render(<EventExplorerTable events={[sampleEvent]} />);
 
     const handle = getByLabelText('Resize Contract column');
     expect(handle).toBeInTheDocument();
