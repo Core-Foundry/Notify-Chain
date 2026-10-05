@@ -7,7 +7,12 @@ import {
   matchesEventFilter,
   validateEventPayload,
   validateRpcResponse,
+  parseEventVersion,
+  validateEventVersion,
+  CURRENT_EVENT_VERSION,
+  SUPPORTED_EVENT_VERSIONS,
 } from './event-utils';
+import { NotificationFixtureBuilder } from '../test-utils/notification-fixture-builder';
 
 function createValidEvent(overrides: Record<string, unknown> = {}) {
   return {
