@@ -80,6 +80,7 @@ export class EventSubscriber {
 
     this.isRunning = true;
     logger.info('Starting event subscriber service');
+    await this.restoreCheckpoints();
     this.eventQueue?.start();
     this.retryQueue?.start();
     this.poll();
@@ -90,6 +91,51 @@ export class EventSubscriber {
     this.eventQueue?.stop();
     this.retryQueue?.stop();
     logger.info('Stopping event subscriber service');
+  }
+
+  /**
+   * Restore the in-memory cursor map from persisted checkpoints.
+   *
+   * Called once at the start of `start()` before the poll loop begins.
+   * For each configured contract address, if a row exists in
+   * `polling_cursors`, the stored cursor string is loaded into
+   * `this.lastCursors` so the first poll resumes from the last known
+   * position rather than replaying from the beginning.
+   *
+   * Failures are logged and swallowed per-contract so a single bad DB
+   * row never prevents the subscriber from starting.
+   */
+  private async restoreCheckpoints(): Promise<void> {
+    if (!this.deduplicationService) {
+      return;
+    }
+
+    let restored = 0;
+
+    for (const contractConfig of this.config.contractAddresses) {
+      try {
+        const record = await this.deduplicationService.getLastCursor(contractConfig.address);
+        if (record) {
+          this.lastCursors.set(contractConfig.address, record.cursor);
+          restored++;
+          logger.info('Checkpoint restored', {
+            contractAddress: contractConfig.address,
+            cursor: record.cursor,
+            ledgerNumber: record.ledgerNumber,
+          });
+        }
+      } catch (error) {
+        logger.warn('Failed to restore checkpoint for contract; starting from beginning', {
+          contractAddress: contractConfig.address,
+          error,
+        });
+      }
+    }
+
+    logger.info('Checkpoint restore complete', {
+      contractsConfigured: this.config.contractAddresses.length,
+      contractsRestored: restored,
+    });
   }
 
   private async poll(): Promise<void> {
@@ -258,7 +304,6 @@ export class EventSubscriber {
         contractAddress: contractConfig.address,
         eventId: event.id,
         eventName,
-        receivedAt: event.receivedAt,
         currentTime: Date.now(),
         reason: 'expired',
       });
