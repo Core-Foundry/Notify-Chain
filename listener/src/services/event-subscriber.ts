@@ -144,14 +144,14 @@ export class EventSubscriber {
         }
 
         const events = response.events || [];
-        
+
         // Detect potential reorg if events exist and we have previous state
         if (this.deduplicationService && events.length > 0) {
           const firstEventLedger = events[0]?.ledger;
           if (firstEventLedger) {
             const reorgDetected = await this.deduplicationService.detectReorg(
               contractConfig.address,
-              firstEventLedger
+              firstEventLedger,
             );
             if (reorgDetected) {
               logger.warn('Potential blockchain reorg detected', {
@@ -218,14 +218,14 @@ export class EventSubscriber {
 
         if (response.cursor) {
           this.lastCursors.set(contractConfig.address, response.cursor);
-          
+
           // Update cursor in deduplication service if available
           if (this.deduplicationService) {
             const lastEventLedger = events.length > 0 ? events[events.length - 1].ledger : 0;
             await this.deduplicationService.updatePollingCursor(
               contractConfig.address,
               response.cursor,
-              lastEventLedger || 0
+              lastEventLedger || 0,
             );
           }
         }
@@ -240,9 +240,7 @@ export class EventSubscriber {
     }
 
     if (totalContracts > 0 && failureCount === totalContracts) {
-      throw new Error(
-        `Failed to fetch events for all ${totalContracts} configured contract(s)`
-      );
+      throw new Error(`Failed to fetch events for all ${totalContracts} configured contract(s)`);
     }
   }
 
@@ -250,7 +248,7 @@ export class EventSubscriber {
     event: StellarSDK.rpc.Api.EventResponse,
     contractConfig: ContractConfig,
     requestId: string = '',
-    correlationId: string = requestId
+    correlationId: string = requestId,
   ): boolean {
     // Check if event has expired
     const eventName = getEventName(event.topic);
@@ -372,7 +370,7 @@ export class EventSubscriber {
   }
 
   private async getContractEvents(
-    contractConfig: ContractConfig
+    contractConfig: ContractConfig,
   ): Promise<StellarSDK.rpc.Api.GetEventsResponse> {
     // Apply rate limiting before making RPC request
     if (this.rpcRateLimiter) {
@@ -465,7 +463,7 @@ export class EventSubscriber {
     event: StellarSDK.rpc.Api.EventResponse,
     contractConfig: ContractConfig,
     requestId: string = '',
-    correlationId: string = ''
+    correlationId: string = '',
   ): Promise<boolean> {
     correlationId = correlationId || requestId || generateCorrelationId();
     const eventStart = Date.now();
@@ -542,7 +540,7 @@ export class EventSubscriber {
           const success = await this.discordService.sendEventNotification(
             event,
             contractConfig,
-            requestId
+            requestId,
           );
           notificationSent = success;
 
@@ -558,8 +556,8 @@ export class EventSubscriber {
         } catch (error) {
           processingError = error instanceof Error ? error.message : String(error);
           logger.error('Error sending Discord notification', {
-              requestId: correlationId,
-              correlationId,
+            requestId: correlationId,
+            correlationId,
             eventId: event.id,
             error: processingError,
           });
@@ -577,7 +575,7 @@ export class EventSubscriber {
         event.type,
         notificationSent,
         processingError ? 'ERROR' : 'PROCESSED',
-        processingError
+        processingError,
       );
     }
 
