@@ -73,7 +73,11 @@ export function EmptyState({
       {body && <p className="empty-state__message empty-state__description">{body}</p>}
       {children}
       {action && (
-        <button type="button" className="empty-state__action button button--secondary" onClick={action.onClick}>
+        <button
+          type="button"
+          className="empty-state__action button button--secondary"
+          onClick={action.onClick}
+        >
           {action.label}
         </button>
       )}

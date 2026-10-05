@@ -6,9 +6,7 @@
   "type": "module",
   "scripts": {
     "lint:config": "node scripts/check-unused-config.mjs",
-    "lint:config:verbose": "VERBOSE=true node scripts/check-unused-config.mjs",
-    "doctor": "bash scripts/check-prereqs.sh",
-    "check:env": "bash scripts/check-prereqs.sh"
+    "lint:config:verbose": "VERBOSE=true node scripts/check-unused-config.mjs"
   },
   "keywords": [
     "blockchain",
