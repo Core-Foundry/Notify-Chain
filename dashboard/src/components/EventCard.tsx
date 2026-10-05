@@ -1,8 +1,6 @@
 import { memo, type KeyboardEvent } from 'react';
 import type { BlockchainEvent } from '../types/event';
 import { formatRelativeTimestamp, formatTimestamp } from '../utils/formatTime';
-import { getEventBadgeClass, isKnownEventType } from '../utils/eventTypeMapping';
-import { formatPayloadPreview } from '../utils/payloadViewer';
 import { CopyButton } from './CopyButton';
 
 export type EventCardVariant = 'compact' | 'expanded';
@@ -18,6 +16,8 @@ function shortenAddress(address: string): string {
   if (address.length <= 12) return address;
   return `${address.slice(0, 6)}...${address.slice(-4)}`;
 }
+
+import { getEventBadgeClass } from '../utils/eventTypeMapping';
 
 function SkeletonLine({ width = '100%', height = '14px' }: { width?: string; height?: string }) {
   return <span className="event-card__skeleton" style={{ width, height }} aria-hidden="true" />;
@@ -84,6 +84,13 @@ function handleActivationKey(onClick: (e: BlockchainEvent) => void, event: Block
   };
 }
 
+function CompactCard({
+  event,
+  onClick,
+}: {
+  event: BlockchainEvent;
+  onClick?: (e: BlockchainEvent) => void;
+}) {
 function IdValue({ value, label }: { value: string; label: string }) {
   return (
     <dd className="event-card__id-value" title={value}>
@@ -95,17 +102,13 @@ function IdValue({ value, label }: { value: string; label: string }) {
 
 function CompactCard({ event, onClick }: { event: BlockchainEvent; onClick?: (e: BlockchainEvent) => void }) {
   const displayName = event.eventName ?? event.type;
-  const rawType = event.eventName ?? event.type;
   const badgeClass = getEventBadgeClass(event.eventName);
-  const isUnknown = !isKnownEventType(rawType);
-  const payload = formatPayloadPreview(event.value);
   const Wrapper = onClick ? 'div' : 'article';
 
   return (
     <Wrapper
       className={`event-card event-card--compact${onClick ? ' event-card--clickable' : ''}`}
       data-event-id={event.eventId}
-      data-event-type-known={isUnknown ? 'false' : 'true'}
       onClick={onClick ? () => onClick(event) : undefined}
       role={onClick ? 'group' : undefined}
       tabIndex={onClick ? 0 : undefined}
@@ -113,12 +116,7 @@ function CompactCard({ event, onClick }: { event: BlockchainEvent; onClick?: (e:
       onKeyDown={onClick ? handleActivationKey(onClick, event) : undefined}
     >
       <div className="event-card__primary">
-        <span
-          className={`event-card__badge ${badgeClass}`}
-          title={isUnknown ? `Unrecognized event type: ${rawType}` : undefined}
-        >
-          {displayName}
-        </span>
+        <span className={`event-card__badge ${badgeClass}`}>{displayName}</span>
         <span className="event-card__ledger">Ledger {event.ledger}</span>
       </div>
       <div className="event-card__meta">
@@ -130,8 +128,10 @@ function CompactCard({ event, onClick }: { event: BlockchainEvent; onClick?: (e:
         </span>
       </div>
       <div className="event-card__details">
-        <span className="event-card__value-preview" title={payload.full}>
-          Value: {payload.preview}
+        <span>Value: {event.value}</span>
+        {event.txHash && <span title={event.txHash}>Tx: {shortenAddress(event.txHash)}</span>}
+        <span className="event-card__value-preview" title={event.value}>
+          Value: {event.value}
         </span>
         {event.txHash && (
           <span title={event.txHash}>
@@ -144,20 +144,21 @@ function CompactCard({ event, onClick }: { event: BlockchainEvent; onClick?: (e:
   );
 }
 
-function ExpandedCard({ event, onClick }: { event: BlockchainEvent; onClick?: (e: BlockchainEvent) => void }) {
+function ExpandedCard({
+  event,
+  onClick,
+}: {
+  event: BlockchainEvent;
+  onClick?: (e: BlockchainEvent) => void;
+}) {
   const displayName = event.eventName ?? event.type;
-  const rawType = event.eventName ?? event.type;
   const badgeClass = getEventBadgeClass(event.eventName);
-  const isUnknown = !isKnownEventType(rawType);
-  const payload = formatPayloadPreview(event.value, 4000);
-  const topics = event.topic ?? [];
   const Wrapper = onClick ? 'div' : 'article';
 
   return (
     <Wrapper
       className={`event-card event-card--expanded${onClick ? ' event-card--clickable' : ''}`}
       data-event-id={event.eventId}
-      data-event-type-known={isUnknown ? 'false' : 'true'}
       onClick={onClick ? () => onClick(event) : undefined}
       role={onClick ? 'group' : undefined}
       tabIndex={onClick ? 0 : undefined}
@@ -170,11 +171,6 @@ function ExpandedCard({ event, onClick }: { event: BlockchainEvent; onClick?: (e
       </div>
 
       <div className="event-card__body">
-        {isUnknown && (
-          <p className="event-card__unknown-notice" role="note">
-            Unrecognized event type “{rawType}”. Showing the raw payload below.
-          </p>
-        )}
         <dl className="event-card__fields">
           <div className="event-card__field">
             <dt>Contract</dt>
@@ -184,6 +180,10 @@ function ExpandedCard({ event, onClick }: { event: BlockchainEvent; onClick?: (e
           {event.txHash && (
             <div className="event-card__field">
               <dt>Tx Hash</dt>
+              <dd title={event.txHash}>
+                {event.txHash}
+                <CopyButton value={event.txHash} label="transaction hash" size="xs" />
+              </dd>
               <IdValue value={event.txHash} label="tx hash" />
             </div>
           )}
@@ -195,17 +195,15 @@ function ExpandedCard({ event, onClick }: { event: BlockchainEvent; onClick?: (e
 
           <div className="event-card__field">
             <dt>Value</dt>
-            <dd className="event-card__payload" title={payload.full}>
-              {payload.full}
-            </dd>
+            <dd className="event-card__payload">{event.value}</dd>
           </div>
 
-          {topics.length > 0 && (
+          {event.topic.length > 0 && (
             <div className="event-card__field">
               <dt>Topics</dt>
               <dd>
                 <ul className="event-card__topics">
-                  {topics.map((t, i) => (
+                  {event.topic.map((t, i) => (
                     <li key={i} className="event-card__topic-item">
                       {t}
                     </li>

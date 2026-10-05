@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { BlockchainEvent } from '../types/event';
 import { formatTimestamp } from '../utils/formatTime';
 import { copyTextToClipboard } from '../utils/clipboard';
-import { getEventTypePresentation, isKnownEventType } from '../utils/eventTypeMapping';
+import { getEventTypePresentation } from '../utils/eventTypeMapping';
 import { formatRawPayload, copyPayloadToClipboard } from '../utils/payloadViewer';
 
 type FetchState<T> =
@@ -77,7 +77,7 @@ export function NotificationDetailsDrawer({
 
   const resolvedFetcher = useMemo(
     () => fetchMetadata ?? (async (e: BlockchainEvent) => defaultMetadata(e)),
-    [fetchMetadata]
+    [fetchMetadata],
   );
 
   useEffect(() => {
@@ -108,15 +108,6 @@ export function NotificationDetailsDrawer({
       cancelled = true;
     };
   }, [isOpen, notification, resolvedFetcher]);
-
-  // Default the payload view per notification: unknown event types open in the
-  // raw JSON view so their payload is immediately inspectable (issue #612).
-  const notificationId = notification?.eventId ?? null;
-  const hasUnknownType = !isKnownEventType(notification?.eventName ?? notification?.type ?? null);
-  useEffect(() => {
-    if (!isOpen) return;
-    setIsRawView(hasUnknownType);
-  }, [isOpen, notificationId, hasUnknownType]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -156,8 +147,6 @@ export function NotificationDetailsDrawer({
   }
 
   const presentation = getEventTypePresentation(notification.eventName ?? notification.type);
-  const rawType = notification.eventName ?? notification.type;
-  const isUnknown = !isKnownEventType(rawType);
   const formattedPayload = formatRawPayload(notification.value);
 
   const sender =
@@ -165,10 +154,7 @@ export function NotificationDetailsDrawer({
       ? fetchState.data.sender
       : { address: notification.contractAddress, metadata: undefined };
 
-  const statusHistory =
-    fetchState.status === 'success'
-      ? fetchState.data.statusHistory
-      : [];
+  const statusHistory = fetchState.status === 'success' ? fetchState.data.statusHistory : [];
 
   const title = notification.eventName ?? notification.type;
 
@@ -180,23 +166,17 @@ export function NotificationDetailsDrawer({
         <header className="drawer__header">
           <div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
-              <span
-                className={`event-card__badge ${presentation.badgeClass}`}
-                data-event-type-known={isUnknown ? 'false' : 'true'}
-                title={isUnknown ? `Unrecognized event type: ${rawType}` : undefined}
-              >
-                {presentation.label}
-              </span>
+              <span className={`event-card__badge ${presentation.badgeClass}`}>{presentation.label}</span>
               <span className="drawer__eyebrow" style={{ margin: 0 }}>Category: {presentation.category}</span>
             </div>
             <h2 className="drawer__title">{title}</h2>
-            {isUnknown && (
-              <p className="drawer__unknown-event" role="note">
-                Unrecognized event type. Showing the raw payload so it stays inspectable.
-              </p>
-            )}
           </div>
-          <button type="button" className="drawer__close" onClick={onClose} aria-label="Close drawer">
+          <button
+            type="button"
+            className="drawer__close"
+            onClick={onClose}
+            aria-label="Close drawer"
+          >
             ×
           </button>
         </header>
@@ -211,20 +191,16 @@ export function NotificationDetailsDrawer({
           <h3 className="drawer__section-title">Sender Details</h3>
           <div className="drawer__row">
             <span className="drawer__label">Address</span>
-            {sender.address ? (
-              <>
-                <span className="drawer__value" title={sender.address}>{shorten(sender.address)}</span>
-                <button
-                  type="button"
-                  className="drawer__action"
-                  onClick={() => void tryCopy('Address', sender.address)}
-                >
-                  Copy
-                </button>
-              </>
-            ) : (
-              <span className="drawer__value">—</span>
-            )}
+            <span className="drawer__value" title={sender.address}>
+              {shorten(sender.address)}
+            </span>
+            <button
+              type="button"
+              className="drawer__action"
+              onClick={() => void tryCopy('Address', sender.address)}
+            >
+              Copy
+            </button>
           </div>
           {sender.metadata && (
             <dl className="drawer__meta">
@@ -257,28 +233,20 @@ export function NotificationDetailsDrawer({
           )}
           <div className="drawer__row">
             <span className="drawer__label">Ledger</span>
-            <span className="drawer__value">
-              {typeof notification.ledger === 'number' ? notification.ledger.toLocaleString() : '—'}
-            </span>
+            <span className="drawer__value">{notification.ledger.toLocaleString()}</span>
           </div>
           <div className="drawer__row">
             <span className="drawer__label">Event ID</span>
-            {notification.eventId ? (
-              <>
-                <span className="drawer__value" title={notification.eventId}>
-                  {shorten(notification.eventId, 10, 6)}
-                </span>
-                <button
-                  type="button"
-                  className="drawer__action"
-                  onClick={() => void tryCopy('Event ID', notification.eventId)}
-                >
-                  Copy
-                </button>
-              </>
-            ) : (
-              <span className="drawer__value">—</span>
-            )}
+            <span className="drawer__value" title={notification.eventId}>
+              {shorten(notification.eventId, 10, 6)}
+            </span>
+            <button
+              type="button"
+              className="drawer__action"
+              onClick={() => void tryCopy('Event ID', notification.eventId)}
+            >
+              Copy
+            </button>
           </div>
           <div className="drawer__row">
             <span className="drawer__label">Tx Hash</span>
@@ -383,8 +351,12 @@ export function NotificationDetailsDrawer({
                     <div className="drawer__timeline-dot" aria-hidden="true" />
                     <div className="drawer__timeline-body">
                       <div className="drawer__timeline-title">{entry.label}</div>
-                      <div className="drawer__timeline-time">{formatTimestamp(entry.timestampMs)}</div>
-                      {entry.detail && <div className="drawer__timeline-detail">{entry.detail}</div>}
+                      <div className="drawer__timeline-time">
+                        {formatTimestamp(entry.timestampMs)}
+                      </div>
+                      {entry.detail && (
+                        <div className="drawer__timeline-detail">{entry.detail}</div>
+                      )}
                     </div>
                   </li>
                 ))}
