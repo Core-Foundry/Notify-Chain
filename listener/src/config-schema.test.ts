@@ -96,4 +96,31 @@ describe('Configuration Schema Validation (#694)', () => {
     const errors = ConfigurationSchemaValidator.validate(invalidConfig, APP_CONFIG_SCHEMA);
     expect(errors.some((e) => e.field === 'stellarRpcUrl' && e.message.includes('pattern'))).toBe(true);
   });
+
+  it('rejects an out-of-range retryScheduler.webhookTimeoutMs', () => {
+    const tooSmall = {
+      ...sampleValidConfig,
+      retryScheduler: { webhookTimeoutMs: 0 },
+    };
+    const tooLarge = {
+      ...sampleValidConfig,
+      retryScheduler: { webhookTimeoutMs: 300001 },
+    };
+
+    const smallErrors = ConfigurationSchemaValidator.validate(tooSmall, APP_CONFIG_SCHEMA);
+    const largeErrors = ConfigurationSchemaValidator.validate(tooLarge, APP_CONFIG_SCHEMA);
+
+    expect(smallErrors.some((e) => e.field === 'retryScheduler.webhookTimeoutMs')).toBe(true);
+    expect(largeErrors.some((e) => e.field === 'retryScheduler.webhookTimeoutMs')).toBe(true);
+  });
+
+  it('accepts a valid retryScheduler.webhookTimeoutMs', () => {
+    const config = {
+      ...sampleValidConfig,
+      retryScheduler: { webhookTimeoutMs: 10000 },
+    };
+
+    const errors = ConfigurationSchemaValidator.validate(config, APP_CONFIG_SCHEMA);
+    expect(errors.some((e) => e.field === 'retryScheduler.webhookTimeoutMs')).toBe(false);
+  });
 });
