@@ -1,5 +1,10 @@
 import winston from 'winston';
-import { redactObject } from './redact';
+import {
+  REDACTED_PLACEHOLDER,
+  isSensitiveKey as isSensitiveKeyName,
+  redactObject,
+  redactString,
+} from './redact';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -100,31 +105,16 @@ export function resolveLogFormat(
 // Secret redaction
 // ---------------------------------------------------------------------------
 
+export { REDACTED_PLACEHOLDER };
+
 /**
- * Field-name fragments whose values are replaced before a record is emitted.
+ * True when a field name looks like it carries a credential.
  *
- * Matching is substring-based and case-insensitive after stripping `-`, `_`
- * and spaces, so `apiKey`, `X-API-Key`, `api_key`, `webhookSecret` and
- * `Authorization` are all caught without enumerating every spelling.
+ * Delegates to the single sensitive-key policy in `./redact` (SENSITIVE_KEYS)
+ * so the logger, URL sanitiser and redaction engine can never drift apart.
  */
-const REDACTED_KEY_PATTERNS = [
-  'password',
-  'secret',
-  'token',
-  'apikey',
-  'authorization',
-  'credential',
-  'signature',
-  'cookie',
-  'privatekey',
-] as const;
-
-export const REDACTED_PLACEHOLDER = '[REDACTED]';
-
-/** True when a field name looks like it carries a credential. */
 export function isSensitiveKey(key: string): boolean {
-  const normalised = key.toLowerCase().replace(/[-_\s]/g, '');
-  return REDACTED_KEY_PATTERNS.some((pattern) => normalised.includes(pattern));
+  return isSensitiveKeyName(key);
 }
 
 /**
@@ -247,22 +237,10 @@ function formatMeta(meta: LogContext): LogContext {
       ? { ...meta, error: formatError(meta.error) }
       : meta;
 
-  // Redact sensitive fields before any transport receives the object.
+  // Redact sensitive fields before any transport receives the object. The
+  // formatted error is walked too, so secrets in error messages/stacks (e.g.
+  // a webhook URL in a fetch failure) are masked as well.
   return redactObject(normalized as Record<string, unknown>) as LogContext;
-  // Redact first, then format the error. Order matters: formatError produces a
-  // plain object that redaction would otherwise walk pointlessly, and an
-  // error's own fields are not where credentials hide — the sibling context
-  // fields are.
-  const redacted = redactSensitive(meta) as LogContext;
-
-  if (!('error' in meta) || meta.error === undefined) {
-    return redacted;
-  }
-
-  return {
-    ...redacted,
-    error: formatError(meta.error),
-  };
 }
 
 function logWithMeta(
@@ -270,10 +248,13 @@ function logWithMeta(
   message: string,
   meta?: LogContext
 ): void {
+  // The message itself is redacted too: interpolated strings such as
+  // `Posting to ${webhookUrl}` would otherwise bypass metadata redaction.
+  const safeMessage = typeof message === 'string' ? redactString(message) : message;
   if (meta && Object.keys(meta).length > 0) {
-    baseLogger[level](message, formatMeta(meta));
+    baseLogger[level](safeMessage, formatMeta(meta));
   } else {
-    baseLogger[level](message);
+    baseLogger[level](safeMessage);
   }
 }
 

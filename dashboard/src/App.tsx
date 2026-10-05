@@ -36,6 +36,33 @@ import { useIsMobileNav } from './hooks/useMediaQuery';
 import { DeliveryHeatmap } from './components/DeliveryHeatmap';
 import { useEventStore } from './store/eventStore';
 import { SyncStatus } from './components/SyncStatus';
+import { ErrorBoundary } from './components/ErrorBoundary';
+
+type Tab = 'explorer' | 'preferences';
+
+export function App() {
+  const [activeTab, setActiveTab] = useState<Tab>('explorer');
+type Tab =
+  | 'explorer'
+  | 'timeline'
+  | 'activity'
+  | 'webhooks'
+  | 'export-history'
+  | 'search'
+  | 'preferences'
+  | 'templates'
+  | 'channels';
+
+const TAB_ITEMS: { id: Tab; label: string }[] = [
+  { id: 'explorer', label: 'Event Explorer' },
+  { id: 'timeline', label: 'Delivery Timeline' },
+  { id: 'activity', label: 'Activity Feed' },
+  { id: 'webhooks', label: 'Webhook Performance' },
+  { id: 'export-history', label: 'Export History' },
+  { id: 'search', label: 'Notification Search' },
+  { id: 'preferences', label: 'Preferences' },
+  { id: 'templates', label: 'Templates' },
+];
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 import { KeyboardShortcutsHelp } from './components/KeyboardShortcutsHelp';
 
@@ -244,28 +271,77 @@ function renderPanel(tab: Tab, events: any[]) {
   switch (tab) {
     case 'explorer':
       return (
+        <ErrorBoundary section="Event Explorer">
+          <>
+            <EventExplorerPage />
+            <DeliveryHeatmap events={events} />
+          </>
+        </ErrorBoundary>
         <>
           <EventExplorerPage />
           <DeliveryHeatmap events={events} />
         </>
       );
     case 'timeline':
-      return <NotificationTimelineView />;
+      return (
+        <ErrorBoundary section="Delivery Timeline">
+          <NotificationTimelineView />
+        </ErrorBoundary>
+      );
     case 'activity':
-      return <ActivityFeed />;
+      return (
+        <ErrorBoundary section="Activity Feed">
+          <ActivityFeed />
+        </ErrorBoundary>
+      );
     case 'user-activity':
-      return <UserActivityTimeline />;
+      return (
+        <ErrorBoundary section="User Activity">
+          <UserActivityTimeline />
+        </ErrorBoundary>
+      );
     case 'retry-stats':
-      return <RetryStatisticsPanel />;
+      return (
+        <ErrorBoundary section="Retry Statistics">
+          <RetryStatisticsPanel />
+        </ErrorBoundary>
+      );
     case 'webhooks':
-      return <WebhookDashboardPage />;
+      return (
+        <ErrorBoundary section="Webhook Performance">
+          <WebhookDashboardPage />
+        </ErrorBoundary>
+      );
     case 'export-history':
-      return <ExportHistoryPage />;
+      return (
+        <ErrorBoundary section="Export History">
+          <ExportHistoryPage />
+        </ErrorBoundary>
+      );
     case 'search':
-      return <NotificationSearchPage />;
+      return (
+        <ErrorBoundary section="Notification Search">
+          <NotificationSearchPage />
+        </ErrorBoundary>
+      );
     case 'preferences':
-      return <NotificationPreferencesPage />;
+      return (
+        <ErrorBoundary section="Notification Preferences">
+          <NotificationPreferencesPage />
+        </ErrorBoundary>
+      );
     case 'templates':
+      return (
+        <ErrorBoundary section="Templates">
+          <TemplatesPage />
+        </ErrorBoundary>
+      );
+    case 'channels':
+      return (
+        <ErrorBoundary section="Channel Details">
+          <ChannelDetailsPage />
+        </ErrorBoundary>
+      );
       return <TemplatesPage />;
     case 'channels':
       return <ChannelDetailsPage />;

@@ -10,270 +10,212 @@
  * production credentials.
  */
 
-const { program, parseString } = require('commander');
+const { Command } = require('commander');
 const fs = require('fs');
-const path = require('path');
 
-// Deterministic event names used by the generator
-const EVENT_NAMES = [
-  'AutoshareCreated',
-  'AutoshareUpdated',
-  'ContractPaused',
-  'ContractUnpaused',
-  'AdminTransferred',
-  'Withdrawal',
-  'AuthorizationFailure',
-  'NotificationScheduled',
-  'NotificationExpired',
-  'ScheduledNotificationCancelled',
-  'NotificationDelivered',
-  'NotificationRecalled',
-  'NotificationRevoked',
-  'NotificationExtended',
-  'NotificationAcknowledged',
-  'SubscriptionCancelled',
-  'BatchNotificationsCreated',
-  'BatchProcessingCompleted',
+const CONTRACT_ADDRESS = 'GDKZXR2MHKPZAJQXOYHKWJNRPEZKMGKGLLXGFMRQVEFWLXOHZN7XQPLA';
+const EVENT_FIXTURES = [
+  {
+    name: 'autoshare_created',
+    topics: ['GBVZR3XKFV6KCXOQQKTQJVQPXJRP3KZMZBXHTF4XLVKXMFKZPZXDTUA', '0', '0'],
+  },
+  {
+    name: 'contract_paused',
+    topics: [CONTRACT_ADDRESS, '1', '2'],
+  },
+  {
+    name: 'withdrawal',
+    topics: [
+      'CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC',
+      CONTRACT_ADDRESS,
+      '2',
+      '2',
+    ],
+  },
+  {
+    name: 'notification_scheduled',
+    topics: ['GBVZR3XKFV6KCXOQQKTQJVQPXJRP3KZMZBXHTF4XLVKXMFKZPZXDTUA', '3', '0'],
+  },
 ];
 
 const NOTIFICATION_TYPES = ['discord', 'email', 'webhook', 'sms'];
+const SYNTHETIC_EVENT_VALUE = 'AAAAAQ==';
+const BASE_LEDGER = 12345;
+const BASE_RECEIVED_AT = 1718640000000;
 
-// Test contract addresses (deterministic but varying)
-const TEST_CONTRACTS = [
-  'CCEMX6Q5V5F5F5F5F5F5F5F5F5F5F5F5F5F5F5F5F5F5F5F5F5F5',
-  'CBDFMX6Q5V5F5F5F5F5F5F5F5F5F5F5F5F5F5F5F5F5F5F5F5F5F5F5',
-];
-
-function generateRandomString(len) {
-  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-  let r = '';
-  for (let i = 0; i < len; i++) r += chars[Math.floor(Math.random() * chars.length)];
-  return r;
-}
-
-function genAddr(i) {
-  const prefix = i < 3 ? 'CCEM' : i < 6 ? 'CBDF' : 'GABC';
-  const hex = generateRandomString(26 - prefix.length);
-  return prefix + hex;
-}
-
-function genDate(base, offset) {
-  const o = Math.floor(Math.random() * (offset || 86400000)) - (offset || 86400000) / 2;
-  return new Date(base.getTime() + o);
-}
-
-// ── Blockchain event generation ──────────────────────────────────────────────
-
-function genBlockchainEvent(i, base) {
-  const name = EVENT_NAMES[i % EVENT_NAMES.length];
-  return {
-    eventId: `synthetic-event-${i}`,
-    contractAddress: genAddr(i),
-    eventName: name,
-    ledger: 100000 + i,
-    type: 'contract',
-    topic: [name.toLowerCase()],
-    value: String(i % 1000),
-    txHash: `tx-${i.toString(16).padStart(8, '0')}`,
-    receivedAt: Math.floor(genDate(base).getTime()),
-  };
-}
-
-// ── Notification input generation ──────────────────────────────────────────
-
-function genNotificationInput(i, base) {
-  const type = NOTIFICATION_TYPES[i % NOTIFICATION_TYPES.length];
-  const prefix = type[0].toUpperCase() + type.slice(1);
-
-  let payload;
-  switch (type) {
-    case 'discord':
-      payload = { content: `🔔 Synthetic ${prefix} notification`, embeds: [{ title: `Synthetic ${prefix} Event`, description: 'Test', color: 5814783 }] };
-      break;
-    case 'email':
-      payload = { subject: `Synthetic ${prefix} Notification`, body: 'Test body', html: '<p>Test</p>' };
-      break;
-    case 'webhook':
-      payload = { event: `synthetic.${type}`, taskId: String(i), reward: String(i % 100), currency: 'XLM' };
-      break;
-    case 'sms':
-      payload = { message: `NotifyChain: Synthetic ${prefix} event` };
-      break;
-    default:
-      payload = { content: 'Synthetic notification' };
+function generateSyntheticBlockchainEvent(index) {
+  if (!Number.isInteger(index) || index < 0) {
+    throw new TypeError('Event index must be a non-negative integer');
   }
 
+  const fixture = EVENT_FIXTURES[index % EVENT_FIXTURES.length];
+  const ledger = BASE_LEDGER + index;
+
   return {
-    payload,
-    notificationType: type,
-    targetRecipient: `https://example.${type}.test/${i}`,
-    executeAt: genDate(base, 86400000).toISOString(),
-    maxRetries: 3,
-    priority: i % 10,
-    eventId: `synthetic-event-${i}`,
-    contractAddress: genAddr(i),
-    metadata: { synthetic: true, generator: 'synthetic-event-generator', index: i },
+    eventId: `${String(ledger).padStart(16, '0')}-1`,
+    contractAddress: CONTRACT_ADDRESS,
+    eventName: fixture.name,
+    ledger,
+    type: 'contract',
+    topic: [fixture.name, ...fixture.topics],
+    value: SYNTHETIC_EVENT_VALUE,
+    txHash: index.toString(16).padStart(64, '0'),
+    receivedAt: BASE_RECEIVED_AT + index * 1000,
   };
 }
 
-// ── CLI ─────────────────────────────────────────────────────────────────────
+function generateSyntheticNotificationInput(index) {
+  if (!Number.isInteger(index) || index < 0) {
+    throw new TypeError('Notification index must be a non-negative integer');
+  }
 
-program
-  .command('generate')
-  .description('Generate synthetic events for local development')
-  .option('-n, --number <n>', 'Number of events (default: 1)', parseInt)
-  .option('-t, --type <t>', 'Event type: blockchain | notification (default: blockchain)', parseString)
-  .option('-o, --output <file>', 'Write output to file')
-  .option('--seed <num>', 'Seed for deterministic generation')
-  .option('--safe', 'Safe mode: no external delivery (default: on)')
-  .action((opts) => {
-    const count = opts.number || 1;
-    const type = opts.type || 'blockchain';
-    const outputFile = opts.output;
-    const seed = opts.seed !== undefined ? parseInt(opts.seed) : undefined;
-    const safe = opts.safe !== false;
+  const type = NOTIFICATION_TYPES[index % NOTIFICATION_TYPES.length];
+  const prefix = type[0].toUpperCase() + type.slice(1);
+  const payloads = {
+    discord: { content: `Synthetic ${prefix} notification`, embeds: [{ title: `Synthetic ${prefix} Event`, description: 'Test', color: 5814783 }] },
+    email: { subject: `Synthetic ${prefix} Notification`, body: 'Test body', html: '<p>Test</p>' },
+    webhook: { event: `synthetic.${type}`, taskId: String(index), reward: String(index % 100), currency: 'XLM' },
+    sms: { message: `NotifyChain: Synthetic ${prefix} event` },
+  };
 
-    // Seed RNG if provided
-    if (seed !== undefined) {
-      Math.seedrandom = Math.seedrandom || (() => {
-        // Simple deterministic seed - just use seed as-is
-        return () => 0.5; // simplified
-      });
-    }
+  return {
+    payload: payloads[type],
+    notificationType: type,
+    targetRecipient: `https://example.${type}.test/${index}`,
+    executeAt: new Date(Date.now() + 86400000 + index * 1000).toISOString(),
+    maxRetries: 3,
+    priority: index % 4,
+    eventId: `synthetic-notification-${index}`,
+    contractAddress: CONTRACT_ADDRESS,
+    metadata: { synthetic: true, generator: 'synthetic-event-generator', index },
+  };
+}
 
-    let events;
+function validateEvent(event) {
+  if (!event || typeof event !== 'object' || Array.isArray(event)) {
+    return ['event must be an object'];
+  }
 
-    if (type === 'blockchain') {
-      events = Array.from({ length: count }, (_, i) => genBlockchainEvent(i, new Date('2024-01-01')));
-    } else if (type === 'notification') {
-      events = Array.from({ length: count }, (_, i) => genNotificationInput(i, new Date('2024-01-01')));
-    } else {
-      console.error(`Unknown type: ${type}. Use 'blockchain' or 'notification'.`);
-      process.exit(1);
-    }
+  const errors = [];
+  if (typeof event.eventId !== 'string' || event.eventId.length === 0) errors.push('eventId must be a non-empty string');
+  if (typeof event.contractAddress !== 'string' || !/^G[A-Z2-7]{55}$/.test(event.contractAddress)) errors.push('contractAddress must be a Stellar account address');
+  if (event.eventName !== null && typeof event.eventName !== 'string') errors.push('eventName must be a string or null');
+  if (!Number.isInteger(event.ledger) || event.ledger < 0) errors.push('ledger must be a non-negative integer');
+  if (event.type !== 'contract') errors.push('type must be contract');
+  if (!Array.isArray(event.topic) || event.topic.length === 0 || event.topic.some((topic) => typeof topic !== 'string')) errors.push('topic must be a non-empty array of strings');
+  if (typeof event.value !== 'string' || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(event.value)) errors.push('value must be a base64 string');
+  if (event.txHash !== undefined && typeof event.txHash !== 'string') errors.push('txHash must be a string when provided');
+  if (!Number.isInteger(event.receivedAt) || event.receivedAt < 0) errors.push('receivedAt must be a non-negative integer');
+  return errors;
+}
 
-    const output = type === 'blockchain'
-      ? events.map(e => ({
-          eventId: e.eventId,
-          contractAddress: e.contractAddress,
-          eventName: e.eventName,
-          ledger: e.ledger,
-          type: e.type,
-          topic: e.topic,
-          value: e.value,
-          txHash: e.txHash,
-          receivedAt: e.receivedAt,
-        }))
-      : events.map(e => ({
-          payload: e.payload,
-          notificationType: e.notificationType,
-          targetRecipient: e.targetRecipient,
-          executeAt: e.executeAt,
-          priority: e.priority,
-          eventId: e.eventId,
-          contractAddress: e.contractAddress,
-          metadata: e.metadata,
-        }));
+function validateNotificationInput(input) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    return ['notification input must be an object'];
+  }
 
-    if (outputFile) {
-      fs.writeFileSync(outputFile, JSON.stringify(output, null, 2), 'utf8');
-      console.log(`Events written to ${outputFile}`);
-    } else {
-      console.log(`Generated ${events.length} synthetic event${events.length !== 1 ? 's' : ''} (type: ${type})`);
-      if (safe) {
-        console.log('⚡ Safe mode: No external notifications sent.');
-      }
-      output.forEach((e, i) => {
-        console.log(`\nEvent ${i + 1}:`);
-        for (const [key, val] of Object.entries(e)) {
-          console.log(`  ${key}: ${JSON.stringify(val).substring(0, 80)}${JSON.stringify(val).length > 80 ? '...' : ''}`);
+  const errors = [];
+  if (typeof input.eventId !== 'string' || input.eventId.length === 0) errors.push('eventId must be a non-empty string');
+  if (typeof input.contractAddress !== 'string' || !/^G[A-Z2-7]{55}$/.test(input.contractAddress)) errors.push('contractAddress must be a Stellar account address');
+  if (!NOTIFICATION_TYPES.includes(input.notificationType)) errors.push('notificationType is unsupported');
+  if (!input.payload || typeof input.payload !== 'object' || Array.isArray(input.payload)) errors.push('payload must be an object');
+  if (typeof input.targetRecipient !== 'string' || input.targetRecipient.length === 0) errors.push('targetRecipient must be a non-empty string');
+  if (typeof input.executeAt !== 'string' || Number.isNaN(Date.parse(input.executeAt))) errors.push('executeAt must be a valid date string');
+  if (!Number.isSafeInteger(input.maxRetries) || input.maxRetries < 0) errors.push('maxRetries must be a non-negative integer');
+  if (!Number.isInteger(input.priority) || input.priority < 0 || input.priority > 3) errors.push('priority must be an integer from 0 to 3');
+  if (!input.metadata || input.metadata.synthetic !== true) errors.push('metadata must identify this as synthetic data');
+  return errors;
+}
+
+function validateRecord(record) {
+  return record && typeof record === 'object' && Object.hasOwn(record, 'notificationType')
+    ? validateNotificationInput(record)
+    : validateEvent(record);
+}
+
+function parsePositiveInteger(value) {
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < 1) {
+    throw new Error('must be a positive integer');
+  }
+  return parsed;
+}
+
+function createProgram() {
+  const program = new Command();
+  program.name('synthetic-event-generator').description('Generate local-only synthetic Notify-Chain events').version('1.0.0');
+
+  const addGenerateCommand = (name) => {
+    program
+      .command(name)
+      .description('Generate synthetic events for local development')
+      .option('-n, --number <count>', 'Number of records to generate', parsePositiveInteger, 1)
+      .option('-t, --type <type>', 'Record type: blockchain or notification', 'blockchain')
+      .option('-o, --output <file>', 'Write a JSON array to this local file')
+      .option('--safe', 'Generate data only; never deliver notifications')
+      .action((options) => {
+        if (!['blockchain', 'notification'].includes(options.type)) {
+          throw new Error(`Unknown type: ${options.type}. Use blockchain or notification.`);
         }
+
+        const generate = options.type === 'blockchain'
+          ? generateSyntheticBlockchainEvent
+          : generateSyntheticNotificationInput;
+        const records = Array.from({ length: options.number }, (_, index) => generate(index));
+        const output = `${JSON.stringify(records, null, 2)}\n`;
+
+        if (options.output) {
+          fs.writeFileSync(options.output, output, { encoding: 'utf8', flag: 'wx' });
+          console.log(`Wrote ${records.length} synthetic ${options.type} record(s) to ${options.output}`);
+          return;
+        }
+
+        process.stdout.write(output);
       });
-    }
-  });
+  };
 
-program
-  .command('validate')
-  .description('Validate generated events against expected schema')
-  .option('-f, --file <path>', 'Path to JSON file with events')
-  .action((opts) => {
-    const file = opts.file;
-    if (!file) {
-      console.error('Error: --file required for validate command');
-      process.exit(1);
-    }
+  addGenerateCommand('generate');
+  addGenerateCommand('generate:batch');
 
-    let events;
-    try {
-      const raw = fs.readFileSync(file, 'utf8');
-      events = JSON.parse(raw);
-    } catch (err) {
-      console.error('Error reading file:', err.message);
-      process.exit(1);
-    }
-
-    if (!Array.isArray(events) || events.length === 0) {
-      console.error('Error: Input must be a non-empty JSON array');
-      process.exit(1);
-    }
-
-    let valid = 0, invalid = 0;
-    const reasons = [];
-
-    events.forEach((e, idx) => {
-      const eventReasons = [];
-      const isBlockchain = !e.notificationType;
-      const isNotification = !!(e.notificationType && ['discord', 'email', 'webhook', 'sms'].includes(e.notificationType));
-
-      // Check blockchain event schema
-      if (isBlockchain) {
-        if (e.eventId === undefined) eventReasons.push('missing eventId');
-        if (e.contractAddress === undefined) eventReasons.push('missing contractAddress');
-        if (e.eventName === undefined) eventReasons.push('missing eventName');
-        if (e.ledger === undefined || typeof e.ledger !== 'number') eventReasons.push('invalid ledger');
-        if (!e.value) eventReasons.push('missing value');
-        if (!Array.isArray(e.topic)) eventReasons.push('invalid topic');
+  program
+    .command('validate')
+    .description('Validate a JSON array of synthetic events')
+    .requiredOption('-f, --file <path>', 'Path to the JSON file to validate')
+    .action((options) => {
+      let events;
+      try {
+        events = JSON.parse(fs.readFileSync(options.file, 'utf8'));
+      } catch (error) {
+        throw new Error(`Could not read valid JSON from ${options.file}: ${error.message}`);
       }
 
-      // Check notification event schema
-      if (isNotification) {
-        if (e.notificationType === undefined) eventReasons.push('missing notificationType');
-        if (!['discord', 'email', 'webhook', 'sms'].includes(e.notificationType)) eventReasons.push('invalid notificationType');
-        if (e.payload === undefined) eventReasons.push('missing payload');
-        if (e.targetRecipient === undefined) eventReasons.push('missing targetRecipient');
-        if (e.executeAt === undefined) eventReasons.push('missing executeAt');
-        if (e.priority === undefined) eventReasons.push('missing priority');
+      if (!Array.isArray(events) || events.length === 0) {
+        throw new Error('Input must be a non-empty JSON array');
       }
 
-      // If neither type matched, treat as blockchain for backward compatibility
-      if (!isBlockchain && !isNotification) {
-        if (e.eventId === undefined) eventReasons.push('missing eventId');
-        if (e.contractAddress === undefined) eventReasons.push('missing contractAddress');
-        if (e.eventName === undefined) eventReasons.push('missing eventName');
-        if (e.ledger === undefined || typeof e.ledger !== 'number') eventReasons.push('invalid ledger');
+      const failures = events.flatMap((event, index) =>
+        validateRecord(event).map((reason) => `Event ${index}: ${reason}`),
+      );
+      if (failures.length > 0) {
+        failures.slice(0, 10).forEach((failure) => console.error(failure));
+        throw new Error(`${failures.length} schema error(s) found in ${events.length} event(s)`);
       }
 
-      if (eventReasons.length === 0) {
-        valid++;
-      } else {
-        invalid++;
-        reasons.push(`Event [${idx}]: ${eventReasons.join(', ')}`);
-      }
+      console.log(`All ${events.length} events conform to the listener event schema.`);
     });
 
-    console.log(`Schema validation: ${valid} valid, ${invalid} invalid out of ${events.length} events`);
-    if (invalid > 0) {
-      reasons.slice(0, 5).forEach(r => console.log(`  - ${r}`));
-      if (reasons.length > 5) console.log(`  ... and ${reasons.length - 5} more`);
-      process.exit(1);
-    } else {
-      console.log('All events conform to the expected schema.');
-    }
-  });
-
-program.parse();
-
-// No-command safety net
-if (!process.argv.slice(2).length) {
-  program.help();
+  return program;
 }
+
+if (require.main === module) {
+  createProgram().parse(process.argv);
+}
+
+module.exports = {
+  generateSyntheticBlockchainEvent,
+  generateSyntheticNotificationInput,
+  validateEvent,
+  validateNotificationInput,
+  validateRecord,
+  createProgram,
+};

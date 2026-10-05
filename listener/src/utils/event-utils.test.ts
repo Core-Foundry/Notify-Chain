@@ -1,5 +1,8 @@
 import { xdr } from '@stellar/stellar-sdk';
 import {
+  EventParseErrorCategory,
+  classifyEvent,
+  describeEventParseError,
   getEventName,
   matchesEventFilter,
   validateEventPayload,
@@ -159,6 +162,193 @@ describe('event-utils', () => {
     it('accepts a response without a cursor', () => {
       const { cursor, ...rest } = createValidRpcResponse();
       expect(validateRpcResponse(rest as any)).toEqual({ valid: true });
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Error classification (#832)
+  // -------------------------------------------------------------------------
+
+  describe('validateEventPayload error classification', () => {
+    it('classifies a field that is present but of the wrong type as invalid_type', () => {
+      const result = validateEventPayload(createValidEvent({ id: 42 }) as any);
+
+      expect(result.valid).toBe(false);
+      expect(result.error).toEqual({
+        category: EventParseErrorCategory.InvalidType,
+        field: 'id',
+        detail: 'Missing or invalid event id',
+      });
+    });
+
+    it.each([
+      ['id', { id: undefined }, 'id'],
+      ['an empty id', { id: '' }, 'id'],
+      ['type', { type: undefined }, 'type'],
+      ['ledger', { ledger: undefined }, 'ledger'],
+      ['topic', { topic: undefined }, 'topic'],
+      ['value', { value: undefined }, 'value'],
+    ])('classifies %s as missing_field', (_label, overrides, field) => {
+      const result = validateEventPayload(createValidEvent(overrides as any) as any);
+
+      expect(result.valid).toBe(false);
+      expect(result.error?.category).toBe(EventParseErrorCategory.MissingField);
+      expect(result.error?.field).toBe(field);
+    });
+
+    it('classifies a right-typed but out-of-range ledger as malformed_payload', () => {
+      const negative = validateEventPayload(createValidEvent({ ledger: -1 }) as any);
+      const fractional = validateEventPayload(createValidEvent({ ledger: 1.5 }) as any);
+
+      expect(negative.error?.category).toBe(EventParseErrorCategory.MalformedPayload);
+      expect(negative.error?.field).toBe('ledger');
+      expect(fractional.error?.category).toBe(EventParseErrorCategory.MalformedPayload);
+    });
+
+    it('classifies a non-object payload as malformed_payload without a field', () => {
+      const result = validateEventPayload(null as any);
+
+      expect(result.error?.category).toBe(EventParseErrorCategory.MalformedPayload);
+      expect(result.error?.field).toBeNull();
+    });
+
+    it('still exposes a human-readable reason alongside the category', () => {
+      const result = validateEventPayload(createValidEvent({ value: undefined }) as any);
+
+      // Backward compatibility: callers that only log `reason` keep working.
+      expect(result.reason).toMatch(/value/i);
+      expect(result.error?.detail).toBe(result.reason);
+    });
+
+    it('omits the classification entirely when the payload is valid', () => {
+      const result = validateEventPayload(createValidEvent() as any);
+
+      expect(result).toEqual({ valid: true });
+      expect(result.error).toBeUndefined();
+    });
+  });
+
+  describe('validateRpcResponse error classification', () => {
+    it('classifies a missing events field as missing_field', () => {
+      const result = validateRpcResponse(createValidRpcResponse({ events: undefined }) as any);
+
+      expect(result.error).toEqual({
+        category: EventParseErrorCategory.MissingField,
+        field: 'events',
+        detail: 'RPC response is missing the events field',
+      });
+    });
+
+    it('classifies a non-array events field as invalid_type', () => {
+      const result = validateRpcResponse(createValidRpcResponse({ events: 'nope' }) as any);
+
+      expect(result.error?.category).toBe(EventParseErrorCategory.InvalidType);
+      expect(result.error?.field).toBe('events');
+    });
+
+    it('classifies a non-string cursor as invalid_type', () => {
+      const result = validateRpcResponse(createValidRpcResponse({ cursor: 123 }) as any);
+
+      expect(result.error?.category).toBe(EventParseErrorCategory.InvalidType);
+      expect(result.error?.field).toBe('cursor');
+    });
+
+    it('classifies a non-object response as malformed_payload', () => {
+      expect(validateRpcResponse(null).error?.category).toBe(
+        EventParseErrorCategory.MalformedPayload
+      );
+      expect(validateRpcResponse('nope' as any).error?.category).toBe(
+        EventParseErrorCategory.MalformedPayload
+      );
+    });
+  });
+
+  describe('classifyEvent', () => {
+    it('processes a valid, allow-listed event', () => {
+      const result = classifyEvent(createValidEvent() as any, ['TaskCreated']);
+
+      expect(result).toEqual({
+        action: 'process',
+        category: null,
+        eventName: 'TaskCreated',
+      });
+    });
+
+    it('processes any event when the allow-list is a wildcard', () => {
+      expect(classifyEvent(createValidEvent() as any, ['*']).action).toBe('process');
+      expect(classifyEvent(createValidEvent() as any, []).action).toBe('process');
+    });
+
+    it('distinguishes a named but unsupported event from a parse failure', () => {
+      const result = classifyEvent(createValidEvent() as any, ['WorkSubmitted']);
+
+      expect(result.action).toBe('skip');
+      expect(result.category).toBe(EventParseErrorCategory.UnsupportedEvent);
+      expect(result.eventName).toBe('TaskCreated');
+      expect(result.error?.detail).toMatch(/not in the configured allow-list/);
+      // A filter outcome is not a payload defect, so no field is blamed.
+      expect(result.error?.field).toBeNull();
+    });
+
+    it('classifies an undecodable topic as malformed_payload, not unsupported_event', () => {
+      // A topic the listener cannot decode is a format mismatch, not a routine
+      // filtering outcome -- conflating them would hide real ingestion faults.
+      const event = createValidEvent({ topic: [xdr.ScVal.scvU32(7)] });
+      const result = classifyEvent(event as any, ['TaskCreated']);
+
+      expect(result.action).toBe('skip');
+      expect(result.category).toBe(EventParseErrorCategory.MalformedPayload);
+      expect(result.eventName).toBeNull();
+      expect(result.error?.field).toBe('topic');
+    });
+
+    it('reports the payload classification for an invalid event', () => {
+      const result = classifyEvent(createValidEvent({ ledger: undefined }) as any, ['*']);
+
+      expect(result.action).toBe('skip');
+      expect(result.category).toBe(EventParseErrorCategory.MissingField);
+      expect(result.error?.field).toBe('ledger');
+    });
+
+    it('never echoes untrusted field values into the classification', () => {
+      const untrusted = 'attacker-controlled-content';
+      const result = classifyEvent(createValidEvent({ type: 99, txHash: untrusted }) as any, ['*']);
+
+      expect(result.action).toBe('skip');
+      expect(result.category).toBe(EventParseErrorCategory.InvalidType);
+      // Diagnostics name the field, never its contents.
+      expect(JSON.stringify(result)).not.toContain(untrusted);
+    });
+  });
+
+  describe('describeEventParseError', () => {
+    it('renders a stable token for log fields and metric labels', () => {
+      expect(
+        describeEventParseError({
+          category: EventParseErrorCategory.MissingField,
+          field: 'ledger',
+          detail: 'Missing or invalid ledger',
+        })
+      ).toBe('missing_field:ledger');
+
+      expect(
+        describeEventParseError({
+          category: EventParseErrorCategory.UnsupportedEvent,
+          field: null,
+          detail: 'nope',
+        })
+      ).toBe('unsupported_event');
+    });
+
+    it('produces four distinct tokens for the four categories', () => {
+      const tokens = new Set([
+        EventParseErrorCategory.MissingField,
+        EventParseErrorCategory.InvalidType,
+        EventParseErrorCategory.MalformedPayload,
+        EventParseErrorCategory.UnsupportedEvent,
+      ]);
+
+      expect(tokens.size).toBe(4);
     });
   });
 });

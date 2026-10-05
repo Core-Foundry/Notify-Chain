@@ -39,9 +39,11 @@ The project enables developers to build reactive decentralized applications with
 > **Dashboard Storybook**: [dashboard/STORYBOOK.md](dashboard/STORYBOOK.md) — component documentation for design and development reviews.
 > **API errors**: [API Error Reference](docs/API_ERROR_REFERENCE.md) — every error response the listener API returns, with causes and resolutions.
 >
+> **Operations**: [Database Backup and Restore](docs/DATABASE_BACKUP_RESTORE.md) — backup strategy, critical data tiers, backup verification, and a tested restore procedure for the listener database.
+>
 > **Architecture decisions**: [Architecture Decision Records](docs/adr/README.md) — the *why* behind the project's significant technical choices, including the [off-chain listener architecture](docs/adr/0001-off-chain-listener-architecture.md), [Soroban on Stellar](docs/adr/0002-soroban-smart-contracts.md), [SQLite persistence](docs/adr/0003-sqlite-for-local-persistence.md), [TypeScript for the listener](docs/adr/0004-typescript-for-listener-service.md), and the [event deduplication strategy](docs/adr/0005-event-deduplication-strategy.md).
 >
-> **Contributor guides**: [Git Workflow](docs/GIT_WORKFLOW.md) · [Contributor Troubleshooting](docs/CONTRIBUTOR_TROUBLESHOOTING.md)
+> **Contributor guides**: [Git Workflow](docs/GIT_WORKFLOW.md) · [Contributor Troubleshooting](docs/CONTRIBUTOR_TROUBLESHOOTING.md) · [Blockchain Event Lifecycle](CONTRIBUTOR_EVENT_LIFECYCLE.md)
 
 ---
 
@@ -647,36 +649,6 @@ See [`frontend/src/components/SubscriptionForm.tsx`](frontend/src/components/Sub
 
 * Discord (implemented)
 * Email, Telegram, Slack, Webhooks, Push Notifications (planned)
-
----
-
-### Testing
-
-NotifyChain includes comprehensive testing infrastructure:
-
-#### Smoke Tests (Fast Pipeline Validation)
-
-```bash
-cd listener
-npm install
-npm run test:smoke
-```
-
-The smoke test validates the complete notification pipeline from event ingestion to notification generation in <2 seconds without any external dependencies. See `listener/SMOKE_TEST.md` for details.
-
-#### Unit Tests
-
-```bash
-cd listener
-npm run test:unit
-```
-
-#### All Tests
-
-```bash
-cd listener
-npm run test:all
-```
 
 ---
 
