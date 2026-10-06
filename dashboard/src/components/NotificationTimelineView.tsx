@@ -5,8 +5,6 @@ import { formatTimestamp } from '../utils/formatTime';
 import { EmptyState } from './EmptyState';
 import { CopyButton } from './CopyButton';
 
-// ─── status helpers ──────────────────────────────────────────────────────────
-
 const STATUS_LABEL: Record<TimelineStatus, string> = {
   PENDING: 'Pending',
   PROCESSING: 'Processing',
@@ -23,16 +21,11 @@ const STATUS_CLASS: Record<TimelineStatus, string> = {
   RETRY: 'timeline__dot--retry',
 };
 
-// ─── sub-components ──────────────────────────────────────────────────────────
-
 function TimelineEntryItem({ entry }: { entry: TimelineEntry }) {
   const ts = new Date(entry.executionTime).getTime();
   return (
     <li className="timeline__entry">
-      <span
-        className={`timeline__dot ${STATUS_CLASS[entry.status] ?? ''}`}
-        aria-hidden="true"
-      />
+      <span className={`timeline__dot ${STATUS_CLASS[entry.status] ?? ''}`} aria-hidden="true" />
       <div className="timeline__entry-body">
         <div className="timeline__entry-header">
           <span className="timeline__entry-label">
@@ -45,9 +38,7 @@ function TimelineEntryItem({ entry }: { entry: TimelineEntry }) {
             {formatTimestamp(ts)}
           </time>
         </div>
-        {entry.errorMessage && (
-          <p className="timeline__entry-error">{entry.errorMessage}</p>
-        )}
+        {entry.errorMessage && <p className="timeline__entry-error">{entry.errorMessage}</p>}
         {entry.durationMs != null && (
           <span className="timeline__entry-duration">{entry.durationMs} ms</span>
         )}
@@ -72,8 +63,6 @@ function TimelineSkeleton() {
   );
 }
 
-// ─── main component ──────────────────────────────────────────────────────────
-
 export function NotificationTimelineView() {
   const [inputValue, setInputValue] = useState('');
   const [timeline, setTimeline] = useState<NotificationTimeline | null>(null);
@@ -95,9 +84,8 @@ export function NotificationTimelineView() {
 
       try {
         const data = await fetchTimeline(id);
-        // Sort entries chronologically
         const sorted = [...data.entries].sort(
-          (a, b) => new Date(a.executionTime).getTime() - new Date(b.executionTime).getTime()
+          (a, b) => new Date(a.executionTime).getTime() - new Date(b.executionTime).getTime(),
         );
         setTimeline({ ...data, entries: sorted });
       } catch (err) {
@@ -106,7 +94,7 @@ export function NotificationTimelineView() {
         setLoading(false);
       }
     },
-    [inputValue]
+    [inputValue],
   );
 
   const overallStatus = timeline?.status;
@@ -117,7 +105,6 @@ export function NotificationTimelineView() {
         Notification Delivery Timeline
       </h2>
 
-      {/* Filter / search */}
       <form className="timeline-view__form" onSubmit={handleSearch} role="search">
         <label htmlFor="timeline-id-input" className="timeline-view__label">
           Notification ID
@@ -144,28 +131,16 @@ export function NotificationTimelineView() {
         )}
       </form>
 
-      {/* Loading skeleton */}
       {loading && <TimelineSkeleton />}
 
-      {/* Empty state — searched but no entries */}
       {!loading && timeline && timeline.entries.length === 0 && (
         <EmptyState
           size="inline"
           title={`No history entries found for notification #${timeline.notificationId}`}
-          message={`Current status: ${STATUS_LABEL[overallStatus!] ?? overallStatus}`}
+          message={`Current status: ${overallStatus ? (STATUS_LABEL[overallStatus] ?? overallStatus) : 'Unknown'}`}
         />
-          className="empty-state--compact"
-          icon="📭"
-          title="No history entries"
-          description={`No delivery history found for notification #${timeline.notificationId}.`}
-        >
-          <p className="timeline-view__empty-sub">
-            Current status: <strong>{STATUS_LABEL[overallStatus!] ?? overallStatus}</strong>
-          </p>
-        </EmptyState>
       )}
 
-      {/* Timeline entries */}
       {!loading && timeline && timeline.entries.length > 0 && (
         <div className="timeline-view__results">
           <div className="timeline-view__summary">
@@ -174,11 +149,13 @@ export function NotificationTimelineView() {
             </span>
             <CopyButton value={String(timeline.notificationId)} label="notification ID" size="xs" />
             <span
-              className={`timeline__dot ${STATUS_CLASS[overallStatus!] ?? ''} timeline__dot--inline`}
+              className={`timeline__dot ${overallStatus ? (STATUS_CLASS[overallStatus] ?? '') : ''} timeline__dot--inline`}
               aria-hidden="true"
             />
             <span>
-              <strong>{STATUS_LABEL[overallStatus!] ?? overallStatus}</strong>
+              <strong>
+                {overallStatus ? (STATUS_LABEL[overallStatus] ?? overallStatus) : 'Unknown'}
+              </strong>
             </span>
             <span className="timeline-view__summary-retries">
               Retries: {timeline.retryCount} / {timeline.maxRetries}
@@ -201,21 +178,15 @@ export function NotificationTimelineView() {
           )}
 
           {timeline.lastError && overallStatus === 'FAILED' && (
-            <p className="timeline-view__last-error">
-              Last error: {timeline.lastError}
-            </p>
+            <p className="timeline-view__last-error">Last error: {timeline.lastError}</p>
           )}
         </div>
       )}
 
-      {/* Initial empty state — nothing searched yet */}
       {!loading && !timeline && !error && (
-        <EmptyState size="inline" message="Enter a notification ID above to view its delivery history." />
         <EmptyState
-          className="empty-state--compact"
-          icon="🕐"
-          title="View delivery timeline"
-          description="Enter a notification ID above to see the full delivery history, retry attempts, and current status."
+          size="inline"
+          message="Enter a notification ID above to view its delivery history."
         />
       )}
     </section>

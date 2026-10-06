@@ -69,7 +69,7 @@ describe('EventExplorerTable resizing UI', () => {
 
   it('renders resize handles and keeps layout stable while resizing', () => {
     const { getByLabelText, container } = render(
-      <EventExplorerTable events={[sampleEvent]} />
+      <EventExplorerTable events={[sampleEvent]} contractStatuses={[]} />
     );
 
     const handle = getByLabelText('Resize Contract column');

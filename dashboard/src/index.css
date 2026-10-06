@@ -4268,6 +4268,191 @@ body.event-explorer--resizing {
   100% { background-position: -200% 0; }
 }
 
+/* ── Notification delivery summary ─────────────────────────────────────── */
+
+.notification-summary-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.notification-summary-panel__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.notification-summary-panel__eyebrow {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #9aa0a6;
+  font-weight: 700;
+  margin: 0;
+}
+
+.notification-summary-panel__title {
+  margin: 2px 0 0;
+  font-size: 1.05rem;
+  font-weight: 600;
+}
+
+.notification-summary-panel__meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.notification-summary-panel__updated {
+  font-size: 0.78rem;
+  color: #9aa0a6;
+  white-space: nowrap;
+}
+
+.notification-summary-panel__refresh {
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  padding: 6px 12px;
+  background: rgba(255, 255, 255, 0.04);
+  color: #c7cdd4;
+  font-size: 0.8rem;
+  cursor: pointer;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+
+.notification-summary-panel__refresh:hover {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+.notification-summary-panel__refresh:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.notification-summary-panel__banner {
+  margin: 0;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: rgba(239, 68, 68, 0.1);
+  color: #fca5a5;
+  font-size: 0.85rem;
+}
+
+/* Cards grid */
+.notification-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 14px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.notification-summary__card {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 16px;
+  padding: 18px 20px 16px;
+  background: rgba(255, 255, 255, 0.02);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.notification-summary__card--green { border-left: 3px solid #34d399; }
+.notification-summary__card--yellow { border-left: 3px solid #f4b400; }
+.notification-summary__card--red { border-left: 3px solid #f87171; }
+
+.notification-summary__card-label {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: #9aa0a6;
+  font-weight: 600;
+}
+
+.notification-summary__card-value {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-items: flex-start;
+}
+
+.notification-summary__card-number {
+  font-size: 1.75rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  letter-spacing: -0.02em;
+  font-family: 'Courier New', Courier, monospace;
+}
+
+.notification-summary__card--green .notification-summary__card-number { color: #6ee7b7; }
+.notification-summary__card--yellow .notification-summary__card-number { color: #fde047; }
+.notification-summary__card--red .notification-summary__card-number { color: #fca5a5; }
+
+.notification-summary__card-sub {
+  font-size: 0.75rem;
+  color: #9aa0a6;
+  font-family: 'Courier New', Courier, monospace;
+}
+
+/* Loading skeleton */
+.notification-summary__skeleton {
+  display: block;
+  height: 36px;
+  width: 70%;
+  border-radius: 6px;
+  background: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0.06) 25%,
+    rgba(255, 255, 255, 0.12) 50%,
+    rgba(255, 255, 255, 0.06) 75%
+  );
+  background-size: 200% 100%;
+  animation: wh-shimmer 1.4s ease-in-out infinite;
+}
+
+/* Light theme */
+[data-theme="light"] .notification-summary-panel__refresh,
+[data-theme="light"] .notification-summary__card {
+  background: rgba(0, 0, 0, 0.03);
+  border-color: rgba(0, 0, 0, 0.08);
+}
+
+[data-theme="light"] .notification-summary-panel__refresh {
+  color: #4b5563;
+  border-color: rgba(0, 0, 0, 0.12);
+}
+
+[data-theme="light"] .notification-summary-panel__banner {
+  background: rgba(239, 68, 68, 0.08);
+  color: #b91c1c;
+}
+
+/* Responsive */
+@media (max-width: 640px) {
+  .notification-summary-panel__header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .notification-summary-panel__meta {
+    justify-content: space-between;
+  }
+
+  .notification-summary {
+    grid-template-columns: 1fr;
+  }
+
+  .notification-summary__card-number {
+    font-size: 1.4rem;
+  }
+}
+
 /* ── Filters bar ─────────────────────────────────────────────────── */
 
 .webhook-filters {

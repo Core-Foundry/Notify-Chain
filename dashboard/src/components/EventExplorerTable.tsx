@@ -16,10 +16,6 @@ interface EventExplorerTableProps {
   contractStatuses: ContractStatus[];
 }
 
-export function EventExplorerTable({ events, onSelectEvent, contractStatuses }: EventExplorerTableProps) {
-  contractStatuses?: ContractStatus[];
-}
-
 export function loadColumnWidths(): number[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -91,14 +87,17 @@ export function EventExplorerTable({
     };
   }, []);
 
-  const startResize = useCallback((index: number, clientX: number) => {
-    dragRef.current = {
-      index,
-      startX: clientX,
-      startWidth: columnWidths[index],
-    };
-    document.body.classList.add('event-explorer--resizing');
-  }, [columnWidths]);
+  const startResize = useCallback(
+    (index: number, clientX: number) => {
+      dragRef.current = {
+        index,
+        startX: clientX,
+        startWidth: columnWidths[index],
+      };
+      document.body.classList.add('event-explorer--resizing');
+    },
+    [columnWidths],
+  );
 
   async function syncCopyText(text: string) {
     if (navigator.clipboard?.writeText) {

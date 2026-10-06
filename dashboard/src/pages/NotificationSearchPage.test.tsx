@@ -1,18 +1,13 @@
 import '@testing-library/jest-dom';
 import { render, screen, waitFor, fireEvent, act } from '@testing-library/react';
-import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { NotificationSearchPage } from './NotificationSearchPage';
 import { searchNotifications } from '../services/eventsApi';
 import type { NotificationSearchResponse } from '../services/eventsApi';
 
-jest.mock('../services/eventsApi', () => ({
-  searchNotifications: jest.fn(),
-}));
-
-const mockedSearch = searchNotifications as jest.MockedFunction<typeof searchNotifications>;
-
 jest.mock('../services/eventsApi', () => {
-  const actual = jest.requireActual('../services/eventsApi') as typeof import('../services/eventsApi');
+  const actual = jest.requireActual(
+    '../services/eventsApi',
+  ) as typeof import('../services/eventsApi');
   return {
     ...actual,
     searchNotifications: jest.fn(),
@@ -45,6 +40,7 @@ const mockResult: NotificationSearchResponse = {
       status: 'PENDING',
       createdAt: '2026-01-15T12:00:00.000Z',
       payload: null,
+      failureReason: null,
     },
   ],
   total: 1,
@@ -54,18 +50,6 @@ const mockResult: NotificationSearchResponse = {
   totalPages: 1,
 };
 
-function emptyResponse(): NotificationSearchResponse {
-  return {
-    results: [],
-    total: 0,
-    limit: 20,
-    offset: 0,
-    itemCount: 0,
-    totalPages: 0,
-  };
-}
-
-describe('NotificationSearchPage loading skeletons', () => {
 describe('NotificationSearchPage filters', () => {
   beforeEach(() => {
     jest.useFakeTimers();
@@ -137,6 +121,7 @@ describe('NotificationSearchPage filters', () => {
           status: 'COMPLETED',
           createdAt: '2026-03-01T00:00:00.000Z',
           payload: null,
+          failureReason: null,
         },
       ],
       total: 1,
@@ -185,6 +170,7 @@ describe('NotificationSearchPage filters', () => {
     expect(screen.getByLabelText(/filter from date/i)).toHaveValue('');
     expect(screen.queryByRole('button', { name: /clear all filters/i })).not.toBeInTheDocument();
   });
+});
 
 describe('searchNotifications query params', () => {
   const originalFetch = global.fetch;
@@ -202,7 +188,7 @@ describe('searchNotifications query params', () => {
 
   it('appends type, status, startDate, and endDate to the URL', async () => {
     const { searchNotifications: realSearch } = jest.requireActual(
-      '../services/eventsApi'
+      '../services/eventsApi',
     ) as typeof import('../services/eventsApi');
 
     await realSearch('http://localhost:8787', {
@@ -212,9 +198,7 @@ describe('searchNotifications query params', () => {
       endDate: '2026-01-31',
     });
 
-    expect(global.fetch).toHaveBeenCalledWith(
-      expect.stringContaining('type=webhook')
-    );
+    expect(global.fetch).toHaveBeenCalledWith(expect.stringContaining('type=webhook'));
     const calledUrl = (global.fetch as jest.Mock).mock.calls[0][0] as string;
     expect(calledUrl).toContain('status=COMPLETED');
     expect(calledUrl).toContain('startDate=2026-01-01');
@@ -232,7 +216,7 @@ describe('NotificationSearchPage loading skeletons', () => {
     jest.useRealTimers();
   });
 
-  it('shows result-card skeletons while searching and hides Searching text', async () => {
+  it('shows result-card skeletons while searching and hides result text', async () => {
     mockedSearch.mockReturnValue(new Promise(() => {}));
 
     render(<NotificationSearchPage />);
@@ -258,7 +242,7 @@ describe('NotificationSearchPage loading skeletons', () => {
       () =>
         new Promise((resolve) => {
           resolveSearch = resolve;
-        })
+        }),
     );
 
     render(<NotificationSearchPage />);
@@ -289,13 +273,6 @@ describe('NotificationSearchPage loading skeletons', () => {
   });
 });
 
-describe('searchNotifications query params', () => {
-  const originalFetch = global.fetch;
-
-  beforeEach(() => {
-    global.fetch = jest.fn().mockResolvedValue({
-      ok: true,
-      json: async () => emptyResponse(),
 describe('NotificationResultCard copy notification ID', () => {
   beforeEach(() => {
     mockedSearch.mockReset();
@@ -308,28 +285,6 @@ describe('NotificationResultCard copy notification ID', () => {
   });
 
   afterEach(() => {
-    global.fetch = originalFetch;
-  });
-
-  it('appends type, status, startDate, and endDate to the URL', async () => {
-    const { searchNotifications: realSearch } = jest.requireActual(
-      '../services/eventsApi'
-    ) as typeof import('../services/eventsApi');
-
-    await realSearch('http://localhost:8787', {
-      type: 'webhook',
-      status: 'COMPLETED',
-      startDate: '2026-01-01',
-      endDate: '2026-01-31',
-    });
-
-    expect(global.fetch).toHaveBeenCalledWith(
-      expect.stringContaining('type=webhook')
-    );
-    const calledUrl = (global.fetch as jest.Mock).mock.calls[0][0] as string;
-    expect(calledUrl).toContain('status=COMPLETED');
-    expect(calledUrl).toContain('startDate=2026-01-01');
-    expect(calledUrl).toContain('endDate=2026-01-31');
     jest.useRealTimers();
   });
 
@@ -337,7 +292,6 @@ describe('NotificationResultCard copy notification ID', () => {
     mockedSearch.mockResolvedValue(mockResult);
     render(<NotificationSearchPage />);
 
-    // Trigger a search
     fireEvent.change(screen.getByLabelText(/free-text search/i), {
       target: { value: 'test' },
     });
@@ -350,12 +304,8 @@ describe('NotificationResultCard copy notification ID', () => {
       expect(screen.getByText('1')).toBeInTheDocument();
     });
 
-    // Verify the notification ID label and value are present
     expect(screen.getByText('Notification ID')).toBeInTheDocument();
-
-    // Verify a CopyButton with the correct aria-label is present
-    const copyBtn = screen.getByRole('button', { name: /copy notification id/i });
-    expect(copyBtn).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /copy notification id/i })).toBeInTheDocument();
   });
 
   it('copies notification ID to clipboard when copy button is clicked', async () => {
@@ -403,7 +353,6 @@ describe('NotificationResultCard copy notification ID', () => {
       fireEvent.click(copyBtn);
     });
 
-    // After clicking, the CopyButton should show "Copied" feedback
     await waitFor(() => {
       expect(screen.getByRole('button', { name: /notification id copied/i })).toBeInTheDocument();
     });

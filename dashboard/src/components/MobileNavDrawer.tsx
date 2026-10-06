@@ -21,7 +21,8 @@ export type Tab =
   | 'export-history'
   | 'search'
   | 'preferences'
-  | 'templates';
+  | 'templates'
+  | 'channels';
 
 export interface NavItem {
   id: Tab;

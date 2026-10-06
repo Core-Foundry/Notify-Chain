@@ -8,6 +8,7 @@ import { PaginationControls } from '../components/PaginationControls';
 import { NotificationDetailsDrawer } from '../components/NotificationDetailsDrawer';
 import { IndexingHealthPanel } from '../components/IndexingHealthPanel';
 import { NotificationHealthPanel } from '../components/NotificationHealthPanel';
+import { NotificationSummaryPanel } from '../components/NotificationSummaryPanel';
 import { EmptyState } from '../components/EmptyState';
 import { useEventFilters, useEventLoadingState, useFilteredEvents } from '../hooks/useEventSelectors';
 import { useEventStore } from '../store/eventStore';
@@ -269,6 +270,7 @@ export function EventExplorerPage() {
       )}
       <IndexingHealthPanel healthUrl={INDEXING_HEALTH_URL} />
       <NotificationHealthPanel healthUrl={NOTIFICATION_HEALTH_URL} />
+      <NotificationSummaryPanel apiUrl={NOTIFICATION_HEALTH_URL} />
 
       <EventFiltersBar />
       <NotificationSearchBar />
@@ -302,9 +304,10 @@ export function EventExplorerPage() {
         />
       ) : (
         <EmptyState
+          size="compact"
           icon="🔍"
           title="No events found"
-          description="Update the search, event type, or contract filter to uncover matching Soroban contract events."
+          message="Update the search, event type, or contract filter to uncover matching Soroban contract events."
           action={{ label: 'Clear filters', onClick: handleClearFilters }}
         />
       )}

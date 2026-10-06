@@ -6,21 +6,10 @@ export interface EmptyStateAction {
 }
 
 export interface EmptyStateProps {
-  /** Short heading. Omit for compact/inline placements that only need a message. */
   title?: string;
-  /** Helpful message guiding the user on what to do next. */
   message: string;
-  /** Custom icon/illustration. Falls back to a generic empty-tray icon. */
   icon?: ReactNode;
-  /** Optional call-to-action rendered below the message. */
   action?: EmptyStateAction;
-  /**
-   * Visual density:
-   * - "default": large dashed card for standalone page/section placeholders.
-   * - "compact": smaller dashed card for placeholders inside a page section.
-   * - "inline": no border/background — for placeholders already nested inside
-   *   a bordered container (a panel, card, or table cell).
-   */
   size?: 'default' | 'compact' | 'inline';
   className?: string;
 }
@@ -43,11 +32,6 @@ function DefaultEmptyIcon() {
   );
 }
 
-/**
- * Reusable placeholder for any screen or section with no data to show.
- * Pairs an icon with a short title and a helpful message, and optionally
- * a call-to-action, so empty screens always guide the user to a next step.
- */
 export function EmptyState({
   title,
   message,
@@ -67,41 +51,6 @@ export function EmptyState({
         <button
           type="button"
           className="empty-state__action button button--secondary"
-interface EmptyStateProps {
-  icon: string;
-  title: string;
-  description: string;
-  /** Optional call-to-action button */
-  action?: {
-    label: string;
-    onClick: () => void;
-  };
-  /** Extra class for size/context variants */
-  className?: string;
-  /** aria role — defaults to "status" */
-  role?: string;
-  children?: ReactNode;
-}
-
-export function EmptyState({
-  icon,
-  title,
-  description,
-  action,
-  className = '',
-  role = 'status',
-  children,
-}: EmptyStateProps) {
-  return (
-    <div className={`empty-state ${className}`} role={role}>
-      <span className="empty-state__icon" aria-hidden="true">{icon}</span>
-      <h2 className="empty-state__title">{title}</h2>
-      <p className="empty-state__description">{description}</p>
-      {children}
-      {action && (
-        <button
-          type="button"
-          className="empty-state__action"
           onClick={action.onClick}
         >
           {action.label}

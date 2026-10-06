@@ -1,4 +1,3 @@
- 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { generateMockExports, type NotificationExport } from '../utils/exportData';
 import { ExportHistoryTable } from '../components/ExportHistoryTable';
@@ -7,18 +6,9 @@ import { PaginationControls } from '../components/PaginationControls';
 import { WalletConnectButton } from '../components/WalletConnectButton';
 import { EmptyState } from '../components/EmptyState';
 
-// ──────────────────────────────────────────────────────────────────
-// Constants
-// ──────────────────────────────────────────────────────────────────
-
 const PAGE_SIZE_OPTIONS = [5, 10, 25];
 const DEFAULT_LIMIT = 5;
 const SKELETON_DELAY_MS = 800;
-
-// ──────────────────────────────────────────────────────────────────
-// Download helper — generates a blob file and triggers the browser
-// download prompt for Completed exports.
-// ──────────────────────────────────────────────────────────────────
 
 function buildExportBlob(item: NotificationExport): { blob: Blob; filename: string } {
   const safeName = item.name.toLowerCase().replace(/[^a-z0-9]+/g, '_');
@@ -34,16 +24,19 @@ function buildExportBlob(item: NotificationExport): { blob: Blob; filename: stri
         record_count: item.recordCount,
         records: Array.from({ length: 5 }, (_, i) => ({
           id: `notif-${2000 + i}`,
-          contract: 'CCEMX6Q5V5F5F5F5F5F5F5F5F5F5F5F5F5F5F5F5F5F5F5F5F5F5F5',
+          contract: 'CCEMX6Q5V5F5F5F5F5F5F5F5F5F5F5F5F5F5F5F5F5F5F5F5F5F5F5F5',
           event_name: i % 2 === 0 ? 'NotificationScheduled' : 'NotificationExpired',
           timestamp: new Date(item.createdAt - i * 15 * 60 * 1000).toISOString(),
           status: 'Delivered',
         })),
       },
       null,
-      2
+      2,
     );
-    return { blob: new Blob([content], { type: 'application/json' }), filename: `${filename}.json` };
+    return {
+      blob: new Blob([content], { type: 'application/json' }),
+      filename: `${filename}.json`,
+    };
   }
 
   if (item.format === 'CSV') {
@@ -52,14 +45,12 @@ function buildExportBlob(item: NotificationExport): { blob: Blob; filename: stri
       (_, i) =>
         `notif-${2000 + i},CCEMX6Q5V5F5F5F5F5F5F5F5F5F5F5F5F5F5F5F5F5F5F5F5F5F5F5,` +
         `${i % 2 === 0 ? 'NotificationScheduled' : 'NotificationExpired'},` +
-        `${new Date(item.createdAt - i * 15 * 60 * 1000).toISOString()},Delivered`
+        `${new Date(item.createdAt - i * 15 * 60 * 1000).toISOString()},Delivered`,
     );
-    const content =
-      'ID,Contract Address,Event Name,Timestamp,Status\n' + rows.join('\n');
+    const content = 'ID,Contract Address,Event Name,Timestamp,Status\n' + rows.join('\n');
     return { blob: new Blob([content], { type: 'text/csv' }), filename: `${filename}.csv` };
   }
 
-  // PDF — represented as plain text for mock purposes
   const createdFormatted = new Date(item.createdAt).toLocaleString('en-US', {
     month: 'short',
     day: 'numeric',
@@ -92,10 +83,6 @@ function triggerDownload(blob: Blob, filename: string): void {
   URL.revokeObjectURL(url);
 }
 
-// ──────────────────────────────────────────────────────────────────
-// Page
-// ──────────────────────────────────────────────────────────────────
-
 export function ExportHistoryPage() {
   const [exports, setExports] = useState<NotificationExport[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -104,7 +91,6 @@ export function ExportHistoryPage() {
   const [page, setPage] = useState(1);
   const [limit, setLimit] = useState<number>(DEFAULT_LIMIT);
 
-  // Simulate async data loading so the skeleton is visible (replace with real API call)
   useEffect(() => {
     setIsLoading(true);
     const timer = setTimeout(() => {
@@ -115,7 +101,6 @@ export function ExportHistoryPage() {
     return () => clearTimeout(timer);
   }, []);
 
-  // ── Filtering ──────────────────────────────────────────────────
   const filteredExports = useMemo(() => {
     const q = search.toLowerCase();
     return exports.filter((item) => {
@@ -124,22 +109,18 @@ export function ExportHistoryPage() {
         item.id.toLowerCase().includes(q) ||
         item.format.toLowerCase().includes(q);
       const matchesStatus =
-        statusFilter === 'all' ||
-        item.status.toLowerCase() === statusFilter.toLowerCase();
+        statusFilter === 'all' || item.status.toLowerCase() === statusFilter.toLowerCase();
       return matchesSearch && matchesStatus;
     });
   }, [exports, search, statusFilter]);
 
-  // Reset to page 1 whenever filters change
   useEffect(() => {
     setPage(1);
   }, [search, statusFilter]);
 
-  // ── Pagination ─────────────────────────────────────────────────
   const totalCount = filteredExports.length;
   const pageCount = Math.max(1, Math.ceil(totalCount / limit));
 
-  // Clamp page to valid range if the filter reduces totalCount
   useEffect(() => {
     if (page > pageCount) {
       setPage(pageCount);
@@ -156,7 +137,6 @@ export function ExportHistoryPage() {
     setPage(1);
   }, []);
 
-  // ── Download ───────────────────────────────────────────────────
   const handleDownload = useCallback((item: NotificationExport) => {
     if (item.status !== 'Completed') return;
     const { blob, filename } = buildExportBlob(item);
@@ -165,20 +145,18 @@ export function ExportHistoryPage() {
 
   return (
     <main className="export-history-page">
-      {/* ── Page header ─────────────────────────────────────────── */}
       <header className="export-history__header">
         <div>
           <p className="export-history__eyebrow">Export Center</p>
           <h1>Notification Export History</h1>
           <p className="export-history__lead">
-            Manage, filter, and download your previously generated notification and smart
-            contract event export records.
+            Manage, filter, and download your previously generated notification and smart contract
+            event export records.
           </p>
         </div>
         <WalletConnectButton />
       </header>
 
-      {/* ── Filters ─────────────────────────────────────────────── */}
       <section className="export-filters" aria-label="Export history filters">
         <div className="event-filters__group">
           <label htmlFor="export-search">Search Exports</label>
@@ -206,43 +184,40 @@ export function ExportHistoryPage() {
         </div>
 
         <p className="event-filters__count" aria-live="polite" aria-atomic="true">
-          {isLoading ? '—' : `${totalCount.toLocaleString()} ${totalCount === 1 ? 'record' : 'records'}`}
+          {isLoading
+            ? '—'
+            : `${totalCount.toLocaleString()} ${totalCount === 1 ? 'record' : 'records'}`}
         </p>
       </section>
 
-      {/* ── Skeleton (loading) ───────────────────────────────────── */}
       {isLoading && <ExportHistorySkeleton rows={5} />}
 
-      {/* ── Table or empty state ─────────────────────────────────── */}
       {!isLoading && displayedExports.length > 0 && (
         <ExportHistoryTable exports={displayedExports} onDownload={handleDownload} />
-      ) : (
-        <EmptyState
-          title="No export records found"
-          message="Try modifying your search query or status filter to locate matching exports."
       )}
 
       {!isLoading && displayedExports.length === 0 && (
-        <section
-          className="event-explorer__empty-state"
-          role="status"
-          aria-live="polite"
-        >
-          <h2>No export records found</h2>
-          <p>
-            Try modifying your search query or status filter to locate matching exports.
-          </p>
-        </section>
-      ) : (
         <EmptyState
-          icon="📦"
           title="No export records found"
-          description="Try modifying your search query or status filter to locate matching exports."
-          action={search || statusFilter !== 'all' ? { label: 'Clear filters', onClick: () => { setSearch(''); setStatusFilter('all'); } } : undefined}
+          message={
+            search || statusFilter !== 'all'
+              ? 'Try modifying your search query or status filter to locate matching exports.'
+              : 'You have no export records yet.'
+          }
+          action={
+            search || statusFilter !== 'all'
+              ? {
+                  label: 'Clear filters',
+                  onClick: () => {
+                    setSearch('');
+                    setStatusFilter('all');
+                  },
+                }
+              : undefined
+          }
         />
       )}
 
-      {/* ── Pagination ───────────────────────────────────────────── */}
       {!isLoading && (
         <PaginationControls
           page={page}
