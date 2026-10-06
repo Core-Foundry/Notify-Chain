@@ -6,12 +6,23 @@ export interface EmptyStateAction {
 }
 
 export interface EmptyStateProps {
+  /** Short heading. Omit for compact placements that only need a message. */
   title?: string;
-  message: string;
-  icon?: ReactNode;
+
+  /** Primary message (preferred). */
+  message?: string;
+
+  /** Legacy alias for message. */
+  description?: string;
+
+  /** Emoji string or custom icon node. */
+  icon?: string | ReactNode;
+
   action?: EmptyStateAction;
   size?: 'default' | 'compact' | 'inline';
   className?: string;
+  role?: string;
+  children?: ReactNode;
 }
 
 function DefaultEmptyIcon() {
@@ -24,6 +35,7 @@ function DefaultEmptyIcon() {
       strokeLinecap="round"
       strokeLinejoin="round"
       aria-hidden="true"
+      focusable="false"
     >
       <path d="M3 13.5 5.5 5h13L21 13.5" />
       <path d="M3 13.5V19a1 1 0 0 0 1 1h16a1 1 0 0 0 1-1v-5.5" />
@@ -32,21 +44,63 @@ function DefaultEmptyIcon() {
   );
 }
 
+function renderIcon(icon: string | ReactNode | undefined) {
+  if (icon == null) {
+    return <DefaultEmptyIcon />;
+  }
+
+  if (typeof icon === 'string') {
+    return (
+      <span className="empty-state__icon-emoji" aria-hidden="true">
+        {icon}
+      </span>
+    );
+  }
+
+  return icon;
+}
+
 export function EmptyState({
   title,
   message,
+  description,
   icon,
   action,
   size = 'default',
   className,
+  role = 'status',
+  children,
 }: EmptyStateProps) {
-  const classes = ['empty-state', `empty-state--${size}`, className].filter(Boolean).join(' ');
+  const body = message ?? description ?? '';
+
+  const classes = [
+    'empty-state',
+    `empty-state--${size}`,
+    className,
+  ]
+    .filter(Boolean)
+    .join(' ');
 
   return (
-    <div className={classes} role="status" aria-live="polite">
-      <div className="empty-state__icon">{icon ?? <DefaultEmptyIcon />}</div>
-      {title && <h2 className="empty-state__title">{title}</h2>}
-      <p className="empty-state__message">{message}</p>
+    <div className={classes} role={role} aria-live="polite">
+      <div className="empty-state__icon">
+        {renderIcon(icon)}
+      </div>
+
+      {title && (
+        <h2 className="empty-state__title">
+          {title}
+        </h2>
+      )}
+
+      {body && (
+        <p className="empty-state__message empty-state__description">
+          {body}
+        </p>
+      )}
+
+      {children}
+
       {action && (
         <button
           type="button"

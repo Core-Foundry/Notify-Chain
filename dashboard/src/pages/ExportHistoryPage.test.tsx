@@ -1,67 +1,125 @@
 import '@testing-library/jest-dom';
-import { render, fireEvent, waitFor } from '@testing-library/react';
+import { render, fireEvent, act } from '@testing-library/react';
 import { axe, toHaveNoViolations } from 'jest-axe';
 import { ExportHistoryPage } from './ExportHistoryPage';
 
 expect.extend(toHaveNoViolations);
 
 test('ExportHistoryPage has no accessibility violations', async () => {
-  const { container } = render(<ExportHistoryPage />);
-  await waitFor(() => {
-    expect(container).toBeDefined();
-  });
-  const results = await axe(container);
-  expect(results).toHaveNoViolations();
+  jest.useFakeTimers();
+
+  try {
+    const { container } = render(<ExportHistoryPage />);
+
+    await act(async () => {
+      jest.advanceTimersByTime(900);
+    });
+
+    const results = await axe(container);
+    expect(results).toHaveNoViolations();
+  } finally {
+    jest.useRealTimers();
+  }
 });
 
-test('ExportHistoryPage renders correctly and lists mock exports', async () => {
-  const { getByText, getByRole, getAllByRole } = render(<ExportHistoryPage />);
-
-  await waitFor(() => {
-    expect(getByText('Notification Export History')).toBeInTheDocument();
+describe('ExportHistoryPage interactions', () => {
+  beforeEach(() => {
+    jest.useFakeTimers();
   });
 
-  expect(getByText(/Manage, filter, and download/)).toBeInTheDocument();
-  expect(getByRole('table')).toBeInTheDocument();
-
-  const rows = getAllByRole('row');
-  expect(rows).toHaveLength(6);
-});
-
-test('ExportHistoryPage search and filtering works', async () => {
-  const { getByLabelText, queryByText, getByText } = render(<ExportHistoryPage />);
-
-  await waitFor(() => {
-    expect(getByText('System Alert Notification logs')).toBeInTheDocument();
+  afterEach(() => {
+    jest.useRealTimers();
   });
 
-  const searchInput = getByLabelText('Search Exports');
-  fireEvent.change(searchInput, { target: { value: 'System Alert' } });
+  function renderLoadedPage() {
+    const view = render(<ExportHistoryPage />);
 
-  expect(getByText('System Alert Notification logs')).toBeInTheDocument();
-  expect(queryByText('Monthly billing export')).not.toBeInTheDocument();
-});
+    act(() => {
+      jest.advanceTimersByTime(900);
+    });
 
-test('ExportHistoryPage pagination limit and page switching works', async () => {
-  const { getByLabelText, getByText, queryByText } = render(<ExportHistoryPage />);
+    return view;
+  }
 
-  await waitFor(() => {
-    expect(getByText('Page 1 of 3')).toBeInTheDocument();
+  test('renders correctly and lists mock exports', () => {
+    const { getByText, getByRole, getAllByRole } =
+      renderLoadedPage();
+
+    expect(
+      getByText('Notification Export History'),
+    ).toBeInTheDocument();
+
+    expect(
+      getByText(/Manage, filter, and download/),
+    ).toBeInTheDocument();
+
+    expect(getByRole('table')).toBeInTheDocument();
+
+    const rows = getAllByRole('row');
+    expect(rows).toHaveLength(6);
   });
 
-  expect(getByText('15 total export records')).toBeInTheDocument();
-  expect(getByText('System Alert Notification logs')).toBeInTheDocument();
+  test('search and filtering works', () => {
+    const {
+      getByLabelText,
+      queryByText,
+      getByText,
+    } = renderLoadedPage();
 
-  const nextBtn = getByText('Next');
-  fireEvent.click(nextBtn);
+    const searchInput =
+      getByLabelText('Search Exports');
 
-  expect(getByText('Page 2 of 3')).toBeInTheDocument();
-  expect(queryByText('System Alert Notification logs')).not.toBeInTheDocument();
+    fireEvent.change(searchInput, {
+      target: { value: 'System Alert' },
+    });
 
-  const selectLimit = getByLabelText('Items per page');
-  fireEvent.change(selectLimit, { target: { value: '10' } });
+    expect(
+      getByText('System Alert Notification logs'),
+    ).toBeInTheDocument();
 
-  await waitFor(() => {
-    expect(getByText('Page 1 of 2')).toBeInTheDocument();
+    expect(
+      queryByText('Monthly billing export'),
+    ).not.toBeInTheDocument();
+  });
+
+  test('pagination limit and page switching works', () => {
+    const {
+      getByLabelText,
+      getByText,
+      queryByText,
+    } = renderLoadedPage();
+
+    expect(
+      getByText('Page 1 of 3'),
+    ).toBeInTheDocument();
+
+    expect(
+      getByText('15 total export records'),
+    ).toBeInTheDocument();
+
+    expect(
+      getByText('System Alert Notification logs'),
+    ).toBeInTheDocument();
+
+    fireEvent.click(getByText('Next'));
+
+    expect(
+      getByText('Page 2 of 3'),
+    ).toBeInTheDocument();
+
+    expect(
+      queryByText('System Alert Notification logs'),
+    ).not.toBeInTheDocument();
+
+    fireEvent.change(
+      getByLabelText('Items per page'),
+      {
+        target: { value: '10' },
+      },
+    );
+
+    expect(
+      getByText('Page 1 of 2'),
+    ).toBeInTheDocument();
   });
 });
