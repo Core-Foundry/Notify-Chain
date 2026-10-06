@@ -1,4 +1,5 @@
 import type { RetryFailureType } from '../services/retry-policy';
+import type { CircuitBreakerConfig } from '../services/circuit-breaker';
 import * as StellarSDK from '@stellar/stellar-sdk';
 
 export interface NotificationProvider {
@@ -29,11 +30,15 @@ export interface DiscordConfig {
 }
 
 export interface RetryQueueConfig {
-  baseDelayMs?: number;
-  multiplier?: number;
-  jitter?: boolean;
-  maxRetries?: number;
+  /**
+   * Provider-independent retry backoff parameters for the in-memory
+   * notification retry queue.  Defaults from `RETRY_BACKOFF_DEFAULTS` are
+   * applied to any omitted field; the merged result is strictly validated
+   * by the shared `resolveRetryBackoffConfig` validator.
+   */
+  backoff?: PartialRetryBackoffConfig;
   processIntervalMs?: number;
+  priorityWeights?: { high: number; medium: number; low: number };
 }
 
 export interface WebhookSecret {
@@ -78,9 +83,12 @@ export interface Config {
   retryPolicy?: RetryPolicyOptions;
   databasePath?: string;
   rateLimit?: RateLimitConfig;
+  rpcRateLimit?: RpcRateLimitConfig;
   cleanup?: AppCleanupConfig;
   analytics?: AnalyticsConfig;
   expiration?: ExpirationConfig;
+  /** Default scheduled-notification lifetime in seconds; zero disables expiry. */
+  notificationDefaultTtlSeconds?: number;
   backfill?: BackfillConfig;
   logging?: LoggingConfig;
   api?: ApiConfig;
@@ -115,6 +123,7 @@ export interface SchedulerConfig {
   lockTimeoutMs: number;
   processorId?: string;
   batchSize: number;
+  concurrency: number;
   timingBufferMs: number;
 }
 
@@ -164,6 +173,11 @@ export interface RetrySchedulerOptions {
   multiplier: number;
   maxDelayMs: number;
   jitter: boolean;
+/**
+   * Timeout (ms) for outbound webhook requests (`WEBHOOK_TIMEOUT_MS`).
+   * Defaults to `DEFAULT_WEBHOOK_TIMEOUT_MS` (10 000 ms).
+   */
+  webhookTimeoutMs: number;
   /**
    * Retry-policy ceiling on total attempts. Mirrors `RetrySchedulerConfig`;
    * `undefined` leaves each notification's own `maxRetries` in control.
@@ -234,15 +248,16 @@ export interface BackfillConfig {
 }
 
 /**
- * Circuit breaker configuration for RPC calls to prevent continuous requests
- * to an unavailable endpoint.
+ * Rate limiting configuration for RPC event ingestion to prevent
+ * excessive RPC requests and resource consumption.
  */
-export interface CircuitBreakerConfig {
-  /** Number of consecutive failures required to open the circuit (default: 5) */
-  failureThreshold?: number;
-  /** Time in milliseconds to wait before attempting recovery (default: 60000) */
-  recoveryTimeoutMs?: number;
-  /** Time in milliseconds to consider a request as timed out (default: 30000) */
-  requestTimeoutMs?: number;
+export interface RpcRateLimitConfig {
+  /** Whether RPC rate limiting is enabled (default: true). */
+  enabled: boolean;
+  /** Maximum RPC requests per second (default: 10). */
+  maxRequestsPerSecond: number;
+  /** Burst size - allows short bursts above the sustained rate (default: 20). */
+  burstSize: number;
+  /** Delay in ms to apply when throttled (default: 1000). */
+  throttleDelayMs: number;
 }
-

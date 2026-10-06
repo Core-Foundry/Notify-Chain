@@ -8,6 +8,8 @@
  * - Validation errors identify the affected configuration field explicitly.
  */
 
+import { MAX_WEBHOOK_TIMEOUT_MS } from './services/webhook-delivery-service';
+
 export type FieldType = 'string' | 'number' | 'boolean' | 'array' | 'object';
 
 export interface SchemaFieldRule {
@@ -222,6 +224,14 @@ export const APP_CONFIG_SCHEMA: ConfigSchema = {
     lockTimeoutMs: { type: 'number', min: 1000 },
     batchSize: { type: 'number', min: 1 },
     timingBufferMs: { type: 'number', min: 0 },
+    concurrency: { type: 'number', min: 1 },
+  },
+  retryScheduler: {
+    enabled: { type: 'boolean' },
+    pollIntervalMs: { type: 'number', min: 1000 },
+    lockTimeoutMs: { type: 'number', min: 1000 },
+    batchSize: { type: 'number', min: 1 },
+    webhookTimeoutMs: { type: 'number', min: 1, max: MAX_WEBHOOK_TIMEOUT_MS },
   },
   rateLimit: {
     enabled: { type: 'boolean' },

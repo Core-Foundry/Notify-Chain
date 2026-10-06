@@ -32,7 +32,10 @@ const SkeletonRow = () => (
   <tr className="webhook-failed-table__row webhook-failed-table__row--skeleton" aria-hidden="true">
     {Array.from({ length: 6 }).map((_, i) => (
       <td key={i} className="webhook-failed-table__cell">
-        <span className="webhook-failed-table__skeleton" style={{ width: `${50 + (i * 23) % 40}%` }} />
+        <span
+          className="webhook-failed-table__skeleton"
+          style={{ width: `${50 + ((i * 23) % 40)}%` }}
+        />
       </td>
     ))}
   </tr>
@@ -60,7 +63,8 @@ function SortButton({
       onClick={() => onSort(field)}
       aria-sort={isActive ? (currentDir === 'asc' ? 'ascending' : 'descending') : 'none'}
     >
-      {label}{arrow}
+      {label}
+      {arrow}
     </button>
   );
 }
@@ -142,24 +146,63 @@ export const WebhookFailedTable = memo(function WebhookFailedTable({
         </span>
       </div>
 
-      <div className="webhook-failed-table__wrapper" role="region" aria-label="Failed deliveries table" tabIndex={0}>
-        <table className="webhook-failed-table" aria-labelledby="failed-table-title" aria-rowcount={deliveries.length}>
+      <div
+        className="webhook-failed-table__wrapper"
+        role="region"
+        aria-label="Failed deliveries table"
+        tabIndex={0}
+      >
+        <table
+          className="webhook-failed-table"
+          aria-labelledby="failed-table-title"
+          aria-rowcount={deliveries.length}
+        >
           <thead>
             <tr>
               <th scope="col" className="webhook-failed-table__th">
-                <SortButton field="attemptedAt" currentField={sortField} currentDir={sortDir} label="Timestamp" onSort={handleSort} />
+                <SortButton
+                  field="attemptedAt"
+                  currentField={sortField}
+                  currentDir={sortDir}
+                  label="Timestamp"
+                  onSort={handleSort}
+                />
               </th>
               <th scope="col" className="webhook-failed-table__th">
-                <SortButton field="eventType" currentField={sortField} currentDir={sortDir} label="Event" onSort={handleSort} />
+                <SortButton
+                  field="eventType"
+                  currentField={sortField}
+                  currentDir={sortDir}
+                  label="Event"
+                  onSort={handleSort}
+                />
               </th>
               <th scope="col" className="webhook-failed-table__th">
-                <SortButton field="targetUrl" currentField={sortField} currentDir={sortDir} label="Target URL" onSort={handleSort} />
+                <SortButton
+                  field="targetUrl"
+                  currentField={sortField}
+                  currentDir={sortDir}
+                  label="Target URL"
+                  onSort={handleSort}
+                />
               </th>
               <th scope="col" className="webhook-failed-table__th">
-                <SortButton field="httpStatus" currentField={sortField} currentDir={sortDir} label="HTTP Status" onSort={handleSort} />
+                <SortButton
+                  field="httpStatus"
+                  currentField={sortField}
+                  currentDir={sortDir}
+                  label="HTTP Status"
+                  onSort={handleSort}
+                />
               </th>
               <th scope="col" className="webhook-failed-table__th">
-                <SortButton field="latencyMs" currentField={sortField} currentDir={sortDir} label="Latency" onSort={handleSort} />
+                <SortButton
+                  field="latencyMs"
+                  currentField={sortField}
+                  currentDir={sortDir}
+                  label="Latency"
+                  onSort={handleSort}
+                />
               </th>
               <th scope="col" className="webhook-failed-table__th">
                 Error Category
@@ -207,7 +250,9 @@ export const WebhookFailedTable = memo(function WebhookFailedTable({
                         {truncateUrl(d.targetUrl)}
                       </td>
                       <td className="webhook-failed-table__cell">
-                        <span className={`webhook-failed-table__code ${statusCodeClass(d.httpStatus)}`}>
+                        <span
+                          className={`webhook-failed-table__code ${statusCodeClass(d.httpStatus)}`}
+                        >
                           {d.httpStatus !== null ? d.httpStatus : 'None'}
                         </span>
                       </td>
@@ -217,7 +262,9 @@ export const WebhookFailedTable = memo(function WebhookFailedTable({
                       <td className="webhook-failed-table__cell">
                         <div className="webhook-failed-table__cell-row">
                           {category && (
-                            <span className={`webhook-failed-table__category webhook-failed-table__category--${category}`}>
+                            <span
+                              className={`webhook-failed-table__category webhook-failed-table__category--${category}`}
+                            >
                               {category}
                             </span>
                           )}

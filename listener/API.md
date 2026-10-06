@@ -634,6 +634,30 @@ Full-text and field-based search across scheduled notifications.
 
 ---
 
+### POST /api/notifications/:id/cancel
+
+Cancel a pending scheduled notification. An optional `reason` may be supplied for auditing.
+
+**Path Parameters**
+
+| Name | Type   | Required | Description                              |
+|------|--------|----------|------------------------------------------|
+| id   | number | Yes      | Numeric identifier of the notification   |
+
+**Request Body** (optional)
+
+```json
+{
+  "reason": "Duplicate request"
+}
+```
+
+**Response `200`**
+
+Returns the full `ScheduledNotification` object, now including `cancellationReason` if provided.
+
+---
+
 ### GET /api/search/suggestions
 
 Returns autocomplete suggestions based on a partial query string. Useful for building search UIs.

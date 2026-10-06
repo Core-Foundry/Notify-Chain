@@ -16,8 +16,7 @@ import { EventDeduplicationService } from './event-deduplication-service';
 import { EventProcessingQueue } from './event-processing-queue';
 import { NotificationExpirationService } from './notification-expiration';
 import { pollingMetrics } from './polling-metrics';
-import { CircuitBreaker } from '../utils/circuit-breaker';
-import { StellarRpcManager } from './stellar-rpc-manager';
+import { RpcRateLimiter } from './rpc-rate-limiter';
 
 export class EventSubscriber {
   private config: Config;
@@ -31,6 +30,7 @@ export class EventSubscriber {
   private eventQueue: EventProcessingQueue | null = null;
   private expirationService: NotificationExpirationService | null = null;
   private lastSuccessfulPollAt: number | null = null;
+  private rpcRateLimiter: RpcRateLimiter | null = null;
   private backfillStartLedger: number | null = null;
 
   constructor(config: Config, deduplicationService?: EventDeduplicationService) {
@@ -45,25 +45,15 @@ export class EventSubscriber {
     });
     this.deduplicationService = deduplicationService ?? null;
 
-    // Initialize circuit breaker if configured
-    if (config.circuitBreaker) {
-      this.circuitBreaker = new CircuitBreaker(config.circuitBreaker);
+    // Initialize RPC rate limiter if configured
+    if (config.rpcRateLimit) {
+      this.rpcRateLimiter = new RpcRateLimiter(config.rpcRateLimit);
     }
 
     // Initialize expiration service if configured
     if (config.expiration) {
       this.expirationService = new NotificationExpirationService(config.expiration);
     }
-    
-    // Retry policy (#842): attempt budget and eligible failure types are
-    // shared by both in-memory queues so a permanent failure is not retried
-    // regardless of which path a notification took.
-    const retryPolicy = config.retryPolicy
-      ? {
-          maxAttempts: config.retryPolicy.maxAttempts,
-          retryableFailureTypes: config.retryPolicy.retryableFailureTypes,
-        }
-      : undefined;
 
     if (config.discord) {
       this.discordService = new DiscordNotificationService(config.discord);
@@ -90,6 +80,7 @@ export class EventSubscriber {
 
     this.isRunning = true;
     logger.info('Starting event subscriber service');
+    await this.restoreCheckpoints();
     this.eventQueue?.start();
     this.retryQueue?.start();
     this.poll();
@@ -100,6 +91,51 @@ export class EventSubscriber {
     this.eventQueue?.stop();
     this.retryQueue?.stop();
     logger.info('Stopping event subscriber service');
+  }
+
+  /**
+   * Restore the in-memory cursor map from persisted checkpoints.
+   *
+   * Called once at the start of `start()` before the poll loop begins.
+   * For each configured contract address, if a row exists in
+   * `polling_cursors`, the stored cursor string is loaded into
+   * `this.lastCursors` so the first poll resumes from the last known
+   * position rather than replaying from the beginning.
+   *
+   * Failures are logged and swallowed per-contract so a single bad DB
+   * row never prevents the subscriber from starting.
+   */
+  private async restoreCheckpoints(): Promise<void> {
+    if (!this.deduplicationService) {
+      return;
+    }
+
+    let restored = 0;
+
+    for (const contractConfig of this.config.contractAddresses) {
+      try {
+        const record = await this.deduplicationService.getLastCursor(contractConfig.address);
+        if (record) {
+          this.lastCursors.set(contractConfig.address, record.cursor);
+          restored++;
+          logger.info('Checkpoint restored', {
+            contractAddress: contractConfig.address,
+            cursor: record.cursor,
+            ledgerNumber: record.ledgerNumber,
+          });
+        }
+      } catch (error) {
+        logger.warn('Failed to restore checkpoint for contract; starting from beginning', {
+          contractAddress: contractConfig.address,
+          error,
+        });
+      }
+    }
+
+    logger.info('Checkpoint restore complete', {
+      contractsConfigured: this.config.contractAddresses.length,
+      contractsRestored: restored,
+    });
   }
 
   private async poll(): Promise<void> {
@@ -154,14 +190,14 @@ export class EventSubscriber {
         }
 
         const events = response.events || [];
-        
+
         // Detect potential reorg if events exist and we have previous state
         if (this.deduplicationService && events.length > 0) {
           const firstEventLedger = events[0]?.ledger;
           if (firstEventLedger) {
             const reorgDetected = await this.deduplicationService.detectReorg(
               contractConfig.address,
-              firstEventLedger
+              firstEventLedger,
             );
             if (reorgDetected) {
               logger.warn('Potential blockchain reorg detected', {
@@ -228,14 +264,14 @@ export class EventSubscriber {
 
         if (response.cursor) {
           this.lastCursors.set(contractConfig.address, response.cursor);
-          
+
           // Update cursor in deduplication service if available
           if (this.deduplicationService) {
             const lastEventLedger = events.length > 0 ? events[events.length - 1].ledger : 0;
             await this.deduplicationService.updatePollingCursor(
               contractConfig.address,
               response.cursor,
-              lastEventLedger || 0
+              lastEventLedger || 0,
             );
           }
         }
@@ -250,9 +286,7 @@ export class EventSubscriber {
     }
 
     if (totalContracts > 0 && failureCount === totalContracts) {
-      throw new Error(
-        `Failed to fetch events for all ${totalContracts} configured contract(s)`
-      );
+      throw new Error(`Failed to fetch events for all ${totalContracts} configured contract(s)`);
     }
   }
 
@@ -260,7 +294,7 @@ export class EventSubscriber {
     event: StellarSDK.rpc.Api.EventResponse,
     contractConfig: ContractConfig,
     requestId: string = '',
-    correlationId: string = requestId
+    correlationId: string = requestId,
   ): boolean {
     // Check if event has expired
     const eventName = getEventName(event.topic);
@@ -270,7 +304,6 @@ export class EventSubscriber {
         contractAddress: contractConfig.address,
         eventId: event.id,
         eventName,
-        receivedAt: event.receivedAt,
         currentTime: Date.now(),
         reason: 'expired',
       });
@@ -337,6 +370,28 @@ export class EventSubscriber {
 
       if (tip !== null) {
         const startLedger = Math.max(1, tip - maxLedgers);
+
+        // Validate that the computed start ledger is a positive integer within
+        // the valid ledger range before caching.  The range-width cap that
+        // applies to external HTTP callers is NOT enforced here because the
+        // internal backfill limit is already governed by `maxLedgers`.
+        const rangeCheck = safeLedgerRangeValidation(startLedger, tip);
+        if (!rangeCheck.valid && startLedger > 1) {
+          // Only fall back when the start ledger itself is invalid (e.g. it
+          // somehow ended up <= 0 or > MAX_LEDGER_VALUE).  A range-too-large
+          // result is expected for long bacfills and is intentionally ignored.
+          const isRangeSizeError = rangeCheck.issues?.every((i) => i.field === 'endLedger');
+          if (!isRangeSizeError) {
+            logger.warn('Backfill start ledger failed range validation; falling back to ledger 1', {
+              startLedger,
+              networkTipLedger: tip,
+              reason: rangeCheck.reason,
+            });
+            this.backfillStartLedger = 1;
+            return 1;
+          }
+        }
+
         this.backfillStartLedger = startLedger;
 
         logger.warn('Backfill safety limit applied: starting historical replay from ledger', {
@@ -360,14 +415,22 @@ export class EventSubscriber {
   }
 
   private async getContractEvents(
-    contractConfig: ContractConfig
+    contractConfig: ContractConfig,
   ): Promise<StellarSDK.rpc.Api.GetEventsResponse> {
+    // Apply rate limiting before making RPC request
+    if (this.rpcRateLimiter) {
+      await this.rpcRateLimiter.acquire();
+    }
+
     const lastCursor = this.lastCursors.get(contractConfig.address);
     let request: StellarSDK.rpc.Api.GetEventsRequest;
 
     if (lastCursor) {
       // Normal real-time polling: continue from the last known cursor.
       request = {
+        filters: [{ contractIds: [contractConfig.address], type: 'contract' }],
+        cursor: lastCursor,
+        limit: 100,
         filters: [
           {
             contractIds: [contractConfig.address],
@@ -384,6 +447,9 @@ export class EventSubscriber {
       // Cold start: apply the backfill safety limit.
       const startLedger = await this.resolveBackfillStartLedger();
       request = {
+        filters: [{ contractIds: [contractConfig.address], type: 'contract' }],
+        startLedger,
+        limit: 100,
         filters: [
           {
             contractIds: [contractConfig.address],
@@ -415,7 +481,7 @@ export class EventSubscriber {
     event: StellarSDK.rpc.Api.EventResponse,
     contractConfig: ContractConfig,
     requestId: string = '',
-    correlationId: string = ''
+    correlationId: string = '',
   ): Promise<boolean> {
     correlationId = correlationId || requestId || generateCorrelationId();
     const eventStart = Date.now();
@@ -484,7 +550,7 @@ export class EventSubscriber {
           const success = await this.discordService.sendEventNotification(
             event,
             contractConfig,
-            requestId
+            requestId,
           );
           notificationSent = success;
 
@@ -500,8 +566,8 @@ export class EventSubscriber {
         } catch (error) {
           processingError = error instanceof Error ? error.message : String(error);
           logger.error('Error sending Discord notification', {
-              requestId: correlationId,
-              correlationId,
+            requestId: correlationId,
+            correlationId,
             eventId: event.id,
             error: processingError,
           });
@@ -519,7 +585,7 @@ export class EventSubscriber {
         event.type,
         notificationSent,
         processingError ? 'ERROR' : 'PROCESSED',
-        processingError
+        processingError,
       );
     }
 

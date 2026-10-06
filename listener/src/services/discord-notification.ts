@@ -3,7 +3,10 @@ import logger from '../utils/logger';
 import { ContractConfig, DiscordConfig, NotificationProvider } from '../types';
 import { getEventName } from '../utils/event-utils';
 import { NotificationDeduplicator, generateFingerprint } from './notification-deduplicator';
-import { getNotificationAnalyticsAggregator, NotificationAnalyticsAggregator } from './notification-analytics-aggregator';
+import {
+  getNotificationAnalyticsAggregator,
+  NotificationAnalyticsAggregator,
+} from './notification-analytics-aggregator';
 import { sendWebhook } from './webhook-sender';
 import { NotificationType } from '../types/scheduled-notification';
 import { generateCorrelationId } from '../utils/request-id';
@@ -57,6 +60,9 @@ const MARKDOWN_CHARS = /([*`~|\\])/g;
  * static strings (embed titles, field labels) don't require it.
  */
 export function sanitizeForDiscord(text: string): string {
+  return text.replace(MENTION_PATTERN, '[mention removed]').replace(MARKDOWN_CHARS, '\\$1');
+}
+
   return text
     .replace(MENTION_PATTERN, '[mention removed]')
     .replace(MARKDOWN_CHARS, '\\$1');
@@ -112,7 +118,7 @@ export class DiscordNotificationService implements NotificationProvider {
   async sendEventNotification(
     event: StellarSDK.rpc.Api.EventResponse,
     contractConfig: ContractConfig,
-    requestId?: string
+    requestId?: string,
   ): Promise<boolean> {
     const correlationId = requestId ?? generateCorrelationId();
     const fingerprint = generateFingerprint(event.id, contractConfig.address);
@@ -186,7 +192,9 @@ export class DiscordNotificationService implements NotificationProvider {
           ...logContext,
           httpStatus: response.status,
           httpCategory: responseCategory,
-          ...(responseCategory === 'rate_limited' && { retryAfter: response.headers?.get('retry-after') }),
+          ...(responseCategory === 'rate_limited' && {
+            retryAfter: response.headers?.get('retry-after'),
+          }),
           errorSummary: errorBody,
           durationMs,
           attempt,
@@ -296,7 +304,10 @@ export class DiscordNotificationService implements NotificationProvider {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
-  private async sendWebhook(message: DiscordMessage, logContext?: Record<string, unknown>): Promise<Response> {
+  private async sendWebhook(
+    message: DiscordMessage,
+    logContext?: Record<string, unknown>,
+  ): Promise<Response> {
     try {
       const response = await sendWebhook(this.config.webhookUrl, message, {
         timeoutMs: this.config.timeoutMs,
@@ -317,7 +328,7 @@ export class DiscordNotificationService implements NotificationProvider {
 
   private formatEventMessage(
     event: StellarSDK.rpc.Api.EventResponse,
-    contractConfig: ContractConfig
+    contractConfig: ContractConfig,
   ): DiscordMessage {
     const eventName = sanitizeForDiscord(getEventName(event.topic) ?? 'Unknown Event');
     const embed = this.createEventEmbed(event, contractConfig, eventName);
@@ -331,7 +342,7 @@ export class DiscordNotificationService implements NotificationProvider {
   private createEventEmbed(
     event: StellarSDK.rpc.Api.EventResponse,
     contractConfig: ContractConfig,
-    eventName: string
+    eventName: string,
   ): DiscordEmbed {
     const fields: { name: string; value: string; inline?: boolean }[] = [
       {
@@ -393,14 +404,16 @@ export class DiscordNotificationService implements NotificationProvider {
   sanitizeEmbed(embed: DiscordEmbed): DiscordEmbed {
     let title = embed.title ?? '';
     if (title.length > MAX_DISCORD_EMBED_TITLE_LENGTH) {
+      const originalLength = embed.title?.length ?? title.length;
       title = title.slice(0, MAX_DISCORD_EMBED_TITLE_LENGTH - 3) + '...';
       logger.warn('Discord embed title truncated', {
-        originalLength: embed.title.length,
+        originalLength: title.length + 3,
+        originalLength,
         maxLength: MAX_DISCORD_EMBED_TITLE_LENGTH,
       });
     }
 
-    const fields = embed.fields?.map(field => {
+    const fields = embed.fields?.map((field) => {
       let value = field.value;
       if (value.length > MAX_DISCORD_FIELD_VALUE_LENGTH) {
         value = value.slice(0, MAX_DISCORD_FIELD_VALUE_LENGTH - 3) + '...';
@@ -415,9 +428,11 @@ export class DiscordNotificationService implements NotificationProvider {
 
     let footer = embed.footer;
     if (footer?.text && footer.text.length > MAX_DISCORD_FOOTER_TEXT_LENGTH) {
+      const originalLength = footer.text.length;
       footer = { text: footer.text.slice(0, MAX_DISCORD_FOOTER_TEXT_LENGTH - 3) + '...' };
       logger.warn('Discord footer text truncated', {
-        originalLength: embed.footer.text.length,
+        originalLength,
+        originalLength: footer.text.length,
         maxLength: MAX_DISCORD_FOOTER_TEXT_LENGTH,
       });
     }
@@ -427,9 +442,14 @@ export class DiscordNotificationService implements NotificationProvider {
     const totalLength = this.getEmbedLength(sanitized);
     if (totalLength > MAX_DISCORD_EMBED_LENGTH) {
       const excess = totalLength - MAX_DISCORD_EMBED_LENGTH;
-      const valueFieldIndex = sanitized.fields?.findIndex(f => f.name === 'Value');
+      const valueFieldIndex = sanitized.fields?.findIndex((f) => f.name === 'Value');
 
-      if (valueFieldIndex !== undefined && valueFieldIndex >= 0 && sanitized.fields && sanitized.fields[valueFieldIndex]) {
+      if (
+        valueFieldIndex !== undefined &&
+        valueFieldIndex >= 0 &&
+        sanitized.fields &&
+        sanitized.fields[valueFieldIndex]
+      ) {
         const currentValue = sanitized.fields[valueFieldIndex].value;
         const newValueLength = Math.max(0, currentValue.length - excess);
         const newValue =
@@ -440,7 +460,7 @@ export class DiscordNotificationService implements NotificationProvider {
         sanitized = {
           ...sanitized,
           fields: sanitized.fields.map((f, i) =>
-            i === valueFieldIndex ? { ...f, value: newValue } : f
+            i === valueFieldIndex ? { ...f, value: newValue } : f,
           ),
         };
 
@@ -470,6 +490,13 @@ export class DiscordNotificationService implements NotificationProvider {
           return String(value.i64());
         case StellarSDK.xdr.ScValType.scvString(): {
           const strVal = value.str().toString();
+          const truncated =
+            strVal.length > MAX_DISCORD_FIELD_VALUE_LENGTH
+              ? strVal.slice(0, MAX_DISCORD_FIELD_VALUE_LENGTH) + '...'
+          return strVal.length > MAX_DISCORD_FIELD_VALUE_LENGTH
+            ? strVal.slice(0, MAX_DISCORD_FIELD_VALUE_LENGTH) + '...'
+            : strVal;
+          const truncated = strVal.length > 500 ? strVal.slice(0, 500) + '...' : strVal;
           // Leave headroom for markdown escapes added by sanitizeForDiscord.
           const limit = Math.floor(MAX_DISCORD_FIELD_VALUE_LENGTH / 2);
           const truncated = strVal.length > limit ? strVal.slice(0, limit) + '...' : strVal;
@@ -491,4 +518,3 @@ export class DiscordNotificationService implements NotificationProvider {
     }
   }
 }
-

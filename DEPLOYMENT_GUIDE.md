@@ -7,6 +7,7 @@ This guide covers deploying NotifyChain across three environments: **local**, **
 > - Smart contract deploy steps → [`DEPLOYMENT_PLAYBOOK.md`](DEPLOYMENT_PLAYBOOK.md)
 > - Contract upgrade procedure → [`CONTRACT_UPGRADE_GUIDE.md`](CONTRACT_UPGRADE_GUIDE.md)
 > - Troubleshooting → [`TROUBLESHOOTING.md`](TROUBLESHOOTING.md)
+> - Database backup and restore → [`docs/DATABASE_BACKUP_RESTORE.md`](docs/DATABASE_BACKUP_RESTORE.md)
 
 ---
 

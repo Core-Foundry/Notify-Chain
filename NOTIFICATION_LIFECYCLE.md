@@ -285,6 +285,23 @@ Declared but not implemented in the scheduler today: `webhook`, `email`, `sms`.
 | Failure, retries left | back to `PENDING` + log `RETRY` |
 | Failure, retries exhausted | `FAILED` + log `FAILED` |
 
+Every scheduled provider attempt also creates an immutable `delivery_receipts`
+row with the notification ID, channel, attempt number, status, optional provider
+message ID/allowlisted response fields, and sanitized error information. Query
+receipts with the authenticated endpoint
+`GET /api/notifications/{notificationId}/receipts`; add
+`?status=delivered` or `?status=failed` to filter. For example:
+
+```sh
+curl -H 'x-api-key: YOUR_API_KEY' \
+  'http://localhost:3000/api/notifications/42/receipts?status=failed'
+```
+
+Provider response persistence keeps only operational fields such as status and
+message identifiers; credentials and recipient payload data are not stored.
+Service-level callers can query through `DeliveryReceiptRepository` using
+`findByNotificationId()` or `findByStatus()`.
+
 ### 6. Delayed retries
 
 `RetryScheduler` picks rows where `status = PENDING`, `retry_count > 0`, and
@@ -293,7 +310,7 @@ Declared but not implemented in the scheduler today: `webhook`, `email`, `sms`.
 
 ### 7. Archive / purge
 
-Terminal rows (`COMPLETED`, `FAILED`, `CANCELLED`) are later moved by
+Terminal rows (`COMPLETED`, `FAILED`, `CANCELLED`, `EXPIRED`) are later moved by
 `ArchiveService` into `notification_archive`, then optionally purged after
 retention. See [Completion and Archival](#completion-and-archival).
 
@@ -393,6 +410,26 @@ consumer acknowledgment.
 before returning failure to the caller.
 
 Details: [NOTIFICATION_FAILURE_RECOVERY.md](NOTIFICATION_FAILURE_RECOVERY.md).
+
+## Database Integrity Constraints
+
+The active SQLite schema rejects unknown notification types/statuses, event
+states, idempotency states, backpressure event types, and invalid counters or
+boolean values. Notification execution logs, dead-letter entries, and
+idempotency records reference their scheduled notification with `ON DELETE
+CASCADE`; template audit records reference their template with `ON DELETE
+RESTRICT`. Processed-event fingerprints, cursor contract addresses,
+idempotency keys, and dead-letter notification references retain their unique
+keys.
+
+Fresh databases receive these constraints from
+`listener/src/database/schema.sql`. Run `npm run migrate` to apply migration
+004 to an existing database. The migration audits legacy rows before rebuilding
+tables in a transaction. If it finds invalid state, an orphaned reference, or a
+duplicate unique key, it aborts and reports the affected table and row count;
+it never deletes or rewrites invalid data automatically. Repair the listed rows
+and rerun the migration. SQLite foreign-key checks are enabled on application
+database connections and verified by the migration runner.
 
 ---
 

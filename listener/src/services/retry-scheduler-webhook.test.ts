@@ -8,7 +8,7 @@
  *  - Successful retries are marked COMPLETED and logged
  */
 
-import { jest, describe, it, expect, beforeEach } from '@jest/globals';
+import { jest, describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import { RetryScheduler, RETRY_SCHEDULER_DEFAULTS } from './retry-scheduler';
 import { WebhookDeliveryService } from './webhook-delivery-service';
 import { NotificationStatus, NotificationType } from '../types/scheduled-notification';
@@ -80,6 +80,38 @@ describe('RetryScheduler — webhook retry queue', () => {
   // ── Successful retry ──────────────────────────────────────────────────────
 
   describe('successful delivery', () => {
+    it('persists a delivered receipt for a successful retry', async () => {
+      const notification = makeWebhookNotification();
+      const repo = makeRepo({ fetchDueRetries: jest.fn().mockImplementation(() => Promise.resolve([notification])) });
+      const webhookService = {
+        deliver: jest.fn<() => Promise<any>>().mockResolvedValue({
+          success: true,
+          statusCode: 204,
+          providerMessageId: 'retry-message-1',
+          providerResponse: { statusCode: 204 },
+        }),
+      } as unknown as WebhookDeliveryService;
+      const receiptRepository = { create: jest.fn().mockImplementation(() => Promise.resolve(1)) };
+
+      const scheduler = new RetryScheduler(
+        repo,
+        RETRY_SCHEDULER_DEFAULTS,
+        null,
+        webhookService,
+        receiptRepository as any,
+      );
+      await scheduler.runOnce();
+
+      expect(receiptRepository.create).toHaveBeenCalledWith(expect.objectContaining({
+        notificationId: 10,
+        channel: 'webhook',
+        status: 'delivered',
+        attemptCount: 2,
+        providerMessageId: 'retry-message-1',
+        providerResponse: { statusCode: 204 },
+      }));
+    });
+
     it('marks the notification COMPLETED when the webhook succeeds', async () => {
       const notification = makeWebhookNotification();
       const repo = makeRepo({ fetchDueRetries: jest.fn().mockImplementation(() => Promise.resolve([notification])) });
@@ -422,6 +454,52 @@ describe('RetryScheduler — webhook retry queue', () => {
       expect(logger.error).toHaveBeenCalledWith(
         'Notification failed permanently, not retried',
         expect.objectContaining({ id: 10 }),
+      );
+    });
+  });
+
+  // ── Configurable webhook timeout ──────────────────────────────────────────
+  describe('webhook timeout configuration', () => {
+    const realFetch = global.fetch;
+
+    afterEach(() => {
+      (global as any).fetch = realFetch;
+    });
+
+    it('applies the configured webhookTimeoutMs to the outbound request', async () => {
+      const notification = makeWebhookNotification();
+      const repo = makeRepo({
+        fetchDueRetries: jest.fn().mockImplementation(() => Promise.resolve([notification])),
+      });
+
+      let aborted = false;
+      (global as any).fetch = jest.fn().mockImplementation((_url: any, init: any) =>
+        new Promise((_resolve, reject) => {
+          (init.signal as AbortSignal).addEventListener('abort', () => {
+            aborted = true;
+            const err = new Error('The operation was aborted.');
+            err.name = 'AbortError';
+            reject(err);
+          });
+        }),
+      );
+
+      const scheduler = new RetryScheduler(repo, {
+        ...RETRY_SCHEDULER_DEFAULTS,
+        pollIntervalMs: 1000,
+        lockTimeoutMs: 1000,
+        batchSize: 1,
+        webhookTimeoutMs: 25,
+      });
+      await scheduler.runOnce();
+
+      expect(aborted).toBe(true);
+      expect(repo.markAsFailedOrRetry).toHaveBeenCalledWith(
+        10,
+        expect.objectContaining({ message: expect.stringContaining('timed out after 25ms') }),
+        expect.anything(),
+        expect.anything(),
+        expect.anything(),
       );
     });
   });

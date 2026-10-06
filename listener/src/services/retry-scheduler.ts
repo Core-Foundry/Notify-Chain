@@ -4,8 +4,10 @@ import { generateRequestId } from '../utils/request-id';
 import { ScheduledNotificationRepository } from './scheduled-notification-repository';
 import { ScheduledNotification, NotificationStatus } from '../types/scheduled-notification';
 import { DiscordNotificationService } from './discord-notification';
-import { WebhookDeliveryService } from './webhook-delivery-service';
+import { WebhookDeliveryService, DEFAULT_WEBHOOK_TIMEOUT_MS } from './webhook-delivery-service';
 import { getWorkerManager } from './worker-manager';
+import { DeliveryReceiptRepository } from './delivery-receipt-repository';
+import { DeliveryResult } from '../types/provider-capabilities';
 import {
   computeBackoffDelay,
   DeliveryError,
@@ -14,6 +16,7 @@ import {
   classifyError,
   classifyHttpStatus,
 } from './retry-policy';
+import { startClaimLease } from './notification-claim-lease';
 
 export interface RetrySchedulerConfig {
   /** Whether the scheduler is enabled. */
@@ -34,6 +37,11 @@ export interface RetrySchedulerConfig {
   maxDelayMs: number;
   /** Add ±25 % random jitter to prevent thundering herd. Default: true. */
   jitter: boolean;
+/**
+   * Timeout (ms) applied to outbound webhook requests (`WEBHOOK_TIMEOUT_MS`).
+   * Default: DEFAULT_WEBHOOK_TIMEOUT_MS.
+   */
+  webhookTimeoutMs: number;
   /**
    * Hard ceiling on total delivery attempts, including the first one.
    * `undefined` (default) leaves each notification's own `maxRetries` in
@@ -48,7 +56,15 @@ export interface RetrySchedulerConfig {
   retryableFailureTypes?: readonly RetryFailureType[];
 }
 
-export const RETRY_SCHEDULER_DEFAULTS: RetrySchedulerConfig = {
+/**
+ * Defaults for the DB-backed scheduler. Scheduling-specific fields are
+ * retained here; backoff defaults are inherited from the shared
+ * `RETRY_BACKOFF_DEFAULTS` and can still be overridden per-instance via
+ * `RetrySchedulerConfig.backoff`.
+ */
+export const RETRY_SCHEDULER_DEFAULTS: Readonly<Omit<RetrySchedulerConfig, 'backoff'> & {
+  backoff: Readonly<RetryBackoffConfig>;
+}> = {
   enabled: true,
   pollIntervalMs: 15_000,
   lockTimeoutMs: 60_000,
@@ -57,6 +73,7 @@ export const RETRY_SCHEDULER_DEFAULTS: RetrySchedulerConfig = {
   multiplier: 2,
   maxDelayMs: 60 * 60 * 1_000,
   jitter: true,
+webhookTimeoutMs: DEFAULT_WEBHOOK_TIMEOUT_MS,
 };
 
 /**
@@ -100,6 +117,7 @@ export class RetryScheduler {
   private repository: ScheduledNotificationRepository;
   private discordService: DiscordNotificationService | null;
   private webhookDeliveryService: WebhookDeliveryService;
+  private deliveryReceiptRepository?: DeliveryReceiptRepository;
   private timer: NodeJS.Timeout | null = null;
   private running = false;
 
@@ -108,6 +126,7 @@ export class RetryScheduler {
     config: Partial<RetrySchedulerConfig> = {},
     discordService?: DiscordNotificationService | null,
     webhookDeliveryService?: WebhookDeliveryService,
+    deliveryReceiptRepository?: DeliveryReceiptRepository,
   ) {
     this.config = { ...RETRY_SCHEDULER_DEFAULTS, ...config };
     this.policy = new RetryPolicy({
@@ -121,7 +140,10 @@ export class RetryScheduler {
     this.processorId = this.config.processorId ?? `retry-${uuidv4()}`;
     this.repository = repository;
     this.discordService = discordService ?? null;
-    this.webhookDeliveryService = webhookDeliveryService ?? new WebhookDeliveryService();
+this.webhookDeliveryService =
+      webhookDeliveryService ??
+      new WebhookDeliveryService({ timeoutMs: this.config.webhookTimeoutMs });
+    this.deliveryReceiptRepository = deliveryReceiptRepository;
   }
 
   /** Exposed for health checks and tests: the policy driving every retry decision. */
@@ -237,9 +259,27 @@ export class RetryScheduler {
           continue;
         }
 
+        const lease = startClaimLease({
+          repository: this.repository,
+          notificationId: notification.id!,
+          processorId: this.processorId,
+          lockTimeoutMs: this.config.lockTimeoutMs,
+          onLeaseLost: (id) => {
+            logger.warn('Retry claim lease was lost before delivery finished', {
+              requestId,
+              id,
+              processorId: this.processorId,
+            });
+          },
+          onRenewalError: (id, error) => {
+            logger.warn('Failed to renew retry claim lease', { requestId, id, error });
+          },
+        });
+
         try {
           await this.processRetry(notification, requestId);
         } finally {
+          await lease?.stop();
           workerManager.completeJob(jobId);
         }
       }
@@ -255,6 +295,25 @@ export class RetryScheduler {
     const priorFailures = notification.retryCount;
     const executionAttempt = priorFailures + 1;
     const startMs = Date.now();
+    let receiptRecorded = false;
+
+    if (notification.expiresAt && notification.expiresAt.getTime() <= startMs) {
+      const errorMessage = 'Notification expired before delivery';
+      await this.repository.markAsExpired(notification.id!);
+      await this.repository.logExecution({
+        scheduledNotificationId: notification.id!,
+        executionAttempt,
+        executionTime: new Date(startMs),
+        status: 'FAILED',
+        errorMessage,
+        durationMs: 0,
+      });
+      logger.info('Expired retry skipped before delivery', {
+        requestId,
+        id: notification.id,
+      });
+      return;
+    }
 
     logger.info('Retrying notification', {
       requestId,
@@ -265,10 +324,12 @@ export class RetryScheduler {
     });
 
     try {
-      const success = await this.deliver(notification, requestId);
+      const deliveryResult = await this.deliver(notification, requestId);
+      await this.recordDeliveryReceipt(notification, executionAttempt, deliveryResult);
+      receiptRecorded = true;
       const durationMs = Date.now() - startMs;
 
-      if (success) {
+      if (deliveryResult.success) {
         await this.repository.markAsCompleted(notification.id!, requestId);
         await this.repository.logExecution({
           scheduledNotificationId: notification.id!,
@@ -281,10 +342,26 @@ export class RetryScheduler {
         return;
       }
 
-      throw new Error('Delivery returned false');
+      throw new Error(deliveryResult.errorMessage ?? 'Delivery returned false');
     } catch (err) {
       const durationMs = Date.now() - startMs;
       const error = err as Error;
+      if (!receiptRecorded) {
+        const providerCode = (err as NodeJS.ErrnoException)?.code;
+        const isTimeout = error?.name === 'AbortError';
+        await this.recordDeliveryReceipt(notification, executionAttempt, {
+          success: false,
+          degradedCapabilities: [],
+          errorCode: isTimeout ? 'TIMEOUT' : typeof providerCode === 'string' ? providerCode : 'DELIVERY_FAILED',
+          errorMessage: isTimeout ? 'Provider request timed out' : 'Provider delivery failed',
+        }).catch((receiptError) => {
+          logger.error('Failed to persist delivery receipt', {
+            requestId,
+            notificationId: notification.id,
+            error: receiptError,
+          });
+        });
+      }
       const failureType = classifyError(err);
 
       const decision = this.policy.evaluate(
@@ -355,22 +432,20 @@ export class RetryScheduler {
   private async deliver(
     notification: ScheduledNotification,
     requestId: string
-  ): Promise<boolean> {
+  ): Promise<DeliveryResult> {
     const payload = JSON.parse(notification.payload);
 
     switch (notification.notificationType) {
       case 'discord':
-        if (!this.discordService) {
-          throw new DeliveryError(
-            'Discord service not configured',
-            RetryFailureType.ConfigurationError,
-          );
-        }
-        return this.discordService.sendEventNotification(
-          payload.event,
-          payload.contractConfig,
-          `retry-${notification.id}-${requestId}`
-        );
+        if (!this.discordService) throw new Error('Discord service not configured');
+        return {
+          success: await this.discordService.sendEventNotification(
+            payload.event,
+            payload.contractConfig,
+            `retry-${notification.id}-${requestId}`
+          ),
+          degradedCapabilities: [],
+        };
 
       case 'webhook': {
         const targetUrl: string = notification.targetRecipient;
@@ -386,9 +461,6 @@ export class RetryScheduler {
           `retry-${notification.id}-${requestId}`,
         );
         if (!result.success) {
-          // Surface the specific reason so it lands in markAsFailedOrRetry's
-          // error details, and tag it with a failure type so the retry policy
-          // can tell permanent rejections (4xx) from transient ones (5xx).
           const failureType = classifyHttpStatus(result.statusCode);
           throw new DeliveryError(
             result.errorReason ?? `Webhook delivery failed (HTTP ${result.statusCode ?? 'unknown'})`,
@@ -396,7 +468,15 @@ export class RetryScheduler {
             { statusCode: result.statusCode },
           );
         }
-        return true;
+        return {
+          success: result.success,
+          degradedCapabilities: [],
+          statusCode: result.statusCode,
+          providerMessageId: result.providerMessageId,
+          providerResponse: result.providerResponse,
+          errorCode: result.errorCode,
+          errorMessage: result.errorReason,
+        };
       }
 
       default:
@@ -405,5 +485,25 @@ export class RetryScheduler {
           RetryFailureType.ConfigurationError,
         );
     }
+  }
+
+  private async recordDeliveryReceipt(
+    notification: ScheduledNotification,
+    attemptCount: number,
+    result: DeliveryResult,
+  ): Promise<void> {
+    if (!this.deliveryReceiptRepository || notification.id == null) return;
+    await this.deliveryReceiptRepository.create({
+      notificationId: notification.id,
+      channel: notification.notificationType,
+      status: result.success ? 'delivered' : result.statusCode && result.statusCode >= 400 && result.statusCode < 500
+        ? 'rejected'
+        : 'failed',
+      attemptCount,
+      providerMessageId: result.providerMessageId ?? null,
+      providerResponse: result.providerResponse ?? null,
+      errorCode: result.errorCode ?? null,
+      errorMessage: result.success ? null : result.errorMessage ?? 'Provider delivery failed',
+    });
   }
 }
