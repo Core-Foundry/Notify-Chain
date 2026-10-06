@@ -1,21 +1,6 @@
-/**
- * App.tsx
- *
- * Integrates:
- *  - #394 Accessibility: role="tablist", aria-selected, keyboard nav (arrow keys),
- *    focus-visible rings, skip-to-content link
- *  - #396 Navigation Redesign: grouped tabs, active-route highlighting,
- *    mobile hamburger + off-canvas drawer
- *  - #397 Toast: ToastProvider wraps the whole app
- *  - #505 Keyboard Shortcuts: number keys for tabs, T for theme, ? for help
-import { useState, useCallback } from 'react';
-import { EventExplorerPage } from './pages/EventExplorerPage';
-import { NotificationTimelineView } from './components/NotificationTimelineView';
-/**
- * App.tsx — root shell; layout delegated to DashboardLayout (#676).
- */
 
 import { useState, useRef, useCallback, useEffect, type KeyboardEvent } from 'react';
+
 import { EventExplorerPage } from './pages/EventExplorerPage';
 import { NotificationTimelineView } from './components/NotificationTimelineView';
 import { ActivityFeed } from './components/ActivityFeed';
@@ -28,182 +13,157 @@ import { NotificationPreferencesPage } from './pages/NotificationPreferencesPage
 import { TemplatesPage } from './pages/TemplatesPage';
 import { ChannelDetailsPage } from './pages/ChannelDetailsPage';
 import { RpcBenchmarkPage } from './pages/RpcBenchmarkPage';
+
 import { ThemeToggle } from './components/ThemeToggle';
 import { MobileNavDrawer, NAV_ITEMS, type Tab } from './components/MobileNavDrawer';
 import { ToastProvider } from './context/ToastContext';
 import { useTheme } from './hooks/useTheme';
 import { useIsMobileNav } from './hooks/useMediaQuery';
+import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
+import { KeyboardShortcutsHelp } from './components/KeyboardShortcutsHelp';
 import { DeliveryHeatmap } from './components/DeliveryHeatmap';
 import { useEventStore } from './store/eventStore';
 import { SyncStatus } from './components/SyncStatus';
 import { ErrorBoundary } from './components/ErrorBoundary';
-
-type Tab = 'explorer' | 'preferences';
-
-export function App() {
-  const [activeTab, setActiveTab] = useState<Tab>('explorer');
-type Tab =
-  | 'explorer'
-  | 'timeline'
-  | 'activity'
-  | 'webhooks'
-  | 'export-history'
-  | 'search'
-  | 'preferences'
-  | 'templates'
-  | 'channels';
-
-const TAB_ITEMS: { id: Tab; label: string }[] = [
-  { id: 'explorer', label: 'Event Explorer' },
-  { id: 'timeline', label: 'Delivery Timeline' },
-  { id: 'activity', label: 'Activity Feed' },
-  { id: 'webhooks', label: 'Webhook Performance' },
-  { id: 'export-history', label: 'Export History' },
-  { id: 'search', label: 'Notification Search' },
-  { id: 'preferences', label: 'Preferences' },
-  { id: 'templates', label: 'Templates' },
-];
-import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
-import { KeyboardShortcutsHelp } from './components/KeyboardShortcutsHelp';
-
-export function App() {
-  const [tab, setTab] = useState<Tab>('explorer');
-  const [drawerOpen, setDrawerOpen] = useState(false);
-  const [helpOpen, setHelpOpen] = useState(false);
 import { DashboardLayout } from './layouts/DashboardLayout';
 
 export function App() {
   const [tab, setTab] = useState<Tab>(() => {
     const hash = window.location.hash.slice(1);
+
     if (NAV_ITEMS.some((item) => item.id === hash)) {
       return hash as Tab;
     }
+
     return 'explorer';
   });
+
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
+
   const isMobileNav = useIsMobileNav();
   const { theme, toggleTheme } = useTheme();
   const events = useEventStore((state) => state.events);
+
   const tabListRef = useRef<HTMLDivElement>(null);
   const hamburgerRef = useRef<HTMLButtonElement>(null);
 
-  // ── Keyboard shortcuts (#505) ───────────────────────────────────────────
+  // Keyboard shortcuts
+  const handleToggleHelp = useCallback(() => {
+    setHelpOpen((prev) => !prev);
+  }, []);
+
+  const handleCloseHelp = useCallback(() => {
+    setHelpOpen(false);
+  }, []);
+
   useKeyboardShortcuts({
     activeTab: tab,
     onTabChange: setTab,
     onToggleTheme: toggleTheme,
     helpOpen,
-    onToggleHelp: useCallback(() => setHelpOpen((prev) => !prev), []),
-    onCloseHelp: useCallback(() => setHelpOpen(false), []),
+    onToggleHelp: handleToggleHelp,
+    onCloseHelp: handleCloseHelp,
   });
 
-  // ── Keyboard navigation inside tablist (arrow keys) ──────────────────────
+  // Keyboard navigation inside the tab list
   const handleTabKeyDown = useCallback(
     (e: KeyboardEvent<HTMLDivElement>) => {
       const tabs = Array.from(
-        tabListRef.current?.querySelectorAll<HTMLButtonElement>('[role="tab"]') ?? [],
+        tabListRef.current?.querySelectorAll<HTMLButtonElement>(
+          '[role="tab"]',
+        ) ?? [],
       );
-      const current = tabs.findIndex((el) => el === document.activeElement);
-  // Sync URL hash with tab state
+
+      if (tabs.length === 0) return;
+
+      const current = tabs.findIndex(
+        (element) => element === document.activeElement,
+      );
+
+      if (current === -1) return;
+
+      let next = current;
+
+      if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+        e.preventDefault();
+        next = (current + 1) % tabs.length;
+      } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        next = (current - 1 + tabs.length) % tabs.length;
+      } else if (e.key === 'Home') {
+        e.preventDefault();
+        next = 0;
+      } else if (e.key === 'End') {
+        e.preventDefault();
+        next = tabs.length - 1;
+      }
+
+      if (next !== current) {
+        tabs[next]?.focus();
+
+        const navItem = NAV_ITEMS.find(
+          (item) => item.id === tabs[next]?.id.replace('tab-', ''),
+        );
+
+        if (navItem) {
+          setTab(navItem.id);
+        }
+      }
+    },
+    [],
+  );
+
+  const handleDrawerOpen = useCallback(() => {
+    setDrawerOpen(true);
+  }, []);
+
+  const handleDrawerClose = useCallback(() => {
+    setDrawerOpen(false);
+  }, []);
+
+  // Keep the URL hash in sync with the active tab
   useEffect(() => {
-    window.location.hash = tab;
+    if (window.location.hash.slice(1) !== tab) {
+      window.location.hash = tab;
+    }
   }, [tab]);
 
-  // Sync tab state with URL hash changes
+  // Update the active tab when the URL hash changes
   useEffect(() => {
     const handleHashChange = () => {
       const hash = window.location.hash.slice(1);
+
       if (NAV_ITEMS.some((item) => item.id === hash)) {
         setTab(hash as Tab);
       }
     };
+
     window.addEventListener('hashchange', handleHashChange);
-    return () => window.removeEventListener('hashchange', handleHashChange);
+
+    return () => {
+      window.removeEventListener('hashchange', handleHashChange);
+    };
   }, []);
 
-  // Close mobile drawer when the viewport crosses into desktop layout so
-  // hidden overlay/focus-trap state does not linger after a resize (#681).
+  // Close the mobile drawer when switching to desktop layout
   useEffect(() => {
     if (!isMobileNav && drawerOpen) {
       setDrawerOpen(false);
     }
   }, [isMobileNav, drawerOpen]);
 
-  const handleTabKeyDown = useCallback((e: KeyboardEvent<HTMLDivElement>) => {
-    const tabs = Array.from(
-      tabListRef.current?.querySelectorAll<HTMLButtonElement>('[role="tab"]') ?? [],
-    );
-    const current = tabs.findIndex((el) => el === document.activeElement);
-
-    let next = current;
-    if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
-      e.preventDefault();
-      next = (current + 1) % tabs.length;
-    } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
-      e.preventDefault();
-      next = (current - 1 + tabs.length) % tabs.length;
-    } else if (e.key === 'Home') {
-      e.preventDefault();
-      next = 0;
-    } else if (e.key === 'End') {
-      e.preventDefault();
-      next = tabs.length - 1;
-    }
-
-    if (next !== current) {
-      tabs[next]?.focus();
-      const navItem = NAV_ITEMS[next];
-      if (navItem) setTab(navItem.id);
-    }
-  }, []);
-
-  const handleDrawerOpen = useCallback(() => setDrawerOpen(true), []);
-  const handleDrawerClose = useCallback(() => setDrawerOpen(false), []);
-
-  const handleTabChange = useCallback((newTab: Tab) => {
-    setTab(newTab);
-  }, []);
-
   return (
     <ToastProvider>
-      {/* Skip-to-content link (#394) */}
       <a href="#main-content" className="skip-link">
         Skip to main content
       </a>
 
-      {/* Keyboard shortcuts help overlay (#505) */}
-      <KeyboardShortcutsHelp isOpen={helpOpen} onClose={() => setHelpOpen(false)} />
+      <KeyboardShortcutsHelp
+        isOpen={helpOpen}
+        onClose={handleCloseHelp}
+      />
 
-      <div className="app">
-        {/* Top bar */}
-        <header className="app__header" role="banner">
-          <div className="app__header-inner">
-            {/* Hamburger for mobile (#396) */}
-            <button
-              ref={hamburgerRef}
-              type="button"
-              className="app__hamburger"
-              aria-label="Open navigation menu"
-              aria-expanded={drawerOpen}
-              aria-controls="mobile-nav-drawer"
-              onClick={handleDrawerOpen}
-            >
-              <span className="app__hamburger-bar" aria-hidden="true" />
-              <span className="app__hamburger-bar" aria-hidden="true" />
-              <span className="app__hamburger-bar" aria-hidden="true" />
-            </button>
-
-            <span className="app__brand">NotifyChain</span>
-
-            <div className="app__theme-bar">
-              <SyncStatus />
-              <ThemeToggle theme={theme} onToggle={toggleTheme} />
-            </div>
-          </div>
-        </header>
-
-        {/* Desktop tab navigation (#394, #396) */}
-        <nav className="app-tabs" aria-label="Main navigation">
       <DashboardLayout
         activeTab={tab}
         onSelectTab={setTab}
@@ -216,49 +176,35 @@ export function App() {
         themeBar={
           <>
             <SyncStatus />
-            <ThemeToggle theme={theme} onToggle={toggleTheme} />
+            <ThemeToggle
+              theme={theme}
+              onToggle={toggleTheme}
+            />
           </>
         }
       >
-        {NAV_ITEMS.map((item) => (
-          <div
-            key={item.id}
-            role="tabpanel"
-            id={`panel-${item.id}`}
-            aria-labelledby={`tab-${item.id}`}
-            hidden={tab !== item.id}
-            className="app__panel"
-          >
-            {NAV_ITEMS.map((item, index) => (
-              <button
-                key={item.id}
-                type="button"
-                role="tab"
-                id={`tab-${item.id}`}
-                aria-selected={tab === item.id}
-                aria-controls={`panel-${item.id}`}
-                tabIndex={tab === item.id ? 0 : -1}
-                className={`app-tabs__btn${tab === item.id ? ' app-tabs__btn--active' : ''}`}
-                onClick={() => setTab(item.id)}
-                title={index < 9 ? `Press ${index + 1} to switch` : undefined}
-              >
-                {index < 9 && (
-                  <kbd className="app-tabs__shortcut">{index + 1}</kbd>
-                )}
-                {item.label}
-              </button>
-            ))}
-            {tab === item.id && renderPanel(item.id, events)}
-          </div>
-        ))}
+        <main id="main-content" tabIndex={-1}>
+          {NAV_ITEMS.map((item) => (
+            <div
+              key={item.id}
+              role="tabpanel"
+              id={`panel-${item.id}`}
+              aria-labelledby={`tab-${item.id}`}
+              hidden={tab !== item.id}
+              className="app__panel"
+            >
+              {tab === item.id && renderPanel(item.id, events)}
+            </div>
+          ))}
+        </main>
       </DashboardLayout>
 
       <MobileNavDrawer
         isOpen={drawerOpen}
         onClose={handleDrawerClose}
         activeTab={tab}
-        onSelectTab={(t) => {
-          setTab(t);
+        onSelectTab={(selectedTab) => {
+          setTab(selectedTab);
           handleDrawerClose();
         }}
       />
@@ -277,76 +223,85 @@ function renderPanel(tab: Tab, events: any[]) {
             <DeliveryHeatmap events={events} />
           </>
         </ErrorBoundary>
-        <>
-          <EventExplorerPage />
-          <DeliveryHeatmap events={events} />
-        </>
       );
+
     case 'timeline':
       return (
         <ErrorBoundary section="Delivery Timeline">
           <NotificationTimelineView />
         </ErrorBoundary>
       );
+
     case 'activity':
       return (
         <ErrorBoundary section="Activity Feed">
           <ActivityFeed />
         </ErrorBoundary>
       );
+
     case 'user-activity':
       return (
         <ErrorBoundary section="User Activity">
           <UserActivityTimeline />
         </ErrorBoundary>
       );
+
     case 'retry-stats':
       return (
         <ErrorBoundary section="Retry Statistics">
           <RetryStatisticsPanel />
         </ErrorBoundary>
       );
+
     case 'webhooks':
       return (
         <ErrorBoundary section="Webhook Performance">
           <WebhookDashboardPage />
         </ErrorBoundary>
       );
+
     case 'export-history':
       return (
         <ErrorBoundary section="Export History">
           <ExportHistoryPage />
         </ErrorBoundary>
       );
+
     case 'search':
       return (
         <ErrorBoundary section="Notification Search">
           <NotificationSearchPage />
         </ErrorBoundary>
       );
+
     case 'preferences':
       return (
         <ErrorBoundary section="Notification Preferences">
           <NotificationPreferencesPage />
         </ErrorBoundary>
       );
+
     case 'templates':
       return (
         <ErrorBoundary section="Templates">
           <TemplatesPage />
         </ErrorBoundary>
       );
+
     case 'channels':
       return (
         <ErrorBoundary section="Channel Details">
           <ChannelDetailsPage />
         </ErrorBoundary>
       );
-      return <TemplatesPage />;
-    case 'channels':
-      return <ChannelDetailsPage />;
+
     case 'rpc-benchmark':
-      return <RpcBenchmarkPage />;
+      return (
+        <ErrorBoundary section="RPC Benchmark">
+          <RpcBenchmarkPage />
+        </ErrorBoundary>
+      );
+
     default:
       return null;
   }

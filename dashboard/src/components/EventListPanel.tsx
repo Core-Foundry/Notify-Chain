@@ -8,12 +8,15 @@ export const EventListPanel = memo(function EventListPanel() {
 
   if (events.length === 0) {
     return (
-      <EmptyState
-        className="empty-state--compact"
-        icon="🔍"
-        title="No events match"
-        description="No events match the current filters. Try adjusting or clearing your search."
-      />
+      <div className="event-panel event-panel--empty">
+        <EmptyState
+          className="empty-state--compact"
+          icon="🔍"
+          title="No events match"
+          description="No events match the current filters. Try adjusting or clearing your search."
+          size="inline"
+        />
+      </div>
     );
   }
 
