@@ -12,27 +12,46 @@ function shortenAddress(address: string) {
   return `${address.slice(0, 6)}...${address.slice(-4)}`;
 }
 
-interface EventExplorerCardProps {
+export interface EventExplorerCardProps {
   event: BlockchainEvent;
-  onCopyContract: (contractAddress: string) => void;
-  isCopied: boolean;
+  onCopyContract?: (contractAddress: string) => void;
+  isCopied?: boolean;
   onSelect?: (event: BlockchainEvent) => void;
   contractStatuses?: ContractStatus[];
 }
 
-export function EventExplorerCard({
+export const EventExplorerCard = memo(function EventExplorerCard({
   event,
   onCopyContract,
-  isCopied,
+  isCopied = false,
   onSelect,
   contractStatuses = [],
 }: EventExplorerCardProps) {
-  const contractStatus = contractStatuses.find((c) => c.address === event.contractAddress);
+  const contractStatus = contractStatuses.find(
+    (status) => status.address === event.contractAddress,
+  );
   const isPaused = contractStatus?.paused ?? false;
   const label = event.eventName ?? event.type;
   const badgeClass = getEventKindClass(event.type);
   const kindLabel = getEventKindLabel(event.type);
   const isUnknown = !isKnownEventType(event.type);
+
+  const handleCopyClick = useCallback(() => {
+    onCopyContract?.(event.contractAddress);
+  }, [onCopyContract, event.contractAddress]);
+
+  const handleKeyDown = useCallback(
+    (keyboardEvent: KeyboardEvent<HTMLElement>) => {
+      if (!onSelect) {
+        return;
+      }
+      if (keyboardEvent.key === 'Enter' || keyboardEvent.key === ' ') {
+        keyboardEvent.preventDefault();
+        onSelect(event);
+      }
+    },
+    [onSelect, event],
+  );
 
   return (
     <article
@@ -42,16 +61,7 @@ export function EventExplorerCard({
       data-event-id={event.eventId}
       data-event-type-known={isUnknown ? 'false' : 'true'}
       onClick={onSelect ? () => onSelect(event) : undefined}
-      onKeyDown={
-        onSelect
-          ? (e) => {
-              if (e.key === 'Enter' || e.key === ' ') {
-                e.preventDefault();
-                onSelect(event);
-              }
-            }
-          : undefined
-      }
+      onKeyDown={onSelect ? handleKeyDown : undefined}
       aria-label={onSelect ? `View details for ${label} notification` : undefined}
     >
       <div className="event-explorer__cell" data-label="Contract" role="cell">
