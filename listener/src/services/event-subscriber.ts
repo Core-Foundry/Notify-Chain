@@ -80,6 +80,7 @@ export class EventSubscriber {
 
     this.isRunning = true;
     logger.info('Starting event subscriber service');
+    await this.restoreCheckpoints();
     this.eventQueue?.start();
     this.retryQueue?.start();
     this.poll();
@@ -90,6 +91,51 @@ export class EventSubscriber {
     this.eventQueue?.stop();
     this.retryQueue?.stop();
     logger.info('Stopping event subscriber service');
+  }
+
+  /**
+   * Restore the in-memory cursor map from persisted checkpoints.
+   *
+   * Called once at the start of `start()` before the poll loop begins.
+   * For each configured contract address, if a row exists in
+   * `polling_cursors`, the stored cursor string is loaded into
+   * `this.lastCursors` so the first poll resumes from the last known
+   * position rather than replaying from the beginning.
+   *
+   * Failures are logged and swallowed per-contract so a single bad DB
+   * row never prevents the subscriber from starting.
+   */
+  private async restoreCheckpoints(): Promise<void> {
+    if (!this.deduplicationService) {
+      return;
+    }
+
+    let restored = 0;
+
+    for (const contractConfig of this.config.contractAddresses) {
+      try {
+        const record = await this.deduplicationService.getLastCursor(contractConfig.address);
+        if (record) {
+          this.lastCursors.set(contractConfig.address, record.cursor);
+          restored++;
+          logger.info('Checkpoint restored', {
+            contractAddress: contractConfig.address,
+            cursor: record.cursor,
+            ledgerNumber: record.ledgerNumber,
+          });
+        }
+      } catch (error) {
+        logger.warn('Failed to restore checkpoint for contract; starting from beginning', {
+          contractAddress: contractConfig.address,
+          error,
+        });
+      }
+    }
+
+    logger.info('Checkpoint restore complete', {
+      contractsConfigured: this.config.contractAddresses.length,
+      contractsRestored: restored,
+    });
   }
 
   private async poll(): Promise<void> {
@@ -144,14 +190,14 @@ export class EventSubscriber {
         }
 
         const events = response.events || [];
-        
+
         // Detect potential reorg if events exist and we have previous state
         if (this.deduplicationService && events.length > 0) {
           const firstEventLedger = events[0]?.ledger;
           if (firstEventLedger) {
             const reorgDetected = await this.deduplicationService.detectReorg(
               contractConfig.address,
-              firstEventLedger
+              firstEventLedger,
             );
             if (reorgDetected) {
               logger.warn('Potential blockchain reorg detected', {
@@ -218,14 +264,14 @@ export class EventSubscriber {
 
         if (response.cursor) {
           this.lastCursors.set(contractConfig.address, response.cursor);
-          
+
           // Update cursor in deduplication service if available
           if (this.deduplicationService) {
             const lastEventLedger = events.length > 0 ? events[events.length - 1].ledger : 0;
             await this.deduplicationService.updatePollingCursor(
               contractConfig.address,
               response.cursor,
-              lastEventLedger || 0
+              lastEventLedger || 0,
             );
           }
         }
@@ -240,9 +286,7 @@ export class EventSubscriber {
     }
 
     if (totalContracts > 0 && failureCount === totalContracts) {
-      throw new Error(
-        `Failed to fetch events for all ${totalContracts} configured contract(s)`
-      );
+      throw new Error(`Failed to fetch events for all ${totalContracts} configured contract(s)`);
     }
   }
 
@@ -250,7 +294,7 @@ export class EventSubscriber {
     event: StellarSDK.rpc.Api.EventResponse,
     contractConfig: ContractConfig,
     requestId: string = '',
-    correlationId: string = requestId
+    correlationId: string = requestId,
   ): boolean {
     // Check if event has expired
     const eventName = getEventName(event.topic);
@@ -260,7 +304,6 @@ export class EventSubscriber {
         contractAddress: contractConfig.address,
         eventId: event.id,
         eventName,
-        receivedAt: event.receivedAt,
         currentTime: Date.now(),
         reason: 'expired',
       });
@@ -372,7 +415,7 @@ export class EventSubscriber {
   }
 
   private async getContractEvents(
-    contractConfig: ContractConfig
+    contractConfig: ContractConfig,
   ): Promise<StellarSDK.rpc.Api.GetEventsResponse> {
     // Apply rate limiting before making RPC request
     if (this.rpcRateLimiter) {
@@ -465,7 +508,7 @@ export class EventSubscriber {
     event: StellarSDK.rpc.Api.EventResponse,
     contractConfig: ContractConfig,
     requestId: string = '',
-    correlationId: string = ''
+    correlationId: string = '',
   ): Promise<boolean> {
     correlationId = correlationId || requestId || generateCorrelationId();
     const eventStart = Date.now();
@@ -542,7 +585,7 @@ export class EventSubscriber {
           const success = await this.discordService.sendEventNotification(
             event,
             contractConfig,
-            requestId
+            requestId,
           );
           notificationSent = success;
 
@@ -558,8 +601,8 @@ export class EventSubscriber {
         } catch (error) {
           processingError = error instanceof Error ? error.message : String(error);
           logger.error('Error sending Discord notification', {
-              requestId: correlationId,
-              correlationId,
+            requestId: correlationId,
+            correlationId,
             eventId: event.id,
             error: processingError,
           });
@@ -577,7 +620,7 @@ export class EventSubscriber {
         event.type,
         notificationSent,
         processingError ? 'ERROR' : 'PROCESSED',
-        processingError
+        processingError,
       );
     }
 
