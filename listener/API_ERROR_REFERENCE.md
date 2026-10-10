@@ -75,7 +75,7 @@ Sample invalid date:
 | 400 | `errors[].code = PARSE_ERROR` | Request body is not valid JSON. | Send a JSON array or `{ "notifications": [...] }`. |
 | 400 | `INVALID_STRUCTURE` | Body is not an array and does not contain `notifications`. | Send an array of notification payloads. |
 | 400 | `EMPTY_BATCH` | Batch has no items. | Include at least one notification. |
-| 400 | `MISSING_FIELD`, `EMPTY_FIELD`, `INVALID_CHANNEL`, `DUPLICATE_RECIPIENT` | One or more notification items are invalid. | Correct the item fields shown in `errors[]`. |
+| 400 | `MISSING_FIELD`, `EMPTY_FIELD`, `EMPTY_CHANNEL_NAME`, `INVALID_CHANNEL`, `DUPLICATE_RECIPIENT` | One or more notification items are invalid. | Correct the item fields shown in `errors[]`. |
 
 Sample validation failure:
 
