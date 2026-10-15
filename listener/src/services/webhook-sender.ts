@@ -1,6 +1,18 @@
+import { assertSafeWebhookDestination } from './webhook-destination-policy';
+
 export interface WebhookSendOptions {
   timeoutMs?: number;
   headers?: Record<string, string>;
+  /**
+   * Re-resolve the destination and reject non-public addresses immediately
+   * before delivery (#994). Defaults to `true`; set `false` only for
+   * self-hosted receivers on a private network.
+   */
+  enforceDestinationPolicy?: boolean;
+  /** Allow private destinations (self-hosted receivers). */
+  allowPrivateDestination?: boolean;
+  /** Injectable resolver, for tests. */
+  resolveDestination?: (hostname: string) => Promise<string[]>;
   /**
    * How to treat HTTP redirects on the outbound webhook request (#995).
    *
@@ -77,6 +89,15 @@ export async function sendWebhook(
   const timeoutMs = opts.timeoutMs ?? 5000;
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+  // Re-resolve immediately before delivery so a DNS answer that changed since
+  // the URL was registered (DNS rebinding) cannot redirect us inward (#994).
+  if (opts.enforceDestinationPolicy !== false) {
+    await assertSafeWebhookDestination(url, {
+      allowPrivate: opts.allowPrivateDestination,
+      resolve: opts.resolveDestination,
+    });
+  }
 
   try {
     const response = await fetch(url, {

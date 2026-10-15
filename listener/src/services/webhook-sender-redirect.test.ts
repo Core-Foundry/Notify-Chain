@@ -51,7 +51,7 @@ describe('sendWebhook redirect policy (#995)', () => {
 
     try {
       await expect(
-        sendWebhook(`${redirector.url}/hook`, { a: 1 }),
+        sendWebhook(`${redirector.url}/hook`, { a: 1 }, { allowPrivateDestination: true }),
       ).rejects.toBeInstanceOf(WebhookRedirectError);
 
       // The critical assertion: the redirect target was never contacted.
@@ -75,7 +75,7 @@ describe('sendWebhook redirect policy (#995)', () => {
     try {
       let caught: unknown;
       try {
-        await sendWebhook(`${redirector.url}/hook`, { a: 1 });
+        await sendWebhook(`${redirector.url}/hook`, { a: 1 }, { allowPrivateDestination: true });
       } catch (error) {
         caught = error;
       }
@@ -95,7 +95,7 @@ describe('sendWebhook redirect policy (#995)', () => {
       res.end('{"delivered":true}');
     });
     try {
-      const response = await sendWebhook(`${server.url}/hook`, { a: 1 });
+      const response = await sendWebhook(`${server.url}/hook`, { a: 1 }, { allowPrivateDestination: true });
       expect(response.status).toBe(200);
       await expect(response.json()).resolves.toEqual({ delivered: true });
     } finally {
@@ -110,7 +110,7 @@ describe('sendWebhook redirect policy (#995)', () => {
     });
     try {
       await expect(
-        sendWebhook(`${server.url}/hook`, { a: 1 }),
+        sendWebhook(`${server.url}/hook`, { a: 1 }, { allowPrivateDestination: true }),
       ).rejects.toBeInstanceOf(WebhookRedirectError);
     } finally {
       await server.close();
