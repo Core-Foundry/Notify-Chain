@@ -15,9 +15,6 @@ import { sendOk, sendErr, sendJson, ErrorCode } from '../utils/response';
 import { normalizePaginationParams } from '../utils/pagination';
 import { handleApiError, ApiError } from './error-handler';
 import { applyRequestIdMiddleware } from '../middleware/request-id';
-import { TemplateService } from '../services/template-service';
-import { handleTemplateRoutes } from './template-routes';
-import { sendOk, sendErr, sendJson, ErrorCode } from '../utils/response';
 import { validateContentType, getMimeType } from '../middleware/content-type';
 import { NotificationHistoryService } from '../services/notification-history';
 import { SearchSuggestionService } from '../services/search-suggestion';
@@ -28,7 +25,6 @@ import {
   IdempotencyKeyReuseError,
 } from '../services/idempotency-key-service';
 import { WebhookReplayCache } from '../services/webhook-replay-cache';
-import { IdempotencyKeyService, IdempotencyKeyReuseError } from '../services/idempotency-key-service';
 import { WebhookSecret, RateLimitConfig, ContractConfig } from '../types';
 import { RateLimiter } from './rate-limiter';
 import { getDatabase } from '../database/database';
@@ -66,6 +62,7 @@ import { sanitizeCredentials } from '../utils/credential-sanitizer';
 import { DiscordNotificationProvider } from '../services/providers/discord-provider';
 import { WebhookNotificationProvider } from '../services/providers/webhook-provider';
 import { ProviderHealthResult } from '../types/provider-capabilities';
+import { EVENT_STREAM_PATH, handleEventStream } from './event-stream';
 
 export interface EventsServerOptions {
   port: number;
@@ -131,6 +128,11 @@ export interface EventsServerOptions {
   maxBodyBytes?: number;
   /** Optional DataExportService override for administrative exports (#850). */
   dataExportService?: DataExportService | null;
+  /**
+   * Optional SSE feed at GET /api/events/stream. Omitted or disabled leaves
+   * that path as 404 so existing poll clients are unchanged.
+   */
+  eventStream?: { enabled: boolean; heartbeatMs?: number } | null;
 }
 
 type ServiceStatus = 'ok' | 'error' | 'not_configured';
@@ -498,7 +500,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
     res.setHeader(
       'Access-Control-Allow-Headers',
-      'Content-Type, X-API-Key, Authorization, X-Correlation-Id, X-Request-Id',
+      'Content-Type, X-API-Key, Authorization, X-Correlation-Id, X-Request-Id, Last-Event-ID',
     );
     res.setHeader(
       'Access-Control-Expose-Headers',
@@ -661,6 +663,17 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
         returned: events.length,
         durationMs: Date.now() - startTime,
       });
+      return;
+    }
+
+    // GET /api/events/stream — optional SSE feed. Registered before the
+    // /api/events prefix match so it is not served as a JSON list.
+    if (req.method === 'GET' && url.pathname === EVENT_STREAM_PATH) {
+      if (!options.eventStream?.enabled) {
+        sendErr(res, 404, 'Event stream is disabled', ErrorCode.NOT_FOUND);
+        return;
+      }
+      handleEventStream(req, res, eventRegistry, { heartbeatMs: options.eventStream.heartbeatMs });
       return;
     }
 

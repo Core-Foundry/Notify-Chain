@@ -22,6 +22,7 @@ import {
   isListenerApiTimeoutError,
   type ContractStatus,
 } from '../services/eventsApi';
+import { openEventStream, toEventStreamUrl } from '../services/eventStream';
 import { resolveIndexingHealthUrl } from '../services/indexingHealthApi';
 import { resolveNotificationHealthUrl } from '../services/notificationHealthApi';
 import { generateMockEvents } from '../utils/eventData';
@@ -34,6 +35,7 @@ const DEFAULT_EVENT_COUNT = 5000;
 const DEFAULT_LIMIT = 12;
 const EVENT_ID_PARAM = 'eventId';
 const API_URL = import.meta.env.VITE_EVENTS_API_URL ?? 'http://localhost:8787/api/events';
+const STREAM_URL = toEventStreamUrl(API_URL);
 const POLL_INTERVAL_MS = 15_000;
 const LISTENER_BASE_URL = API_URL.replace('/api/events', '');
 const INDEXING_HEALTH_URL =
@@ -72,6 +74,7 @@ export function EventExplorerPage() {
 
   const events = useEventStore((state) => state.events);
   const setEvents = useEventStore((state) => state.setEvents);
+  const appendEvents = useEventStore((state) => state.appendEvents);
   const setLoading = useEventStore((state) => state.setLoading);
   const setError = useEventStore((state) => state.setError);
   const markSyncSuccess = useEventStore((state) => state.markSyncSuccess);
@@ -141,27 +144,47 @@ export function EventExplorerPage() {
     loadEvents();
     loadStatus();
 
-    // Poll for status updates so delivered/failed notifications are reflected
-    // without requiring a manual page refresh.
-    const intervalId = setInterval(async () => {
-      try {
-        const remoteEvents = await fetchEvents(API_URL);
-        if (!cancelled) {
-          setEvents(remoteEvents);
-          markSyncSuccess();
+    // Poll only when the optional SSE feed is off or cannot be opened.
+    // A live stream delivers new events without this interval.
+    let intervalId: ReturnType<typeof setInterval> | undefined;
+    const startPolling = () => {
+      if (intervalId || cancelled) return;
+      intervalId = setInterval(async () => {
+        try {
+          const remoteEvents = await fetchEvents(API_URL);
+          if (!cancelled) {
+            setEvents(remoteEvents);
+            markSyncSuccess();
+          }
+        } catch {
+          if (!cancelled) {
+            markSyncFailure('Background refresh failed');
+          }
         }
-      } catch {
-        if (!cancelled) {
-          markSyncFailure('Background refresh failed');
-        }
-      }
-    }, POLL_INTERVAL_MS);
+      }, POLL_INTERVAL_MS);
+    };
+
+    const sseDisabled = import.meta.env.VITE_EVENTS_SSE === 'false';
+    const closeStream =
+      !sseDisabled && STREAM_URL
+        ? openEventStream(STREAM_URL, {
+            onEvent: (event) => {
+              if (cancelled) return;
+              appendEvents([event]);
+              markSyncSuccess();
+            },
+            onFallback: startPolling,
+          })
+        : undefined;
+
+    if (!closeStream) startPolling();
 
     return () => {
       cancelled = true;
-      clearInterval(intervalId);
+      if (intervalId) clearInterval(intervalId);
+      closeStream?.();
     };
-  }, [lastFetchedAt, setEvents, setError, setLoading]);
+  }, [lastFetchedAt, appendEvents, setEvents, setError, setLoading]);
 
   // Clear stale events and re-fetch whenever the connected wallet address
   // changes (switch or disconnect). This is the fix for issue #175.
