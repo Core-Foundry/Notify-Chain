@@ -31,6 +31,20 @@ import { buildRetryStatisticsPayload } from './retry-statistics';
 
 export { InvalidTimezoneError };
 
+export type CancelScheduleState =
+  | 'cancelled'
+  | 'already_cancelled'
+  | 'already_final'
+  | 'not_found';
+
+export interface CancelScheduleResult {
+  cancelled: boolean;
+  state: CancelScheduleState;
+  status: string | null;
+  message: string;
+  notification?: Awaited<ReturnType<ScheduledNotificationRepository['getById']>>;
+}
+
 function parseExpiresAt(value: Date | string | number): Date | null {
   if (value instanceof Date) {
     return Number.isNaN(value.getTime()) ? null : value;
@@ -335,21 +349,102 @@ export class NotificationAPI {
    * @param reason - An optional reason for cancellation
    * @param requestId - Optional request ID for logging
    */
-  async cancelNotification(id: number, reason?: string, requestId?: string): Promise<boolean> {
+  /**
+   * Cancel a scheduled notification.
+   * Returns a structured outcome so callers can distinguish freshly cancelled,
+   * already-cancelled (idempotent), and already-final states.
+   */
+  async cancelNotification(
+    id: number,
+    reason?: string,
+    requestId?: string,
+  ): Promise<boolean | CancelScheduleResult> {
+    return this.cancelSchedule(id, reason, requestId).then((r) => r.cancelled || r.state === 'already_cancelled');
+  }
+
+  async cancelSchedule(
+    id: number,
+    reason?: string,
+    requestId?: string,
+  ): Promise<CancelScheduleResult> {
     logger.info('Cancelling scheduled notification', { requestId, id, reason });
     const existing = await this.repository.getById(id);
-    const ok = await this.repository.cancel(id, reason);
-    if (ok && existing) {
-      await this.scheduleAudit?.record({
-        scheduledNotificationId: id,
-        action: 'CANCELLED',
-        actor: 'api',
-        fromStatus: existing.status,
-        toStatus: NotificationStatus.CANCELLED,
-        details: { reason: reason ?? null, requestId: requestId ?? null },
-      });
+
+    if (!existing) {
+      return {
+        cancelled: false,
+        state: 'not_found',
+        status: null,
+        message: 'Notification not found',
+      };
     }
-    return ok;
+
+    if (existing.status === NotificationStatus.CANCELLED) {
+      // Idempotent: already cancelled is a successful no-op.
+      return {
+        cancelled: false,
+        state: 'already_cancelled',
+        status: existing.status,
+        message: 'Schedule was already cancelled',
+        notification: existing,
+      };
+    }
+
+    const terminal: NotificationStatus[] = [
+      NotificationStatus.COMPLETED,
+      NotificationStatus.FAILED,
+      NotificationStatus.DEAD_LETTERED,
+      NotificationStatus.EXPIRED,
+    ];
+    if (terminal.includes(existing.status) || existing.status === NotificationStatus.PROCESSING) {
+      return {
+        cancelled: false,
+        state: 'already_final',
+        status: existing.status,
+        message: `Cannot cancel schedule in status ${existing.status}`,
+        notification: existing,
+      };
+    }
+
+    const ok = await this.repository.cancel(id, reason);
+    if (!ok) {
+      // Race: status changed between get and cancel.
+      const latest = await this.repository.getById(id);
+      if (latest?.status === NotificationStatus.CANCELLED) {
+        return {
+          cancelled: false,
+          state: 'already_cancelled',
+          status: NotificationStatus.CANCELLED,
+          message: 'Schedule was already cancelled',
+          notification: latest,
+        };
+      }
+      return {
+        cancelled: false,
+        state: 'already_final',
+        status: latest?.status ?? existing.status,
+        message: `Cannot cancel schedule in status ${latest?.status ?? existing.status}`,
+        notification: latest ?? existing,
+      };
+    }
+
+    await this.scheduleAudit?.record({
+      scheduledNotificationId: id,
+      action: 'CANCELLED',
+      actor: 'api',
+      fromStatus: existing.status,
+      toStatus: NotificationStatus.CANCELLED,
+      details: { reason: reason ?? null, requestId: requestId ?? null },
+    });
+
+    const notification = await this.repository.getById(id);
+    return {
+      cancelled: true,
+      state: 'cancelled',
+      status: NotificationStatus.CANCELLED,
+      message: 'Schedule cancelled',
+      notification: notification ?? undefined,
+    };
   }
 
   async getScheduleAuditHistory(id: number) {
