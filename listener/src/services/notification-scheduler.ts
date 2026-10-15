@@ -347,7 +347,50 @@ export class NotificationScheduler {
         return;
       }
 
-      if (timeDiff > this.config.timingBufferMs) {
+      if (timeDiff > this.config.timingBufferMs && !this.isInterventionReleased(notification)) {
+        const policy = this.config.missedSchedulePolicy ?? 'execute';
+        if (policy === 'expire') {
+          const errorMessage = 'Missed schedule expired by recovery policy';
+          await this.repository.markAsExpired(notification.id!, errorMessage);
+          await this.repository.logExecution({
+            scheduledNotificationId: notification.id!,
+            executionAttempt,
+            executionTime: new Date(),
+            status: 'FAILED',
+            errorMessage,
+            durationMs: Date.now() - startTime,
+          });
+          if (jobId) {
+            jobMonitor.failJob(jobId, errorMessage, { notificationId: notification.id });
+          }
+          logger.info('Overdue notification expired by missed-schedule policy', {
+            requestId,
+            id: notification.id,
+            missedByMs: timeDiff,
+          });
+          return;
+        }
+        if (policy === 'intervene') {
+          const errorMessage = 'Missed schedule requires operator intervention';
+          await this.repository.holdForIntervention(notification.id!);
+          await this.repository.logExecution({
+            scheduledNotificationId: notification.id!,
+            executionAttempt,
+            executionTime: new Date(),
+            status: 'FAILED',
+            errorMessage,
+            durationMs: Date.now() - startTime,
+          });
+          if (jobId) {
+            jobMonitor.failJob(jobId, errorMessage, { notificationId: notification.id });
+          }
+          logger.warn('Overdue notification held for operator intervention', {
+            requestId,
+            id: notification.id,
+            missedByMs: timeDiff,
+          });
+          return;
+        }
         logger.warn('Missed scheduled notification detected; dispatching catch-up delivery', {
           requestId,
           id: notification.id,
@@ -476,6 +519,16 @@ export class NotificationScheduler {
         errorMessage: (error as Error).message,
         durationMs,
       });
+    }
+  }
+
+  private isInterventionReleased(notification: ScheduledNotification): boolean {
+    if (!notification.errorDetails) return false;
+    try {
+      const parsed = JSON.parse(notification.errorDetails) as { code?: string; releasedAt?: string };
+      return parsed.code === 'MISSED_SCHEDULE_INTERVENTION' && typeof parsed.releasedAt === 'string';
+    } catch {
+      return false;
     }
   }
 

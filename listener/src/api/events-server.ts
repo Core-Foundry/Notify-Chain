@@ -1504,6 +1504,31 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
       return;
     }
 
+    // POST /api/schedule/:id/resume — release a notification held by the
+    // intervene missed-schedule policy so the next poll delivers it.
+    const resumeMatch = url.pathname.match(/^\/api\/schedule\/(\d+)\/resume$/);
+    if (req.method === 'POST' && resumeMatch) {
+      if (!options.notificationAPI) {
+        sendErr(res, 503, 'Scheduler not enabled', ErrorCode.SERVICE_UNAVAILABLE);
+        return;
+      }
+      const id = parseInt(resumeMatch[1], 10);
+      options.notificationAPI
+        .releaseMissedSchedule(id)
+        .then((released) => {
+          if (!released) {
+            sendErr(res, 404, 'No notification is waiting for intervention', ErrorCode.NOT_FOUND);
+            return;
+          }
+          sendOk(res, 200, { id, released: true });
+        })
+        .catch((error) => {
+          logger.error('Failed to resume missed notification', { error, requestId, correlationId, id });
+          sendErr(res, 500, (error as Error).message, ErrorCode.INTERNAL_ERROR);
+        });
+      return;
+    }
+
     // GET /api/schedule/:id
     if (req.method === 'GET' && url.pathname.startsWith('/api/schedule/')) {
       if (!options.notificationAPI) {
