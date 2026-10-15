@@ -13,6 +13,7 @@ import { verifyPayloadIntegrity } from '../utils/payload-integrity';
 import { DeliveryReceiptRepository } from './delivery-receipt-repository';
 import { DeliveryResult } from '../types/provider-capabilities';
 import { NotificationClaimLease, startClaimLease } from './notification-claim-lease';
+import { nextLocalOccurrence, readLocalSchedule } from './local-schedule';
 
 /**
  * Background scheduler that processes scheduled notifications
@@ -395,6 +396,7 @@ export class NotificationScheduler {
 
       if (success) {
         await this.repository.markAsCompleted(notification.id!, requestId);
+        await this.enqueueNextLocalOccurrence(notification, requestId);
         await this.repository.logExecution({
           scheduledNotificationId: notification.id!,
           executionAttempt,
@@ -473,6 +475,51 @@ export class NotificationScheduler {
         status: willRetry ? 'RETRY' : 'FAILED',
         errorMessage: (error as Error).message,
         durationMs,
+      });
+    }
+  }
+
+  /**
+   * When a timezone schedule repeats daily or weekly, queue the next local
+   * occurrence with the daylight-saving policy in local-schedule.ts.
+   */
+  private async enqueueNextLocalOccurrence(
+    notification: ScheduledNotification,
+    requestId: string,
+  ): Promise<void> {
+    const intent = readLocalSchedule(notification.metadata);
+    if (!intent?.recurrence) return;
+
+    try {
+      const next = nextLocalOccurrence(intent);
+      const metadata = notification.metadata ? JSON.parse(notification.metadata) : {};
+      metadata.localSchedule = {
+        ...(metadata.localSchedule ?? {}),
+        timeZone: intent.timeZone,
+        localDateTime: next.requestedLocal,
+        recurrence: intent.recurrence,
+        kind: next.kind,
+        resolvedLocal: next.resolvedLocal,
+      };
+      await this.repository.create(
+        {
+          payload: JSON.parse(notification.payload),
+          notificationType: notification.notificationType,
+          targetRecipient: notification.targetRecipient,
+          executeAt: next.executeAt,
+          maxRetries: notification.maxRetries,
+          priority: notification.priority,
+          eventId: notification.eventId ?? undefined,
+          contractAddress: notification.contractAddress ?? undefined,
+          metadata,
+        },
+        requestId,
+      );
+    } catch (error) {
+      logger.error('Failed to enqueue the next local occurrence', {
+        requestId,
+        id: notification.id,
+        error,
       });
     }
   }

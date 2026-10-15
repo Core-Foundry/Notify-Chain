@@ -63,6 +63,7 @@ import { DiscordNotificationProvider } from '../services/providers/discord-provi
 import { WebhookNotificationProvider } from '../services/providers/webhook-provider';
 import { ProviderHealthResult } from '../types/provider-capabilities';
 import { EVENT_STREAM_PATH, handleEventStream } from './event-stream';
+import { resolveLocalDateTime } from '../services/local-schedule';
 
 export interface EventsServerOptions {
   port: number;
@@ -1179,24 +1180,79 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
         }
 
         try {
-          if (!data.executeAt || !data.payload || !data.targetRecipient) {
+          const hasLocalSchedule = data.timeZone != null || data.localDateTime != null;
+          if ((!data.executeAt && !hasLocalSchedule) || !data.payload || !data.targetRecipient) {
             res.writeHead(400, { 'Content-Type': 'application/json' });
             res.end(
               JSON.stringify({
-                error: 'Missing required fields: executeAt, payload, targetRecipient',
+                error: 'Missing required fields: executeAt (or timeZone + localDateTime), payload, targetRecipient',
                 code: 'MISSING_FIELDS',
               }),
             );
             return;
           }
 
-          const executeAt = new Date(data.executeAt);
-          if (isNaN(executeAt.getTime())) {
-            res.writeHead(400, { 'Content-Type': 'application/json' });
-            res.end(
-              JSON.stringify({ error: 'executeAt is not a valid date', code: 'INVALID_DATE' }),
-            );
-            return;
+          let executeAt: Date;
+          let metadata = data.metadata;
+          if (data.timeZone != null || data.localDateTime != null) {
+            if (typeof data.timeZone !== 'string' || typeof data.localDateTime !== 'string') {
+              res.writeHead(400, { 'Content-Type': 'application/json' });
+              res.end(
+                JSON.stringify({
+                  error: 'timeZone and localDateTime are both required for a local schedule',
+                  code: 'INVALID_LOCAL_SCHEDULE',
+                }),
+              );
+              return;
+            }
+            if (
+              data.recurrence != null &&
+              data.recurrence !== 'daily' &&
+              data.recurrence !== 'weekly'
+            ) {
+              res.writeHead(400, { 'Content-Type': 'application/json' });
+              res.end(
+                JSON.stringify({
+                  error: 'recurrence must be daily or weekly',
+                  code: 'INVALID_LOCAL_SCHEDULE',
+                }),
+              );
+              return;
+            }
+            try {
+              const resolved = resolveLocalDateTime(data.localDateTime, data.timeZone);
+              executeAt = resolved.executeAt;
+              const base =
+                metadata && typeof metadata === 'object' && !Array.isArray(metadata) ? metadata : {};
+              metadata = {
+                ...base,
+                localSchedule: {
+                  timeZone: data.timeZone,
+                  localDateTime: resolved.requestedLocal,
+                  recurrence: data.recurrence,
+                  kind: resolved.kind,
+                  resolvedLocal: resolved.resolvedLocal,
+                },
+              };
+            } catch (scheduleError) {
+              res.writeHead(400, { 'Content-Type': 'application/json' });
+              res.end(
+                JSON.stringify({
+                  error: (scheduleError as Error).message,
+                  code: 'INVALID_LOCAL_SCHEDULE',
+                }),
+              );
+              return;
+            }
+          } else {
+            executeAt = new Date(data.executeAt);
+            if (isNaN(executeAt.getTime())) {
+              res.writeHead(400, { 'Content-Type': 'application/json' });
+              res.end(
+                JSON.stringify({ error: 'executeAt is not a valid date', code: 'INVALID_DATE' }),
+              );
+              return;
+            }
           }
 
           const schedule = async (): Promise<{ id: number }> => {
@@ -1210,7 +1266,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
               priority: data.priority,
               eventId: data.eventId,
               contractAddress: data.contractAddress,
-              metadata: data.metadata,
+              metadata,
             });
             logger.info('Notification scheduled via API', {
               requestId,
