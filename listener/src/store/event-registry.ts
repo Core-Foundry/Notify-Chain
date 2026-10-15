@@ -88,7 +88,9 @@ export class EventRegistry {
     this.lastIngestedLedger = displayEvent.ledger;
     this.lastIngestedAt = displayEvent.receivedAt;
     this.maxLedgerSeen =
-      this.maxLedgerSeen === null ? displayEvent.ledger : Math.max(this.maxLedgerSeen, displayEvent.ledger);
+      this.maxLedgerSeen === null
+        ? displayEvent.ledger
+        : Math.max(this.maxLedgerSeen, displayEvent.ledger);
 
     if (this.events.size > this.maxEvents) {
       const evicted = this.events.size - this.maxEvents;
@@ -117,7 +119,7 @@ export class EventRegistry {
    */
   getEventsByLedgerRange(startLedger: number, endLedger: number): DisplayEvent[] {
     return Array.from(this.events.values()).filter(
-      (e) => e.ledger >= startLedger && e.ledger <= endLedger,
+      (event) => event.ledger >= startLedger && event.ledger <= endLedger,
     );
   }
 
@@ -175,5 +177,3 @@ export class EventRegistry {
 }
 
 export const eventRegistry = new EventRegistry();
-
-
