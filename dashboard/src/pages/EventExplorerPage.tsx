@@ -144,9 +144,18 @@ export function EventExplorerPage() {
     loadEvents();
     loadStatus();
 
-    // Poll only when the optional SSE feed is off or cannot be opened.
-    // A live stream delivers new events without this interval.
+    return () => {
+      cancelled = true;
+    };
+  }, [lastFetchedAt, setEvents, setError, setLoading]);
+
+  // Live updates stay outside the fetch effect. That effect stores events and
+  // changes lastFetchedAt, and its cleanup would otherwise close the stream
+  // (and the poll timer) as soon as the first response arrives.
+  useEffect(() => {
+    let cancelled = false;
     let intervalId: ReturnType<typeof setInterval> | undefined;
+
     const startPolling = () => {
       if (intervalId || cancelled) return;
       intervalId = setInterval(async () => {
@@ -184,7 +193,7 @@ export function EventExplorerPage() {
       if (intervalId) clearInterval(intervalId);
       closeStream?.();
     };
-  }, [lastFetchedAt, appendEvents, setEvents, setError, setLoading]);
+  }, [appendEvents, setEvents, markSyncSuccess, markSyncFailure]);
 
   // Clear stale events and re-fetch whenever the connected wallet address
   // changes (switch or disconnect). This is the fix for issue #175.
