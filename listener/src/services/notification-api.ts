@@ -23,10 +23,13 @@ import {
   isInteger,
 } from '../utils/validation';
 import { ScheduleAuditTrail } from './schedule-audit-trail';
+import { assertValidTimezone, InvalidTimezoneError } from '../utils/timezone';
 
 const PRIORITY_MIN = 1;
 const PRIORITY_MAX = 10;
 import { buildRetryStatisticsPayload } from './retry-statistics';
+
+export { InvalidTimezoneError };
 
 function parseExpiresAt(value: Date | string | number): Date | null {
   if (value instanceof Date) {
@@ -148,11 +151,27 @@ export class NotificationAPI {
     if (input.metadata !== undefined) {
       v.check(isPlainObject(input.metadata), 'metadata', 'must be an object');
     }
+    if (input.timezone !== undefined && input.timezone !== null) {
+      try {
+        input = { ...input, timezone: assertValidTimezone(String(input.timezone)) };
+      } catch (err) {
+        if (err instanceof InvalidTimezoneError) throw err;
+        throw new InvalidTimezoneError(String(input.timezone));
+      }
+    }
     v.throwIfInvalid();
     // Stamp / verify protocol version on the payload.
+    // Persist timezone in metadata for display without a schema migration.
+    const metadataWithTz: Record<string, any> = {
+      ...(input.metadata ?? {}),
+    };
+    if (input.timezone) {
+      metadataWithTz.timezone = input.timezone;
+    }
     input = {
       ...input,
       payload: ensureNotificationVersion(input.payload as Record<string, unknown>),
+      metadata: Object.keys(metadataWithTz).length > 0 ? metadataWithTz : input.metadata,
     };
 
     // Validate metadata before any storage write.

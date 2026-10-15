@@ -7,6 +7,11 @@ import { preferenceStore } from '../store/preference-store';
 import { PreferencesUpdateInput } from '../types/preferences';
 import { NotificationAPI } from '../services/notification-api';
 import { NotificationType } from '../types/scheduled-notification';
+import {
+  formatInTimezone,
+  InvalidTimezoneError,
+  parseExecuteAtWithTimezone,
+} from '../utils/timezone';
 import logger from '../utils/logger';
 import { generateRequestId, resolveCorrelationId } from '../utils/request-id';
 import { TemplateService } from '../services/template-service';
@@ -1177,8 +1182,20 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
             return;
           }
 
-          const executeAt = new Date(data.executeAt);
-          if (isNaN(executeAt.getTime())) {
+          let executeAt: Date;
+          let timezone = 'UTC';
+          try {
+            const parsed = parseExecuteAtWithTimezone(data.executeAt, data.timezone);
+            executeAt = parsed.utcDate;
+            timezone = parsed.timezone;
+          } catch (tzErr) {
+            if (tzErr instanceof InvalidTimezoneError) {
+              res.writeHead(400, { 'Content-Type': 'application/json' });
+              res.end(
+                JSON.stringify({ error: tzErr.message, code: 'INVALID_TIMEZONE' }),
+              );
+              return;
+            }
             res.writeHead(400, { 'Content-Type': 'application/json' });
             res.end(
               JSON.stringify({ error: 'executeAt is not a valid date', code: 'INVALID_DATE' }),
@@ -1186,12 +1203,18 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
             return;
           }
 
-          const schedule = async (): Promise<{ id: number }> => {
+          const schedule = async (): Promise<{
+            id: number;
+            executeAt: string;
+            timezone: string;
+            executeAtLocal: string;
+          }> => {
             const notificationId = await options.notificationAPI!.scheduleNotification({
               payload: data.payload,
               notificationType: data.notificationType || NotificationType.DISCORD,
               targetRecipient: data.targetRecipient,
               executeAt,
+              timezone,
               expiresAt: data.expiresAt,
               maxRetries: data.maxRetries,
               priority: data.priority,
@@ -1203,9 +1226,15 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
               requestId,
               correlationId,
               notificationId,
-              executeAt: data.executeAt,
+              executeAt: executeAt.toISOString(),
+              timezone,
             });
-            return { id: notificationId };
+            return {
+              id: notificationId,
+              executeAt: executeAt.toISOString(),
+              timezone,
+              executeAtLocal: formatInTimezone(executeAt, timezone),
+            };
           };
 
           if (options.idempotencyService && idempotencyKey) {
@@ -1216,23 +1245,37 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
               { requestId, correlationId },
             );
             const statusCode = outcome.isDuplicate ? 200 : 201;
+            const result = outcome.result as {
+              id: number;
+              executeAt: string;
+              timezone: string;
+              executeAtLocal: string;
+            };
             res.writeHead(statusCode, {
               'Content-Type': 'application/json',
               'X-Idempotent-Replay': outcome.isDuplicate ? 'true' : 'false',
             });
             res.end(
               JSON.stringify({
-                id: (outcome.result as { id: number }).id,
+                id: result.id,
+                executeAt: result.executeAt,
+                timezone: result.timezone,
+                executeAtLocal: result.executeAtLocal,
                 replay: outcome.isDuplicate,
               }),
             );
             return;
           }
 
-          const { id } = await schedule();
+          const scheduled = await schedule();
           res.writeHead(201, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ id }));
+          res.end(JSON.stringify(scheduled));
         } catch (error) {
+          if (error instanceof InvalidTimezoneError) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: error.message, code: 'INVALID_TIMEZONE' }));
+            return;
+          }
           if (error instanceof IdempotencyKeyReuseError) {
             logger.warn('Schedule API rejected request: idempotency key body mismatch', {
               requestId,
