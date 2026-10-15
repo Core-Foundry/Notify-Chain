@@ -6,6 +6,32 @@ import logger from '../utils/logger';
 /** How long a write waits for a competing connection's lock before failing. */
 export const DATABASE_BUSY_TIMEOUT_MS = 5_000;
 
+/** Owner read/write only - used for the SQLite main file and its sidecars. */
+export const DATABASE_FILE_MODE = 0o600;
+
+/** Owner read/write/execute only - used for the directory holding the DB. */
+export const DIRECTORY_MODE = 0o700;
+
+/**
+ * Best-effort chmod. Windows (and some mounted filesystems) either ignore POSIX
+ * modes or reject the call outright; that must never take the service down, so
+ * failures are swallowed. `fs.chmodSync` on a path that does not exist yet is
+ * also a no-op for our purposes - the caller re-asserts after creation.
+ */
+export function applyRestrictiveMode(targetPath: string, mode: number): void {
+  try {
+    if (process.platform === 'win32') {
+      return; // POSIX modes are not meaningful on Windows
+    }
+    if (!fs.existsSync(targetPath)) {
+      return;
+    }
+    fs.chmodSync(targetPath, mode);
+  } catch {
+    // Non-fatal: unsupported filesystem or permission denied on a shared dir.
+  }
+}
+
 /**
  * SQLite Database Service
  * Handles all database operations with promise-based interface
@@ -134,12 +160,27 @@ export class Database {
         fs.mkdirSync(dbDir, { recursive: true });
         logger.info('Created database directory', { path: dbDir });
       }
+      // The database holds notification payloads and recipient data; keep the
+      // directory owner-only where the platform supports POSIX modes.
+      applyRestrictiveMode(dbDir, DIRECTORY_MODE);
 
       // Open database connection
       await this.connect();
+      // sqlite creates the main file on first open; the WAL/SHM sidecars are
+      // created lazily, so harden all three now and again after migrations.
+      applyRestrictiveMode(this.dbPath, DATABASE_FILE_MODE);
+      for (const suffix of ['-wal', '-shm', '-journal']) {
+        applyRestrictiveMode(`${this.dbPath}${suffix}`, DATABASE_FILE_MODE);
+      }
 
       // Run schema migrations
       await this.runMigrations();
+
+      // Re-assert: migrations may have created or recreated sidecar files.
+      applyRestrictiveMode(this.dbPath, DATABASE_FILE_MODE);
+      for (const suffix of ['-wal', '-shm', '-journal']) {
+        applyRestrictiveMode(`${this.dbPath}${suffix}`, DATABASE_FILE_MODE);
+      }
 
       this.isInitialized = true;
       logger.info('Database initialized successfully', { path: this.dbPath });
