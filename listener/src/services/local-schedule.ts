@@ -10,9 +10,12 @@
  *   hour later when the clock shows 01:30 again (EST).
  * - **Skipped local time** (spring forward). The clock jumps ahead and the
  *   reading never happens. NotifyChain moves the wall time forward by the
- *   length of the gap, then schedules that valid instant. Example:
+ *   length of that zone's gap, then schedules that valid instant. A one-hour
+ *   gap and a 30-minute gap are not treated the same. Examples:
  *   `America/New_York` `2026-03-08T02:30:00` does not exist; it runs at
- *   `03:30` EDT (`2026-03-08T07:30:00.000Z`). The occurrence is not dropped
+ *   `03:30` EDT (`2026-03-08T07:30:00.000Z`). `Australia/Lord_Howe`
+ *   `2026-10-04T02:15:00` does not exist; the gap is 30 minutes, so it runs
+ *   at `02:45` (`2026-10-03T15:45:00.000Z`). The occurrence is not dropped
  *   and is not placed inside the gap.
  * - **Unique local time.** The reading maps to exactly one UTC instant.
  *
@@ -201,8 +204,10 @@ function findMatches(parts: LocalParts, timeZone: string): Date[] {
   const naive = Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute, parts.second);
   const requested = formatParts(parts);
   const offsets = new Set<number>();
-  for (const hours of [-18, -8, -3, -1, 0, 1, 3, 8, 18]) {
-    offsets.add(offsetMinutes(new Date(naive + hours * 3_600_000), timeZone));
+  // A local reading can sit many hours away from its UTC instant. Sample the
+  // whole practical offset range so both sides of a short overlap are seen.
+  for (let minutes = -16 * 60; minutes <= 16 * 60; minutes += 30) {
+    offsets.add(offsetMinutes(new Date(naive + minutes * 60_000), timeZone));
   }
   const seen = new Set<number>();
   const matches: Date[] = [];
@@ -220,10 +225,14 @@ function findMatches(parts: LocalParts, timeZone: string): Date[] {
 
 function transitionGapMinutes(parts: LocalParts, timeZone: string): number {
   const naive = Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute, parts.second);
-  const before = offsetMinutes(new Date(naive - 3 * 3_600_000), timeZone);
-  for (let minutes = -180; minutes <= 180; minutes += 15) {
-    const offset = offsetMinutes(new Date(naive + minutes * 60_000), timeZone);
-    if (offset !== before) return Math.abs(offset - before);
+  // The transition instant is the UTC time of the wall clock, not the naive
+  // reading of that wall clock. Searching only a few hours around the naive
+  // UTC timestamp misses zones far from UTC and then assumes a 60-minute gap.
+  const start = naive - 20 * 3_600_000;
+  let previous = offsetMinutes(new Date(start), timeZone);
+  for (let minutes = 15; minutes <= 40 * 60; minutes += 15) {
+    const offset = offsetMinutes(new Date(start + minutes * 60_000), timeZone);
+    if (offset !== previous) return Math.abs(offset - previous);
   }
   return 60;
 }

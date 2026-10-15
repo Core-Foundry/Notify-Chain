@@ -26,6 +26,18 @@ describe('daylight-saving schedule policy', () => {
     );
   });
 
+  it('shifts a 30-minute Lord Howe spring gap by 30 minutes and keeps the earlier fall-back instant', () => {
+    const skipped = resolveLocalDateTime('2026-10-04T02:15:00', 'Australia/Lord_Howe');
+    expect(skipped.kind).toBe('skipped');
+    expect(skipped.resolvedLocal).toBe('2026-10-04T02:45:00');
+    expect(skipped.executeAt.toISOString()).toBe('2026-10-03T15:45:00.000Z');
+
+    const repeated = resolveLocalDateTime('2026-04-05T01:45:00', 'Australia/Lord_Howe');
+    expect(repeated.kind).toBe('repeated');
+    expect(repeated.resolvedLocal).toBe('2026-04-05T01:45:00');
+    expect(repeated.executeAt.toISOString()).toBe('2026-04-04T14:45:00.000Z');
+  });
+
   it('applies the same policy outside the US', () => {
     const skipped = resolveLocalDateTime('2026-03-29T01:30:00', 'Europe/London');
     expect(skipped.kind).toBe('skipped');
