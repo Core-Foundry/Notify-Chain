@@ -3,6 +3,7 @@ import { QueueOperationalMetrics, NotificationStats } from './notification-stats
 import { IdempotencyKeyService } from './idempotency-key-service';
 import {
   CreateScheduledNotificationInput,
+  NotificationStatus,
   NotificationType,
 } from '../types/scheduled-notification';
 import {
@@ -21,6 +22,7 @@ import {
   isInRange,
   isInteger,
 } from '../utils/validation';
+import { ScheduleAuditTrail } from './schedule-audit-trail';
 
 const PRIORITY_MIN = 1;
 const PRIORITY_MAX = 10;
@@ -58,6 +60,7 @@ export class NotificationAPI {
     private repository: ScheduledNotificationRepository,
     maxPayloadSizeBytesOrIdempotency?: number | IdempotencyKeyService,
     private idempotencyService?: IdempotencyKeyService,
+    private scheduleAudit?: ScheduleAuditTrail | null,
   ) {
     if (typeof maxPayloadSizeBytesOrIdempotency === 'number') {
       this.maxPayloadSizeBytes = maxPayloadSizeBytesOrIdempotency;
@@ -68,6 +71,11 @@ export class NotificationAPI {
         this.idempotencyService = maxPayloadSizeBytesOrIdempotency;
       }
     }
+  }
+
+  /** Attach or replace the schedule audit trail used for lifecycle recording. */
+  setScheduleAuditTrail(audit: ScheduleAuditTrail | null): void {
+    this.scheduleAudit = audit;
   }
 
   /**
@@ -162,11 +170,28 @@ export class NotificationAPI {
       version: (input.payload as Record<string, unknown>).version,
     });
 
+    const createAndAudit = async (): Promise<number> => {
+      const id = await this.repository.create(input, requestId);
+      await this.scheduleAudit?.record({
+        scheduledNotificationId: id,
+        action: 'CREATED',
+        actor: 'api',
+        toStatus: NotificationStatus.PENDING,
+        details: {
+          notificationType: input.notificationType,
+          eventId: input.eventId ?? null,
+          contractAddress: input.contractAddress ?? null,
+          executeAt: input.executeAt.toISOString(),
+        },
+      });
+      return id;
+    };
+
     // If idempotency service is available, use it for deduplication
     if (this.idempotencyService && idempotencyKey) {
       const { result, isDuplicate, notificationId } =
         await this.idempotencyService.processWithIdempotency(idempotencyKey, input, async () => {
-          return await this.repository.create(input, requestId);
+          return await createAndAudit();
         });
 
       if (isDuplicate) {
@@ -180,7 +205,52 @@ export class NotificationAPI {
       return typeof result === 'number' ? result : (result as { id: number }).id;
     }
 
-    return await this.repository.create(input, requestId);
+    return await createAndAudit();
+  }
+
+  /**
+   * Update mutable fields on a pending scheduled notification and audit the change.
+   */
+  async updateScheduledNotification(
+    id: number,
+    updates: { executeAt?: Date; priority?: number },
+    requestId?: string,
+  ): Promise<boolean> {
+    const existing = await this.repository.getById(id);
+    if (!existing || existing.status !== NotificationStatus.PENDING) {
+      return false;
+    }
+
+    if (updates.executeAt !== undefined) {
+      if (!(updates.executeAt instanceof Date) || isNaN(updates.executeAt.getTime())) {
+        throw new Error('executeAt must be a valid date');
+      }
+      if (updates.executeAt <= new Date()) {
+        throw new Error('executeAt must be a future timestamp');
+      }
+    }
+    if (updates.priority !== undefined) {
+      if (!isInteger(updates.priority) || !isInRange(updates.priority, PRIORITY_MIN, PRIORITY_MAX)) {
+        throw new Error(`priority must be an integer between ${PRIORITY_MIN} and ${PRIORITY_MAX}`);
+      }
+    }
+
+    const ok = await this.repository.updatePending(id, updates);
+    if (ok) {
+      await this.scheduleAudit?.record({
+        scheduledNotificationId: id,
+        action: 'MODIFIED',
+        actor: 'api',
+        fromStatus: existing.status,
+        toStatus: existing.status,
+        details: {
+          executeAt: updates.executeAt?.toISOString(),
+          priority: updates.priority,
+          requestId: requestId ?? null,
+        },
+      });
+    }
+    return ok;
   }
 
   /**
@@ -248,7 +318,42 @@ export class NotificationAPI {
    */
   async cancelNotification(id: number, reason?: string, requestId?: string): Promise<boolean> {
     logger.info('Cancelling scheduled notification', { requestId, id, reason });
-    return await this.repository.cancel(id, reason);
+    const existing = await this.repository.getById(id);
+    const ok = await this.repository.cancel(id, reason);
+    if (ok && existing) {
+      await this.scheduleAudit?.record({
+        scheduledNotificationId: id,
+        action: 'CANCELLED',
+        actor: 'api',
+        fromStatus: existing.status,
+        toStatus: NotificationStatus.CANCELLED,
+        details: { reason: reason ?? null, requestId: requestId ?? null },
+      });
+    }
+    return ok;
+  }
+
+  async getScheduleAuditHistory(id: number) {
+    if (!this.scheduleAudit) {
+      return [];
+    }
+    return this.scheduleAudit.getByNotificationId(id);
+  }
+
+  /** Record an EXECUTED audit entry after successful delivery. */
+  async recordExecutionAudit(
+    id: number,
+    fromStatus: string,
+    details?: Record<string, unknown>,
+  ): Promise<void> {
+    await this.scheduleAudit?.record({
+      scheduledNotificationId: id,
+      action: 'EXECUTED',
+      actor: 'scheduler',
+      fromStatus,
+      toStatus: NotificationStatus.COMPLETED,
+      details: details ?? null,
+    });
   }
 
   /**

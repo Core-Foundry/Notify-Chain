@@ -16,6 +16,7 @@ import {
   NotificationStats,
   QueueOperationalMetrics,
 } from './notification-stats-cache';
+import { ScheduleAuditTrail } from './schedule-audit-trail';
 
 /**
  * Repository for scheduled notifications database operations
@@ -23,6 +24,7 @@ import {
  */
 export class ScheduledNotificationRepository {
   private statsCache: NotificationStatsCache;
+  private scheduleAudit: ScheduleAuditTrail | null = null;
 
   constructor(
     private db: Database,
@@ -30,6 +32,10 @@ export class ScheduledNotificationRepository {
     private defaultTtlSeconds: number = 0,
   ) {
     this.statsCache = statsCache ?? getStatsCache();
+  }
+
+  setScheduleAuditTrail(audit: ScheduleAuditTrail | null): void {
+    this.scheduleAudit = audit;
   }
 
   /**
@@ -357,6 +363,15 @@ export class ScheduledNotificationRepository {
     // Invalidate stats cache after completion
     this.statsCache.invalidate();
 
+    await this.scheduleAudit?.record({
+      scheduledNotificationId: id,
+      action: 'EXECUTED',
+      actor: 'scheduler',
+      fromStatus: NotificationStatus.PROCESSING,
+      toStatus: NotificationStatus.COMPLETED,
+      details: { requestId: requestId ?? null },
+    });
+
     logger.info('Notification marked as completed', { requestId, id });
   }
 
@@ -628,6 +643,40 @@ export class ScheduledNotificationRepository {
     const sql = 'SELECT * FROM scheduled_notifications WHERE id = ?';
     const row = await this.db.get<ScheduledNotificationRow>(sql, [id]);
     return row ? this.rowToModel(row) : null;
+  }
+
+  /**
+   * Update mutable fields on a PENDING scheduled notification.
+   */
+  async updatePending(
+    id: number,
+    updates: { executeAt?: Date; priority?: number },
+  ): Promise<boolean> {
+    const sets: string[] = ['updated_at = ?'];
+    const params: unknown[] = [new Date().toISOString()];
+
+    if (updates.executeAt !== undefined) {
+      sets.push('execute_at = ?');
+      params.push(updates.executeAt.toISOString());
+    }
+    if (updates.priority !== undefined) {
+      sets.push('priority = ?');
+      params.push(updates.priority);
+    }
+
+    if (sets.length === 1) {
+      return false;
+    }
+
+    params.push(id, NotificationStatus.PENDING);
+    const result = await this.db.run(
+      `UPDATE scheduled_notifications SET ${sets.join(', ')} WHERE id = ? AND status = ?`,
+      params,
+    );
+    if (result.changes > 0) {
+      this.statsCache.invalidate();
+    }
+    return result.changes > 0;
   }
 
   /**
