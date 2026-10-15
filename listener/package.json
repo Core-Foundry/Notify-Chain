@@ -9,6 +9,8 @@
     "typecheck": "node ./node_modules/typescript/bin/tsc --noEmit",
     "lint": "node ./node_modules/typescript/bin/tsc --noEmit",
     "test": "node ./node_modules/jest/bin/jest.js",
+    "test:coverage": "node ./node_modules/jest/bin/jest.js --coverage",
+    "coverage:report": "node ./node_modules/jest/bin/jest.js --coverage && open coverage/index.html",
     "migrate": "ts-node src/scripts/migrate-db.ts",
     "migrate:templates": "ts-node src/scripts/migrate-templates.ts",
     "check-migrations": "ts-node src/scripts/check-migrations.ts",
