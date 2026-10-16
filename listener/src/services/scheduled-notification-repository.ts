@@ -158,6 +158,7 @@ export class ScheduledNotificationRepository {
     batchSize: number = 10,
     requestId?: string,
   ): Promise<ScheduledNotification[]> {
+    assertScheduleTransition(NotificationStatus.PENDING, NotificationStatus.PROCESSING);
     const now = new Date();
     const lockExpiresAt = new Date(now.getTime() + lockTimeoutMs);
 
@@ -290,6 +291,7 @@ export class ScheduledNotificationRepository {
         const newRetryCount = model.retryCount + 1;
         const isFailed = newRetryCount >= model.maxRetries;
         const newStatus = isFailed ? NotificationStatus.DEAD_LETTERED : NotificationStatus.PENDING;
+        assertScheduleTransition(NotificationStatus.PROCESSING, newStatus);
 
         const updateSql = `
           UPDATE scheduled_notifications
@@ -343,6 +345,7 @@ export class ScheduledNotificationRepository {
    * Mark notification as completed
    */
   async markAsCompleted(id: number, requestId?: string): Promise<void> {
+    assertScheduleTransition(NotificationStatus.PROCESSING, NotificationStatus.COMPLETED);
     const sql = `
       UPDATE scheduled_notifications
       SET 
@@ -365,6 +368,7 @@ export class ScheduledNotificationRepository {
 
   /** Mark a notification expired and release its processing lock. */
   async markAsExpired(id: number): Promise<void> {
+    assertScheduleTransition(NotificationStatus.PROCESSING, NotificationStatus.EXPIRED);
     const now = new Date().toISOString();
     const errorMessage = 'Notification expired before delivery';
     await this.db.run(
@@ -398,6 +402,7 @@ export class ScheduledNotificationRepository {
     const nextRetryCount = currentRetryCount + 1;
     const isFailed = nextRetryCount >= maxRetries;
     const newStatus = isFailed ? NotificationStatus.DEAD_LETTERED : NotificationStatus.PENDING;
+    assertScheduleTransition(NotificationStatus.PROCESSING, newStatus);
     // When permanently failing, preserve currentRetryCount so the distribution
     // reflects actual retries performed (not an incremented-past-max value).
     const storedRetryCount = isFailed ? currentRetryCount : nextRetryCount;
@@ -575,6 +580,7 @@ export class ScheduledNotificationRepository {
     batchSize: number = 10,
     requestId?: string,
   ): Promise<ScheduledNotification[]> {
+    assertScheduleTransition(NotificationStatus.PENDING, NotificationStatus.PROCESSING);
     const now = new Date();
     const lockExpiresAt = new Date(now.getTime() + lockTimeoutMs);
 
@@ -754,6 +760,7 @@ export class ScheduledNotificationRepository {
    * Cancel a scheduled notification
    */
   async cancel(id: number, reason?: string): Promise<boolean> {
+    assertScheduleTransition(NotificationStatus.PENDING, NotificationStatus.CANCELLED);
     // Store cancellation reason inside error_details as JSON.
     const errorDetails = reason ? JSON.stringify({ cancellationReason: reason }) : null;
 
