@@ -2,6 +2,11 @@ import * as StellarSDK from '@stellar/stellar-sdk';
 import { ExpirationConfig } from '../types';
 import logger from '../utils/logger';
 
+// Extend EventResponse to include receivedAt timestamp
+export interface ExtendedEventResponse extends StellarSDK.rpc.Api.EventResponse {
+  receivedAt: number;
+}
+
 /**
  * NotificationExpirationService handles expiration checks for notifications.
  * 
@@ -23,6 +28,7 @@ export class NotificationExpirationService {
    * and the appropriate expiration time.
    * 
    * @param event - The blockchain event to check
+   * @param eventType - Optional event type for per-type expiration lookup
    * @returns true if the event has expired, false otherwise
    */
   isExpired(event: StellarSDK.rpc.Api.EventResponse, eventType?: string): boolean {
@@ -53,7 +59,7 @@ export class NotificationExpirationService {
    * @returns true if the event should be processed, false if expired
    */
   shouldProcess(
-    event: StellarSDK.rpc.Api.EventResponse,
+    event: ExtendedEventResponse,
     eventType?: string
   ): boolean {
     // If expiration is disabled, always process
