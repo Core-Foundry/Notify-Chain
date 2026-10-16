@@ -7,6 +7,7 @@ import { preferenceStore } from '../store/preference-store';
 import { PreferencesUpdateInput } from '../types/preferences';
 import { NotificationAPI } from '../services/notification-api';
 import { NotificationType } from '../types/scheduled-notification';
+import { ScheduleValidationError, toScheduleValidationResponse } from '../services/schedule-validator';
 import logger from '../utils/logger';
 import { generateRequestId, resolveCorrelationId } from '../utils/request-id';
 import { TemplateService } from '../services/template-service';
@@ -1207,6 +1208,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
               eventId: data.eventId,
               contractAddress: data.contractAddress,
               metadata: data.metadata,
+              recurrence: data.recurrence,
             });
             logger.info('Notification scheduled via API', {
               requestId,
@@ -1242,6 +1244,13 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
           res.writeHead(201, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ id }));
         } catch (error) {
+          if (error instanceof ScheduleValidationError) {
+            const response = toScheduleValidationResponse(error);
+            res.writeHead(response.statusCode, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify(response.body));
+            return;
+          }
+
           if (error instanceof IdempotencyKeyReuseError) {
             logger.warn('Schedule API rejected request: idempotency key body mismatch', {
               requestId,
