@@ -363,8 +363,8 @@ fn test_audit_record_appended_event_has_notification_category() {
     let topics = topics_of(&test_env.env, "audit_record_appended")
         .expect("audit_record_appended must be emitted");
 
-    // topics: [0] name, [1] notification_id, [2] action, [3] category
-    assert_eq!(topics.len(), 4);
+    // topics: [0] name, [1] notification_id, [2] action, [3] category, [4] priority
+    assert_eq!(topics.len(), 5);
     let category =
         NotificationCategory::try_from_val(&test_env.env, &topics.get(3).unwrap())
             .expect("topic[3] must be NotificationCategory");
@@ -373,6 +373,11 @@ fn test_audit_record_appended_event_has_notification_category() {
         NotificationCategory::Notification,
         "audit_record_appended must carry Notification category"
     );
+
+    let priority =
+        NotificationPriority::try_from_val(&test_env.env, &topics.get(4).unwrap())
+            .expect("topic[4] must be NotificationPriority");
+    assert_eq!(priority, NotificationPriority::Medium);
 }
 
 #[test]
@@ -634,9 +639,13 @@ fn test_notification_accessed_has_notification_category() {
 
     let topics = topics_of(&test_env.env, "notification_accessed")
         .expect("notification_accessed event must be emitted");
-    // topics: [0] name, [1] notification_id, [2] accessor, [3] category
-    assert_eq!(topics.len(), 4);
+    // topics: [0] name, [1] notification_id, [2] accessor, [3] category, [4] priority
+    assert_eq!(topics.len(), 5);
     let category =
         NotificationCategory::try_from_val(&test_env.env, &topics.get(3).unwrap()).unwrap();
     assert_eq!(category, NotificationCategory::Notification);
+
+    let priority =
+        NotificationPriority::try_from_val(&test_env.env, &topics.get(4).unwrap()).unwrap();
+    assert_eq!(priority, NotificationPriority::Medium);
 }
