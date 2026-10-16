@@ -13,6 +13,7 @@
     "lint": "node ./node_modules/eslint/bin/eslint.js \"src/**/*.{ts,tsx}\" --max-warnings=0",
     "format:check": "node ./node_modules/prettier/bin/prettier.cjs --check \"src/**/*.{ts,tsx}\" --config ../.prettierrc",
     "test": "node ./node_modules/jest/bin/jest.js",
+    "test:a11y": "node ./node_modules/jest/bin/jest.js --config jest.accessibility.config.cjs --runInBand",
     "test:wallet": "node ./node_modules/jest/bin/jest.js src/__tests__/wallet-integration.test.tsx",
     "benchmark": "node ./node_modules/jest/bin/jest.js src/benchmark",
     "storybook": "node ./node_modules/storybook/bin/index.cjs dev -p 6006",
