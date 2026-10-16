@@ -183,4 +183,76 @@ expect([NotificationStatus.PENDING, NotificationStatus.PROCESSING]).toContain(cu
     expect(result.notifications).toBeGreaterThanOrEqual(1);
     expect(await repository.getById(id)).toBeNull();
   });
+  it('applies EXPIRE recovery once and keeps the schedule expired on rerun', async () => {
+    const id = await repository.create({
+      payload: schedulerPayload(),
+      notificationType: NotificationType.DISCORD,
+      targetRecipient: NotificationFixtureBuilder.constants.webhookUrl,
+      executeAt: new Date(Date.now() - 60_000),
+    });
+    expect(await repository.recoverOverdueSchedules('EXPIRE')).toBe(1);
+    expect(await repository.recoverOverdueSchedules('EXPIRE')).toBe(0);
+    expect((await repository.getById(id))!.status).toBe(NotificationStatus.EXPIRED);
+  });
+
+  it('holds overdue schedules for intervention until an operator resolves them', async () => {
+    const id = await repository.create({
+      payload: schedulerPayload(),
+      notificationType: NotificationType.DISCORD,
+      targetRecipient: NotificationFixtureBuilder.constants.webhookUrl,
+      executeAt: new Date(Date.now() - 60_000),
+    });
+    expect(await repository.recoverOverdueSchedules('REQUIRE_INTERVENTION')).toBe(1);
+    expect((await repository.getById(id))!.status).toBe(NotificationStatus.AWAITING_INTERVENTION);
+    expect(await repository.fetchAndLockPendingNotifications('test-worker', 30000, 10)).toHaveLength(0);
+    expect(await repository.resolveAwaitingIntervention(id, 'EXECUTE')).toBe(true);
+    expect((await repository.getById(id))!.status).toBe(NotificationStatus.PENDING);
+  });
+
+  it('keeps overdue schedules pending for default EXECUTE recovery', async () => {
+    const id = await repository.create({
+      payload: schedulerPayload(),
+      notificationType: NotificationType.DISCORD,
+      targetRecipient: NotificationFixtureBuilder.constants.webhookUrl,
+      executeAt: new Date(Date.now() - 60_000),
+    });
+    expect(await repository.recoverOverdueSchedules('EXECUTE')).toBe(1);
+    expect((await repository.getById(id))!.status).toBe(NotificationStatus.PENDING);
+  });
+
+  it('modifies pending schedules atomically and rejects a stale version', async () => {
+    const id = await api.scheduleNotification({
+      payload: schedulerPayload(),
+      notificationType: NotificationType.DISCORD,
+      targetRecipient: NotificationFixtureBuilder.constants.webhookUrl,
+      executeAt: new Date(Date.now() + 60_000),
+    });
+    const current = (await repository.getById(id))!;
+    const updated = await api.modifyNotification(id, current.version ?? 1, {
+      executeAt: new Date(Date.now() + 120_000),
+      priority: 3,
+    });
+    expect(updated!.version).toBe((current.version ?? 1) + 1);
+    await expect(api.modifyNotification(id, current.version ?? 1, { priority: 4 })).rejects.toMatchObject({
+      code: 'SCHEDULE_VERSION_CONFLICT',
+      statusCode: 409,
+    });
+  });
+
+  it('allows only one of two simultaneous updates using the same version', async () => {
+    const id = await api.scheduleNotification({
+      payload: schedulerPayload(),
+      notificationType: NotificationType.DISCORD,
+      targetRecipient: NotificationFixtureBuilder.constants.webhookUrl,
+      executeAt: new Date(Date.now() + 60_000),
+    });
+    const current = (await repository.getById(id))!;
+    const results = await Promise.allSettled([
+      api.modifyNotification(id, current.version ?? 1, { priority: 2 }),
+      api.modifyNotification(id, current.version ?? 1, { priority: 3 }),
+    ]);
+    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+    expect(results.filter((result) => result.status === 'rejected')).toHaveLength(1);
+  });
+
 });

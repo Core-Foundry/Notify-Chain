@@ -10,7 +10,7 @@ import {
   DeadLetterQueueEntry,
   ScheduleRecoveryPolicy,
 } from '../types/scheduled-notification';
-import { assertScheduleTransition, canModifyScheduleStatus } from './schedule-state-machine';
+import { assertScheduleTransition } from './schedule-state-machine';
 import { hashPayload } from '../utils/payload-integrity';
 import {
   NotificationStatsCache,
@@ -760,7 +760,7 @@ export class ScheduledNotificationRepository {
     const sql = `
       UPDATE scheduled_notifications
       SET status = ?, updated_at = ?, error_details = ?
-      WHERE id = ? AND status = ?
+      WHERE id = ? AND status = ? AND recovery_state IS NULL
     `;
 
     const result = await this.db.run(sql, [

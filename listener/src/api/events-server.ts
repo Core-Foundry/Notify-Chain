@@ -1454,7 +1454,8 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
       }
       const id = Number(patchScheduleMatch[1]);
       const versionHeader = req.headers['if-match'] ?? req.headers['x-schedule-version'];
-      const expectedVersion = Number(Array.isArray(versionHeader) ? versionHeader[0] : versionHeader);
+      const rawVersion = Array.isArray(versionHeader) ? versionHeader[0] : versionHeader;
+      const expectedVersion = Number(String(rawVersion ?? '').replace(/^W\/?"?|"$/g, ''));
       if (!Number.isSafeInteger(expectedVersion) || expectedVersion < 1) {
         sendErr(res, 428, 'Provide the current schedule version in If-Match or X-Schedule-Version.', ErrorCode.BAD_REQUEST);
         return;
@@ -1481,12 +1482,16 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
               sendErr(res, 404, 'Notification not found', ErrorCode.NOT_FOUND);
               return;
             }
-            res.setHeader('ETag', String(updated.version ?? expectedVersion + 1));
+            res.setHeader('ETag', `"${updated.version ?? expectedVersion + 1}"`);
             sendOk(res, 200, updated);
           } catch (error) {
             const statusCode = Number((error as any)?.statusCode);
             if (Number.isInteger(statusCode) && statusCode >= 400 && statusCode < 500) {
               sendErr(res, statusCode, (error as Error).message, ErrorCode.BAD_REQUEST);
+              return;
+            }
+            if (error instanceof Error && !/SQLITE_|database|constraint/i.test(error.message)) {
+              sendErr(res, 422, error.message, ErrorCode.BAD_REQUEST);
               return;
             }
             if (error instanceof SyntaxError) {
