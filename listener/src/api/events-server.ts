@@ -7,6 +7,11 @@ import { preferenceStore } from '../store/preference-store';
 import { PreferencesUpdateInput } from '../types/preferences';
 import { NotificationAPI } from '../services/notification-api';
 import { NotificationType } from '../types/scheduled-notification';
+import {
+  formatInTimezone,
+  InvalidTimezoneError,
+  parseExecuteAtWithTimezone,
+} from '../utils/timezone';
 import logger from '../utils/logger';
 import { generateRequestId, resolveCorrelationId } from '../utils/request-id';
 import { TemplateService } from '../services/template-service';
@@ -1186,8 +1191,20 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
             return;
           }
 
-          const executeAt = new Date(data.executeAt);
-          if (isNaN(executeAt.getTime())) {
+          let executeAt: Date;
+          let timezone = 'UTC';
+          try {
+            const parsed = parseExecuteAtWithTimezone(data.executeAt, data.timezone);
+            executeAt = parsed.utcDate;
+            timezone = parsed.timezone;
+          } catch (tzErr) {
+            if (tzErr instanceof InvalidTimezoneError) {
+              res.writeHead(400, { 'Content-Type': 'application/json' });
+              res.end(
+                JSON.stringify({ error: tzErr.message, code: 'INVALID_TIMEZONE' }),
+              );
+              return;
+            }
             res.writeHead(400, { 'Content-Type': 'application/json' });
             res.end(
               JSON.stringify({ error: 'executeAt is not a valid date', code: 'INVALID_DATE' }),
@@ -1195,12 +1212,18 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
             return;
           }
 
-          const schedule = async (): Promise<{ id: number }> => {
+          const schedule = async (): Promise<{
+            id: number;
+            executeAt: string;
+            timezone: string;
+            executeAtLocal: string;
+          }> => {
             const notificationId = await options.notificationAPI!.scheduleNotification({
               payload: data.payload,
               notificationType: data.notificationType || NotificationType.DISCORD,
               targetRecipient: data.targetRecipient,
               executeAt,
+              timezone,
               expiresAt: data.expiresAt,
               maxRetries: data.maxRetries,
               priority: data.priority,
@@ -1212,9 +1235,15 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
               requestId,
               correlationId,
               notificationId,
-              executeAt: data.executeAt,
+              executeAt: executeAt.toISOString(),
+              timezone,
             });
-            return { id: notificationId };
+            return {
+              id: notificationId,
+              executeAt: executeAt.toISOString(),
+              timezone,
+              executeAtLocal: formatInTimezone(executeAt, timezone),
+            };
           };
 
           if (options.idempotencyService && idempotencyKey) {
@@ -1225,23 +1254,37 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
               { requestId, correlationId },
             );
             const statusCode = outcome.isDuplicate ? 200 : 201;
+            const result = outcome.result as {
+              id: number;
+              executeAt: string;
+              timezone: string;
+              executeAtLocal: string;
+            };
             res.writeHead(statusCode, {
               'Content-Type': 'application/json',
               'X-Idempotent-Replay': outcome.isDuplicate ? 'true' : 'false',
             });
             res.end(
               JSON.stringify({
-                id: (outcome.result as { id: number }).id,
+                id: result.id,
+                executeAt: result.executeAt,
+                timezone: result.timezone,
+                executeAtLocal: result.executeAtLocal,
                 replay: outcome.isDuplicate,
               }),
             );
             return;
           }
 
-          const { id } = await schedule();
+          const scheduled = await schedule();
           res.writeHead(201, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ id }));
+          res.end(JSON.stringify(scheduled));
         } catch (error) {
+          if (error instanceof InvalidTimezoneError) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: error.message, code: 'INVALID_TIMEZONE' }));
+            return;
+          }
           if (error instanceof IdempotencyKeyReuseError) {
             logger.warn('Schedule API rejected request: idempotency key body mismatch', {
               requestId,
@@ -1444,6 +1487,43 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
       return;
     }
 
+    // GET /api/schedule/:id/audit — schedule change audit trail (#966)
+    const scheduleAuditMatch = url.pathname.match(/^\/api\/schedule\/(\d+)\/audit$/);
+    if (req.method === 'GET' && scheduleAuditMatch) {
+      if (!options.notificationAPI) {
+        sendErr(res, 503, 'Scheduler not enabled', ErrorCode.SERVICE_UNAVAILABLE);
+        return;
+      }
+
+      const id = parseInt(scheduleAuditMatch[1], 10);
+      options.notificationAPI
+        .getScheduleAuditHistory(id)
+        .then((records) => {
+          sendOk(res, 200, {
+            scheduledNotificationId: id,
+            records: records.map((r) => ({
+              id: r.id,
+              action: r.action,
+              actor: r.actor,
+              timestamp: r.timestamp.toISOString(),
+              fromStatus: r.fromStatus,
+              toStatus: r.toStatus,
+              details: r.details,
+            })),
+          });
+        })
+        .catch((error) => {
+          logger.error('Failed to get schedule audit history', {
+            error,
+            requestId,
+            correlationId,
+            id,
+          });
+          sendErr(res, 500, (error as Error).message, ErrorCode.INTERNAL_ERROR);
+        });
+      return;
+    }
+
     // GET /api/schedule/:id
     if (req.method === 'GET' && url.pathname.startsWith('/api/schedule/')) {
       if (!options.notificationAPI) {
@@ -1473,35 +1553,62 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
       return;
     }
 
-    // POST /api/notifications/:id/cancel
-    const cancelMatch = url.pathname.match(/^\/api\/notifications\/([^/]+)\/cancel$/);
-    if (req.method === 'POST' && cancelMatch) {
+    // POST /api/schedule/:id/cancel — primary schedule cancellation endpoint (#969)
+    // Also supports legacy POST /api/notifications/:id/cancel
+    const scheduleCancelMatch = url.pathname.match(
+      /^\/api\/(?:schedule|notifications)\/(\d+)\/cancel$/,
+    );
+    if (req.method === 'POST' && scheduleCancelMatch) {
       if (!options.notificationAPI) {
         sendErr(res, 503, 'Scheduler not enabled', ErrorCode.SERVICE_UNAVAILABLE);
         return;
       }
 
-      const id = parseInt(cancelMatch[1], 10);
+      const id = parseInt(scheduleCancelMatch[1], 10);
       if (isNaN(id)) {
         sendErr(res, 400, 'Invalid notification ID', ErrorCode.BAD_REQUEST);
         return;
       }
 
       let body = '';
-      req.on('data', (chunk) => { body += chunk; });
+      req.on('data', (chunk) => {
+        body += chunk;
+      });
       req.on('end', () => {
         void (async () => {
           try {
-            const parsed = body ? JSON.parse(body) as { reason?: string } : {};
-            const ok = await options.notificationAPI!.cancelNotification(id, parsed.reason, requestId);
-            
-            if (!ok) {
-              sendErr(res, 400, 'Unable to cancel notification', ErrorCode.BAD_REQUEST);
+            const parsed = body ? (JSON.parse(body) as { reason?: string }) : {};
+            const result = await options.notificationAPI!.cancelSchedule(
+              id,
+              parsed.reason,
+              requestId,
+            );
+
+            if (result.state === 'not_found') {
+              sendErr(res, 404, result.message, ErrorCode.NOT_FOUND);
               return;
             }
-            
-            const notification = await options.notificationAPI!.getNotification(id);
-            sendOk(res, 200, notification);
+
+            if (result.state === 'already_final') {
+              // Completed / failed / processing — do not silently undo.
+              sendJson(res, 409, {
+                cancelled: false,
+                state: result.state,
+                status: result.status,
+                message: result.message,
+                notification: result.notification ?? null,
+              });
+              return;
+            }
+
+            // Fresh cancel and idempotent already_cancelled both return 200.
+            sendOk(res, 200, {
+              cancelled: result.cancelled,
+              state: result.state,
+              status: result.status,
+              message: result.message,
+              notification: result.notification ?? null,
+            });
           } catch (error) {
             if (error instanceof SyntaxError) {
               sendErr(res, 400, 'Invalid JSON', ErrorCode.PARSE_ERROR);
