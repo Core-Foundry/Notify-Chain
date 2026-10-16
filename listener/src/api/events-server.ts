@@ -1491,7 +1491,8 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
               return;
             }
             if (Number.isInteger(statusCode) && statusCode >= 400 && statusCode < 500) {
-              sendErr(res, statusCode, (error as Error).message, ErrorCode.BAD_REQUEST);
+              const errorCode = statusCode === 409 ? ErrorCode.CONFLICT : ErrorCode.BAD_REQUEST;
+              sendErr(res, statusCode, (error as Error).message, errorCode);
               return;
             }
             if (error instanceof Error && !/SQLITE_|database|constraint/i.test(error.message)) {
@@ -1526,7 +1527,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
             }
             const result = await options.notificationAPI!.resolveRecovery(Number(recoveryMatch[1]), data.action);
             if (!result) {
-              sendErr(res, 409, 'Schedule is not awaiting intervention or does not exist', ErrorCode.BAD_REQUEST);
+              sendErr(res, 409, 'Schedule is not awaiting intervention or does not exist', ErrorCode.CONFLICT);
               return;
             }
             sendOk(res, 200, result);
