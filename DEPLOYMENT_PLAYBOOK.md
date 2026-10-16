@@ -81,7 +81,7 @@ These variables are commonly exported during CLI deployment scripting:
 - `DISPUTE_RESOLVER_ADDRESS`: The designated address authorized to resolve disputed tasks in `TaskBounty`.
 
 ### 2.2 Off-Chain Listener Configuration (`listener/.env`)
-Once the contracts are deployed, their IDs must be registered in the listener's environment config [listener/.env.example](file:///workspaces/Notify-Chain/listener/.env.example):
+Once the contracts are deployed, their IDs must be registered in the listener's environment config [listener/.env.example](listener/.env.example):
 - `STELLAR_NETWORK`: Set to `testnet` or `public` (mainnet).
 - `STELLAR_RPC_URL`: The Stellar RPC endpoint URL (e.g., `https://soroban-testnet.stellar.org:443`).
 - `CONTRACT_ADDRESSES`: A JSON array specifying the contract addresses and events to subscribe to.
@@ -93,7 +93,7 @@ Once the contracts are deployed, their IDs must be registered in the listener's 
   ```
 
 ### 2.3 Frontend Dashboard Configuration (`dashboard/.env`)
-Provide the frontend dashboard [dashboard/.env.example](file:///workspaces/Notify-Chain/dashboard/.env.example) with details to query the listener:
+Provide the frontend dashboard [dashboard/.env.example](dashboard/.env.example) with details to query the listener:
 - `VITE_EVENTS_API_URL`: HTTP URL of the listener event feed (e.g., `http://localhost:8787/api/events`).
 - `VITE_STELLAR_NETWORK`: Network context (`TESTNET` or `PUBLIC`).
 
@@ -102,8 +102,8 @@ Provide the frontend dashboard [dashboard/.env.example](file:///workspaces/Notif
 ## 3. Step-by-Step Deployment Examples
 
 NotifyChain contains two primary smart contracts that must be compiled and deployed:
-1. `AutoShare` - Subscription and group management contract located in [contract/contracts/hello-world](file:///workspaces/Notify-Chain/contract/contracts/hello-world).
-2. `TaskBounty` - Decentralized task and reward board contract located in [Documents/Task Bounty](file:///workspaces/Notify-Chain/Documents/Task%20Bounty).
+1. `AutoShare` - Subscription and group management contract located in [contract/contracts/hello-world](contract/contracts/hello-world).
+2. `TaskBounty` - Decentralized task and reward board contract located in [Documents/Task Bounty](Documents/Task%20Bounty).
 
 ---
 
@@ -142,7 +142,7 @@ export AUTOSHARE_CONTRACT_ID=<returned-contract-id>
 ```
 
 #### Step A.4: Initialize the Contract
-The `AutoShare` contract requires initializing the administrator identity before it can accept groups and payments. Call the [initialize_admin](file:///workspaces/Notify-Chain/contract/contracts/hello-world/src/lib.rs#L38) function:
+The `AutoShare` contract requires initializing the administrator identity before it can accept groups and payments. Call the [initialize_admin](contract/contracts/hello-world/src/lib.rs#L38) function:
 ```bash
 stellar contract invoke \
   --id $AUTOSHARE_CONTRACT_ID \
@@ -186,7 +186,7 @@ export TASKBOUNTY_CONTRACT_ID=<returned-contract-id>
 ```
 
 #### Step B.4: Initialize the Contract
-The `TaskBounty` contract requires setting up the admin address and a dispute resolver. Call the [initialize](file:///workspaces/Notify-Chain/Documents/Task%20Bounty/src/lib.rs#L38) function:
+The `TaskBounty` contract requires setting up the admin address and a dispute resolver. Call the [initialize](Documents/Task%20Bounty/src/lib.rs#L38) function:
 ```bash
 stellar contract invoke \
   --id $TASKBOUNTY_CONTRACT_ID \
@@ -266,3 +266,113 @@ stellar contract event \
   --start-ledger <ledger-number-of-deployment>
 ```
 Verify that the output contains the correct event topics (e.g. `AutoshareCreated`) and matching data values.
+
+---
+
+## 5. Deployment Manifest (Auto-Generated)
+
+Every deployment run via `make deploy`, `make deploy-testnet`, or `make deploy-mainnet` automatically writes a small JSON manifest file to `contract/contracts/hello-world/deployment-manifest.json` (override path with `MANIFEST_FILE=...`).
+
+This manifest contains only **non-secret** metadata and is safe to commit to version control, share with team members, or attach to release notes. It is consumed by the listener, dashboard, and CI pipelines to resolve the active contract address and network without manual copy-paste.
+
+### 5.1 Security — What Is Explicitly Excluded
+
+The manifest generation code in the `deploy` Makefile target **nevers records** any of the following:
+
+- `DEPLOYER_SECRET_KEY` or any private / secret key
+- Any seed phrase, mnemonic, or signing material
+- Any environment variable whose name contains `SECRET`, `KEY`, `TOKEN`, or `PASS`
+- The CLI `--source` account identity or its derived values
+
+If your workflow adds new secret variables, they must not be printed, echoed, or interpolated into the manifest output. The `_securityNote` field inside each manifest serves as an in-band reminder.
+
+### 5.2 Manifest Schema (v1)
+
+```typescript
+interface DeploymentManifest {
+  manifestVersion: 1;                   // Schema version, bumped on format changes
+  contract: {
+    id: string;                         // Contract address (C + 55 base32 chars)
+    name: 'AutoShare' | 'TaskBounty';   // Human-readable contract name
+    wasmPath: string;                   // Relative path to the deployed .wasm binary
+    wasmSha256?: string;                // SHA-256 of the deployed WASM (optional, platform support dependent)
+  };
+  network: {
+    name: 'testnet' | 'mainnet' | string;   // NETWORK_NAME passed to make deploy
+    rpcUrl: string;                       // RPC_URL used for the deployment
+    passphrase: string;                   // NETWORK_PASSPHRASE for the ledger
+  };
+  deployedAt: string;                    // ISO-8601 UTC timestamp of the deploy
+  deployedBy: string;                    // Toolchain identifier ("stellar-cli")
+  _securityNote: string;                 // In-band security reminder (safe to ignore programmatically)
+}
+```
+
+### 5.3 Sample Output
+
+```json
+{
+  "_securityNote": "This manifest intentionally excludes all private keys, seed phrases, and secret environment variables. Never commit DEPLOYER_SECRET_KEY or any signing material.",
+  "contract": {
+    "id": "CAS3...56CHAR...",
+    "name": "AutoShare",
+    "wasmPath": "target/wasm32v1-none/release/hello_world.wasm",
+    "wasmSha256": "a1b2c3d4..."
+  },
+  "deployedAt": "2025-07-01T12:34:56Z",
+  "deployedBy": "stellar-cli",
+  "manifestVersion": 1,
+  "network": {
+    "name": "testnet",
+    "passphrase": "Test SDF Network ; September 2015",
+    "rpcUrl": "https://soroban-testnet.stellar.org"
+  }
+}
+```
+
+### 5.4 Consuming the Manifest
+
+From shell (for CI scripts or quick lookups):
+
+```bash
+cd contract/contracts/hello-world
+jq -r '.contract.id' deployment-manifest.json
+jq -r '.network.name'   deployment-manifest.json
+jq -r '.deployedAt'     deployment-manifest.json
+```
+
+From Node.js / TypeScript listener or dashboard config:
+
+```typescript
+import manifest from './contract/contracts/hello-world/deployment-manifest.json';
+
+if (manifest.manifestVersion !== 1) {
+  throw new Error(`Unsupported manifest version: ${manifest.manifestVersion}`);
+}
+
+const contractId = manifest.contract.id;
+const network = manifest.network.name;
+```
+
+### 5.5 TaskBounty Contract (Manual Step)
+
+The TaskBounty makefile does not yet auto-generate a manifest. After deploying TaskBounty, copy the sample template below and save it next to the TaskBounty `Cargo.toml` (path: `Documents/Task Bounty/deployment-manifest.json`), filling in the values from the deployment output:
+
+```json
+{
+  "manifestVersion": 1,
+  "contract": {
+    "id": "<TASKBOUNTY_CONTRACT_ID>",
+    "name": "TaskBounty",
+    "wasmPath": "target/wasm32-unknown-unknown/release/task_bounty.wasm"
+  },
+  "network": {
+    "name": "testnet",
+    "rpcUrl": "https://soroban-testnet.stellar.org",
+    "passphrase": "Test SDF Network ; September 2015"
+  },
+  "deployedAt": "2025-07-01T00:00:00Z",
+  "deployedBy": "stellar-cli-manual",
+  "_securityNote": "Do not commit DEPLOYER_SECRET_KEY, seed phrases, or other signing material."
+}
+```

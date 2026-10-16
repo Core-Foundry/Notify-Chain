@@ -1,4 +1,4 @@
-/// Storage Optimization Tests — Issue #171
+/// Storage Optimization Tests — Issue #371
 ///
 /// # Optimization Summary
 ///
@@ -23,18 +23,40 @@
 /// The old code additionally wrote an identical copy under `DataKey::GroupMembers(id)`.
 /// Every `update_members` call wrote 2 persistent entries; now it writes 1.
 ///
+/// ### 3. Removed dead DataKey variants
+///
+/// - `DataKey::IsPaused`  — pause flag is now exclusively in instance storage;
+///   the persistent variant was never read and wasted enum space.
+/// - `DataKey::GroupMembers` — member list is embedded in `AutoShareDetails`;
+///   the separate key was written but never read independently.
+///
+/// ### 4. Optimized XDR field ordering in storage structs
+///
+/// Soroban serialises structs field-by-field in declaration order.  Grouping
+/// fixed-width scalars together and ordering them narrow → wide reduces padding
+/// in the XDR stream and makes the on-chain layout easier to audit.
+///
+/// | Struct                  | Change                                                  |
+/// |-------------------------|---------------------------------------------------------|
+/// | `AutoShareDetails`      | `is_active: bool` moved before `name`/`members` (Vec)   |
+/// | `ScheduledNotification` | `revoked_at: Option<u64>` placed before `revoked_by`    |
+/// | `PaymentHistory`        | `timestamp: u64` placed before `amount_paid: i128`      |
+///
 /// ## Gas Benchmark (Soroban resource cost model, estimated)
 ///
-/// Operation          | Before (ops) | After (ops) | Saving
-/// -------------------|--------------|-------------|--------
-/// create_autoshare   | 5 writes     | 4 writes    | ~20 %
-/// update_members     | 2 writes     | 1 write     | ~50 %
-/// is_group_member    | 2 reads      | 1 read      | ~50 %
-/// pause/unpause      | 2 reads      | 1 read (instance) | ~40 %
-/// create + topup (fee check) | 2×persistent reads | 1×instance read | ~40 %
+/// Operation                    | Before                     | After                     | Saving
+/// -----------------------------|----------------------------|---------------------------|--------
+/// `create_autoshare`           | 5 persistent writes        | 4 persistent writes       | ~20 %
+/// `update_members`             | 2 persistent writes        | 1 persistent write        | ~50 %
+/// `is_group_member`            | 2 persistent reads         | 1 persistent read         | ~50 %
+/// `pause` / `unpause`          | 2 persistent reads + write | 1 instance read + write   | ~40 %
+/// `create` / `topup` (fee)     | 2 persistent reads         | 1 instance read           | ~40 %
+/// `require_admin` (every call) | 1 persistent read          | 1 instance read (cheaper) | ~15 %
+/// `get_supported_tokens`       | 1 persistent read          | 1 instance read (cheaper) | ~15 %
 ///
 /// Instance storage reads are cheaper because the instance ledger entry is
-/// already loaded into the VM's working set for the life of the transaction.
+/// already loaded into the VM's working set for the life of the transaction,
+/// so subsequent reads within the same invocation are effectively free.
 #[cfg(test)]
 mod storage_optimization_tests {
     use crate::base::types::GroupMember;

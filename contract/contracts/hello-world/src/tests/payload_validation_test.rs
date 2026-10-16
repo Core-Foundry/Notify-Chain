@@ -173,7 +173,7 @@ fn test_schedule_rejects_zero_ttl() {
     let creator = test_env.users.get(0).unwrap().clone();
     let id = make_id(&test_env.env, 10);
 
-    let result = client.try_schedule_notification(&id, &creator, &0u64, &make_title(&test_env.env));
+    let result = client.try_schedule_notification(&id, &creator, &0u64, &make_title(&test_env.env), &NotificationPriority::Medium);
     assert!(result.is_err(), "zero TTL must be rejected");
 }
 
@@ -184,9 +184,9 @@ fn test_schedule_rejects_duplicate_id() {
     let creator = test_env.users.get(0).unwrap().clone();
     let id = make_id(&test_env.env, 11);
 
-    client.schedule_notification(&id, &creator, &3_600u64, &make_title(&test_env.env));
+    client.schedule_notification(&id, &creator, &3_600u64, &make_title(&test_env.env), &NotificationPriority::Medium);
     let result =
-        client.try_schedule_notification(&id, &creator, &3_600u64, &make_title(&test_env.env));
+        client.try_schedule_notification(&id, &creator, &3_600u64, &make_title(&test_env.env), &NotificationPriority::Medium);
     assert!(
         result.is_err(),
         "duplicate notification id must be rejected"
@@ -205,7 +205,7 @@ fn test_schedule_rejects_overflow_ttl() {
     test_env.env.ledger().set_timestamp(1_000);
 
     let result =
-        client.try_schedule_notification(&id, &creator, &u64::MAX, &make_title(&test_env.env));
+        client.try_schedule_notification(&id, &creator, &u64::MAX, &make_title(&test_env.env), &NotificationPriority::Medium);
     assert!(result.is_err(), "overflow TTL must be rejected");
 }
 
@@ -379,7 +379,7 @@ fn test_ttl_of_one_second_is_valid() {
     let id = make_id(&test_env.env, 20);
 
     // TTL = 1 second is the minimum valid value.
-    client.schedule_notification(&id, &creator, &1u64, &make_title(&test_env.env));
+    client.schedule_notification(&id, &creator, &1u64, &make_title(&test_env.env), &NotificationPriority::Medium);
     let stored = client.get_notification(&id);
     assert_eq!(stored.expires_at, stored.created_at + 1);
 }
@@ -419,7 +419,7 @@ fn test_every_event_carries_category_and_priority() {
 
     // --- notification_scheduled ---
     let id = make_id(&test_env.env, 30);
-    client.schedule_notification(&id, &creator, &3_600u64, &make_title(&test_env.env));
+    client.schedule_notification(&id, &creator, &3_600u64, &make_title(&test_env.env), &NotificationPriority::Medium);
     assert!(
         category_of(&test_env.env, "notification_scheduled").is_some(),
         "notification_scheduled must carry a NotificationCategory topic"
@@ -526,7 +526,7 @@ fn test_notification_events_have_notification_category() {
     let creator = test_env.users.get(0).unwrap().clone();
 
     let id = make_id(&test_env.env, 40);
-    client.schedule_notification(&id, &creator, &3_600u64, &make_title(&test_env.env));
+    client.schedule_notification(&id, &creator, &3_600u64, &make_title(&test_env.env), &NotificationPriority::Medium);
 
     assert_eq!(
         category_of(&test_env.env, "notification_scheduled"),
@@ -638,7 +638,7 @@ fn test_consumer_can_filter_by_category() {
 
     // Notification events (schedule emits audit_record_appended + notification_scheduled).
     let id = make_id(&test_env.env, 50);
-    client.schedule_notification(&id, &creator, &3_600u64, &make_title(&test_env.env));
+    client.schedule_notification(&id, &creator, &3_600u64, &make_title(&test_env.env), &NotificationPriority::Medium);
     tally(&test_env.env); // last event emitted = notification_scheduled (Notification)
 
     // Financial event.

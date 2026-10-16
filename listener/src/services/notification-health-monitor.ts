@@ -2,6 +2,9 @@ import logger from '../utils/logger';
 import { EventProcessingQueue } from './event-processing-queue';
 import { WorkerManager } from './worker-manager';
 import { eventRegistry } from '../store/event-registry';
+import { ScheduledNotificationRepository } from './scheduled-notification-repository';
+import { pollingMetrics } from './polling-metrics';
+import { QueueOperationalMetrics } from './notification-stats-cache';
 
 export type ComponentStatus = 'healthy' | 'degraded' | 'unhealthy';
 
@@ -9,6 +12,8 @@ export interface QueueHealth {
   status: ComponentStatus;
   pendingJobs: number;
   stalledSince: number | null;
+  deadLetterQueueDepth: number;
+  operationalMetrics?: QueueOperationalMetrics;
 }
 
 export interface WorkerHealth {
@@ -24,12 +29,35 @@ export interface RegistryHealth {
   processingDelayMs: number | null;
 }
 
+export interface PollingHealth {
+  /** ISO timestamp of the most recent successful poll, or null if none yet. */
+  lastSuccessAt: string | null;
+  /** ISO timestamp of the most recent failed poll, or null if none yet. */
+  lastFailureAt: string | null;
+  /** ISO timestamp of the most recent poll cycle (successful or not). */
+  lastPollAt: string | null;
+  /** Duration of the most recent poll cycle in milliseconds. */
+  lastPollDurationMs: number | null;
+  /** Whether the most recent poll cycle completed without error. */
+  lastPollSucceeded: boolean | null;
+  /** Total number of recorded poll cycles. */
+  totalPolls: number;
+  /** Number of successful poll cycles. */
+  successfulPolls: number;
+  /** Number of failed poll cycles. */
+  failedPolls: number;
+}
+
 export interface HealthReport {
   status: ComponentStatus;
   timestamp: string;
   queue: QueueHealth;
   workers: WorkerHealth;
   registry: RegistryHealth;
+  lastSuccessfulPollAt: string | null;
+  /** Process uptime in milliseconds since startup. */
+  uptimeMs: number;
+  polling: PollingHealth;
 }
 
 export interface NotificationHealthMonitorOptions {
@@ -41,6 +69,11 @@ export interface NotificationHealthMonitorOptions {
   maxProcessingDelayMs?: number;
   /** Injected clock for tests. */
   now?: () => number;
+  /** Optional repository used to surface DLQ depth in the health report. */
+  repository?: ScheduledNotificationRepository | null;
+  getLastSuccessfulPoll?: () => number | null;
+  /** Function to calculate uptime in milliseconds. */
+  getUptimeMs?: () => number;
 }
 
 /**
@@ -55,9 +88,12 @@ export class NotificationHealthMonitor {
   private readonly stallThresholdCycles: number;
   private readonly maxProcessingDelayMs: number;
   private readonly now: () => number;
+  private readonly getLastSuccessfulPoll: () => number | null;
+  private readonly getUptimeMs: () => number;
 
   private queue: EventProcessingQueue | null;
   private workerManager: WorkerManager | null;
+  private repository: ScheduledNotificationRepository | null;
 
   private timer: ReturnType<typeof setInterval> | null = null;
   private lastReport: HealthReport | null = null;
@@ -74,15 +110,24 @@ export class NotificationHealthMonitor {
   ) {
     this.queue = queue;
     this.workerManager = workerManager;
+    this.repository = options.repository ?? null;
     this.intervalMs = options.intervalMs ?? 30_000;
     this.stallThresholdCycles = options.stallThresholdCycles ?? 3;
     this.maxProcessingDelayMs = options.maxProcessingDelayMs ?? 60_000;
     this.now = options.now ?? Date.now;
+    this.getLastSuccessfulPoll = options.getLastSuccessfulPoll ?? (() => null);
+    this.getUptimeMs = options.getUptimeMs ?? (() => 0);
   }
 
   start(): void {
     if (this.timer !== null) return;
+    if (this.repository && !this.repository.getStatsCached?.()) {
+      void this.repository.getStats().catch(() => {});
+    }
     this.timer = setInterval(() => {
+      if (this.repository) {
+        void this.repository.getStats().catch(() => {});
+      }
       this.runCheck();
     }, this.intervalMs);
     // Run immediately so first report is available without waiting one interval.
@@ -110,6 +155,7 @@ export class NotificationHealthMonitor {
     const queueHealth = this.checkQueue();
     const workerHealth = this.checkWorkers();
     const registryHealth = this.checkRegistry();
+    const pollingHealth = this.checkPolling();
 
     const overallStatus = this.deriveOverallStatus(
       queueHealth.status,
@@ -117,12 +163,19 @@ export class NotificationHealthMonitor {
       registryHealth.status,
     );
 
+    const lastSuccessfulPollMs = this.getLastSuccessfulPoll();
+    const lastSuccessfulPollAt =
+      lastSuccessfulPollMs !== null ? new Date(lastSuccessfulPollMs).toISOString() : null;
+
     const report: HealthReport = {
       status: overallStatus,
       timestamp: new Date(this.now()).toISOString(),
       queue: queueHealth,
       workers: workerHealth,
       registry: registryHealth,
+      lastSuccessfulPollAt,
+      uptimeMs: this.getUptimeMs(),
+      polling: pollingHealth,
     };
 
     this.lastReport = report;
@@ -138,15 +191,29 @@ export class NotificationHealthMonitor {
   }
 
   private checkQueue(): QueueHealth {
+    const deadLetterQueueDepth = this.getDeadLetterQueueDepth();
+    const operationalMetrics = this.getOperationalMetrics();
+
     if (!this.queue) {
-      return { status: 'healthy', pendingJobs: 0, stalledSince: null };
+      const pendingJobs = operationalMetrics?.pendingNotifications ?? 0;
+      return {
+        status: 'healthy',
+        pendingJobs,
+        stalledSince: null,
+        deadLetterQueueDepth,
+        operationalMetrics,
+      };
     }
 
     const pending = this.queue.pendingCount();
 
     if (pending > 0 && pending === this.lastQueueDepth) {
       this.stalledCycles++;
-      if (this.stalledCycles >= this.stallThresholdCycles && this.stalledSince === null) {
+      if (
+        this.stallThresholdCycles > 0 &&
+        this.stalledCycles >= this.stallThresholdCycles &&
+        this.stalledSince === null
+      ) {
         this.stalledSince = this.now();
         logger.warn('Event processing queue appears stalled', {
           pendingJobs: pending,
@@ -167,7 +234,64 @@ export class NotificationHealthMonitor {
       status = 'degraded';
     }
 
-    return { status, pendingJobs: pending, stalledSince: this.stalledSince };
+    return {
+      status,
+      pendingJobs: pending,
+      stalledSince: this.stalledSince,
+      deadLetterQueueDepth,
+      operationalMetrics,
+    };
+  }
+
+  private getOperationalMetrics(): QueueOperationalMetrics | undefined {
+    if (this.repository) {
+      try {
+        const stats =
+          this.repository.getStatsCached?.() ?? (this.repository as any).statsCache?.get();
+        if (stats) {
+          return {
+            pendingNotifications: stats.pendingNotifications ?? stats.pending ?? 0,
+            processingNotifications: stats.processingNotifications ?? stats.processing ?? 0,
+            successfulDeliveries: stats.successfulDeliveries ?? stats.completed ?? 0,
+            failedDeliveries: stats.failedDeliveries ?? stats.failed ?? 0,
+            retryAttempts: stats.retryAttempts ?? 0,
+          };
+        }
+      } catch (error) {
+        logger.warn('Unable to determine operational metrics', { error });
+      }
+    }
+
+    if (this.queue) {
+      const qm = this.queue.getMetrics();
+      return {
+        pendingNotifications: qm.queueSize,
+        processingNotifications: qm.activeCount,
+        successfulDeliveries: qm.totalSucceeded,
+        failedDeliveries: qm.totalFailed,
+        retryAttempts: 0,
+      };
+    }
+
+    return undefined;
+  }
+
+  private getDeadLetterQueueDepth(): number {
+    if (!this.repository) {
+      return 0;
+    }
+
+    try {
+      const stats =
+        this.repository.getStatsCached?.() ?? (this.repository as any).statsCache?.get();
+      if (stats && typeof stats.deadLetterQueue === 'number') {
+        return stats.deadLetterQueue;
+      }
+      return 0;
+    } catch (error) {
+      logger.warn('Unable to determine dead letter queue depth', { error });
+      return 0;
+    }
   }
 
   private checkWorkers(): WorkerHealth {
@@ -187,8 +311,7 @@ export class NotificationHealthMonitor {
     const eventCount = eventRegistry.count();
     const { lastIngestedAt: lastIngestedMs } = eventRegistry.getIngestionSnapshot();
     const lastIngestedAt = lastIngestedMs !== null ? new Date(lastIngestedMs).toISOString() : null;
-    const processingDelayMs =
-      lastIngestedMs !== null ? this.now() - lastIngestedMs : null;
+    const processingDelayMs = lastIngestedMs !== null ? this.now() - lastIngestedMs : null;
 
     let status: ComponentStatus = 'healthy';
     if (processingDelayMs !== null && processingDelayMs > this.maxProcessingDelayMs) {
@@ -196,6 +319,21 @@ export class NotificationHealthMonitor {
     }
 
     return { status, eventCount, lastIngestedAt, processingDelayMs };
+  }
+
+  private checkPolling(): PollingHealth {
+    const snapshot = pollingMetrics.snapshot();
+
+    return {
+      lastSuccessAt: snapshot.lastSuccessAt,
+      lastFailureAt: snapshot.lastFailureAt,
+      lastPollAt: snapshot.lastPollAt,
+      lastPollDurationMs: snapshot.lastPollDurationMs,
+      lastPollSucceeded: snapshot.lastPollSucceeded,
+      totalPolls: snapshot.totalPolls,
+      successfulPolls: snapshot.successfulPolls,
+      failedPolls: snapshot.failedPolls,
+    };
   }
 
   private deriveOverallStatus(...statuses: ComponentStatus[]): ComponentStatus {

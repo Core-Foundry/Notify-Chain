@@ -12,6 +12,7 @@ Each entry contains these standard fields:
 | `level`      | string  | Severity: `error`, `warn`, `info`, `debug`                     |
 | `message`    | string  | Human-readable description of the event                        |
 | `requestId`  | string  | Short UUID prefix scoped to a single poll cycle or API request |
+| `correlationId` | string | UUID used to trace a single request across services (see below) |
 | `durationMs` | number  | Elapsed milliseconds for timed operations                      |
 
 Additional context fields (e.g. `contractAddress`, `eventId`) are appended as needed.
@@ -19,6 +20,25 @@ Additional context fields (e.g. `contractAddress`, `eventId`) are appended as ne
 ## Request IDs
 
 A `requestId` is generated at the start of every poll cycle and every HTTP request. It is threaded through all log calls within that unit of work so you can trace a single notification from receipt to delivery.
+
+## Correlation-ID middleware
+
+Every HTTP request handled by the events API server (`listener/src/api/events-server.ts`) is passed through `applyRequestContext()` (`listener/src/utils/request-id.ts`) before any routing happens. It:
+
+1. Mints a fresh `requestId` for the request (this is never reused across requests, unlike a correlation ID, which callers may deliberately pass through several hops).
+2. Resolves a `correlationId` — reusing the caller's `X-Correlation-Id` request header when present, otherwise generating a new UUID. This lets a request be traced across services when the caller (a gateway, another internal service, or a retried client call) forwards its own correlation ID.
+3. Echoes both back as `X-Request-Id` and `X-Correlation-Id` response headers.
+
+```typescript
+import { applyRequestContext } from '../utils/request-id';
+
+const server = http.createServer(async (req, res) => {
+  const { requestId, correlationId } = applyRequestContext(req, res);
+  // ...pass requestId/correlationId into every logger call for this request
+});
+```
+
+Every log call made while handling a request should include both `requestId` and `correlationId`.
 
 ```
 2026-06-17T12:00:00.000Z info: Poll cycle complete {"requestId":"a1b2c3d4","durationMs":42}
@@ -51,6 +71,19 @@ The following messages mark each stage of the notification pipeline:
 | Scheduler batch done   | `info`  | `Scheduler batch complete`                            |
 | Scheduled notification | `info`  | `Processing scheduled notification`                   |
 | Registry at capacity   | `warn`  | `Event registry at capacity, evicting oldest events`  |
+
+## Event registry retention
+
+The in-memory event registry is a bounded display cache, not the source of
+record for processed events. It retains at most `maxEvents` entries (10,000 by
+default) and removes entries older than its TTL (24 hours by default) when the
+cleanup interval runs. Insertion order determines eviction when the capacity
+is reached.
+
+An event is keyed by contract address and event ID. Re-adding an event already
+in the retention window returns the existing entry without increasing memory
+usage. Events evicted by capacity or TTL are still protected from replay by
+the persistent `processed_events` deduplication table used by the subscriber.
 
 ## Error Formatting
 

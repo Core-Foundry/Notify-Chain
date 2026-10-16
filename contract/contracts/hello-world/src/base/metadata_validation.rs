@@ -172,4 +172,92 @@ mod tests {
         };
         assert!(validate_metadata(&metadata).is_err());
     }
+
+    #[test]
+    fn test_long_description_invalid() {
+        let env = soroban_sdk::Env::default();
+        let long_desc =
+            String::from_slice(&env, &"d".repeat(MAX_METADATA_STRING_LENGTH as usize + 1));
+        let metadata = NotificationMetadata {
+            title: String::from_slice(&env, "ok"),
+            description: Some(long_desc),
+            data_uri: None,
+            custom_fields: None,
+        };
+        assert!(validate_metadata(&metadata).is_err());
+    }
+
+    #[test]
+    fn test_long_data_uri_invalid() {
+        let env = soroban_sdk::Env::default();
+        let long_uri =
+            String::from_slice(&env, &"u".repeat(MAX_METADATA_STRING_LENGTH as usize + 1));
+        let metadata = NotificationMetadata {
+            title: String::from_slice(&env, "ok"),
+            description: None,
+            data_uri: Some(long_uri),
+            custom_fields: None,
+        };
+        assert!(validate_metadata(&metadata).is_err());
+    }
+
+    #[test]
+    fn test_too_many_custom_fields_invalid() {
+        let env = soroban_sdk::Env::default();
+        let mut fields = Map::new(&env);
+        let mut i = 0u32;
+        while i < MAX_METADATA_FIELDS + 1 {
+            let key_bytes = [b'k', b'0' + ((i / 10) as u8), b'0' + ((i % 10) as u8)];
+            let key = String::from_slice(&env, core::str::from_utf8(&key_bytes).unwrap());
+            let val = String::from_slice(&env, "v");
+            fields.set(key, val);
+            i += 1;
+        }
+        let metadata = NotificationMetadata {
+            title: String::from_slice(&env, "ok"),
+            description: None,
+            data_uri: None,
+            custom_fields: Some(fields),
+        };
+        assert!(validate_metadata(&metadata).is_err());
+    }
+
+    #[test]
+    fn test_valid_custom_fields() {
+        let env = soroban_sdk::Env::default();
+        let mut fields = Map::new(&env);
+        fields.set(
+            String::from_slice(&env, "priority"),
+            String::from_slice(&env, "high"),
+        );
+        let metadata = NotificationMetadata {
+            title: String::from_slice(&env, "Alert"),
+            description: Some(String::from_slice(&env, "Body")),
+            data_uri: Some(String::from_slice(&env, "ipfs://abc")),
+            custom_fields: Some(fields),
+        };
+        assert!(validate_metadata(&metadata).is_ok());
+        assert!(validate_metadata_size(&metadata).is_ok());
+    }
+
+    #[test]
+    fn test_oversized_metadata_rejected() {
+        let env = soroban_sdk::Env::default();
+        let mut fields = Map::new(&env);
+        let mut i = 0u32;
+        while i < MAX_METADATA_FIELDS {
+            let key_bytes = [b'k', b'0' + ((i / 10) as u8), b'0' + ((i % 10) as u8)];
+            let key = String::from_slice(&env, core::str::from_utf8(&key_bytes).unwrap());
+            let val = String::from_slice(&env, &"x".repeat(256));
+            fields.set(key, val);
+            i += 1;
+        }
+        let metadata = NotificationMetadata {
+            title: String::from_slice(&env, &"t".repeat(256)),
+            description: Some(String::from_slice(&env, &"d".repeat(256))),
+            data_uri: Some(String::from_slice(&env, &"u".repeat(256))),
+            custom_fields: Some(fields),
+        };
+        assert!(validate_metadata_size(&metadata).is_err());
+    }
 }

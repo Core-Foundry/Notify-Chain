@@ -16,9 +16,11 @@ export function useFilteredEvents() {
         filters.eventType,
         filters.status,
         filters.dateFrom,
-        filters.dateTo
+        filters.dateTo,
+        filters.txHash,
+        filters.sortBy ?? 'newest',
       ),
-    [events, filters]
+    [events, filters],
   );
 }
 
@@ -34,15 +36,11 @@ export function useFilterOptions() {
   const events = useEventStore((state) => state.events);
 
   return useMemo(() => {
-    const contractOptions = Array.from(
-      new Set(events.map((event) => event.contractAddress))
-    );
+    const contractOptions = Array.from(new Set(events.map((event) => event.contractAddress)));
     const eventTypeOptions = Array.from(
       new Set(
-        events
-          .map((event) => event.eventName)
-          .filter((name): name is string => Boolean(name))
-      )
+        events.map((event) => event.eventName).filter((name): name is string => Boolean(name)),
+      ),
     );
 
     return { contractOptions, eventTypeOptions };
@@ -54,6 +52,6 @@ export function useEventLoadingState() {
     useShallow((state) => ({
       isLoading: state.isLoading,
       error: state.error,
-    }))
+    })),
   );
 }

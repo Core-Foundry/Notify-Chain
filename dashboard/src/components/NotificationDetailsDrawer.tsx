@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { BlockchainEvent } from '../types/event';
 import { formatTimestamp } from '../utils/formatTime';
 import { copyTextToClipboard } from '../utils/clipboard';
+import { getEventTypePresentation } from '../utils/eventTypeMapping';
+import { formatRawPayload, copyPayloadToClipboard } from '../utils/payloadViewer';
 
 type FetchState<T> =
   | { status: 'idle' }
@@ -61,6 +63,42 @@ export interface NotificationDetailsDrawerProps {
   fetchMetadata?: (event: BlockchainEvent) => Promise<NotificationDetailsMetadata>;
 }
 
+function PayloadNode({ label, value, depth = 0 }: { label: string; value: unknown; depth?: number }) {
+  const [visibleCount, setVisibleCount] = useState(100);
+  const isArray = Array.isArray(value);
+  const isObject = value !== null && typeof value === 'object' && !isArray;
+
+  if (isArray || isObject) {
+    const entries = isArray
+      ? value.map((item, index) => [String(index), item] as const)
+      : Object.entries(value as Record<string, unknown>);
+    const kind = isArray ? 'Array' : 'Object';
+
+    return (
+      <details className="drawer__payload-node" open={depth === 0}>
+        <summary>{label}: {kind} ({entries.length})</summary>
+        <div className="drawer__payload-children">
+          {entries.slice(0, visibleCount).map(([key, child]) => (
+            <PayloadNode key={key} label={key} value={child} depth={depth + 1} />
+          ))}
+          {visibleCount < entries.length && (
+            <button
+              type="button"
+              className="drawer__action"
+              onClick={() => setVisibleCount((count) => count + 100)}
+            >
+              Show {Math.min(100, entries.length - visibleCount)} more
+            </button>
+          )}
+        </div>
+      </details>
+    );
+  }
+
+  const displayValue = typeof value === 'string' ? JSON.stringify(value) : String(value);
+  return <div className="drawer__payload-leaf">{label}: {displayValue}</div>;
+}
+
 export function NotificationDetailsDrawer({
   isOpen,
   notification,
@@ -71,20 +109,20 @@ export function NotificationDetailsDrawer({
     status: 'idle',
   });
   const [copyMessage, setCopyMessage] = useState<string | null>(null);
+  const [isRawView, setIsRawView] = useState<boolean>(false);
 
   const resolvedFetcher = useMemo(
     () => fetchMetadata ?? (async (e: BlockchainEvent) => defaultMetadata(e)),
-    [fetchMetadata]
+    [fetchMetadata],
   );
 
   useEffect(() => {
     if (!isOpen || !notification) {
       setFetchState({ status: 'idle' });
+      setIsRawView(false);
       return;
     }
 
-    // Fast path: no async metadata provider, keep the drawer snappy and avoid
-    // unnecessary loading states.
     if (!fetchMetadata) {
       setFetchState({ status: 'success', data: defaultMetadata(notification) });
       return;
@@ -121,7 +159,7 @@ export function NotificationDetailsDrawer({
 
   useEffect(() => {
     if (!copyMessage) return;
-    const id = window.setTimeout(() => setCopyMessage(null), 1500);
+    const id = window.setTimeout(() => setCopyMessage(null), 1800);
     return () => window.clearTimeout(id);
   }, [copyMessage]);
 
@@ -130,8 +168,29 @@ export function NotificationDetailsDrawer({
     setCopyMessage(ok ? `${label} copied` : `Copy failed`);
   }, []);
 
+  const handleCopyPayload = useCallback(async () => {
+    if (!notification) return;
+    const res = await copyPayloadToClipboard(notification.value);
+    if (res.success) {
+      setCopyMessage(res.isJson ? 'Payload copied as valid JSON' : 'Payload copied');
+    } else {
+      setCopyMessage('Copy failed');
+    }
+  }, [notification]);
+
   if (!isOpen || !notification) {
     return null;
+  }
+
+  const presentation = getEventTypePresentation(notification.eventName ?? notification.type);
+  const formattedPayload = formatRawPayload(notification.value);
+  let parsedPayload: unknown;
+  if (formattedPayload.isValidJson) {
+    try {
+      parsedPayload = JSON.parse(formattedPayload.formatted);
+    } catch {
+      parsedPayload = undefined;
+    }
   }
 
   const sender =
@@ -139,10 +198,7 @@ export function NotificationDetailsDrawer({
       ? fetchState.data.sender
       : { address: notification.contractAddress, metadata: undefined };
 
-  const statusHistory =
-    fetchState.status === 'success'
-      ? fetchState.data.statusHistory
-      : [];
+  const statusHistory = fetchState.status === 'success' ? fetchState.data.statusHistory : [];
 
   const title = notification.eventName ?? notification.type;
 
@@ -153,10 +209,18 @@ export function NotificationDetailsDrawer({
       <aside className="drawer__panel">
         <header className="drawer__header">
           <div>
-            <p className="drawer__eyebrow">Notification</p>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+              <span className={`event-card__badge ${presentation.badgeClass}`}>{presentation.label}</span>
+              <span className="drawer__eyebrow" style={{ margin: 0 }}>Category: {presentation.category}</span>
+            </div>
             <h2 className="drawer__title">{title}</h2>
           </div>
-          <button type="button" className="drawer__close" onClick={onClose} aria-label="Close drawer">
+          <button
+            type="button"
+            className="drawer__close"
+            onClick={onClose}
+            aria-label="Close drawer"
+          >
             ×
           </button>
         </header>
@@ -171,11 +235,14 @@ export function NotificationDetailsDrawer({
           <h3 className="drawer__section-title">Sender Details</h3>
           <div className="drawer__row">
             <span className="drawer__label">Address</span>
-            <span className="drawer__value" title={sender.address}>{shorten(sender.address)}</span>
+            <span className="drawer__value" title={sender.address}>
+              {shorten(sender.address)}
+            </span>
             <button
               type="button"
               className="drawer__action"
               onClick={() => void tryCopy('Address', sender.address)}
+              aria-label="Copy sender address"
             >
               Copy
             </button>
@@ -194,17 +261,36 @@ export function NotificationDetailsDrawer({
 
         <section className="drawer__section">
           <h3 className="drawer__section-title">Blockchain Context</h3>
+          {notification.relatedNotificationId && (
+            <div className="drawer__row">
+              <span className="drawer__label">Notification ID</span>
+              <span className="drawer__value" title={notification.relatedNotificationId}>
+                {shorten(notification.relatedNotificationId, 10, 6)}
+              </span>
+              <button
+                type="button"
+                className="drawer__action"
+                onClick={() => void tryCopy('Notification ID', notification.relatedNotificationId!)}
+                aria-label="Copy notification ID"
+              >
+                Copy
+              </button>
+            </div>
+          )}
           <div className="drawer__row">
             <span className="drawer__label">Ledger</span>
             <span className="drawer__value">{notification.ledger.toLocaleString()}</span>
           </div>
           <div className="drawer__row">
             <span className="drawer__label">Event ID</span>
-            <span className="drawer__value" title={notification.eventId}>{shorten(notification.eventId, 10, 6)}</span>
+            <span className="drawer__value" title={notification.eventId}>
+              {shorten(notification.eventId, 10, 6)}
+            </span>
             <button
               type="button"
               className="drawer__action"
               onClick={() => void tryCopy('Event ID', notification.eventId)}
+              aria-label="Copy event ID"
             >
               Copy
             </button>
@@ -219,6 +305,7 @@ export function NotificationDetailsDrawer({
                 type="button"
                 className="drawer__action"
                 onClick={() => void tryCopy('Tx Hash', notification.txHash!)}
+                aria-label="Copy transaction hash"
               >
                 Copy
               </button>
@@ -226,7 +313,64 @@ export function NotificationDetailsDrawer({
           </div>
           <div className="drawer__row">
             <span className="drawer__label">Observed</span>
-            <span className="drawer__value">{formatTimestamp(notification.receivedAt)}</span>
+            <span className="drawer__value drawer__value--wrap">
+              {formatTimestamp(notification.receivedAt)}
+            </span>
+          </div>
+
+          {/* Raw Event Payload Viewer (Issue #609) & Payload Copy Action (Issue #610) */}
+          <div className="drawer__row drawer__row--stack">
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%', marginBottom: '6px' }}>
+              <span className="drawer__label">Payload</span>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <button
+                  type="button"
+                  className="drawer__action"
+                  onClick={() => setIsRawView(!isRawView)}
+                  aria-label={isRawView ? 'Switch to formatted view' : 'Switch to raw JSON view'}
+                >
+                  {isRawView ? 'Standard View' : 'Raw JSON View'}
+                </button>
+                <button
+                  type="button"
+                  className="drawer__action"
+                  onClick={() => void handleCopyPayload()}
+                  aria-label="Copy event payload"
+                >
+                  Copy Payload
+                </button>
+              </div>
+            </div>
+
+            {isRawView ? (
+              <div className="drawer__raw-container" style={{ width: '100%' }}>
+                {formattedPayload.hasRedactions && (
+                  <p className="drawer__muted" style={{ fontSize: '12px', color: '#e5c07b', marginBottom: '4px' }}>
+                    🔒 Sensitive configuration values have been redacted.
+                  </p>
+                )}
+                <pre className="drawer__payload drawer__payload--raw" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }} title={formattedPayload.formatted}>
+                  {formattedPayload.formatted}
+                </pre>
+              </div>
+            ) : (
+              <div className="drawer__payload" aria-label="Structured event payload">
+                {parsedPayload !== undefined && parsedPayload !== null && typeof parsedPayload === 'object' ? (
+                  <PayloadNode label="payload" value={parsedPayload} />
+                ) : (
+                  <pre title={formattedPayload.formatted}>{formattedPayload.formatted}</pre>
+                )}
+              </div>
+            )}
+
+            <button
+              type="button"
+              className="drawer__action"
+              style={{ display: 'none' }} // Legacy hidden copy button fallback for existing test selectors
+              onClick={() => void tryCopy('Payload', notification.value)}
+            >
+              Copy
+            </button>
           </div>
         </section>
 
@@ -259,8 +403,12 @@ export function NotificationDetailsDrawer({
                     <div className="drawer__timeline-dot" aria-hidden="true" />
                     <div className="drawer__timeline-body">
                       <div className="drawer__timeline-title">{entry.label}</div>
-                      <div className="drawer__timeline-time">{formatTimestamp(entry.timestampMs)}</div>
-                      {entry.detail && <div className="drawer__timeline-detail">{entry.detail}</div>}
+                      <div className="drawer__timeline-time">
+                        {formatTimestamp(entry.timestampMs)}
+                      </div>
+                      {entry.detail && (
+                        <div className="drawer__timeline-detail">{entry.detail}</div>
+                      )}
                     </div>
                   </li>
                 ))}
