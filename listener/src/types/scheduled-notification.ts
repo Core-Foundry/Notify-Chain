@@ -10,6 +10,7 @@ export enum NotificationStatus {
   DEAD_LETTERED = 'DEAD_LETTERED',
   CANCELLED = 'CANCELLED',
   EXPIRED = 'EXPIRED',
+  AWAITING_INTERVENTION = 'AWAITING_INTERVENTION',
 }
 
 export enum NotificationType {
@@ -48,6 +49,8 @@ export interface ScheduledNotification {
   nextRetryAt?: Date | null;
   /** Stable logical key used to prevent duplicate delivery of the same notification. */
   deduplicationKey?: string | null;
+  version?: number;
+  recoveryState?: 'AWAITING_INTERVENTION' | null;
 }
 
 export interface CreateScheduledNotificationInput {
@@ -66,6 +69,8 @@ export interface CreateScheduledNotificationInput {
 
 export interface ScheduledNotificationRow {
   id: number;
+  version: number;
+  recovery_state: 'AWAITING_INTERVENTION' | null;
   payload: string;
   payload_hash: string | null;
   notification_type: string;
@@ -102,6 +107,8 @@ export interface NotificationExecutionLog {
   durationMs?: number | null;
 }
 
+export type ScheduleRecoveryPolicy = 'EXECUTE' | 'EXPIRE' | 'REQUIRE_INTERVENTION';
+
 export interface SchedulerConfig {
   enabled: boolean;
   pollIntervalMs: number;
@@ -112,6 +119,7 @@ export interface SchedulerConfig {
   retryDelayMs?: number;
   /** Max notifications processed concurrently per poll cycle (WORKER_CONCURRENCY). Default 1 = serial. */
   concurrency?: number;
+  recoveryPolicy?: ScheduleRecoveryPolicy;
 }
 
 export interface DeadLetterQueueEntry {
