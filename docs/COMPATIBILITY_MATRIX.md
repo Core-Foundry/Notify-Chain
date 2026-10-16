@@ -4,58 +4,50 @@ This document provides a machine-readable compatibility matrix for Notify-Chain 
 
 ## Payload Version Compatibility
 
-| Payload Version | Release Date | Status | Supported Adapters | Breaking Changes |
-|-----------------|--------------|--------|-------------------|------------------|
-| v1.0.0 | 2026-01-15 | Stable | Webhook, Email, SMS, Push | Initial release |
-| v1.1.0 | 2026-03-20 | Stable | Webhook, Email, SMS, Push | Added retry metadata |
-| v1.2.0 | 2026-06-10 | Stable | Webhook, Email, SMS, Push, Discord | Added Discord adapter, added event source field |
-| v2.0.0 | 2026-09-01 | Beta | Webhook, Email, SMS, Push, Discord | **Breaking**: Renamed `notification_id` to `id`, moved `payload` to top level |
+| Payload Version | Status | Supported Adapters | Notes |
+|-----------------|--------|-------------------|-------|
+| v1.0.0 | Stable | Webhook, Email, SMS, Push | Initial release with core notification features |
+| v1.1.0 | Stable | Webhook, Email, SMS, Push | Added retry metadata and scheduling support |
+| v1.2.0 | Beta | Webhook, Email, SMS, Push, Discord | Added Discord adapter (beta), event source field |
 
 ## Delivery Adapter Compatibility
 
-| Adapter | Minimum Payload Version | Maximum Payload Version | Features | Notes |
-|---------|------------------------|-------------------------|----------|-------|
-| Webhook | v1.0.0 | v2.0.0 | Signature verification, retry, rate limiting | Supports custom headers |
-| Email | v1.0.0 | v2.0.0 | HTML templates, attachments, BCC | Uses SMTP or SendGrid |
-| SMS | v1.0.0 | v2.0.0 | Character limit checking, Unicode support | Uses Twilio or Termii |
-| Push | v1.1.0 | v2.0.0 | FCM, APNs, silent notifications | Requires device token |
-| Discord | v1.2.0 | v2.0.0 | Embeds, buttons, webhook URLs | Requires bot token or webhook URL |
+| Adapter | Minimum Payload Version | Features | Configuration |
+|---------|------------------------|----------|---------------|
+| Webhook | v1.0.0 | Signature verification, retry, rate limiting | `WEBHOOK_URL`, `WEBHOOK_SECRET` |
+| Email | v1.0.0 | HTML templates, attachments, BCC | SMTP or SendGrid configuration |
+| SMS | v1.0.0 | Character limit checking, Unicode support | Twilio or Termii configuration |
+| Push | v1.1.0 | FCM, APNs, silent notifications | Device token configuration |
+| Discord | v1.2.0 (Beta) | Embeds, webhook URLs | Discord webhook URL (beta) |
 
 ## Consumer Integration Compatibility
 
-| Integration Type | Minimum Notify-Chain Version | Supported SDKs | Documentation |
-|------------------|------------------------------|----------------|---------------|
-| Direct API | v1.0.0 | REST, GraphQL | [API Reference](./api-versioning.md) |
-| Webhook Consumer | v1.0.0 | Any HTTP client | [Webhook Guide](./NOTIFICATION-FLOW.md) |
-| Email Client | v1.0.0 | SMTP, SendGrid | [Email Setup](./LISTENER-CONFIGURATION.md) |
-| SMS Client | v1.0.0 | Twilio, Termii | [SMS Setup](./LISTENER-CONFIGURATION.md) |
-| Push Client | v1.1.0 | FCM, APNs | [Push Setup](./LISTENER-CONFIGURATION.md) |
-| Discord Bot | v1.2.0 | Discord.js, discord.py | [Discord Setup](./LISTENER-CONFIGURATION.md) |
+| Integration Type | Minimum Version | Supported Protocols | Documentation |
+|------------------|----------------|---------------------|---------------|
+| Direct API | v1.0.0 | REST | [API.md](../listener/API.md) |
+| Webhook Consumer | v1.0.0 | HTTP/HTTPS | [NOTIFICATION-FLOW.md](./NOTIFICATION-FLOW.md) |
+| Email Client | v1.0.0 | SMTP | [LISTENER-CONFIGURATION.md](./LISTENER-CONFIGURATION.md) |
+| SMS Client | v1.0.0 | Twilio/Termii API | [LISTENER-CONFIGURATION.md](./LISTENER-CONFIGURATION.md) |
+| Push Client | v1.1.0 | FCM/APNs | [LISTENER-CONFIGURATION.md](./LISTENER-CONFIGURATION.md) |
 
-## Migration Guide
+## Environment Configuration
 
-### v1.x → v2.0.0 Breaking Changes
+The following environment variables control notification delivery:
 
-1. **Payload structure**: Moved `payload` from nested to top level
-2. **Field renaming**: `notification_id` → `id`
-3. **Required fields**: Added `version` field to all payloads
-4. **Adapter endpoints**: Updated webhook URL format from `/api/v1/notify` to `/api/v2/notify`
-
-### Migration Steps
-
-1. Update your consumer to handle both v1.x and v2.0.0 payloads
-2. Check the `version` field in the payload
-3. Map `notification_id` to `id` if using v1.x
-4. Update your webhook endpoint URL to v2 if available
-5. Test with the v2.0.0 beta payload before full migration
+| Variable | Purpose | Default | Required |
+|----------|---------|---------|----------|
+| `STELLAR_NETWORK` | Stellar network label | `testnet` | Yes |
+| `STELLAR_RPC_URL` | Soroban RPC endpoint | Testnet URL | Yes |
+| `CONTRACT_ADDRESSES` | Contracts to monitor | None | Yes |
+| `LOG_LEVEL` | Logging verbosity | `info` | No |
 
 ## CI Validation
 
 This compatibility matrix is validated by CI to ensure:
-- All listed payload versions match the implementation
-- All adapter versions match the adapter capabilities
+- All listed adapters match the implementation in `.env.example`
+- All environment variables are documented
 - All documentation links are valid
-- No breaking changes are introduced without a major version bump
+- Breaking changes require a version bump
 
 ## Support Policy
 
@@ -66,6 +58,7 @@ This compatibility matrix is validated by CI to ensure:
 ## Questions?
 
 For questions about compatibility, please:
-1. Check the [FAQ](./FAQ.md)
-2. Review the [API Reference](./api-versioning.md)
+1. Review the [API Documentation](../listener/API.md)
+2. Check the [Listener Configuration](./LISTENER-CONFIGURATION.md)
 3. Open an issue in the repository
+4. 
