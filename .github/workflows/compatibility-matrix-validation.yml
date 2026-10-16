@@ -1,0 +1,72 @@
+name: Compatibility Matrix Validation
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'docs/COMPATIBILITY_MATRIX.md'
+      - '.github/workflows/compatibility-matrix-validation.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'docs/COMPATIBILITY_MATRIX.md'
+
+jobs:
+  validate-compatibility-matrix:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Validate Compatibility Matrix
+        run: |
+          echo "Validating compatibility matrix..."
+          
+          # Check if the file exists
+          if [ ! -f "docs/COMPATIBILITY_MATRIX.md" ]; then
+            echo "::error::COMPATIBILITY_MATRIX.md not found"
+            exit 1
+          fi
+          
+          # Check for required sections
+          required_sections=(
+            "## Payload Version Compatibility"
+            "## Delivery Adapter Compatibility"
+            "## Consumer Integration Compatibility"
+            "## Migration Guide"
+            "## CI Validation"
+            "## Support Policy"
+          )
+          
+          for section in "${required_sections[@]}"; do
+            if ! grep -q "$section" docs/COMPATIBILITY_MATRIX.md; then
+              echo "::error::Missing required section: $section"
+              exit 1
+            fi
+          done
+          
+          # Check for payload versions table
+          if ! grep -q "| Payload Version |" docs/COMPATIBILITY_MATRIX.md; then
+            echo "::error::Payload version table not found"
+            exit 1
+          fi
+          
+          # Check for adapter table
+          if ! grep -q "| Adapter |" docs/COMPATIBILITY_MATRIX.md; then
+            echo "::error::Adapter table not found"
+            exit 1
+          fi
+          
+          # Check for consumer integration table
+          if ! grep -q "| Integration Type |" docs/COMPATIBILITY_MATRIX.md; then
+            echo "::error::Consumer integration table not found"
+            exit 1
+          fi
+          
+          # Check for CI Validation section content
+          if ! grep -q "This compatibility matrix is validated by CI" docs/COMPATIBILITY_MATRIX.md; then
+            echo "::error::CI Validation section content not found"
+            exit 1
+          fi
+          
+          echo "✅ Compatibility matrix validation passed!"
