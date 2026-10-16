@@ -209,6 +209,25 @@ expect([NotificationStatus.PENDING, NotificationStatus.PROCESSING]).toContain(cu
     expect((await repository.getById(id))!.status).toBe(NotificationStatus.PENDING);
   });
 
+  it('applies the configured recovery policy when the scheduler starts after downtime', async () => {
+    const id = await repository.create({
+      payload: schedulerPayload(),
+      notificationType: NotificationType.DISCORD,
+      targetRecipient: NotificationFixtureBuilder.constants.webhookUrl,
+      executeAt: new Date(Date.now() - 60_000),
+    });
+    scheduler = new NotificationScheduler(
+      repository,
+      { ...schedulerConfig, recoveryPolicy: 'EXPIRE' },
+      { sendEventNotification: sendEventMock } as unknown as DiscordNotificationService,
+    );
+
+    await scheduler.start();
+
+    expect((await repository.getById(id))!.status).toBe(NotificationStatus.EXPIRED);
+    expect(sendEventMock).not.toHaveBeenCalled();
+  });
+
   it('keeps overdue schedules pending for default EXECUTE recovery', async () => {
     const id = await repository.create({
       payload: schedulerPayload(),
