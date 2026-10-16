@@ -958,3 +958,43 @@ describe('Schedule modification API', () => {
     expect(notificationAPI.modifyNotification).toHaveBeenCalledWith(42, 1, { priority: 2 }, expect.any(String));
   });
 });
+
+
+  it('returns not found when the schedule service cannot find the requested ID', async () => {
+    notificationAPI.modifyNotification.mockResolvedValue(null);
+    server = await startServer({
+      ...BASE_OPTIONS,
+      apiKeys: [{ key: 'schedule-secret' }],
+      notificationAPI,
+    });
+    const result = await new Promise<{ status: number }>((resolve, reject) => {
+      const address = server.address() as { port: number };
+      const req = http.request({
+        host: '127.0.0.1', port: address.port, path: '/api/schedule/404',
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', 'X-API-Key': 'schedule-secret', 'If-Match': '1' },
+      }, (res) => { res.resume(); res.on('end', () => resolve({ status: res.statusCode! })); });
+      req.on('error', reject);
+      req.end(JSON.stringify({ priority: 2 }));
+    });
+    expect(result.status).toBe(404);
+  });
+
+  it('rejects an empty patch body', async () => {
+    server = await startServer({
+      ...BASE_OPTIONS,
+      apiKeys: [{ key: 'schedule-secret' }],
+      notificationAPI,
+    });
+    const result = await new Promise<{ status: number }>((resolve, reject) => {
+      const address = server.address() as { port: number };
+      const req = http.request({
+        host: '127.0.0.1', port: address.port, path: '/api/schedule/42',
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', 'X-API-Key': 'schedule-secret', 'If-Match': '1' },
+      }, (res) => { res.resume(); res.on('end', () => resolve({ status: res.statusCode! })); });
+      req.on('error', reject);
+      req.end('{}');
+    });
+    expect(result.status).toBe(400);
+  });

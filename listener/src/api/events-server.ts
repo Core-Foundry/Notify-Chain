@@ -1455,7 +1455,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
       const id = Number(patchScheduleMatch[1]);
       const versionHeader = req.headers['if-match'] ?? req.headers['x-schedule-version'];
       const rawVersion = Array.isArray(versionHeader) ? versionHeader[0] : versionHeader;
-      const expectedVersion = Number(String(rawVersion ?? '').replace(/^W\/?"?|"$/g, ''));
+      const expectedVersion = Number(String(rawVersion ?? '').replace(/^W\//, '').replace(/^"/, '').replace(/"$/, ''));
       if (!Number.isSafeInteger(expectedVersion) || expectedVersion < 1) {
         sendErr(res, 428, 'Provide the current schedule version in If-Match or X-Schedule-Version.', ErrorCode.BAD_REQUEST);
         return;

@@ -255,4 +255,91 @@ expect([NotificationStatus.PENDING, NotificationStatus.PROCESSING]).toContain(cu
     expect(results.filter((result) => result.status === 'rejected')).toHaveLength(1);
   });
 
+  it('rejects modification for every non-pending state', async () => {
+    const states = [
+      NotificationStatus.PROCESSING,
+      NotificationStatus.COMPLETED,
+      NotificationStatus.FAILED,
+      NotificationStatus.DEAD_LETTERED,
+      NotificationStatus.CANCELLED,
+      NotificationStatus.EXPIRED,
+      NotificationStatus.AWAITING_INTERVENTION,
+    ];
+    for (const status of states) {
+      const id = await repository.create({
+        payload: schedulerPayload(),
+        notificationType: NotificationType.DISCORD,
+        targetRecipient: NotificationFixtureBuilder.constants.webhookUrl,
+        executeAt: new Date(Date.now() + 60_000),
+      });
+      if (status === NotificationStatus.AWAITING_INTERVENTION) {
+        await db.run(
+          "UPDATE scheduled_notifications SET recovery_state = 'AWAITING_INTERVENTION' WHERE id = ?",
+          [id],
+        );
+      } else {
+        await db.run('UPDATE scheduled_notifications SET status = ? WHERE id = ?', [status, id]);
+      }
+      await expect(api.modifyNotification(id, 1, { priority: 2 })).rejects.toMatchObject({
+        code: 'SCHEDULE_NOT_MODIFIABLE',
+        statusCode: 409,
+      });
+    }
+  });
+
+  it('returns not found for modification of a missing schedule', async () => {
+    await expect(api.modifyNotification(999999, 1, { priority: 2 })).resolves.toBeNull();
+  });
+
+  it('rejects invalid modification payloads', async () => {
+    const id = await api.scheduleNotification({
+      payload: schedulerPayload(),
+      notificationType: NotificationType.DISCORD,
+      targetRecipient: NotificationFixtureBuilder.constants.webhookUrl,
+      executeAt: new Date(Date.now() + 60_000),
+    });
+    const current = (await repository.getById(id))!;
+    await expect(api.modifyNotification(id, current.version ?? 1, { priority: 100 })).rejects.toThrow(
+      'priority must be an integer between 1 and 10',
+    );
+  });
+
+  it('can expire an intervention hold without delivering it', async () => {
+    const id = await repository.create({
+      payload: schedulerPayload(),
+      notificationType: NotificationType.DISCORD,
+      targetRecipient: NotificationFixtureBuilder.constants.webhookUrl,
+      executeAt: new Date(Date.now() - 60_000),
+    });
+    await repository.recoverOverdueSchedules('REQUIRE_INTERVENTION');
+    expect(await repository.resolveAwaitingIntervention(id, 'EXPIRE')).toBe(true);
+    expect((await repository.getById(id))!.status).toBe(NotificationStatus.EXPIRED);
+  });
+
+  it('makes modification race safely with an execution claim', async () => {
+    const id = await api.scheduleNotification({
+      payload: schedulerPayload(),
+      notificationType: NotificationType.DISCORD,
+      targetRecipient: NotificationFixtureBuilder.constants.webhookUrl,
+      executeAt: new Date(Date.now() - 1000),
+    });
+    const current = (await repository.getById(id))!;
+    const outcomes = await Promise.all([
+      repository.updatePending(id, current.version ?? 1, {
+        payload: schedulerPayload(),
+        notificationType: NotificationType.DISCORD,
+        targetRecipient: NotificationFixtureBuilder.constants.webhookUrl,
+        executeAt: new Date(Date.now() + 120_000),
+      }),
+      repository.fetchAndLockPendingNotifications('race-worker', 30000, 1),
+    ]);
+    const refreshed = (await repository.getById(id))!;
+    expect(['PENDING', 'PROCESSING']).toContain(refreshed.status);
+    if (refreshed.status === NotificationStatus.PROCESSING) {
+      expect(outcomes[0]).toBe(false);
+    } else {
+      expect(outcomes[0]).toBe(true);
+    }
+  });
+
 });

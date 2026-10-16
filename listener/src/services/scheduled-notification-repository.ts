@@ -874,7 +874,7 @@ export class ScheduledNotificationRepository {
     const sql = `
       SELECT id, notification_type, created_at, execute_at, priority, retry_count
       FROM scheduled_notifications
-      WHERE status = ?
+      WHERE status = ? AND recovery_state IS NULL
       ORDER BY priority ASC, execute_at ASC
       LIMIT ?
     `;
