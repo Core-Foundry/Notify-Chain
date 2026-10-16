@@ -9,8 +9,10 @@ is responsible for, how data moves between them, and which files in the
 repository implement each piece.
 
 > **New to NotifyChain?** Start with
-> [`SYSTEM_ARCHITECTURE.md`](SYSTEM_ARCHITECTURE.md) for a visual overview
-> with Mermaid architecture diagrams, then return here for the detailed
+> [`SYSTEM_ARCHITECTURE_DIAGRAM.md`](SYSTEM_ARCHITECTURE_DIAGRAM.md) for a
+> complete visual ASCII architecture diagram covering all components and data
+> flow, or [`SYSTEM_ARCHITECTURE.md`](SYSTEM_ARCHITECTURE.md) for Mermaid
+> diagrams and a structured narrative. Then return here for the detailed
 > walkthrough.
 
 It does **not** replace the deeper subsystem docs linked at the end — read it
@@ -480,12 +482,29 @@ maintainers track open questions actively.
 
 ## 9. Related Resources
 
+### Sequence Diagrams (Issue #354)
+
+Visual walkthroughs of the key data flows — the fastest way to build a
+mental model of how the system moves data end-to-end:
+
+| Diagram | What it covers |
+|---------|----------------|
+| [Notification Request Flow](API_SEQUENCE_DIAGRAMS.md#diagram-1--notification-request-flow) | Client → API validation → scheduled delivery to subscriber |
+| [Event Processing Lifecycle](API_SEQUENCE_DIAGRAMS.md#diagram-2--event-processing-lifecycle) | On-chain contract event → EventSubscriber → deduplication → Discord / dashboard |
+| [Scheduled Notification Delivery](API_SEQUENCE_DIAGRAMS.md#diagram-3--scheduled-notification-delivery) | POST /api/schedule → SQLite → background scheduler → delivery states |
+| [Retry & Failure Recovery](API_SEQUENCE_DIAGRAMS.md#diagram-4--retry--failure-recovery) | In-memory retry queue vs DB-backed retry; stale lock recovery |
+| [Dashboard Data Fetch](API_SEQUENCE_DIAGRAMS.md#diagram-5--dashboard-data-fetch) | React dashboard polling /api/events, /health, /api/analytics |
+
+→ **[View all sequence diagrams →](API_SEQUENCE_DIAGRAMS.md)**
+
+---
+
 ### Subsystem Architecture Docs (read alongside this guide)
 
 - [Contributor Architecture Deep Dive](file:///workspaces/Notify-Chain/CONTRIBUTOR_ARCHITECTURE_DEEP_DIVE.md) — Deep dive into event indexing, lifecycle, scheduler concurrency model, sequence diagrams, and module mapping.
 - `Documents/Task Bounty/ARCHITECTURE.md` — TaskBounty contract lifecycle, state machines, and event schema.
-- `SYSTEM_ARCHITECTURE.md` — Visual system architecture with Mermaid
-  diagrams covering all layers, component interactions, and data flow.
+- [`SYSTEM_ARCHITECTURE_DIAGRAM.md`](SYSTEM_ARCHITECTURE_DIAGRAM.md) — **Visual ASCII architecture diagram** with full component map, event lifecycle, scheduler state machine, deduplication flow, DB schema, and deployment topologies.
+- [`SYSTEM_ARCHITECTURE.md`](SYSTEM_ARCHITECTURE.md) — Mermaid diagrams and structured narrative covering all layers, component interactions, and data flow.
 - `Documents/Task Bounty/ARCHITECTURE.md` — TaskBounty contract
   lifecycle, state machines, and event schema.
 - `listener/ARCHITECTURE-DIAGRAM.md` — Scheduler subsystem diagrams.

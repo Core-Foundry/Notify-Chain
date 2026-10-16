@@ -501,7 +501,7 @@ The feature is:
 ### Branch Information
 ```
 Branch: feature/notification-template-preview
-Remote: https://github.com/coderolisa/Notify-Chain.git
+Remote: https://github.com/Core-Foundry/Notify-Chain.git
 Status: Ready for Pull Request
 ```
 

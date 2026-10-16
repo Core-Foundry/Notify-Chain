@@ -8,7 +8,7 @@ jest.mock('@stellar/stellar-sdk', () => ({
       getHealth: jest.fn().mockResolvedValue({ status: 'healthy' }),
     })),
   },
-}));
+}), { virtual: true });
 
 jest.mock('../utils/logger', () => ({
   __esModule: true,

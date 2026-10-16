@@ -31,7 +31,7 @@ export class NotificationExpirationService {
    * @param eventType - Optional event type for per-type expiration lookup
    * @returns true if the event has expired, false otherwise
    */
-  isExpired(event: ExtendedEventResponse, eventType?: string): boolean {
+  isExpired(event: StellarSDK.rpc.Api.EventResponse, eventType?: string): boolean {
     // If expiration is disabled, nothing is ever expired
     if (!this.config.enabled) {
       return false;

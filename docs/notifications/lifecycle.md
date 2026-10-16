@@ -1,6 +1,14 @@
 # Notification Lifecycle Documentation
 
+> **Canonical doc:** [NOTIFICATION_LIFECYCLE.md](../../NOTIFICATION_LIFECYCLE.md)
+> (repo root). Prefer that document for the complete on-chain/off-chain lifecycle,
+> component roles, Mermaid diagrams, acknowledgment, retry, and archival.
+> This file retains scheduled-notification details (state machine, schema, APIs)
+> as a deeper reference for the durable path only.
+
 ## Overview
+
+See also the root lifecycle guide: [`NOTIFICATION_LIFECYCLE.md`](../../NOTIFICATION_LIFECYCLE.md).
 
 The NotifyChain notification system is a robust, multi-component system designed to capture events from Soroban smart contracts, deliver them to configured destinations, and track their entire lifecycle for auditing and debugging purposes.
 
@@ -146,12 +154,20 @@ const notificationId = await api.scheduleNotification({
 });
 ```
 
-#### B. Triggered by Blockchain Event
+#### B. Triggered by Blockchain Event (real-time path — not DB scheduling)
+
+Blockchain events follow the **real-time** path documented in the
+[canonical lifecycle](../../NOTIFICATION_LIFECYCLE.md#off-chain-flow--real-time-path):
 
 1. `EventSubscriber` polls Soroban RPC for new events
-2. Events are deduplicated using `NotificationDeduplicator`
-3. If notification is enabled in user preferences, it's scheduled
-4. Same flow as above for storage
+2. Events are deduplicated via `EventDeduplicationService` (persistent) and
+   `NotificationDeduplicator` (in-memory, at Discord send time)
+3. Events are added to `eventRegistry` (for `GET /api/events` / dashboard)
+4. If Discord preferences allow it, `DiscordNotificationService` delivers immediately
+5. Failures may enqueue `NotificationRetryQueue` (in-memory) — they are **not**
+   automatically inserted into `scheduled_notifications`
+
+Use `POST /api/schedule` / `NotificationAPI` when you need durable deferred delivery.
 
 ### 2. Notification Processing
 
@@ -365,6 +381,7 @@ Key environment variables (`.env.example` in listener):
 
 ## Related Documentation
 
+- [NOTIFICATION_LIFECYCLE.md](../../NOTIFICATION_LIFECYCLE.md) — **canonical** end-to-end lifecycle
 - [README-SCHEDULED-NOTIFICATIONS.md](../../listener/README-SCHEDULED-NOTIFICATIONS.md)
 - [SCHEDULED-NOTIFICATIONS-DELIVERY.md](../../SCHEDULED-NOTIFICATIONS-DELIVERY.md)
 - [API.md](../../listener/API.md)

@@ -1,0 +1,65 @@
+services:
+
+  # ── Listener: off-chain event processor & REST API (port 8787) ──────────────
+  listener:
+    build:
+      context: ./listener
+      target: production
+    ports:
+      - "8787:8787"
+    environment:
+      # Stellar connectivity — update CONTRACT_ADDRESSES with your deployed contract ID
+      STELLAR_RPC_URL: ${STELLAR_RPC_URL:-https://soroban-testnet.stellar.org:443}
+      STELLAR_NETWORK: ${STELLAR_NETWORK:-testnet}
+      STELLAR_NETWORK_PASSPHRASE: ${STELLAR_NETWORK_PASSPHRASE:-Test SDF Network ; September 2015}
+      CONTRACT_ADDRESSES: ${CONTRACT_ADDRESSES:-[{"address":"CXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX","events":["*"]}]}
+      # API server
+      EVENTS_API_PORT: "8787"
+      EVENTS_API_CORS_ORIGIN: "http://localhost:5173"
+      # Database — stored in the named volume below
+      DATABASE_PATH: /app/data/notifications.db
+      # Logging
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      # Optional Discord delivery (leave blank to disable)
+      DISCORD_WEBHOOK_URL: ${DISCORD_WEBHOOK_URL:-}
+      DISCORD_WEBHOOK_ID: ${DISCORD_WEBHOOK_ID:-}
+    volumes:
+      # Persist SQLite database across container restarts
+      - listener_data:/app/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:8787/health', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  # ── Dashboard: React + Vite dev server with HMR (port 5173) ─────────────────
+  #
+  # NOTE: Vite VITE_* variables are embedded at BUILD time, not at runtime.
+  # To change the API URL, set VITE_EVENTS_API_URL in your shell before running
+  # `docker compose up --build`, or export it in a .env file at the repo root.
+  dashboard:
+    build:
+      context: ./dashboard
+      target: dev
+      args:
+        # Passed as a build arg so Vite can embed it — defaults to the listener
+        # container reachable via the host-mapped port.
+        VITE_EVENTS_API_URL: ${VITE_EVENTS_API_URL:-http://localhost:8787/api/events}
+        VITE_STELLAR_NETWORK: ${VITE_STELLAR_NETWORK:-TESTNET}
+    ports:
+      - "5173:5173"
+    volumes:
+      # Mount source for hot module replacement — changes reflect without rebuild
+      - ./dashboard/src:/app/src:ro
+      - ./dashboard/index.html:/app/index.html:ro
+      - ./dashboard/vite.config.ts:/app/vite.config.ts:ro
+    depends_on:
+      listener:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  listener_data:
+    driver: local

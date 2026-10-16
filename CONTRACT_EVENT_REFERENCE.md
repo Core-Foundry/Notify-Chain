@@ -263,6 +263,10 @@ Emitted when a notification category is registered on-chain.
 
 ## Notification Lifecycle Events
 
+> These are **on-chain** schedule/expire/cancel signals. For the full off-chain
+> delivery pipeline (listener → Discord → ack/retry/archive), see
+> [NOTIFICATION_LIFECYCLE.md](NOTIFICATION_LIFECYCLE.md).
+
 ### NotificationScheduled
 
 Emitted when a notification is scheduled on-chain with a bounded lifetime.

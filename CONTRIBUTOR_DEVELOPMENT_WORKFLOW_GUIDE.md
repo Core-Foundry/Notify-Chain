@@ -21,7 +21,7 @@ A single, end-to-end workflow for local setup, branching, testing, and submittin
 - Rust (stable) with WebAssembly target:
   - `rustup target add wasm32-unknown-unknown`
 - Stellar CLI:
-  - `cargo install stellar-cli`
+  - `cargo install --locked stellar-cli --features opt`
 - Node.js:
   - Listener uses **Node 20**
   - Dashboard uses **Node 18**
@@ -177,6 +177,27 @@ Also ensure formatting is clean before PR:
 ```bash
 cargo fmt --all
 ```
+
+### 4.1.1 Documentation Link Check (all markdown files)
+
+Before pushing documentation changes, verify that internal repository-relative links are not broken. External HTTP/HTTPS links are checked separately in CI and treated as warnings only (temporary external downtime will not fail the pipeline).
+
+From the **repository root**:
+
+```bash
+# Install root dev dependencies (if you haven't already)
+npm install
+
+# Check internal links strictly (fails on broken internal/relative links)
+npm run check:links
+
+# Quiet mode (suppresses per-file progress, shows only failures)
+npm run check:links:quiet
+```
+
+The `check:links` script scans every `.md` file in the repository. Broken **internal** or **repository-relative** links (e.g. `[guide](./docs/README.md)`, `[adr](/docs/adr/0001-...)`) will cause the command to exit non-zero and must be fixed. External `http://` / `https://` links are excluded from strict checks to avoid CI fragility from transient outages; they are audited separately on a best-effort basis via the `check-external-links` CI job.
+
+See [`.github/workflows/docs-link-check.yml`](.github/workflows/docs-link-check.yml) for the full CI pipeline and [`.markdown-link-check.json`](.markdown-link-check.json) for the checker configuration.
 
 ### 4.2 Listener (TypeScript)
 

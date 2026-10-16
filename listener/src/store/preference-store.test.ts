@@ -1,4 +1,5 @@
 import { PreferenceStore } from './preference-store';
+import { ValidationError } from '../utils/validation';
 
 describe('PreferenceStore', () => {
   let store: PreferenceStore;
@@ -52,6 +53,39 @@ describe('PreferenceStore', () => {
       store.update('user-2', { categories: { discord: false } });
       expect(store.get('user-2').categories.discord).toBe(false);
       expect(store.get('user-2').categories.discord).toBe(false);
+    });
+
+    it('rejects a missing categories object', () => {
+      expect(() => store.update('user-1', {} as any)).toThrow(ValidationError);
+      expect(() => store.update('user-1', { categories: null } as any)).toThrow(ValidationError);
+    });
+
+    it('rejects a categories value that is an array instead of an object', () => {
+      expect(() => store.update('user-1', { categories: ['discord'] as any })).toThrow(ValidationError);
+    });
+
+    it('rejects non-boolean category values with a message naming the offending category', () => {
+      expect(() => store.update('user-1', { categories: { discord: 'yes' } as any })).toThrow(
+        ValidationError,
+      );
+      try {
+        store.update('user-1', { categories: { discord: 'yes' } as any });
+        throw new Error('expected update to throw');
+      } catch (err) {
+        expect(err).toBeInstanceOf(ValidationError);
+        expect((err as ValidationError).issues).toContainEqual({
+          field: 'categories.discord',
+          message: 'must be a boolean, received "yes"',
+        });
+      }
+    });
+
+    it('does not persist a partially-invalid update', () => {
+      store.update('user-3', { categories: { discord: true } });
+      expect(() =>
+        store.update('user-3', { categories: { discord: true, email: 'nope' } as any }),
+      ).toThrow(ValidationError);
+      expect(store.get('user-3').categories).toEqual({ discord: true });
     });
   });
 

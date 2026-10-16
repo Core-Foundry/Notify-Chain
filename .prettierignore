@@ -1,0 +1,26 @@
+# Dependencies
+node_modules/
+dashboard/node_modules/
+listener/node_modules/
+
+# Build output
+dist/
+dashboard/dist/
+listener/dist/
+target/
+
+# Lock files (managed by package managers, not formatted)
+package-lock.json
+dashboard/package-lock.json
+listener/package-lock.json
+Cargo.lock
+
+# Generated / vendored
+*.wasm
+*.optimized.wasm
+reports/
+dashboard/reports/
+
+# Environment files
+.env
+.env.*
