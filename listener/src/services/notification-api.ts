@@ -267,7 +267,13 @@ export class NotificationAPI {
     }
 
     const executeAt = patch.executeAt ?? current.executeAt;
-    const payload = patch.payload ?? current.payload as unknown as Record<string, any>;
+    let existingPayload: Record<string, any>;
+    try {
+      existingPayload = JSON.parse(current.payload) as Record<string, any>;
+    } catch {
+      throw new Error('Stored schedule payload is invalid JSON and cannot be modified');
+    }
+    const payload = patch.payload ?? existingPayload;
     const targetRecipient = patch.targetRecipient ?? current.targetRecipient;
     const notificationType = patch.notificationType ?? current.notificationType;
     if (!(executeAt instanceof Date) || Number.isNaN(executeAt.getTime())) {
