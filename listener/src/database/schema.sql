@@ -38,7 +38,10 @@ CREATE TABLE IF NOT EXISTS scheduled_notifications (
   priority INTEGER NOT NULL DEFAULT 5 CHECK (priority BETWEEN 1 AND 10),
   metadata TEXT,                            -- Additional JSON metadata
   next_retry_at DATETIME,                   -- When the next retry should be attempted
-  deduplication_key TEXT                    -- Caller-supplied key; duplicate inserts with the same key are silently skipped
+  deduplication_key TEXT,                   -- Caller-supplied key; duplicate inserts with the same key are silently skipped
+  recurrence_rule TEXT,                     -- Validated recurrence rule JSON (NULL for one-shot notifications)
+  occurrence_count INTEGER NOT NULL DEFAULT 0,
+  last_run_at DATETIME
 );
 
 -- Indexes for performance optimization

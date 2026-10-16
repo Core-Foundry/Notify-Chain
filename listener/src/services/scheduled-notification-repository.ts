@@ -8,6 +8,7 @@ import {
   NotificationStatus,
   NotificationExecutionLog,
   DeadLetterQueueEntry,
+  RecurrenceRule,
 } from '../types/scheduled-notification';
 import { hashPayload } from '../utils/payload-integrity';
 import {
@@ -16,6 +17,7 @@ import {
   NotificationStats,
   QueueOperationalMetrics,
 } from './notification-stats-cache';
+import { calculateNextRun } from './recurrence';
 
 /**
  * Repository for scheduled notifications database operations
@@ -48,8 +50,9 @@ export class ScheduledNotificationRepository {
         payload, payload_hash, notification_type, target_recipient, execute_at, expires_at,
         created_at, updated_at, status, retry_count, max_retries, processing_started_at,
         processing_completed_at, processor_id, lock_expires_at, last_error, error_details,
-        event_id, contract_address, priority, metadata, next_retry_at, deduplication_key
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        event_id, contract_address, priority, metadata, next_retry_at, deduplication_key,
+        recurrence_rule, occurrence_count, last_run_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
 
     const serializedPayload = compressPayload(input.payload);
@@ -84,6 +87,11 @@ export class ScheduledNotificationRepository {
       input.metadata ? JSON.stringify(input.metadata) : null,
       null,
       input.deduplicationKey ?? null,
+      input.recurrence
+        ? JSON.stringify({ ...input.recurrence, interval: input.recurrence.interval ?? 1 })
+        : null,
+      0,
+      null,
     ];
 
     try {
@@ -100,10 +108,7 @@ export class ScheduledNotificationRepository {
 
       return result.lastID;
     } catch (err) {
-      if (
-        input.deduplicationKey &&
-        (err as any)?.message?.includes('UNIQUE constraint failed')
-      ) {
+      if (input.deduplicationKey && (err as any)?.message?.includes('UNIQUE constraint failed')) {
         const existing = await this.db.get<{ id: number }>(
           'SELECT id FROM scheduled_notifications WHERE deduplication_key = ?',
           [input.deduplicationKey],
@@ -232,7 +237,7 @@ export class ScheduledNotificationRepository {
     id: number,
     processorId: string,
     lockTimeoutMs: number,
-    requestId?: string
+    requestId?: string,
   ): Promise<boolean> {
     const lockExpiresAt = new Date(Date.now() + lockTimeoutMs).toISOString();
 
@@ -242,7 +247,7 @@ export class ScheduledNotificationRepository {
         SET lock_expires_at = ?
         WHERE id = ? AND processor_id = ? AND status = ?
       `,
-      [lockExpiresAt, id, processorId, NotificationStatus.PROCESSING]
+      [lockExpiresAt, id, processorId, NotificationStatus.PROCESSING],
     );
 
     const renewed = result.changes > 0;
@@ -339,20 +344,59 @@ export class ScheduledNotificationRepository {
   /**
    * Mark notification as completed
    */
-  async markAsCompleted(id: number, requestId?: string): Promise<void> {
-    const sql = `
-      UPDATE scheduled_notifications
-      SET 
-        status = ?,
-        processing_completed_at = ?,
-        updated_at = ?,
-        processor_id = NULL,
-        lock_expires_at = NULL
-      WHERE id = ?
-    `;
+  async markAsCompleted(
+    id: number,
+    requestId?: string,
+    completedAt: Date = new Date(),
+  ): Promise<void> {
+    const now = completedAt.toISOString();
+    await this.db.transaction(async () => {
+      const row = await this.db.get<ScheduledNotificationRow>(
+        'SELECT * FROM scheduled_notifications WHERE id = ?',
+        [id],
+      );
+      if (!row) return;
 
-    const now = new Date().toISOString();
-    await this.db.run(sql, [NotificationStatus.COMPLETED, now, now, id]);
+      const notification = this.rowToModel(row);
+      if (notification.recurrence) {
+        const result = calculateNextRun(
+          notification.recurrence,
+          notification.executeAt,
+          completedAt,
+          (notification.occurrenceCount ?? 0) + 1,
+        );
+        const nextStatus = result.nextRun
+          ? NotificationStatus.PENDING
+          : NotificationStatus.COMPLETED;
+        const update = await this.db.run(
+          `UPDATE scheduled_notifications
+           SET execute_at = ?, occurrence_count = ?, last_run_at = ?, status = ?,
+               retry_count = 0, last_error = NULL, error_details = NULL,
+               processing_started_at = NULL, processing_completed_at = ?, updated_at = ?,
+               processor_id = NULL, lock_expires_at = NULL, next_retry_at = NULL
+           WHERE id = ? AND status = ?`,
+          [
+            result.nextRun?.toISOString() ?? notification.executeAt.toISOString(),
+            result.occurrenceCount,
+            notification.executeAt.toISOString(),
+            nextStatus,
+            nextStatus === NotificationStatus.COMPLETED ? now : null,
+            now,
+            id,
+            NotificationStatus.PROCESSING,
+          ],
+        );
+        if (update.changes === 0) return;
+      } else {
+        await this.db.run(
+          `UPDATE scheduled_notifications
+           SET status = ?, processing_completed_at = ?, updated_at = ?,
+               processor_id = NULL, lock_expires_at = NULL
+           WHERE id = ?`,
+          [NotificationStatus.COMPLETED, now, now, id],
+        );
+      }
+    });
 
     // Invalidate stats cache after completion
     this.statsCache.invalidate();
@@ -1031,9 +1075,7 @@ export class ScheduledNotificationRepository {
         if (!row.error_details) return null;
         try {
           const parsed = JSON.parse(row.error_details);
-          return typeof parsed.cancellationReason === 'string'
-            ? parsed.cancellationReason
-            : null;
+          return typeof parsed.cancellationReason === 'string' ? parsed.cancellationReason : null;
         } catch {
           return null;
         }
@@ -1044,6 +1086,9 @@ export class ScheduledNotificationRepository {
       metadata: row.metadata,
       nextRetryAt: row.next_retry_at ? new Date(row.next_retry_at) : null,
       deduplicationKey: row.deduplication_key ?? null,
+      recurrence: row.recurrence_rule ? (JSON.parse(row.recurrence_rule) as RecurrenceRule) : null,
+      occurrenceCount: row.occurrence_count ?? 0,
+      lastRunAt: parseUtc(row.last_run_at) ?? null,
     };
   }
 }

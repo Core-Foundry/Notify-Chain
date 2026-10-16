@@ -25,6 +25,7 @@ import {
 const PRIORITY_MIN = 1;
 const PRIORITY_MAX = 10;
 import { buildRetryStatisticsPayload } from './retry-statistics';
+import { DEFAULT_MAX_SCHEDULING_HORIZON_MS, validateScheduleInput } from './schedule-validator';
 
 function parseExpiresAt(value: Date | string | number): Date | null {
   if (value instanceof Date) {
@@ -38,7 +39,11 @@ function parseExpiresAt(value: Date | string | number): Date | null {
     return Number.isNaN(date.getTime()) ? null : date;
   }
 
-  if (!/^\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,9})?)?(?:Z|[+-]\d{2}:\d{2})?)?$/.test(value)) {
+  if (
+    !/^\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,9})?)?(?:Z|[+-]\d{2}:\d{2})?)?$/.test(
+      value,
+    )
+  ) {
     return null;
   }
   const date = new Date(value);
@@ -58,6 +63,8 @@ export class NotificationAPI {
     private repository: ScheduledNotificationRepository,
     maxPayloadSizeBytesOrIdempotency?: number | IdempotencyKeyService,
     private idempotencyService?: IdempotencyKeyService,
+    private maxSchedulingHorizonMs: number | null = DEFAULT_MAX_SCHEDULING_HORIZON_MS,
+    private clock: () => Date = () => new Date(),
   ) {
     if (typeof maxPayloadSizeBytesOrIdempotency === 'number') {
       this.maxPayloadSizeBytes = maxPayloadSizeBytesOrIdempotency;
@@ -80,19 +87,15 @@ export class NotificationAPI {
     idempotencyKey?: string,
   ): Promise<number> {
     // Validate input
-    if (
-      !input.executeAt ||
-      !(input.executeAt instanceof Date) ||
-      isNaN(input.executeAt.getTime())
-    ) {
-      throw new Error('executeAt must be a valid date');
-    }
-
-    if (input.executeAt <= new Date()) {
-      throw new Error(
-        'executeAt must be a future timestamp — the provided date has already expired',
-      );
-    }
+    input = {
+      ...input,
+      recurrence: validateScheduleInput(
+        input.executeAt,
+        input.recurrence,
+        this.clock(),
+        this.maxSchedulingHorizonMs,
+      ),
+    };
 
     if (!isPlainObject(input.payload)) {
       throw new Error('payload must be a valid object');
