@@ -317,7 +317,7 @@ expect([NotificationStatus.PENDING, NotificationStatus.PROCESSING]).toContain(cu
   });
 
   it('makes modification race safely with an execution claim', async () => {
-    const id = await api.scheduleNotification({
+    const id = await repository.create({
       payload: schedulerPayload(),
       notificationType: NotificationType.DISCORD,
       targetRecipient: NotificationFixtureBuilder.constants.webhookUrl,

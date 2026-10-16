@@ -26,6 +26,7 @@ import {
 const PRIORITY_MIN = 1;
 const PRIORITY_MAX = 10;
 import { buildRetryStatisticsPayload } from './retry-statistics';
+import { canModifyScheduleStatus } from './schedule-state-machine';
 
 function parseExpiresAt(value: Date | string | number): Date | null {
   if (value instanceof Date) {
@@ -253,7 +254,7 @@ export class NotificationAPI {
   ): Promise<ScheduledNotification | null> {
     const current = await this.repository.getById(id);
     if (!current) return null;
-    if (current.status !== 'PENDING' || current.recoveryState === 'AWAITING_INTERVENTION') {
+    if (!canModifyScheduleStatus(current.status) || current.recoveryState === 'AWAITING_INTERVENTION') {
       const error = new Error('Only pending schedules can be modified.');
       (error as any).statusCode = 409;
       (error as any).code = 'SCHEDULE_NOT_MODIFIABLE';

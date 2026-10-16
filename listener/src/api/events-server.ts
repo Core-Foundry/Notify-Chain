@@ -1486,16 +1486,16 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
             sendOk(res, 200, updated);
           } catch (error) {
             const statusCode = Number((error as any)?.statusCode);
+            if (error instanceof SyntaxError) {
+              sendErr(res, 400, 'Invalid JSON', ErrorCode.PARSE_ERROR);
+              return;
+            }
             if (Number.isInteger(statusCode) && statusCode >= 400 && statusCode < 500) {
               sendErr(res, statusCode, (error as Error).message, ErrorCode.BAD_REQUEST);
               return;
             }
             if (error instanceof Error && !/SQLITE_|database|constraint/i.test(error.message)) {
               sendErr(res, 422, error.message, ErrorCode.BAD_REQUEST);
-              return;
-            }
-            if (error instanceof SyntaxError) {
-              sendErr(res, 400, 'Invalid JSON', ErrorCode.PARSE_ERROR);
               return;
             }
             logger.error('Failed to modify scheduled notification', { id, error, requestId, correlationId });
