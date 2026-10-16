@@ -16,6 +16,9 @@ CREATE TABLE IF NOT EXISTS scheduled_notifications (
   expires_at DATETIME,                      -- Optional deadline after which delivery is skipped
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  version INTEGER NOT NULL DEFAULT 1 CHECK (version >= 1),
+  -- Separate marker keeps compatibility with existing status CHECK constraints.
+  recovery_state TEXT CHECK (recovery_state IS NULL OR recovery_state = 'AWAITING_INTERVENTION'),
   
   -- Status tracking
   status VARCHAR(20) NOT NULL DEFAULT 'PENDING' CHECK (status IN ('PENDING', 'PROCESSING', 'COMPLETED', 'FAILED', 'CANCELLED', 'EXPIRED', 'DEAD_LETTERED')),

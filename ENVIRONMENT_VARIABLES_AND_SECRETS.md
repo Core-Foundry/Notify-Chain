@@ -210,6 +210,7 @@ RETRY_POLICY_RETRYABLE_FAILURE_TYPES=network_error,timeout,rate_limited,server_e
 | `SCHEDULER_PROCESSOR_ID` | *(unset)* | No | Unique identifier for this scheduler worker instance. |
 | `SCHEDULER_BATCH_SIZE` | `10` | No | Due notifications to dispatch per tick. |
 | `SCHEDULER_TIMING_BUFFER_MS` | `60000` | No | Timing buffer (ms) applied around scheduled times to prevent edge-case early or late dispatch. |
+| `SCHEDULE_RECOVERY_POLICY` | `EXECUTE` | No | Startup recovery policy for overdue schedules: `EXECUTE` catches up, `EXPIRE` skips delivery, or `REQUIRE_INTERVENTION` holds for an operator. |
 
 ### 2.14 Event processing queue
 
@@ -396,6 +397,7 @@ SCHEDULER_LOCK_TIMEOUT_MS=60000
 SCHEDULER_PROCESSOR_ID=local-1
 SCHEDULER_BATCH_SIZE=10
 SCHEDULER_TIMING_BUFFER_MS=60000
+SCHEDULE_RECOVERY_POLICY=EXECUTE
 
 # Rate limiting
 RATE_LIMIT_ENABLED=true

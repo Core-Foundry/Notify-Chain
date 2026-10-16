@@ -1,3 +1,8 @@
+## Unreleased
+
+- Add version-checked modification for pending scheduled notifications.
+- Add configurable overdue schedule recovery policies: execute, expire, or require operator intervention.
+
 # Changelog
 
 All notable changes to this project are documented here.

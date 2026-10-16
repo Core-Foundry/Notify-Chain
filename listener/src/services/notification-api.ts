@@ -4,6 +4,7 @@ import { IdempotencyKeyService } from './idempotency-key-service';
 import {
   CreateScheduledNotificationInput,
   NotificationType,
+  ScheduledNotification,
 } from '../types/scheduled-notification';
 import {
   validatePayloadSize,
@@ -25,6 +26,7 @@ import {
 const PRIORITY_MIN = 1;
 const PRIORITY_MAX = 10;
 import { buildRetryStatisticsPayload } from './retry-statistics';
+import { canModifyScheduleStatus } from './schedule-state-machine';
 
 function parseExpiresAt(value: Date | string | number): Date | null {
   if (value instanceof Date) {
@@ -238,6 +240,95 @@ export class NotificationAPI {
       priority: options?.priority,
       metadata: options?.metadata,
     });
+  }
+
+  /**
+   * Update eligible pending notification fields. All supplied values are
+   * validated using the same constraints as schedule creation.
+   */
+  async modifyNotification(
+    id: number,
+    expectedVersion: number,
+    patch: Partial<CreateScheduledNotificationInput>,
+    requestId?: string,
+  ): Promise<ScheduledNotification | null> {
+    const current = await this.repository.getById(id);
+    if (!current) return null;
+    if (!canModifyScheduleStatus(current.status) || current.recoveryState === 'AWAITING_INTERVENTION') {
+      const error = new Error('Only pending schedules can be modified.');
+      (error as any).statusCode = 409;
+      (error as any).code = 'SCHEDULE_NOT_MODIFIABLE';
+      throw error;
+    }
+    if (!Number.isInteger(expectedVersion) || expectedVersion < 1 || current.version !== expectedVersion) {
+      const error = new Error('Schedule version is stale; fetch the latest schedule and retry.');
+      (error as any).statusCode = 409;
+      (error as any).code = 'SCHEDULE_VERSION_CONFLICT';
+      throw error;
+    }
+
+    const executeAt = patch.executeAt ?? current.executeAt;
+    let existingPayload: Record<string, any>;
+    try {
+      existingPayload = JSON.parse(current.payload) as Record<string, any>;
+    } catch {
+      throw new Error('Stored schedule payload is invalid JSON and cannot be modified');
+    }
+    const payload = patch.payload ?? existingPayload;
+    const targetRecipient = patch.targetRecipient ?? current.targetRecipient;
+    const notificationType = patch.notificationType ?? current.notificationType;
+    if (!(executeAt instanceof Date) || Number.isNaN(executeAt.getTime())) {
+      throw new Error('executeAt must be a valid date');
+    }
+    if (executeAt <= new Date()) throw new Error('executeAt must be a future timestamp');
+    if (!isPlainObject(payload)) throw new Error('payload must be a valid object');
+    if (!isNonEmptyString(targetRecipient)) throw new Error('targetRecipient is required and must be a non-empty string');
+    if (!isOneOf(notificationType, Object.values(NotificationType))) {
+      throw new Error(`notificationType must be one of: ${Object.values(NotificationType).join(', ')}`);
+    }
+    const maxRetries = patch.maxRetries ?? current.maxRetries;
+    if (!isNonNegativeInteger(maxRetries)) throw new Error('maxRetries must be a non-negative integer');
+    const priority = patch.priority ?? current.priority;
+    if (!isInteger(priority) || !isInRange(priority, PRIORITY_MIN, PRIORITY_MAX)) {
+      throw new Error(`priority must be an integer between ${PRIORITY_MIN} and ${PRIORITY_MAX}`);
+    }
+    const expiresAt = patch.expiresAt === undefined ? current.expiresAt : patch.expiresAt;
+    if (expiresAt !== undefined && expiresAt !== null && !parseExpiresAt(expiresAt)) {
+      throw new Error('expiresAt must be a valid ISO-8601 timestamp or epoch');
+    }
+    const metadata = patch.metadata ?? (current.metadata ? JSON.parse(current.metadata) : undefined);
+    if (metadata !== undefined) {
+      if (!isPlainObject(metadata)) throw new Error('metadata must be an object');
+      validateNotificationMetadata(metadata);
+    }
+    const normalizedPayload = ensureNotificationVersion(payload as Record<string, unknown>);
+    validatePayloadSize(normalizedPayload, this.maxPayloadSizeBytes);
+
+    const updated = await this.repository.updatePending(id, expectedVersion, {
+      payload: normalizedPayload,
+      notificationType,
+      targetRecipient,
+      executeAt,
+      expiresAt,
+      maxRetries,
+      priority,
+      eventId: patch.eventId ?? current.eventId ?? undefined,
+      contractAddress: patch.contractAddress ?? current.contractAddress ?? undefined,
+      metadata,
+    });
+    if (!updated) {
+      const error = new Error('Schedule changed or is no longer pending; fetch the latest schedule and retry.');
+      (error as any).statusCode = 409;
+      (error as any).code = 'SCHEDULE_VERSION_CONFLICT';
+      throw error;
+    }
+    logger.info('Scheduled notification modified', { requestId, id, expectedVersion });
+    return this.repository.getById(id);
+  }
+
+  async resolveRecovery(id: number, action: 'EXECUTE' | 'EXPIRE'): Promise<ScheduledNotification | null> {
+    const resolved = await this.repository.resolveAwaitingIntervention(id, action);
+    return resolved ? this.repository.getById(id) : null;
   }
 
   /**

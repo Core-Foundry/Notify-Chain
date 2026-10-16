@@ -125,6 +125,7 @@ export interface SchedulerConfig {
   batchSize: number;
   concurrency: number;
   timingBufferMs: number;
+  recoveryPolicy: 'EXECUTE' | 'EXPIRE' | 'REQUIRE_INTERVENTION';
 }
 
 export interface EventQueueConfig {

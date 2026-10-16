@@ -1444,6 +1444,105 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
       return;
     }
 
+    // PATCH /api/schedule/:id — modify an eligible pending schedule.
+    const patchScheduleMatch = url.pathname.match(/^\/api\/schedule\/(\d+)$/);
+    if (req.method === 'PATCH' && patchScheduleMatch) {
+      if (!requireApiKey()) return;
+      if (!options.notificationAPI) {
+        sendErr(res, 503, 'Scheduler not enabled', ErrorCode.SERVICE_UNAVAILABLE);
+        return;
+      }
+      const id = Number(patchScheduleMatch[1]);
+      const versionHeader = req.headers['if-match'] ?? req.headers['x-schedule-version'];
+      const rawVersion = Array.isArray(versionHeader) ? versionHeader[0] : versionHeader;
+      const expectedVersion = Number(String(rawVersion ?? '').replace(/^W\//, '').replace(/^"/, '').replace(/"$/, ''));
+      if (!Number.isSafeInteger(expectedVersion) || expectedVersion < 1) {
+        sendErr(res, 428, 'Provide the current schedule version in If-Match or X-Schedule-Version.', ErrorCode.BAD_REQUEST);
+        return;
+      }
+      if (!validateContentType(req, res, ['application/json'])) return;
+      let body = '';
+      req.on('data', (chunk) => { body += chunk.toString(); });
+      req.on('end', () => {
+        void (async () => {
+          try {
+            const patch = JSON.parse(body || '{}');
+            const allowed = new Set([
+              'payload', 'notificationType', 'targetRecipient', 'executeAt', 'expiresAt',
+              'maxRetries', 'priority', 'eventId', 'contractAddress', 'metadata',
+            ]);
+            if (!patch || typeof patch !== 'object' || Array.isArray(patch) ||
+                Object.keys(patch).some((key) => !allowed.has(key)) || Object.keys(patch).length === 0) {
+              sendErr(res, 400, 'Provide a non-empty JSON object containing only modifiable schedule fields.', ErrorCode.BAD_REQUEST);
+              return;
+            }
+            if (patch.executeAt !== undefined) patch.executeAt = new Date(patch.executeAt);
+            const updated = await options.notificationAPI!.modifyNotification(id, expectedVersion, patch, requestId);
+            if (!updated) {
+              sendErr(res, 404, 'Notification not found', ErrorCode.NOT_FOUND);
+              return;
+            }
+            res.setHeader('ETag', `"${updated.version ?? expectedVersion + 1}"`);
+            sendOk(res, 200, updated);
+          } catch (error) {
+            const statusCode = Number((error as any)?.statusCode);
+            if (error instanceof SyntaxError) {
+              sendErr(res, 400, 'Invalid JSON', ErrorCode.PARSE_ERROR);
+              return;
+            }
+            if (Number.isInteger(statusCode) && statusCode >= 400 && statusCode < 500) {
+              const errorCode = statusCode === 409 ? ErrorCode.CONFLICT : ErrorCode.BAD_REQUEST;
+              sendErr(res, statusCode, (error as Error).message, errorCode);
+              return;
+            }
+            if (error instanceof Error && !/SQLITE_|database|constraint/i.test(error.message)) {
+              sendErr(res, 422, error.message, ErrorCode.BAD_REQUEST);
+              return;
+            }
+            logger.error('Failed to modify scheduled notification', { id, error, requestId, correlationId });
+            handleApiError(res, error, requestId, correlationId);
+          }
+        })();
+      });
+      return;
+    }
+
+    // POST /api/schedule/:id/recovery — resolve an operator intervention hold.
+    const recoveryMatch = url.pathname.match(/^\/api\/schedule\/(\d+)\/recovery$/);
+    if (req.method === 'POST' && recoveryMatch) {
+      if (!requireApiKey()) return;
+      if (!options.notificationAPI) {
+        sendErr(res, 503, 'Scheduler not enabled', ErrorCode.SERVICE_UNAVAILABLE);
+        return;
+      }
+      let body = '';
+      req.on('data', (chunk) => { body += chunk.toString(); });
+      req.on('end', () => {
+        void (async () => {
+          try {
+            const data = JSON.parse(body || '{}');
+            if (data.action !== 'EXECUTE' && data.action !== 'EXPIRE') {
+              sendErr(res, 400, 'action must be EXECUTE or EXPIRE', ErrorCode.BAD_REQUEST);
+              return;
+            }
+            const result = await options.notificationAPI!.resolveRecovery(Number(recoveryMatch[1]), data.action);
+            if (!result) {
+              sendErr(res, 409, 'Schedule is not awaiting intervention or does not exist', ErrorCode.CONFLICT);
+              return;
+            }
+            sendOk(res, 200, result);
+          } catch (error) {
+            if (error instanceof SyntaxError) {
+              sendErr(res, 400, 'Invalid JSON', ErrorCode.PARSE_ERROR);
+              return;
+            }
+            handleApiError(res, error, requestId, correlationId);
+          }
+        })();
+      });
+      return;
+    }
+
     // GET /api/schedule/:id
     if (req.method === 'GET' && url.pathname.startsWith('/api/schedule/')) {
       if (!options.notificationAPI) {

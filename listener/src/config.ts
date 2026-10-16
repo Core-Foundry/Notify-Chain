@@ -400,6 +400,16 @@ function loadCircuitBreakerConfig(): CircuitBreakerConfig {
   };
 }
 
+function parseScheduleRecoveryPolicy(): 'EXECUTE' | 'EXPIRE' | 'REQUIRE_INTERVENTION' {
+  const value = (trimEnv('SCHEDULE_RECOVERY_POLICY') ?? 'EXECUTE').toUpperCase();
+  if (value === 'EXECUTE' || value === 'EXPIRE' || value === 'REQUIRE_INTERVENTION') {
+    return value;
+  }
+  throw new ConfigError(
+    'SCHEDULE_RECOVERY_POLICY must be one of EXECUTE, EXPIRE, REQUIRE_INTERVENTION.',
+  );
+}
+
 export function loadConfig(): Config {
   validateRequiredEnvVars();
 
@@ -472,6 +482,7 @@ export function loadConfig(): Config {
       batchSize: parseIntegerEnv('SCHEDULER_BATCH_SIZE', '10'),
       concurrency: parseIntegerEnv('WORKER_CONCURRENCY', '1'),
       timingBufferMs: parseIntegerEnv('SCHEDULER_TIMING_BUFFER_MS', '60000'),
+      recoveryPolicy: parseScheduleRecoveryPolicy(),
     },
     retryScheduler: loadRetrySchedulerConfig(retryPolicy),
     retryPolicy,
