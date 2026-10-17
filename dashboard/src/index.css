@@ -5,6 +5,9 @@
   font-weight: 400;
   color: #e8eaed;
   background: #0b0d12;
+  --text-muted: #9aa0a6;
+  --text-accent: #fb923c;
+  --text-danger: #f28b82;
 
   /* ── Heatmap design tokens (dark) ── */
   --hm-bg: rgba(255, 255, 255, 0.02);
@@ -17,7 +20,7 @@
   --hm-cell-hover-ring: rgba(255, 255, 255, 0.25);
   --hm-text-primary: #e8eaed;
   --hm-text-secondary: #9aa0a6;
-  --hm-text-tertiary: #6b7280;
+  --hm-text-tertiary: #7d8694;
   --hm-tooltip-bg: #1e2128;
   --hm-tooltip-border: rgba(255, 255, 255, 0.14);
   --hm-input-bg: #12151c;
@@ -58,6 +61,9 @@
   color-scheme: light;
   color: #1a1a2e;
   background: #f5f5f9;
+  --text-muted: #4b5563;
+  --text-accent: #9a3412;
+  --text-danger: #b91c1c;
 
   --hm-bg: rgba(0, 0, 0, 0.02);
   --hm-border: rgba(0, 0, 0, 0.1);
@@ -69,7 +75,7 @@
   --hm-cell-hover-ring: rgba(0, 0, 0, 0.2);
   --hm-text-primary: #1a1a2e;
   --hm-text-secondary: #4b5563;
-  --hm-text-tertiary: #9ca3af;
+  --hm-text-tertiary: #5b6570;
   --hm-tooltip-bg: #ffffff;
   --hm-tooltip-border: rgba(0, 0, 0, 0.12);
   --hm-input-bg: #ffffff;
@@ -121,10 +127,6 @@
 
 [data-theme="light"] .event-explorer__eyebrow {
   color: var(--hm-accent);
-}
-
-[data-theme="light"] .event-explorer__lead {
-  color: #4b5563;
 }
 
 [data-theme="light"] .event-explorer__table-wrapper {
@@ -2906,7 +2908,7 @@ body {
 .event-explorer__lead {
   margin: 0;
   max-width: 700px;
-  color: #cbd5e1;
+  color: var(--text-muted);
   line-height: 1.75;
 }
 
@@ -4018,7 +4020,7 @@ body.event-explorer--resizing {
 
 .timeline__entry-attempt {
   font-size: 0.8rem;
-  color: #9aa0a6;
+  color: var(--text-muted);
   background: rgba(255,255,255,0.07);
   padding: 2px 6px;
   border-radius: 4px;
@@ -4027,13 +4029,13 @@ body.event-explorer--resizing {
 .timeline__entry-time {
   margin-left: auto;
   font-size: 0.8rem;
-  color: #9aa0a6;
+  color: var(--text-muted);
 }
 
 .timeline__entry-error {
   margin: 2px 0 0;
   font-size: 0.85rem;
-  color: #f28b82;
+  color: var(--text-danger);
 }
 
 .timeline__entry-duration {
@@ -4226,7 +4228,7 @@ body.event-explorer--resizing {
 
 .activity-feed__subtitle {
   margin: 0;
-  color: #9aa0a6;
+  color: var(--text-muted);
 }
 
 .activity-feed__toggle-realtime {
@@ -4460,7 +4462,7 @@ body.event-explorer--resizing {
   font-size: 0.75rem;
   letter-spacing: 0.1em;
   text-transform: uppercase;
-  color: #fb923c;
+  color: var(--text-accent);
 }
 
 .webhook-dashboard__title {
@@ -4471,7 +4473,7 @@ body.event-explorer--resizing {
 .webhook-dashboard__lead {
   margin: 0;
   max-width: 680px;
-  color: #cbd5e1;
+  color: var(--text-muted);
   line-height: 1.75;
 }
 

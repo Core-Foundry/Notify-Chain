@@ -225,6 +225,7 @@ export const APP_CONFIG_SCHEMA: ConfigSchema = {
     batchSize: { type: 'number', min: 1 },
     timingBufferMs: { type: 'number', min: 0 },
     concurrency: { type: 'number', min: 1 },
+    missedSchedulePolicy: { type: 'string', enum: ['execute', 'expire', 'intervene'] },
   },
   retryScheduler: {
     enabled: { type: 'boolean' },

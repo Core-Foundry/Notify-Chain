@@ -361,9 +361,9 @@ export class ScheduledNotificationRepository {
   }
 
   /** Mark a notification expired and release its processing lock. */
-  async markAsExpired(id: number): Promise<void> {
+  async markAsExpired(id: number, reason = 'Notification expired before delivery'): Promise<void> {
     const now = new Date().toISOString();
-    const errorMessage = 'Notification expired before delivery';
+    const errorMessage = reason;
     await this.db.run(
       `UPDATE scheduled_notifications
        SET status = ?, last_error = ?, error_details = ?, processing_completed_at = ?,
@@ -380,6 +380,60 @@ export class ScheduledNotificationRepository {
       ],
     );
     this.statsCache.invalidate();
+  }
+
+  /**
+   * Hold an overdue notification until an operator resumes it.
+   * `next_retry_at` is parked far in the future so the poll loop will not
+   * claim the row again. Status stays PENDING so no schema migration is required.
+   */
+  async holdForIntervention(id: number): Promise<void> {
+    const now = new Date().toISOString();
+    const errorMessage = 'Missed schedule requires operator intervention';
+    await this.db.run(
+      `UPDATE scheduled_notifications
+       SET status = ?, last_error = ?, error_details = ?, next_retry_at = ?,
+           updated_at = ?, processor_id = NULL, lock_expires_at = NULL
+       WHERE id = ? AND status = ?`,
+      [
+        NotificationStatus.PENDING,
+        errorMessage,
+        JSON.stringify({ code: 'MISSED_SCHEDULE_INTERVENTION', heldAt: now }),
+        '9999-12-31T00:00:00.000Z',
+        now,
+        id,
+        NotificationStatus.PROCESSING,
+      ],
+    );
+    this.statsCache.invalidate();
+  }
+
+  /**
+   * Let an operator release a notification held by the intervene policy.
+   * The next poll delivers it. Returns false when the row is not held.
+   */
+  async releaseIntervention(id: number): Promise<boolean> {
+    const existing = await this.getById(id);
+    if (!existing || existing.status !== NotificationStatus.PENDING) return false;
+
+    let details: { code?: string; releasedAt?: string; heldAt?: string };
+    try {
+      details = JSON.parse(existing.errorDetails ?? '');
+    } catch {
+      return false;
+    }
+    if (details.code !== 'MISSED_SCHEDULE_INTERVENTION' || details.releasedAt) return false;
+
+    const now = new Date().toISOString();
+    details.releasedAt = now;
+    const result = await this.db.run(
+      `UPDATE scheduled_notifications
+       SET next_retry_at = NULL, error_details = ?, updated_at = ?
+       WHERE id = ? AND status = ?`,
+      [JSON.stringify(details), now, id, NotificationStatus.PENDING],
+    );
+    this.statsCache.invalidate();
+    return result.changes > 0;
   }
 
   /**

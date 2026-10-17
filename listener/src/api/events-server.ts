@@ -15,9 +15,6 @@ import { sendOk, sendErr, sendJson, ErrorCode } from '../utils/response';
 import { normalizePaginationParams } from '../utils/pagination';
 import { handleApiError, ApiError } from './error-handler';
 import { applyRequestIdMiddleware } from '../middleware/request-id';
-import { TemplateService } from '../services/template-service';
-import { handleTemplateRoutes } from './template-routes';
-import { sendOk, sendErr, sendJson, ErrorCode } from '../utils/response';
 import { validateContentType, getMimeType } from '../middleware/content-type';
 import { NotificationHistoryService } from '../services/notification-history';
 import { SearchSuggestionService } from '../services/search-suggestion';
@@ -28,7 +25,6 @@ import {
   IdempotencyKeyReuseError,
 } from '../services/idempotency-key-service';
 import { WebhookReplayCache } from '../services/webhook-replay-cache';
-import { IdempotencyKeyService, IdempotencyKeyReuseError } from '../services/idempotency-key-service';
 import { WebhookSecret, RateLimitConfig, ContractConfig } from '../types';
 import { RateLimiter } from './rate-limiter';
 import {
@@ -71,6 +67,8 @@ import { sanitizeCredentials } from '../utils/credential-sanitizer';
 import { DiscordNotificationProvider } from '../services/providers/discord-provider';
 import { WebhookNotificationProvider } from '../services/providers/webhook-provider';
 import { ProviderHealthResult } from '../types/provider-capabilities';
+import { EVENT_STREAM_PATH, handleEventStream } from './event-stream';
+import { resolveLocalDateTime } from '../services/local-schedule';
 
 export interface EventsServerOptions {
   port: number;
@@ -136,6 +134,11 @@ export interface EventsServerOptions {
   maxBodyBytes?: number;
   /** Optional DataExportService override for administrative exports (#850). */
   dataExportService?: DataExportService | null;
+  /**
+   * Optional SSE feed at GET /api/events/stream. Omitted or disabled leaves
+   * that path as 404 so existing poll clients are unchanged.
+   */
+  eventStream?: { enabled: boolean; heartbeatMs?: number } | null;
 }
 
 type ServiceStatus = 'ok' | 'error' | 'not_configured';
@@ -503,7 +506,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
     res.setHeader(
       'Access-Control-Allow-Headers',
-      'Content-Type, X-API-Key, Authorization, X-Correlation-Id, X-Request-Id',
+      'Content-Type, X-API-Key, Authorization, X-Correlation-Id, X-Request-Id, Last-Event-ID',
     );
     res.setHeader(
       'Access-Control-Expose-Headers',
@@ -1175,24 +1178,79 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
         }
 
         try {
-          if (!data.executeAt || !data.payload || !data.targetRecipient) {
+          const hasLocalSchedule = data.timeZone != null || data.localDateTime != null;
+          if ((!data.executeAt && !hasLocalSchedule) || !data.payload || !data.targetRecipient) {
             res.writeHead(400, { 'Content-Type': 'application/json' });
             res.end(
               JSON.stringify({
-                error: 'Missing required fields: executeAt, payload, targetRecipient',
+                error: 'Missing required fields: executeAt (or timeZone + localDateTime), payload, targetRecipient',
                 code: 'MISSING_FIELDS',
               }),
             );
             return;
           }
 
-          const executeAt = new Date(data.executeAt);
-          if (isNaN(executeAt.getTime())) {
-            res.writeHead(400, { 'Content-Type': 'application/json' });
-            res.end(
-              JSON.stringify({ error: 'executeAt is not a valid date', code: 'INVALID_DATE' }),
-            );
-            return;
+          let executeAt: Date;
+          let metadata = data.metadata;
+          if (data.timeZone != null || data.localDateTime != null) {
+            if (typeof data.timeZone !== 'string' || typeof data.localDateTime !== 'string') {
+              res.writeHead(400, { 'Content-Type': 'application/json' });
+              res.end(
+                JSON.stringify({
+                  error: 'timeZone and localDateTime are both required for a local schedule',
+                  code: 'INVALID_LOCAL_SCHEDULE',
+                }),
+              );
+              return;
+            }
+            if (
+              data.recurrence != null &&
+              data.recurrence !== 'daily' &&
+              data.recurrence !== 'weekly'
+            ) {
+              res.writeHead(400, { 'Content-Type': 'application/json' });
+              res.end(
+                JSON.stringify({
+                  error: 'recurrence must be daily or weekly',
+                  code: 'INVALID_LOCAL_SCHEDULE',
+                }),
+              );
+              return;
+            }
+            try {
+              const resolved = resolveLocalDateTime(data.localDateTime, data.timeZone);
+              executeAt = resolved.executeAt;
+              const base =
+                metadata && typeof metadata === 'object' && !Array.isArray(metadata) ? metadata : {};
+              metadata = {
+                ...base,
+                localSchedule: {
+                  timeZone: data.timeZone,
+                  localDateTime: resolved.requestedLocal,
+                  recurrence: data.recurrence,
+                  kind: resolved.kind,
+                  resolvedLocal: resolved.resolvedLocal,
+                },
+              };
+            } catch (scheduleError) {
+              res.writeHead(400, { 'Content-Type': 'application/json' });
+              res.end(
+                JSON.stringify({
+                  error: (scheduleError as Error).message,
+                  code: 'INVALID_LOCAL_SCHEDULE',
+                }),
+              );
+              return;
+            }
+          } else {
+            executeAt = new Date(data.executeAt);
+            if (isNaN(executeAt.getTime())) {
+              res.writeHead(400, { 'Content-Type': 'application/json' });
+              res.end(
+                JSON.stringify({ error: 'executeAt is not a valid date', code: 'INVALID_DATE' }),
+              );
+              return;
+            }
           }
 
           const schedule = async (): Promise<{ id: number }> => {
@@ -1206,7 +1264,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
               priority: data.priority,
               eventId: data.eventId,
               contractAddress: data.contractAddress,
-              metadata: data.metadata,
+              metadata,
             });
             logger.info('Notification scheduled via API', {
               requestId,
@@ -1440,6 +1498,31 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
             correlationId,
           });
           handleApiError(res, error, requestId, correlationId);
+        });
+      return;
+    }
+
+    // POST /api/schedule/:id/resume — release a notification held by the
+    // intervene missed-schedule policy so the next poll delivers it.
+    const resumeMatch = url.pathname.match(/^\/api\/schedule\/(\d+)\/resume$/);
+    if (req.method === 'POST' && resumeMatch) {
+      if (!options.notificationAPI) {
+        sendErr(res, 503, 'Scheduler not enabled', ErrorCode.SERVICE_UNAVAILABLE);
+        return;
+      }
+      const id = parseInt(resumeMatch[1], 10);
+      options.notificationAPI
+        .releaseMissedSchedule(id)
+        .then((released) => {
+          if (!released) {
+            sendErr(res, 404, 'No notification is waiting for intervention', ErrorCode.NOT_FOUND);
+            return;
+          }
+          sendOk(res, 200, { id, released: true });
+        })
+        .catch((error) => {
+          logger.error('Failed to resume missed notification', { error, requestId, correlationId, id });
+          sendErr(res, 500, (error as Error).message, ErrorCode.INTERNAL_ERROR);
         });
       return;
     }

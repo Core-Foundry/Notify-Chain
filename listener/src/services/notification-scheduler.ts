@@ -13,6 +13,7 @@ import { verifyPayloadIntegrity } from '../utils/payload-integrity';
 import { DeliveryReceiptRepository } from './delivery-receipt-repository';
 import { DeliveryResult } from '../types/provider-capabilities';
 import { NotificationClaimLease, startClaimLease } from './notification-claim-lease';
+import { nextLocalOccurrence, readLocalSchedule } from './local-schedule';
 
 /**
  * Background scheduler that processes scheduled notifications
@@ -346,7 +347,50 @@ export class NotificationScheduler {
         return;
       }
 
-      if (timeDiff > this.config.timingBufferMs) {
+      if (timeDiff > this.config.timingBufferMs && !this.isInterventionReleased(notification)) {
+        const policy = this.config.missedSchedulePolicy ?? 'execute';
+        if (policy === 'expire') {
+          const errorMessage = 'Missed schedule expired by recovery policy';
+          await this.repository.markAsExpired(notification.id!, errorMessage);
+          await this.repository.logExecution({
+            scheduledNotificationId: notification.id!,
+            executionAttempt,
+            executionTime: new Date(),
+            status: 'FAILED',
+            errorMessage,
+            durationMs: Date.now() - startTime,
+          });
+          if (jobId) {
+            jobMonitor.failJob(jobId, errorMessage, { notificationId: notification.id });
+          }
+          logger.info('Overdue notification expired by missed-schedule policy', {
+            requestId,
+            id: notification.id,
+            missedByMs: timeDiff,
+          });
+          return;
+        }
+        if (policy === 'intervene') {
+          const errorMessage = 'Missed schedule requires operator intervention';
+          await this.repository.holdForIntervention(notification.id!);
+          await this.repository.logExecution({
+            scheduledNotificationId: notification.id!,
+            executionAttempt,
+            executionTime: new Date(),
+            status: 'FAILED',
+            errorMessage,
+            durationMs: Date.now() - startTime,
+          });
+          if (jobId) {
+            jobMonitor.failJob(jobId, errorMessage, { notificationId: notification.id });
+          }
+          logger.warn('Overdue notification held for operator intervention', {
+            requestId,
+            id: notification.id,
+            missedByMs: timeDiff,
+          });
+          return;
+        }
         logger.warn('Missed scheduled notification detected; dispatching catch-up delivery', {
           requestId,
           id: notification.id,
@@ -395,6 +439,7 @@ export class NotificationScheduler {
 
       if (success) {
         await this.repository.markAsCompleted(notification.id!, requestId);
+        await this.enqueueNextLocalOccurrence(notification, requestId);
         await this.repository.logExecution({
           scheduledNotificationId: notification.id!,
           executionAttempt,
@@ -473,6 +518,61 @@ export class NotificationScheduler {
         status: willRetry ? 'RETRY' : 'FAILED',
         errorMessage: (error as Error).message,
         durationMs,
+      });
+    }
+  }
+
+  private isInterventionReleased(notification: ScheduledNotification): boolean {
+    if (!notification.errorDetails) return false;
+    try {
+      const parsed = JSON.parse(notification.errorDetails) as { code?: string; releasedAt?: string };
+      return parsed.code === 'MISSED_SCHEDULE_INTERVENTION' && typeof parsed.releasedAt === 'string';
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * When a timezone schedule repeats daily or weekly, queue the next local
+   * occurrence with the daylight-saving policy in local-schedule.ts.
+   */
+  private async enqueueNextLocalOccurrence(
+    notification: ScheduledNotification,
+    requestId: string,
+  ): Promise<void> {
+    const intent = readLocalSchedule(notification.metadata);
+    if (!intent?.recurrence) return;
+
+    try {
+      const next = nextLocalOccurrence(intent);
+      const metadata = notification.metadata ? JSON.parse(notification.metadata) : {};
+      metadata.localSchedule = {
+        ...(metadata.localSchedule ?? {}),
+        timeZone: intent.timeZone,
+        localDateTime: next.requestedLocal,
+        recurrence: intent.recurrence,
+        kind: next.kind,
+        resolvedLocal: next.resolvedLocal,
+      };
+      await this.repository.create(
+        {
+          payload: JSON.parse(notification.payload),
+          notificationType: notification.notificationType,
+          targetRecipient: notification.targetRecipient,
+          executeAt: next.executeAt,
+          maxRetries: notification.maxRetries,
+          priority: notification.priority,
+          eventId: notification.eventId ?? undefined,
+          contractAddress: notification.contractAddress ?? undefined,
+          metadata,
+        },
+        requestId,
+      );
+    } catch (error) {
+      logger.error('Failed to enqueue the next local occurrence', {
+        requestId,
+        id: notification.id,
+        error,
       });
     }
   }

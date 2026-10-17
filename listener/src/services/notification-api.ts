@@ -259,6 +259,14 @@ export class NotificationAPI {
   }
 
   /**
+   * Release a notification held because it missed its schedule under the
+   * `intervene` recovery policy. The next scheduler poll delivers it.
+   */
+  async releaseMissedSchedule(id: number): Promise<boolean> {
+    return await this.repository.releaseIntervention(id);
+  }
+
+  /**
    * Get scheduler statistics.
    */
   async getStatistics(): Promise<NotificationStats> {
