@@ -35,4 +35,13 @@ jobs:
         run: |
           cd listener
           npm run typecheck
-          npm test
+          npm run test:coverage
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: listener/coverage/
+          retention-days: 14
+          if-no-files-found: warn
