@@ -295,7 +295,7 @@ const AUTH_ERRORS: Record<string, { message: string; code: string; status: numbe
   },
 };
 
-export function verifyWebhookRequest(ctx: WebhookVerificationContext): WebhookVerificationOutcome {
+export async function verifyWebhookRequest(ctx: WebhookVerificationContext): Promise<WebhookVerificationOutcome> {
   const {
     headers,
     rawBody,
@@ -306,9 +306,8 @@ export function verifyWebhookRequest(ctx: WebhookVerificationContext): WebhookVe
     maxAgeSeconds,
     requireTimestamp = true,
     replayCache,
+    auditService,
   } = ctx;
-export async function verifyWebhookRequest(ctx: WebhookVerificationContext): Promise<WebhookVerificationOutcome> {
-  const { headers, rawBody, secrets, sourceIp, requestId, correlationId, maxAgeSeconds, auditService } = ctx;
 
   const signatureHeader = extractSignature(headers);
   const keyId = extractKeyId(headers);
