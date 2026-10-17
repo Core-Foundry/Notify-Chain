@@ -2135,6 +2135,23 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
     });
     sendErr(res, 404, 'Not found', ErrorCode.NOT_FOUND);
     responseTime.finish(req, res, requestId, 404);
+  };
+
+  const server = http.createServer((req, res) => {
+    // Request-ID + correlation middleware (#686, #986): assigns (or
+    // validates+reuses) a requestId and correlationId, stamps both onto the
+    // response headers, and runs the handler inside an AsyncLocalStorage
+    // context so logs, error envelopes and queued jobs inherit them.
+    runWithRequestCorrelation(req, res, (requestContext) =>
+      handleRequest(req, res, requestContext),
+    ).catch((error: unknown) => {
+      logger.error('Unhandled error in events server request handler', { error });
+      if (!res.headersSent) {
+        sendErr(res, 500, 'Internal server error', ErrorCode.INTERNAL_ERROR);
+      } else {
+        res.end();
+      }
+    });
   });
 
   if (rateLimiter) {

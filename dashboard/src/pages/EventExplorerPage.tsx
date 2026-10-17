@@ -313,6 +313,10 @@ export function EventExplorerPage() {
     replaceSelectedEventInUrl(event.eventId);
   }, []);
 
+  const handleContractClick = useCallback((contractAddress: string) => {
+    window.location.hash = `contract-detail?address=${contractAddress}`;
+  }, []);
+
   const handleCloseDrawer = useCallback(() => {
     setSelectedNotification(null);
     replaceSelectedEventInUrl(null);
@@ -412,6 +416,7 @@ export function EventExplorerPage() {
           events={currentPageEvents}
           onSelectEvent={handleSelectEvent}
           contractStatuses={contractStatuses}
+          onContractClick={handleContractClick}
         />
       ) : (
         <EmptyState
