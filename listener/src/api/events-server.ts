@@ -66,6 +66,11 @@ import { NotificationImportService } from '../services/notification-import-servi
 import { ResponseTimeMiddleware } from '../middleware/response-time';
 import { addSecurityHeaders } from '../middleware/security-headers';
 import { DEFAULT_MAX_BODY_BYTES, enforceBodyLimit } from '../middleware/body-limit';
+import {
+  DEFAULT_MAX_COMPRESSED_BYTES,
+  DEFAULT_MAX_DECOMPRESSED_BYTES,
+  applyDecompressionLimit,
+} from '../middleware/decompression-limit';
 import { sanitizeUrl } from '../utils/logger';
 import { sanitizeCredentials } from '../utils/credential-sanitizer';
 import { DiscordNotificationProvider } from '../services/providers/discord-provider';
@@ -134,6 +139,18 @@ export interface EventsServerOptions {
    * are never parsed. Defaults to {@link DEFAULT_MAX_BODY_BYTES}.
    */
   maxBodyBytes?: number;
+  /**
+   * Largest *compressed* request body accepted when a `Content-Encoding` is
+   * present, in bytes (issue #999). Defaults to
+   * {@link DEFAULT_MAX_COMPRESSED_BYTES}.
+   */
+  maxCompressedBytes?: number;
+  /**
+   * Largest *decompressed* request body accepted when a `Content-Encoding` is
+   * present, in bytes (issue #999). Bounds decompression bombs. Defaults to
+   * {@link DEFAULT_MAX_DECOMPRESSED_BYTES}.
+   */
+  maxDecompressedBytes?: number;
   /** Optional DataExportService override for administrative exports (#850). */
   dataExportService?: DataExportService | null;
 }
@@ -499,6 +516,31 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
       return;
     }
 
+    // Compressed request body limits (#999).
+    //
+    // The body-size guard above bounds the bytes on the wire, but a
+    // `Content-Encoding: gzip` body inflates in memory, so a small upload can
+    // still exhaust the heap. This screens both the compressed and the inflated
+    // size before any route handler reads the body, and refuses encodings we
+    // cannot inflate. On success the decoded body is replayed to the handlers.
+    const decompression = await applyDecompressionLimit(req, res, {
+      maxCompressedBytes: options.maxCompressedBytes ?? DEFAULT_MAX_COMPRESSED_BYTES,
+      maxDecompressedBytes: options.maxDecompressedBytes ?? DEFAULT_MAX_DECOMPRESSED_BYTES,
+      onRejected: (reason, detail) => {
+        logger.warn('Compressed request body rejected', {
+          requestId,
+          correlationId,
+          method: req.method,
+          url: sanitizeUrl(req.url ?? '/'),
+          reason,
+          ...detail,
+        });
+      },
+    });
+    if (decompression.rejected) {
+      return;
+    }
+
     res.setHeader('Access-Control-Allow-Origin', corsOrigin);
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
     res.setHeader(
@@ -834,29 +876,14 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
 
           const secrets = options.webhookSecrets ?? [];
           const maxAgeSeconds = options.signatureExpirationSeconds ?? 300;
-        const secrets = options.webhookSecrets ?? [];
-        const maxAgeSeconds = options.signatureExpirationSeconds ?? 300;
-        
-        // Use default database for audit log or mock one if not available.
-        // Actually since SecurityAuditService requires Database, let's pass a real one.
-        const db = getDatabase();
-        const { SecurityAuditService } = require('../services/security-audit');
-        const auditService = new SecurityAuditService(db);
 
-        const auth = await verifyWebhookRequest({
-          headers: req.headers as Record<string, string | string[] | undefined>,
-          rawBody,
-          secrets,
-          sourceIp,
-          requestId,
-          correlationId,
-          maxAgeSeconds,
-          requireTimestamp: options.requireWebhookTimestamp !== false,
-          replayCache: webhookReplayCache,
-          auditService,
-        });
+          // Use default database for audit log or mock one if not available.
+          // Actually since SecurityAuditService requires Database, let's pass a real one.
+          const db = getDatabase();
+          const { SecurityAuditService } = require('../services/security-audit');
+          const auditService = new SecurityAuditService(db);
 
-          const auth = verifyWebhookRequest({
+          const auth = await verifyWebhookRequest({
             headers: req.headers as Record<string, string | string[] | undefined>,
             rawBody,
             secrets,
@@ -864,6 +891,9 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
             requestId,
             correlationId,
             maxAgeSeconds,
+            requireTimestamp: options.requireWebhookTimestamp !== false,
+            replayCache: webhookReplayCache,
+            auditService,
           });
 
           if (!auth.authenticated) {
@@ -1515,7 +1545,6 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
       return;
     }
 
-    function isValidApiKey(apiKey: string | undefined, allowedKeys: Array<{ key: string; name?: string }> | undefined): boolean {
     function isValidApiKey(
       apiKey: string | undefined,
       allowedKeys: Array<{ key: string; name?: string }> | undefined,
@@ -1561,21 +1590,6 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
       return;
     }
 
-    // Get notification delivery history endpoint
-    if (req.method === 'GET' && req.url?.startsWith('/api/notifications/history')) {
-      const apiKey = req.headers['x-api-key'] as string | undefined;
-      if (!isValidApiKey(apiKey, options.apiKeys)) {
-        sendErr(res, 401, 'Unauthorized: Invalid or missing API key', ErrorCode.UNAUTHORIZED);
-        return;
-      }
-
-      const url = new URL(req.url, 'http://localhost');
-      const limit = url.searchParams.get('limit')
-        ? parseInt(url.searchParams.get('limit')!, 10)
-        : undefined;
-      const offset = url.searchParams.get('offset')
-        ? parseInt(url.searchParams.get('offset')!, 10)
-        : undefined;
     // Get notification delivery history endpoint.
     // Matched on the rewritten pathname so /api/v1/notifications/history is
     // routed (and authenticated) the same as the unversioned path.
