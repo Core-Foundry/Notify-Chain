@@ -15,6 +15,7 @@ export const API_SCOPES = [
   'notifications:write',
   'webhooks:manage',
   'credentials:manage',
+  'admin',
 ] as const;
 
 export type ApiScope = (typeof API_SCOPES)[number];
