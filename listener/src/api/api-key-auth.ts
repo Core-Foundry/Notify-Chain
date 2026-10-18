@@ -117,6 +117,7 @@ export function principalHasScopes(
   required: readonly ApiScope[],
 ): boolean {
   if (principal.type !== 'credential') return true;
+  if (principal.scopes.includes('admin')) return true;
   return required.every((scope) => principal.scopes.includes(scope));
 }
 

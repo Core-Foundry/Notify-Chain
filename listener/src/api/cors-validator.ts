@@ -6,6 +6,7 @@
  */
 
 import cors, { CorsOptions } from 'cors';
+export { createCorsPolicy, type CorsPolicy, type CorsPolicyConfig } from './cors-policy';
 
 export interface ValidatedCorsConfig {
   allowedOrigins: string[] | '*';
