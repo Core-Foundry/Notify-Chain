@@ -242,7 +242,7 @@ export const EventExplorerTable = memo(function EventExplorerTable({
             event={event}
             onCopyContract={handleCopyContract}
             isCopied={isCopied(event.contractAddress)}
-            onSelectEvent={handleSelectEvent}
+            onSelect={handleSelectEvent}
           />
         ))}
       </div>

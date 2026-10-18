@@ -1,3 +1,4 @@
+import { memo, useCallback, type KeyboardEvent } from 'react';
 import type { BlockchainEvent } from '../types/event';
 import type { ContractStatus } from '../services/eventsApi';
 import { formatTimestamp } from '../utils/formatTime';
@@ -75,7 +76,7 @@ export const EventExplorerCard = memo(function EventExplorerCard({
               className="event-explorer__copy-button"
               onClick={(e) => {
                 e.stopPropagation();
-                onCopyContract(event.contractAddress);
+                handleCopyClick();
               }}
               aria-label={`Copy contract address ${event.contractAddress}`}
             >
@@ -126,4 +127,4 @@ export const EventExplorerCard = memo(function EventExplorerCard({
       </div>
     </article>
   );
-}
+});

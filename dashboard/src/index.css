@@ -2190,10 +2190,11 @@ body {
 @media (max-width: 600px) {
   .event-card--compact .event-card__primary,
   .event-card--compact .event-card__meta,
+  .event-card--compact .event-card__details {
     width: 100%;
     min-width: 0;
     overflow-x: clip;
-  .event-card--compact .event-card__details {
+  }
 
   .event-filters {
     grid-template-columns: minmax(0, 1fr);
@@ -3083,6 +3084,8 @@ body.event-explorer--resizing {
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
+}
+
 /* Row inside a cell that pairs a value with a copy button */
 .event-explorer__id-cell {
   display: flex;
@@ -6538,6 +6541,8 @@ body.event-explorer--resizing {
   .cd-channel-card__stats {
     grid-template-columns: repeat(2, 1fr);
   }
+}
+
 @media (max-width: 640px) {
   .notif-search-page {
     padding: 16px;
@@ -6979,6 +6984,8 @@ select,
 textarea {
   font-family: inherit;
   font-size: inherit;
+}
+
 /* ── Retry statistics ─────────────────────────────────────────── */
 .retry-stats,
 .user-activity {
