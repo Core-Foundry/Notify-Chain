@@ -15,7 +15,7 @@
  */
 
 import { jest, describe, it, expect, beforeEach, afterEach } from '@jest/globals';
-import { sendWebhookWithRetry } from './webhook-retry-helper';
+import { sendWebhookWithRetry, classifyWebhookFailure } from './webhook-retry-helper';
 
 // ---------------------------------------------------------------------------
 // Mock sendWebhook to prevent real HTTP requests
@@ -421,6 +421,47 @@ describe('sendWebhookWithRetry', () => {
         PAYLOAD,
         expect.objectContaining({ timeoutMs: 2500, headers: { 'X-Retry': 'test' } }),
       );
+    });
+  });
+
+  // ── Failure classification ────────────────────────────────────────────────
+
+  describe('classifyWebhookFailure', () => {
+    it('classifies an AbortError as a timeout', () => {
+      expect(classifyWebhookFailure(undefined, makeTimeoutError())).toBe('timeout');
+    });
+
+    it('classifies a TimeoutError as a timeout', () => {
+      const err = new Error('request timed out');
+      err.name = 'TimeoutError';
+
+      expect(classifyWebhookFailure(undefined, err)).toBe('timeout');
+    });
+
+    it('classifies a generic error as a network failure (not a timeout)', () => {
+      expect(classifyWebhookFailure(undefined, makeNetworkError())).toBe('network');
+    });
+
+    it('does not treat a message mentioning "timeout" as a timeout', () => {
+      // Only the error name marks an abort; a generic message must not be
+      // mistaken for a timeout, otherwise retry/observability cannot tell them apart.
+      expect(classifyWebhookFailure(undefined, new Error('timeout'))).toBe('network');
+    });
+
+    it('classifies retryable HTTP statuses', () => {
+      for (const status of [429, 500, 502, 503, 504]) {
+        expect(classifyWebhookFailure(makeResponse(status, false))).toBe('http_retryable');
+      }
+    });
+
+    it('classifies permanent client errors', () => {
+      for (const status of [400, 401, 403, 404, 422]) {
+        expect(classifyWebhookFailure(makeResponse(status, false))).toBe('http_permanent');
+      }
+    });
+
+    it('returns null for a successful response', () => {
+      expect(classifyWebhookFailure(makeResponse(200))).toBeNull();
     });
   });
 });

@@ -2,7 +2,8 @@ import type { WebhookDelivery } from '../types/webhook';
 import { generateMockWebhookDeliveries } from '../utils/webhookData';
 
 const BASE_URL =
-  (typeof import.meta !== 'undefined' && (import.meta as { env?: Record<string, string> }).env?.VITE_EVENTS_API_URL) ||
+  (typeof import.meta !== 'undefined' &&
+    (import.meta as { env?: Record<string, string> }).env?.VITE_EVENTS_API_URL) ||
   'http://localhost:8787';
 
 export interface WebhookDeliveryResponse {

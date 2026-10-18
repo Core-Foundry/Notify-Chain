@@ -1,4 +1,4 @@
-jest.mock('../utils/request-id', () => ({ generateRequestId: () => 'scheduler-test-request-id' }));
+jest.mock('../utils/request-id', () => ({ generateRequestId: () => 'test-request-id' }));
 
 import { Database } from '../database/database';
 import { ScheduledNotificationRepository } from '../services/scheduled-notification-repository';
@@ -166,6 +166,128 @@ describe('NotificationScheduler', () => {
       expect(notification!.retryCount).toBe(0);
     });
 
+    test('does not deliver an expired scheduled notification', async () => {
+      const id = await repository.create({
+        payload: { event: {}, contractConfig: {}, message: 'Expired notification' },
+        notificationType: NotificationType.DISCORD,
+        targetRecipient: 'webhook-b',
+        executeAt: new Date(Date.now() - 1000),
+        expiresAt: new Date(Date.now() - 1000),
+      });
+      const discordService = { sendEventNotification: jest.fn().mockResolvedValue(true) } as any;
+
+      scheduler = new NotificationScheduler(
+        repository,
+        {
+          enabled: true,
+          pollIntervalMs: 1000,
+          lockTimeoutMs: 30000,
+          processorId: 'expired-dispatch-test',
+          batchSize: 10,
+          timingBufferMs: 1000,
+        },
+        discordService,
+      );
+
+      await (scheduler as any).processPendingNotifications();
+
+      expect(discordService.sendEventNotification).toHaveBeenCalledTimes(0);
+      expect((await repository.getById(id))!.status).toBe(NotificationStatus.EXPIRED);
+    });
+
+    test('does not deliver a notification that expires between retries', async () => {
+      const id = await repository.create({
+        payload: { event: {}, contractConfig: {}, message: 'Retry expiration' },
+        notificationType: NotificationType.DISCORD,
+        targetRecipient: 'test-webhook',
+        executeAt: new Date(Date.now() - 60_000),
+        expiresAt: new Date(Date.now() + 60_000),
+        maxRetries: 3,
+      });
+      const discordService = {
+        sendEventNotification: jest.fn().mockRejectedValueOnce(new Error('temporary outage')),
+      } as any;
+      scheduler = new NotificationScheduler(
+        repository,
+        {
+          enabled: true,
+          pollIntervalMs: 1000,
+          lockTimeoutMs: 30000,
+          processorId: 'retry-expiration-initial-test',
+          batchSize: 10,
+          timingBufferMs: 1000,
+          retryDelayMs: 100,
+        },
+        discordService,
+      );
+
+      await (scheduler as any).processPendingNotifications();
+      expect(discordService.sendEventNotification).toHaveBeenCalledTimes(1);
+
+      await db.run(
+        'UPDATE scheduled_notifications SET expires_at = ?, next_retry_at = ? WHERE id = ?',
+        [new Date(Date.now() - 1000).toISOString(), new Date(Date.now() - 1000).toISOString(), id],
+      );
+
+      const { RetryScheduler } = await import('../services/retry-scheduler');
+      const retryScheduler = new RetryScheduler(
+        repository,
+        {
+          enabled: true,
+          pollIntervalMs: 1000,
+          lockTimeoutMs: 30000,
+          processorId: 'retry-expiration-test',
+          batchSize: 10,
+          baseDelayMs: 100,
+          multiplier: 2,
+          maxDelayMs: 1000,
+          jitter: false,
+        },
+        discordService,
+      );
+
+      await retryScheduler.runOnce();
+
+      expect(discordService.sendEventNotification).toHaveBeenCalledTimes(1);
+      expect((await repository.getById(id))!.status).toBe(NotificationStatus.EXPIRED);
+    });
+
+    test('delivers non-expired and NULL-expiration notifications normally', async () => {
+      const activeId = await repository.create({
+        payload: { event: {}, contractConfig: {}, message: 'Still valid' },
+        notificationType: NotificationType.DISCORD,
+        targetRecipient: 'webhook-a',
+        executeAt: new Date(Date.now() - 1000),
+        expiresAt: new Date(Date.now() + 60_000),
+      });
+      const neverExpiresId = await repository.create({
+        payload: { event: {}, contractConfig: {}, message: 'Never expires' },
+        notificationType: NotificationType.DISCORD,
+        targetRecipient: 'webhook-b',
+        executeAt: new Date(Date.now() - 1000),
+        expiresAt: null,
+      });
+      const discordService = { sendEventNotification: jest.fn().mockResolvedValue(true) } as any;
+      scheduler = new NotificationScheduler(
+        repository,
+        {
+          enabled: true,
+          pollIntervalMs: 1000,
+          lockTimeoutMs: 30000,
+          processorId: 'valid-expiration-test',
+          batchSize: 10,
+          timingBufferMs: 1000,
+        },
+        discordService,
+      );
+
+      await (scheduler as any).processPendingNotifications();
+
+      expect(discordService.sendEventNotification).toHaveBeenCalledTimes(2);
+      expect((await repository.getById(activeId))!.status).toBe(NotificationStatus.COMPLETED);
+      expect((await repository.getById(neverExpiresId))!.status).toBe(NotificationStatus.COMPLETED);
+    });
+
     test('should fetch and lock pending notifications', async () => {
       const executeAt = new Date(Date.now() - 1000); // Past time
 
@@ -187,7 +309,7 @@ describe('NotificationScheduler', () => {
       const notifications = await repository.fetchAndLockPendingNotifications(
         processorId,
         30000,
-        10
+        10,
       );
 
       expect(notifications.length).toBe(2);
@@ -225,7 +347,7 @@ describe('NotificationScheduler', () => {
           timingBufferMs: 1000,
           retryDelayMs: 2000,
         },
-        discordService
+        discordService,
       );
 
       await (scheduler as any).processPendingNotifications();
@@ -255,7 +377,7 @@ describe('NotificationScheduler', () => {
           maxDelayMs: 1000,
           jitter: false,
         },
-        discordService
+        discordService,
       );
 
       await retryScheduler.runOnce();
@@ -279,12 +401,12 @@ describe('NotificationScheduler', () => {
       const processor1 = await repository.fetchAndLockPendingNotifications(
         'processor-1',
         30000,
-        10
+        10,
       );
       const processor2 = await repository.fetchAndLockPendingNotifications(
         'processor-2',
         30000,
-        10
+        10,
       );
 
       expect(processor1.length).toBe(1);
@@ -365,8 +487,8 @@ describe('NotificationScheduler', () => {
       await repository.markAsFailedOrRetry(id, error, 2, 3);
 
       const notification = await repository.getById(id);
-      expect(notification!.status).toBe(NotificationStatus.FAILED);
-      expect(notification!.retryCount).toBe(3);
+      expect(notification!.status).toBe(NotificationStatus.DEAD_LETTERED);
+      expect(notification!.retryCount).toBe(2);
     });
 
     test('should cancel pending notification', async () => {
@@ -448,8 +570,10 @@ describe('NotificationScheduler', () => {
           notificationType: NotificationType.DISCORD,
           targetRecipient: 'test-webhook',
           executeAt: pastDate,
-        })
-      ).rejects.toThrow('executeAt must be a future timestamp — the provided date has already expired');
+        }),
+      ).rejects.toThrow(
+        'executeAt must be a future timestamp — the provided date has already expired',
+      );
     });
 
     test('should reject execution time equal to now', async () => {
@@ -462,7 +586,7 @@ describe('NotificationScheduler', () => {
           notificationType: NotificationType.DISCORD,
           targetRecipient: 'test-webhook',
           executeAt: now,
-        })
+        }),
       ).rejects.toThrow('executeAt must be a future timestamp');
     });
 
@@ -473,7 +597,7 @@ describe('NotificationScheduler', () => {
           notificationType: NotificationType.DISCORD,
           targetRecipient: 'test-webhook',
           executeAt: new Date('not-a-date'),
-        })
+        }),
       ).rejects.toThrow('executeAt must be a valid date');
     });
 
@@ -497,7 +621,7 @@ describe('NotificationScheduler', () => {
         'https://discord.com/webhook/test',
         { content: 'Hello World' },
         executeAt,
-        { priority: 1, maxRetries: 5 }
+        { priority: 1, maxRetries: 5 },
       );
 
       expect(id).toBeGreaterThan(0);
@@ -600,7 +724,7 @@ describe('Stale cache regression tests', () => {
     await repository.markAsFailedOrRetry(id, new Error('Max retries exceeded'), 2, 2);
 
     const notification = await repository.getById(id);
-    expect(notification?.status).toBe(NotificationStatus.FAILED);
+    expect(notification?.status).toBe(NotificationStatus.DEAD_LETTERED);
     expect(notification?.updatedAt).toBeDefined();
     expect(notification?.updatedAt).toBeInstanceOf(Date);
     expect(isNaN(notification?.updatedAt?.getTime() ?? NaN)).toBe(false);

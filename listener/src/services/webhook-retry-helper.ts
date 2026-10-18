@@ -1,5 +1,5 @@
 /**
- * Bounded retry helper for transient API failures.
+ * Bounded retry helper for transient webhook API failures.
  *
  * Wraps the sendWebhook function with retry logic driven by a {@link RetryPolicy},
  * so the attempt budget, the delay curve and the set of eligible failure types
@@ -16,14 +16,20 @@
  * returned to the caller immediately.
  */
 
-import { sendWebhook, WebhookSendOptions } from './webhook-sender';
-import { RetryFailureType, RetryPolicy, classifyError, classifyHttpStatus } from './retry-policy';
+import { sendWebhook, WebhookSendOptions, WebhookFailureReason } from './webhook-sender';
+import { RetryFailureType, RetryPolicy, classifyError } from './retry-policy';
 
 /** Maximum number of retry attempts (not counting the initial attempt). */
 const MAX_RETRY_ATTEMPTS = 2;
 
 /** Delay in milliseconds before the first retry. */
 const RETRY_DELAY_MS = 1000;
+
+/** Client errors that will never succeed on retry. */
+const PERMANENT_CLIENT_ERRORS = new Set<number>([400, 401, 403, 404, 410, 422]);
+
+/** Statuses explicitly worth retrying; any other 5xx is also retryable. */
+const RETRYABLE_STATUS_CODES = new Set<number>([408, 429]);
 
 export interface WebhookRetryOptions extends WebhookSendOptions {
   /**
@@ -43,44 +49,68 @@ const DEFAULT_RETRY_POLICY = new RetryPolicy({
 });
 
 /**
+ * Classify a webhook attempt as a specific failure reason, or `null` when it
+ * succeeded / did not fail.
+ *
+* A request timeout is reported as its own `'timeout'` reason rather than
+ * being folded into a generic network error, so retry logic and observability
+ * can treat (and count) the two separately.
+ *
+ * @param response - The HTTP response, if one was received
+ * @param error - The error thrown, if the request failed before/without a response
+ * @param policy - Policy deciding which failure types are retryable
+ * @returns the failure reason, or null when the attempt did not fail
+ */
+export function classifyWebhookFailure(
+  response?: Response,
+  error?: unknown
+): WebhookFailureReason | null {
+  // A thrown error means no HTTP response was available. Timeouts are their
+  // own reason; everything else is a network-level failure.
+  if (error) {
+    return classifyError(error) === RetryFailureType.Timeout ? 'timeout' : 'network';
+  }
+
+  if (!response || response.ok) {
+    return null;
+  }
+
+  // Permanent client errors are not worth retrying.
+  if (PERMANENT_CLIENT_ERRORS.has(response.status)) {
+    return 'http_permanent';
+  }
+
+  // Explicit retryable status codes, plus any other 5xx.
+  if (RETRYABLE_STATUS_CODES.has(response.status) || response.status >= 500) {
+    return 'http_retryable';
+  }
+
+  // Other status codes (e.g. redirects, unlisted 4xx) are non-retryable.
+  return 'http_permanent';
+}
+
+/**
  * Determines if an error or response should trigger a retry.
  *
  * @param response - The HTTP response, if available
  * @param error - The error thrown, if any
- * @param policy - Policy deciding which failure types are retryable
  * @returns true if the failure is retryable
  */
-export function isRetryable(
-  response?: Response,
-  error?: unknown,
-  policy: RetryPolicy = DEFAULT_RETRY_POLICY,
-): boolean {
-  // An explicit status code is the most precise signal available.
-  if (response) {
-    if (response.ok) {
-      return false;
-    }
-    return policy.isRetryable(classifyHttpStatus(response.status));
-  }
-
-  if (error !== undefined && error !== null) {
-    return policy.isRetryable(classifyError(error));
-  }
-
-  return false;
+function isRetryable(response?: Response, error?: unknown): boolean {
+  const reason = classifyWebhookFailure(response, error);
+  return reason === 'timeout' || reason === 'network' || reason === 'http_retryable';
 }
 
 /**
  * Delay execution for the specified number of milliseconds.
- *
- * @param ms - Milliseconds to delay
  */
 async function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 /**
- * Send a webhook with bounded retry logic for transient failures.
+ * Send a webhook with bounded, configurable retry logic for transient
+ * failures.
  *
  * Makes an initial attempt, then retries while the policy allows: while the
  * attempt budget is not exhausted *and* the failure type is eligible for retry.
@@ -115,11 +145,10 @@ export async function sendWebhookWithRetry(
       }
 
       // Non-retryable failure (permanent client error)
-      if (!isRetryable(response, undefined, policy)) {
+      if (!isRetryable(response, undefined)) {
         return response;
       }
 
-      // Retryable failure - store response and retry if attempts remain
       lastResponse = response;
 
       if (attempt < maxAttempts) {
@@ -143,13 +172,7 @@ export async function sendWebhookWithRetry(
     }
   }
 
-  // If we got here, we have a failed response (not an exception)
-  // Return the last response
-  if (lastResponse) {
-    return lastResponse;
-  }
-
-  // This should not happen, but handle it gracefully
+  if (lastResponse) return lastResponse;
   throw lastError ?? new Error('All retry attempts failed');
 }
 

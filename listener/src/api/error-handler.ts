@@ -1,6 +1,7 @@
 import http from 'http';
 import logger from '../utils/logger';
 import { sendErr, ErrorCode } from '../utils/response';
+import { ValidationError } from '../utils/validation';
 
 export class ApiError extends Error {
   public readonly statusCode: number;
@@ -26,6 +27,13 @@ export class ApiError extends Error {
 
   static unauthorized(message: string): ApiError {
     return new ApiError(message, 401, ErrorCode.UNAUTHORIZED);
+  }
+
+  static invalidPermissions(
+    message = 'The provided credentials lack the necessary scope for this action.',
+    details?: unknown,
+  ): ApiError {
+    return new ApiError(message, 403, ErrorCode.INVALID_PERMISSIONS, details);
   }
 
   static notFound(message: string): ApiError {
@@ -75,7 +83,24 @@ export function handleApiError(
       errorCode: error.errorCode,
       message: error.message,
     });
-    sendErr(res, error.statusCode, error.message, error.errorCode, error.details);
+    sendErr(res, error.statusCode, error.message, error.errorCode, error.details, correlationId);
+    return;
+  }
+
+  if (error instanceof ValidationError) {
+    logger.warn('Validation error', {
+      requestId,
+      correlationId,
+      issues: error.issues,
+    });
+    sendErr(
+      res,
+      400,
+      `Validation failed: ${error.message}`,
+      ErrorCode.BAD_REQUEST,
+      error.issues,
+      correlationId,
+    );
     return;
   }
 
@@ -85,7 +110,7 @@ export function handleApiError(
     correlationId,
     error,
   });
-  sendErr(res, 500, message, ErrorCode.INTERNAL_ERROR);
+  sendErr(res, 500, message, ErrorCode.INTERNAL_ERROR, undefined, correlationId);
 }
 
 export function wrapAsyncHandler(

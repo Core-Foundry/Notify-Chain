@@ -12,6 +12,7 @@ import { ProviderRegistry, getProviderRegistry } from './provider-registry';
 import { verifyPayloadIntegrity } from '../utils/payload-integrity';
 import { DeliveryReceiptRepository } from './delivery-receipt-repository';
 import { DeliveryResult } from '../types/provider-capabilities';
+import { NotificationClaimLease, startClaimLease } from './notification-claim-lease';
 
 /**
  * Background scheduler that processes scheduled notifications
@@ -144,8 +145,15 @@ export class NotificationScheduler {
         return;
       }
 
+      const activeNotifications: ScheduledNotification[] = [];
+      for (const notification of notifications) {
+        if (await this.expireIfPastDeadline(notification, requestId)) continue;
+        activeNotifications.push(notification);
+      }
+      if (activeNotifications.length === 0) return;
+
       const batchRejection = this.batchValidator.rejectIfInvalid(
-        this.toValidationBatch(notifications)
+        this.toValidationBatch(activeNotifications)
       );
 
       if (batchRejection) {
@@ -155,7 +163,7 @@ export class NotificationScheduler {
           errors: batchRejection.errors,
         });
 
-        for (const notification of notifications) {
+        for (const notification of activeNotifications) {
           await this.repository.markAsFailedOrRetry(
             notification.id!,
             new Error(`Batch validation failed: ${batchRejection.errors.map((e) => e.message).join('; ')}`),
@@ -168,7 +176,7 @@ export class NotificationScheduler {
 
       logger.info('Processing batch of scheduled notifications', {
         requestId,
-        count: notifications.length,
+        count: activeNotifications.length,
         processorId: this.processorId,
       });
 
@@ -177,10 +185,10 @@ export class NotificationScheduler {
       if (workerManager.isShutdownInProgress()) {
         logger.info('Shutdown in progress - releasing unprocessed notifications', {
           requestId,
-          count: notifications.length,
+          count: activeNotifications.length,
         });
         // Release locks on unprocessed notifications
-        for (const notification of notifications) {
+        for (const notification of activeNotifications) {
           await this.repository.markAsFailedOrRetry(
             notification.id!,
             new Error('Scheduler shutting down'),
@@ -191,9 +199,14 @@ export class NotificationScheduler {
         return;
       }
 
-      // Process each notification with job tracking + monitoring
+      // Process each notification with job tracking + monitoring.
+      // WORKER_CONCURRENCY (config.concurrency, default 1) bounds how many
+      // notifications are processed in parallel per poll cycle; 1 preserves
+      // the original serial behavior exactly.
       const jobMonitor = getJobMonitor();
-      for (const notification of notifications) {
+      const concurrency = Math.max(1, Math.floor(this.config.concurrency ?? 1));
+      const queue = [...activeNotifications];
+      const processOne = async (notification: ScheduledNotification): Promise<void> => {
         const jobId = `notification-${notification.id}`;
         if (!workerManager.startJob(jobId)) {
           // Shutdown is in progress, don't process new jobs
@@ -204,7 +217,7 @@ export class NotificationScheduler {
             notification.retryCount,
             notification.maxRetries
           );
-          continue;
+          return;
         }
 
         jobMonitor.startJob(jobId, 'scheduled-notification', {
@@ -213,17 +226,32 @@ export class NotificationScheduler {
           requestId,
         });
 
+        const lease = this.startClaimLease(notification, requestId);
+
         try {
           await this.processNotification(notification, requestId, jobId);
         } finally {
+          await lease?.stop();
           workerManager.completeJob(jobId);
         }
-      }
+      };
+      const workers = Array.from(
+        { length: Math.min(concurrency, queue.length) },
+        async () => {
+          // Array.shift() is atomic in the single-threaded event loop, so each
+          // notification is claimed by exactly one worker.
+          let next: ScheduledNotification | undefined;
+          while ((next = queue.shift()) !== undefined) {
+            await processOne(next);
+          }
+        }
+      );
+      await Promise.all(workers);
 
       logger.info('Scheduler batch complete', {
         requestId,
         processorId: this.processorId,
-        count: notifications.length,
+        count: activeNotifications.length,
         durationMs: Date.now() - batchStart,
       });
     } catch (error) {
@@ -234,6 +262,38 @@ export class NotificationScheduler {
         durationMs: Date.now() - batchStart,
       });
     }
+  }
+
+  /**
+   * Keep the claim on `notification` alive for as long as this worker is
+   * actually delivering it.
+   *
+   * The lease is renewed at a third of the lock window, so a delivery that
+   * outlives `lockTimeoutMs` is no longer handed back to the queue by the
+   * `recoverStaleLocks()` call that opens every poll cycle. Renewal is
+   * owner-checked, so a worker that did lose its claim stops renewing rather
+   * than taking the job back from its new owner.
+   */
+  private startClaimLease(
+    notification: ScheduledNotification,
+    requestId: string
+  ): NotificationClaimLease | null {
+    return startClaimLease({
+      repository: this.repository,
+      notificationId: notification.id!,
+      processorId: this.processorId,
+      lockTimeoutMs: this.config.lockTimeoutMs,
+      onLeaseLost: (id) => {
+        logger.warn('Notification claim lease was lost before delivery finished', {
+          requestId,
+          id,
+          processorId: this.processorId,
+        });
+      },
+      onRenewalError: (id, error) => {
+        logger.warn('Failed to renew notification claim lease', { requestId, id, error });
+      },
+    });
   }
 
   /**
@@ -250,6 +310,8 @@ export class NotificationScheduler {
     let receiptRecorded = false;
 
     try {
+      if (await this.expireIfPastDeadline(notification, requestId, jobId)) return;
+
       logger.info('Processing scheduled notification', {
         requestId,
         id: notification.id,
@@ -413,6 +475,33 @@ export class NotificationScheduler {
         durationMs,
       });
     }
+  }
+
+  private async expireIfPastDeadline(
+    notification: ScheduledNotification,
+    requestId: string,
+    jobId?: string,
+  ): Promise<boolean> {
+    if (!notification.expiresAt || notification.expiresAt.getTime() > Date.now()) return false;
+
+    const errorMessage = 'Notification expired before delivery';
+    await this.repository.markAsExpired(notification.id!);
+    await this.repository.logExecution({
+      scheduledNotificationId: notification.id!,
+      executionAttempt: notification.retryCount + 1,
+      executionTime: new Date(),
+      status: 'FAILED',
+      errorMessage,
+      durationMs: 0,
+    });
+    if (jobId) {
+      getJobMonitor().failJob(jobId, errorMessage, { notificationId: notification.id });
+    }
+    logger.info('Expired notification skipped before delivery', {
+      requestId,
+      id: notification.id,
+    });
+    return true;
   }
 
   /**

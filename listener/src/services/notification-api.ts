@@ -26,6 +26,25 @@ const PRIORITY_MIN = 1;
 const PRIORITY_MAX = 10;
 import { buildRetryStatisticsPayload } from './retry-statistics';
 
+function parseExpiresAt(value: Date | string | number): Date | null {
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : value;
+  }
+
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) return null;
+    const milliseconds = Math.abs(value) < 100_000_000_000 ? value * 1000 : value;
+    const date = new Date(milliseconds);
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+
+  if (!/^\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,9})?)?(?:Z|[+-]\d{2}:\d{2})?)?$/.test(value)) {
+    return null;
+  }
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
 /**
  * High-level API for scheduling notifications
  * This is the main interface that application code should use
@@ -112,6 +131,11 @@ export class NotificationAPI {
         'contractAddress',
         'must be a non-empty string',
       );
+    }
+    if (input.expiresAt !== undefined && input.expiresAt !== null) {
+      const expiresAt = parseExpiresAt(input.expiresAt);
+      v.check(expiresAt !== null, 'expiresAt', 'must be a valid ISO-8601 timestamp or epoch');
+      if (expiresAt) input = { ...input, expiresAt };
     }
     if (input.metadata !== undefined) {
       v.check(isPlainObject(input.metadata), 'metadata', 'must be an object');

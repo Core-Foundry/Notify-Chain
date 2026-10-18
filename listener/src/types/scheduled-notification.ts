@@ -7,7 +7,9 @@ export enum NotificationStatus {
   PROCESSING = 'PROCESSING',
   COMPLETED = 'COMPLETED',
   FAILED = 'FAILED',
+  DEAD_LETTERED = 'DEAD_LETTERED',
   CANCELLED = 'CANCELLED',
+  EXPIRED = 'EXPIRED',
 }
 
 export enum NotificationType {
@@ -24,6 +26,7 @@ export interface ScheduledNotification {
   notificationType: NotificationType;
   targetRecipient: string;
   executeAt: Date;
+  expiresAt?: Date | null;
   createdAt?: Date;
   updatedAt?: Date;
   status: NotificationStatus;
@@ -52,6 +55,7 @@ export interface CreateScheduledNotificationInput {
   notificationType: NotificationType;
   targetRecipient: string;
   executeAt: Date;
+  expiresAt?: Date | string | number | null;
   maxRetries?: number;
   deduplicationKey?: string;
   eventId?: string;
@@ -67,6 +71,7 @@ export interface ScheduledNotificationRow {
   notification_type: string;
   target_recipient: string;
   execute_at: string;
+  expires_at: string | null;
   created_at: string;
   updated_at: string;
   status: string;
@@ -91,7 +96,7 @@ export interface NotificationExecutionLog {
   scheduledNotificationId: number;
   executionAttempt: number;
   executionTime: Date;
-  status: 'SUCCESS' | 'FAILED' | 'RETRY';
+  status: 'SUCCESS' | 'FAILED' | 'RETRY' | 'DEAD_LETTERED';
   errorMessage?: string | null;
   responseData?: string | null;
   durationMs?: number | null;
@@ -105,6 +110,8 @@ export interface SchedulerConfig {
   batchSize: number;
   timingBufferMs: number;
   retryDelayMs?: number;
+  /** Max notifications processed concurrently per poll cycle (WORKER_CONCURRENCY). Default 1 = serial. */
+  concurrency?: number;
 }
 
 export interface DeadLetterQueueEntry {

@@ -30,7 +30,7 @@ jest.mock('@stellar/stellar-sdk', () => {
 
 jest.mock('../utils/logger', () => ({
   __esModule: true,
-  default: { info: jest.fn(), error: jest.fn(), warn: jest.fn() },
+  default: { info: jest.fn(), error: jest.fn(), warn: jest.fn(), debug: jest.fn() },
 }));
 
 jest.mock('./discord-notification', () => ({
@@ -46,6 +46,7 @@ jest.mock('../store/preference-store', () => ({
 // Stub out payload validation and event-name extraction so tests that pass
 // plain-object events don't need real XDR values.
 jest.mock('../utils/event-utils', () => ({
+  validateRpcResponse: jest.fn().mockReturnValue({ valid: true }),
   validateEventPayload: jest.fn().mockReturnValue({ valid: true }),
   validateRpcResponse: jest.fn().mockReturnValue({ valid: true }),
   getEventName: jest.fn().mockReturnValue('TaskCreated'),

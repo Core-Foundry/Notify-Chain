@@ -1,4 +1,6 @@
 import type { RetryFailureType } from '../services/retry-policy';
+import type { CircuitBreakerConfig } from '../services/circuit-breaker';
+import type { PartialRetryBackoffConfig } from '../utils/retry-backoff-config';
 import * as StellarSDK from '@stellar/stellar-sdk';
 
 export interface NotificationProvider {
@@ -29,11 +31,15 @@ export interface DiscordConfig {
 }
 
 export interface RetryQueueConfig {
-  baseDelayMs?: number;
-  multiplier?: number;
-  jitter?: boolean;
-  maxRetries?: number;
+  /**
+   * Provider-independent retry backoff parameters for the in-memory
+   * notification retry queue.  Defaults from `RETRY_BACKOFF_DEFAULTS` are
+   * applied to any omitted field; the merged result is strictly validated
+   * by the shared `resolveRetryBackoffConfig` validator.
+   */
+  backoff?: PartialRetryBackoffConfig;
   processIntervalMs?: number;
+  priorityWeights?: { high: number; medium: number; low: number };
 }
 
 export interface WebhookSecret {
@@ -78,41 +84,55 @@ export interface Config {
   retryPolicy?: RetryPolicyOptions;
   databasePath?: string;
   rateLimit?: RateLimitConfig;
+  rpcRateLimit?: RpcRateLimitConfig;
   cleanup?: AppCleanupConfig;
   analytics?: AnalyticsConfig;
   expiration?: ExpirationConfig;
+  /** Default scheduled-notification lifetime in seconds; zero disables expiry. */
+  notificationDefaultTtlSeconds?: number;
   backfill?: BackfillConfig;
   logging?: LoggingConfig;
   api?: ApiConfig;
+  /** High-volume event batching settings (feature: batched delivery). */
+  eventBatching?: EventBatchingConfig;
+  /** Periodic digest summary settings (feature: digest delivery). */
+  digest?: DigestConfig;
+  /** Localization (i18n) settings (feature: template separation). */
+  localization?: LocalizationConfig;
+  /** Dry-run mode: parse and validate events without persisting or delivering notifications. */
+  dryRun?: boolean;
+  /** Circuit breaker configuration for RPC failure handling. */
   circuitBreaker?: CircuitBreakerConfig;
 }
 
-/** Configurable fallback RPC endpoint settings */
-export interface RpcFallbackConfig {
-  /** Array of fallback RPC URLs to try when primary fails */
-  fallbackUrls: string[];
-  /** Number of consecutive failures before marking endpoint unhealthy and failing over (default: 3) */
-  failureThreshold: number;
-  /** Cooldown duration in ms before attempting to reuse a failed endpoint (default: 60000) */
-  cooldownMs: number;
-  /** Timeout for RPC requests in milliseconds (default: 10000) */
-  requestTimeoutMs: number;
-  /** Maximum number of endpoint retries for a single operation across pool (default: pool size) */
-  maxRetries?: number;
+/**
+ * High-volume event batching configuration.
+ *
+ * When enabled, selected event groups are coalesced into a single batched
+ * message once either `maxBatchSize` events accumulate or `windowMs` elapses.
+ */
+export interface EventBatchingConfig {
+  enabled: boolean;
+  maxBatchSize: number;
+  windowMs: number;
 }
 
-/** Operational status metrics for an RPC endpoint */
-export interface RpcEndpointStatus {
-  url: string;
-  isPrimary: boolean;
-  status: 'healthy' | 'degraded' | 'unhealthy';
-  consecutiveFailures: number;
-  totalRequests: number;
-  totalSuccesses: number;
-  totalFailures: number;
-  lastFailureTime: number | null;
-  lastSuccessTime: number | null;
-  lastError: string | null;
+/**
+ * Periodic digest summary configuration.
+ *
+ * When enabled, recipients receive a periodic summary of accumulated event
+ * activity instead of one delivery per event.
+ */
+export interface DigestConfig {
+  enabled: boolean;
+  intervalMs: number;
+  maxEventsPerDigest: number;
+}
+
+/** Localization (i18n) configuration. */
+export interface LocalizationConfig {
+  /** Initial/default locale, used when a translation is missing. */
+  defaultLocale: string;
 }
 
 /** Observability settings, sourced from LOG_LEVEL / LOG_FORMAT. */
@@ -142,6 +162,7 @@ export interface SchedulerConfig {
   lockTimeoutMs: number;
   processorId?: string;
   batchSize: number;
+  concurrency: number;
   timingBufferMs: number;
 }
 
@@ -191,7 +212,10 @@ export interface RetrySchedulerOptions {
   multiplier: number;
   maxDelayMs: number;
   jitter: boolean;
-  /** Request timeout for outbound webhook delivery (ms). Default: 10 000. */
+/**
+   * Timeout (ms) for outbound webhook requests (`WEBHOOK_TIMEOUT_MS`).
+   * Defaults to `DEFAULT_WEBHOOK_TIMEOUT_MS` (10 000 ms).
+   */
   webhookTimeoutMs: number;
   /**
    * Retry-policy ceiling on total attempts. Mirrors `RetrySchedulerConfig`;
@@ -249,6 +273,33 @@ export interface ExpirationConfig {
  */
 export interface BackfillConfig {
   /**
+   * When true, a backfill run is triggered once at startup before the live
+   * polling loop begins.
+   */
+  enabled?: boolean;
+  /**
+   * The earliest ledger from which to recover missed events (inclusive).
+   * Events at or after this ledger that are not yet in processed_events will
+   * be passed through the normal processing pipeline.
+   */
+  startLedger?: number;
+  /**
+   * The last ledger to include in the backfill window (inclusive).
+   * Defaults to the current network-tip ledger when not set.
+   */
+  endLedger?: number;
+  /**
+   * Maximum number of Stellar RPC pages to fetch per contract during the
+   * backfill.  Each page holds up to 200 events.  Defaults to 50.
+   */
+  maxPages?: number;
+  /**
+   * Upper bound on the total number of on-chain events processed per
+   * contract.  Acts as a safety rail against unexpectedly large windows.
+   * Defaults to 10 000.
+   */
+  maxEventsPerContract?: number;
+  /**
    * Maximum number of ledgers to replay from the network tip on a cold start.
    *
    * When the subscriber has no persisted cursor for a contract it would
@@ -259,19 +310,48 @@ export interface BackfillConfig {
    * Set to `0` to disable the limit and allow full historical replay
    * (the previous default behaviour).  Default: 10 000.
    */
-  maxLedgers: number;
+  maxLedgers?: number;
 }
 
 /**
- * Circuit breaker configuration for RPC calls to prevent continuous requests
- * to an unavailable endpoint.
+ * Rate limiting configuration for RPC event ingestion to prevent
+ * excessive RPC requests and resource consumption.
  */
-export interface CircuitBreakerConfig {
-  /** Number of consecutive failures required to open the circuit (default: 5) */
-  failureThreshold?: number;
-  /** Time in milliseconds to wait before attempting recovery (default: 60000) */
-  recoveryTimeoutMs?: number;
-  /** Time in milliseconds to consider a request as timed out (default: 30000) */
-  requestTimeoutMs?: number;
+export interface RpcRateLimitConfig {
+  /** Whether RPC rate limiting is enabled (default: true). */
+  enabled: boolean;
+  /** Maximum RPC requests per second (default: 10). */
+  maxRequestsPerSecond: number;
+  /** Burst size - allows short bursts above the sustained rate (default: 20). */
+  burstSize: number;
+  /** Delay in ms to apply when throttled (default: 1000). */
+  throttleDelayMs: number;
 }
 
+/** Configuration for fallback RPC endpoints and automatic failover. */
+export interface RpcFallbackConfig {
+  /** Array of fallback RPC URLs to try when primary fails */
+  fallbackUrls: string[];
+  /** Number of consecutive failures before marking endpoint unhealthy and failing over (default: 3) */
+  failureThreshold: number;
+  /** Cooldown duration in ms before attempting to reuse a failed endpoint (default: 60000) */
+  cooldownMs: number;
+  /** Timeout for RPC requests in milliseconds (default: 10000) */
+  requestTimeoutMs: number;
+  /** Maximum number of endpoint retries for a single operation across pool (default: pool size) */
+  maxRetries?: number;
+}
+
+/** Operational status metrics for an RPC endpoint */
+export interface RpcEndpointStatus {
+  url: string;
+  isPrimary: boolean;
+  status: 'healthy' | 'degraded' | 'unhealthy';
+  consecutiveFailures: number;
+  totalRequests: number;
+  totalSuccesses: number;
+  totalFailures: number;
+  lastFailureTime: number | null;
+  lastSuccessTime: number | null;
+  lastError: string | null;
+}

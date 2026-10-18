@@ -76,7 +76,7 @@ export function consumeInjectedFailure(target: FailureInjectionTarget): boolean 
 
 export async function fetchIndexingHealth(
   healthUrl: string,
-  options?: { signal?: AbortSignal }
+  options?: { signal?: AbortSignal },
 ): Promise<IndexingHealth> {
   if (consumeInjectedFailure('rpc')) {
     throw new Error(DEFAULT_FAILURE_MESSAGES.rpc);
