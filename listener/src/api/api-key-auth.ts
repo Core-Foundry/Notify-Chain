@@ -78,9 +78,39 @@ export type AuthPrincipal =
   /** No keys configured anywhere: open dev/local mode (backward compatible). */
   | { type: 'anonymous' }
   /** A key from the static `apiKeys` config: full access, as before scopes existed. */
-  | { type: 'legacy'; keyName?: string }
+  | { type: 'legacy'; keyName?: string; clientId: string }
   /** A scoped credential issued through the credentials API. */
-  | { type: 'credential'; credentialId: string; name: string; scopes: readonly ApiScope[] };
+  | {
+      type: 'credential';
+      credentialId: string;
+      name: string;
+      scopes: readonly ApiScope[];
+      clientId: string;
+    };
+
+/**
+ * Stable, non-secret identifier for a static API key, used to attribute usage
+ * without ever storing the key itself. Derived from the key material so it is
+ * stable across restarts, but it is a one-way digest and cannot be reversed.
+ */
+export function staticKeyClientId(key: string): string {
+  return `legacy:${sha256(key).toString('hex').slice(0, 32)}`;
+}
+
+/**
+ * Returns the client identifier a principal's usage should be attributed to,
+ * or `undefined` for anonymous (unauthenticated dev) requests.
+ */
+export function principalClientId(principal: AuthPrincipal): string | undefined {
+  switch (principal.type) {
+    case 'credential':
+      return principal.clientId;
+    case 'legacy':
+      return principal.clientId;
+    default:
+      return undefined;
+  }
+}
 
 export type AuthorizationResult =
   | { allowed: true; principal: AuthPrincipal }
@@ -153,6 +183,7 @@ export async function authorizeRequest(
       credentialId: credential.id,
       name: credential.name,
       scopes: credential.scopes,
+      clientId: `credential:${credential.id}`,
     };
     if (!principalHasScopes(principal, required)) {
       const missing = required.filter((scope) => !credential.scopes.includes(scope));
@@ -177,5 +208,13 @@ export async function authorizeRequest(
 
   const legacy = authenticateApiKey(req, options.apiKeys);
   if (!legacy.authenticated) return unauthorized(API_KEY_AUTH_MESSAGES[legacy.reason]);
-  return { allowed: true, principal: { type: 'legacy', keyName: legacy.keyName } };
+  const presentedKey = typeof header === 'string' ? header : '';
+  return {
+    allowed: true,
+    principal: {
+      type: 'legacy',
+      keyName: legacy.keyName,
+      clientId: staticKeyClientId(presentedKey),
+    },
+  };
 }

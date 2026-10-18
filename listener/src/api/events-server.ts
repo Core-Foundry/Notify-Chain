@@ -88,7 +88,37 @@
     responseTime.finish(req, res, requestId, 404);
   };
 
+  // Per-client usage accounting (#989): record the resolved non-secret client
+  // identifier, route, method and status once the response is finished. The
+  // recorder is fire-and-forget so it never blocks or fails the request, and
+  // only the sanitized client id is passed through — never raw credentials.
+  const recordUsage = (req: http.IncomingMessage, res: http.ServerResponse): void => {
+    const usageAccounting = options.usageAccounting;
+    if (!usageAccounting) return;
+    try {
+      const clientId = resolveUsageClientId(req);
+      const route = resolveUsageRoute(req);
+      const status = res.statusCode;
+      void Promise.resolve(
+        usageAccounting.record({
+          clientId,
+          method: req.method ?? 'UNKNOWN',
+          route,
+          status,
+        }),
+      ).catch((error: unknown) => {
+        logger.warn('Usage accounting record failed', { error });
+      });
+    } catch (error: unknown) {
+      logger.warn('Usage accounting record failed', { error });
+    }
+  };
+
   const server = http.createServer((req, res) => {
+    // Usage accounting (#989): attach a one-shot listener so the record is
+    // written after the response completes, regardless of which branch handled
+    // the request. Non-blocking and never throws into the request path.
+    res.once('finish', () => recordUsage(req, res));
     // Request-ID + correlation middleware (#686, #986): assigns (or
     // validates+reuses) a requestId and correlationId, stamps both onto the
     // response headers, and runs the handler inside an AsyncLocalStorage
@@ -114,6 +144,46 @@
   }
 
   return server;
+}
+
+/**
+ * Resolve the non-secret client identifier used for usage accounting (#989).
+ * Prefers an explicit authenticated principal attached by the authorization
+ * layer; falls back to a stable, non-reversible hash of the presented
+ * credential so distinct clients remain distinguishable without storing the
+ * secret itself. Never returns raw credential material.
+ */
+function resolveUsageClientId(req: http.IncomingMessage): string {
+  const principal = (req as http.IncomingMessage & {
+    principal?: { clientId?: string; id?: string };
+  }).principal;
+  if (principal?.clientId) return principal.clientId;
+  if (principal?.id) return principal.id;
+
+  const authHeader = req.headers['authorization'];
+  if (typeof authHeader === 'string' && authHeader.length > 0) {
+    return `cred:${createHash('sha256').update(authHeader).digest('hex').slice(0, 16)}`;
+  }
+  const apiKey = req.headers['x-api-key'];
+  if (typeof apiKey === 'string' && apiKey.length > 0) {
+    return `key:${createHash('sha256').update(apiKey).digest('hex').slice(0, 16)}`;
+  }
+  return 'anonymous';
+}
+
+/**
+ * Resolve a low-cardinality route label for usage accounting (#989). Strips
+ * the query string and collapses path segments that look like identifiers so
+ * aggregation stays bounded and no sensitive values leak into records.
+ */
+function resolveUsageRoute(req: http.IncomingMessage): string {
+  const rawUrl = req.url ?? '/';
+  const pathname = rawUrl.split('?')[0] ?? '/';
+  const segments = pathname.split('/').filter((segment) => segment.length > 0);
+  const normalized = segments.map((segment) =>
+    /^[0-9a-fA-F-]{8,}$/.test(segment) || /^\d+$/.test(segment) ? ':id' : segment,
+  );
+  return `/${normalized.join('/')}`;
 }
 
 export function startEventsServer(options: EventsServerOptions): http.Server {
