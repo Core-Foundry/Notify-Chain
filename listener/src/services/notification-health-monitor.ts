@@ -4,6 +4,7 @@ import { WorkerManager } from './worker-manager';
 import { eventRegistry } from '../store/event-registry';
 import { ScheduledNotificationRepository } from './scheduled-notification-repository';
 import { pollingMetrics } from './polling-metrics';
+import { QueueOperationalMetrics } from './notification-stats-cache';
 
 export type ComponentStatus = 'healthy' | 'degraded' | 'unhealthy';
 
@@ -12,6 +13,7 @@ export interface QueueHealth {
   pendingJobs: number;
   stalledSince: number | null;
   deadLetterQueueDepth: number;
+  operationalMetrics?: QueueOperationalMetrics;
 }
 
 export interface WorkerHealth {
@@ -119,7 +121,13 @@ export class NotificationHealthMonitor {
 
   start(): void {
     if (this.timer !== null) return;
+    if (this.repository && !this.repository.getStatsCached?.()) {
+      void this.repository.getStats().catch(() => {});
+    }
     this.timer = setInterval(() => {
+      if (this.repository) {
+        void this.repository.getStats().catch(() => {});
+      }
       this.runCheck();
     }, this.intervalMs);
     // Run immediately so first report is available without waiting one interval.
@@ -156,7 +164,8 @@ export class NotificationHealthMonitor {
     );
 
     const lastSuccessfulPollMs = this.getLastSuccessfulPoll();
-    const lastSuccessfulPollAt = lastSuccessfulPollMs !== null ? new Date(lastSuccessfulPollMs).toISOString() : null;
+    const lastSuccessfulPollAt =
+      lastSuccessfulPollMs !== null ? new Date(lastSuccessfulPollMs).toISOString() : null;
 
     const report: HealthReport = {
       status: overallStatus,
@@ -182,15 +191,29 @@ export class NotificationHealthMonitor {
   }
 
   private checkQueue(): QueueHealth {
+    const deadLetterQueueDepth = this.getDeadLetterQueueDepth();
+    const operationalMetrics = this.getOperationalMetrics();
+
     if (!this.queue) {
-      return { status: 'healthy', pendingJobs: 0, stalledSince: null, deadLetterQueueDepth: this.getDeadLetterQueueDepth() };
+      const pendingJobs = operationalMetrics?.pendingNotifications ?? 0;
+      return {
+        status: 'healthy',
+        pendingJobs,
+        stalledSince: null,
+        deadLetterQueueDepth,
+        operationalMetrics,
+      };
     }
 
     const pending = this.queue.pendingCount();
 
     if (pending > 0 && pending === this.lastQueueDepth) {
       this.stalledCycles++;
-      if (this.stalledCycles >= this.stallThresholdCycles && this.stalledSince === null) {
+      if (
+        this.stallThresholdCycles > 0 &&
+        this.stalledCycles >= this.stallThresholdCycles &&
+        this.stalledSince === null
+      ) {
         this.stalledSince = this.now();
         logger.warn('Event processing queue appears stalled', {
           pendingJobs: pending,
@@ -211,7 +234,46 @@ export class NotificationHealthMonitor {
       status = 'degraded';
     }
 
-    return { status, pendingJobs: pending, stalledSince: this.stalledSince, deadLetterQueueDepth: this.getDeadLetterQueueDepth() };
+    return {
+      status,
+      pendingJobs: pending,
+      stalledSince: this.stalledSince,
+      deadLetterQueueDepth,
+      operationalMetrics,
+    };
+  }
+
+  private getOperationalMetrics(): QueueOperationalMetrics | undefined {
+    if (this.repository) {
+      try {
+        const stats =
+          this.repository.getStatsCached?.() ?? (this.repository as any).statsCache?.get();
+        if (stats) {
+          return {
+            pendingNotifications: stats.pendingNotifications ?? stats.pending ?? 0,
+            processingNotifications: stats.processingNotifications ?? stats.processing ?? 0,
+            successfulDeliveries: stats.successfulDeliveries ?? stats.completed ?? 0,
+            failedDeliveries: stats.failedDeliveries ?? stats.failed ?? 0,
+            retryAttempts: stats.retryAttempts ?? 0,
+          };
+        }
+      } catch (error) {
+        logger.warn('Unable to determine operational metrics', { error });
+      }
+    }
+
+    if (this.queue) {
+      const qm = this.queue.getMetrics();
+      return {
+        pendingNotifications: qm.queueSize,
+        processingNotifications: qm.activeCount,
+        successfulDeliveries: qm.totalSucceeded,
+        failedDeliveries: qm.totalFailed,
+        retryAttempts: 0,
+      };
+    }
+
+    return undefined;
   }
 
   private getDeadLetterQueueDepth(): number {
@@ -220,8 +282,12 @@ export class NotificationHealthMonitor {
     }
 
     try {
-      const stats = this.repository.getStats();
-      return (stats as any).deadLetterQueue ?? 0;
+      const stats =
+        this.repository.getStatsCached?.() ?? (this.repository as any).statsCache?.get();
+      if (stats && typeof stats.deadLetterQueue === 'number') {
+        return stats.deadLetterQueue;
+      }
+      return 0;
     } catch (error) {
       logger.warn('Unable to determine dead letter queue depth', { error });
       return 0;
@@ -245,8 +311,7 @@ export class NotificationHealthMonitor {
     const eventCount = eventRegistry.count();
     const { lastIngestedAt: lastIngestedMs } = eventRegistry.getIngestionSnapshot();
     const lastIngestedAt = lastIngestedMs !== null ? new Date(lastIngestedMs).toISOString() : null;
-    const processingDelayMs =
-      lastIngestedMs !== null ? this.now() - lastIngestedMs : null;
+    const processingDelayMs = lastIngestedMs !== null ? this.now() - lastIngestedMs : null;
 
     let status: ComponentStatus = 'healthy';
     if (processingDelayMs !== null && processingDelayMs > this.maxProcessingDelayMs) {

@@ -188,7 +188,7 @@ Returns all stored contract events, newest first.
 
 | Name  | Type   | Required | Description                                          |
 |-------|--------|----------|------------------------------------------------------|
-| limit | number | No       | Maximum number of events to return (default: all)    |
+| limit | number | No       | Maximum number of events to return (default: 20, max: 100) |
 
 **Response `200`**
 
@@ -631,6 +631,30 @@ Full-text and field-based search across scheduled notifications.
 ```json
 { "error": "..." }
 ```
+
+---
+
+### POST /api/notifications/:id/cancel
+
+Cancel a pending scheduled notification. An optional `reason` may be supplied for auditing.
+
+**Path Parameters**
+
+| Name | Type   | Required | Description                              |
+|------|--------|----------|------------------------------------------|
+| id   | number | Yes      | Numeric identifier of the notification   |
+
+**Request Body** (optional)
+
+```json
+{
+  "reason": "Duplicate request"
+}
+```
+
+**Response `200`**
+
+Returns the full `ScheduledNotification` object, now including `cancellationReason` if provided.
 
 ---
 

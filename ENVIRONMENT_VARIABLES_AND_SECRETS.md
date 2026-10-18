@@ -173,7 +173,34 @@ The DB-backed retry scheduler persists retry state across process restarts.
 | `RETRY_SCHEDULER_PROCESSOR_ID` | *(unset)* | No | Unique identifier for this worker instance. Useful for multi-instance deployability and observability. |
 | `RETRY_SCHEDULER_BATCH_SIZE` | `10` | No | Number of retry jobs to process per tick. |
 
-### 2.12 Scheduled notification scheduler
+### 2.12 Retry policy
+
+Controls retry behaviour independently of the delay curve, which continues to be
+governed by the shared variables in section 2.10 (`RETRY_BASE_DELAY_MS`,
+`RETRY_MULTIPLIER`, `RETRY_MAX_DELAY_MS`, `RETRY_JITTER`).
+
+| Variable | Default | Required | Description |
+|---|---|---|---|
+| `RETRY_POLICY_MAX_ATTEMPTS` | *(unset)* | No | Hard ceiling on total delivery attempts, including the first. Unset leaves each notification's own `max_retries` in control; `1` disables retries process-wide. Must be >= 1. |
+| `RETRY_POLICY_RETRYABLE_FAILURE_TYPES` | `network_error,timeout,rate_limited,server_error,unknown` | No | Comma-separated list of failure types eligible for retry. Anything not listed fails on its first attempt. Must list at least one type. |
+
+Supported failure types: `network_error`, `timeout`, `rate_limited`,
+`server_error`, `client_error`, `not_found`, `auth_error`,
+`configuration_error`, `unknown`.
+
+The default set deliberately excludes every unambiguously permanent failure
+(`auth_error`, `not_found`, `client_error`, `configuration_error`) so an expired
+credential or a misconfigured webhook URL is retired on its first attempt instead
+of burning the remaining retry budget. `unknown` is included so that unclassified
+failures keep their previous retry behaviour rather than being silently dropped.
+To trade retries for throughput on a known-good endpoint, opt a permanent type
+back in:
+
+```bash
+RETRY_POLICY_RETRYABLE_FAILURE_TYPES=network_error,timeout,rate_limited,server_error,client_error,unknown
+```
+
+### 2.13 Scheduled notification scheduler
 
 | Variable | Default | Required | Description |
 |---|---|---|---|
@@ -184,7 +211,7 @@ The DB-backed retry scheduler persists retry state across process restarts.
 | `SCHEDULER_BATCH_SIZE` | `10` | No | Due notifications to dispatch per tick. |
 | `SCHEDULER_TIMING_BUFFER_MS` | `60000` | No | Timing buffer (ms) applied around scheduled times to prevent edge-case early or late dispatch. |
 
-### 2.13 Event processing queue
+### 2.14 Event processing queue
 
 | Variable | Default | Required | Description |
 |---|---|---|---|
@@ -193,7 +220,7 @@ The DB-backed retry scheduler persists retry state across process restarts.
 | `EVENT_QUEUE_BASE_DELAY_MS` | `2000` | No | Base delay for event queue retry backoff (ms). |
 | `EVENT_QUEUE_POLL_INTERVAL_MS` | `1000` | No | How often the event queue checks for events ready to process (ms). |
 
-### 2.14 Rate limiting
+### 2.15 Rate limiting
 
 | Variable | Default | Required | Description |
 |---|---|---|---|
@@ -211,7 +238,7 @@ The DB-backed retry scheduler persists retry state across process restarts.
 }
 ```
 
-### 2.15 Cleanup / retention policies
+### 2.16 Cleanup / retention policies
 
 | Variable | Default | Required | Description |
 |---|---|---|---|
@@ -221,7 +248,7 @@ The DB-backed retry scheduler persists retry state across process restarts.
 | `EVENT_RETENTION_MS` | `86400000` | No | How long raw contract events are retained (ms). Default: 24 hours. |
 | `EXECUTION_LOG_RETENTION_MS` | `7776000000` | No | How long execution log entries are retained (ms). Default: 90 days. |
 
-### 2.16 Notification archive
+### 2.17 Notification archive
 
 The archiver moves old completed/failed/cancelled notifications to a separate archive table, then permanently deletes them after a further retention period.
 
@@ -233,7 +260,7 @@ The archiver moves old completed/failed/cancelled notifications to a separate ar
 | `ARCHIVE_DELETE_AFTER_MS` | `7776000000` | No | Permanently delete archived records older than this many ms since archiving. Set to `0` to never delete. Default: 90 days. |
 | `ARCHIVE_BATCH_SIZE` | `500` | No | Maximum rows moved per archive cycle. Prevents long-running transactions. |
 
-### 2.17 Analytics
+### 2.18 Analytics
 
 | Variable | Default | Required | Description |
 |---|---|---|---|
@@ -350,6 +377,10 @@ RETRY_MAX_RETRIES=5
 RETRY_MULTIPLIER=2
 RETRY_MAX_DELAY_MS=3600000
 RETRY_JITTER=true
+
+# Retry policy (optional)
+# RETRY_POLICY_MAX_ATTEMPTS=5
+# RETRY_POLICY_RETRYABLE_FAILURE_TYPES=network_error,timeout,rate_limited,server_error,unknown
 
 # Retry scheduler
 RETRY_SCHEDULER_ENABLED=true
