@@ -366,8 +366,8 @@ fn test_audit_record_appended_event_has_notification_category() {
     let topics = topics_of(&test_env.env, "audit_record_appended")
         .expect("audit_record_appended must be emitted");
 
-    // topics: [0] name, [1] notification_id, [2] action, [3] category
-    assert_eq!(topics.len(), 4);
+    // topics: [0] name, [1] notification_id, [2] action, [3] category, [4] priority
+    assert_eq!(topics.len(), 5);
     let category =
         NotificationCategory::try_from_val(&test_env.env, &topics.get(3).unwrap())
             .expect("topic[3] must be NotificationCategory");
@@ -376,6 +376,11 @@ fn test_audit_record_appended_event_has_notification_category() {
         NotificationCategory::Notification,
         "audit_record_appended must carry Notification category"
     );
+
+    let priority =
+        NotificationPriority::try_from_val(&test_env.env, &topics.get(4).unwrap())
+            .expect("topic[4] must be NotificationPriority");
+    assert_eq!(priority, NotificationPriority::Medium);
 }
 
 #[test]
@@ -637,9 +642,138 @@ fn test_notification_accessed_has_notification_category() {
 
     let topics = topics_of(&test_env.env, "notification_accessed")
         .expect("notification_accessed event must be emitted");
-    // topics: [0] name, [1] notification_id, [2] accessor, [3] category
-    assert_eq!(topics.len(), 4);
+    // topics: [0] name, [1] notification_id, [2] accessor, [3] category, [4] priority
+    assert_eq!(topics.len(), 5);
     let category =
         NotificationCategory::try_from_val(&test_env.env, &topics.get(3).unwrap()).unwrap();
     assert_eq!(category, NotificationCategory::Notification);
+
+    let priority =
+        NotificationPriority::try_from_val(&test_env.env, &topics.get(4).unwrap()).unwrap();
+    assert_eq!(priority, NotificationPriority::Medium);
+}
+
+#[test]
+fn test_notification_accessed_carries_high_priority() {
+    let test_env = setup_test_env();
+    let client = AutoShareContractClient::new(&test_env.env, &test_env.autoshare_contract);
+    let creator = test_env.users.get(0).unwrap().clone();
+    let accessor = test_env.users.get(2).unwrap().clone();
+
+    let id = make_id(&test_env.env, 91);
+    client.schedule_notification(
+        &id,
+        &creator,
+        &ONE_HOUR,
+        &title(&test_env.env),
+        &NotificationPriority::High,
+    );
+    client.record_notification_access(&id, &accessor);
+
+    let topics = topics_of(&test_env.env, "notification_accessed")
+        .expect("notification_accessed event must be emitted");
+    // topics: [0] name, [1] notification_id, [2] accessor, [3] category, [4] priority
+    assert_eq!(topics.len(), 5, "notification_accessed must have 5 topics");
+    let priority =
+        NotificationPriority::try_from_val(&test_env.env, &topics.get(4).unwrap())
+            .expect("topic[4] must be a NotificationPriority");
+    assert_eq!(
+        priority,
+        NotificationPriority::High,
+        "notification_accessed must carry High priority"
+    );
+}
+
+#[test]
+fn test_notification_accessed_carries_low_priority() {
+    let test_env = setup_test_env();
+    let client = AutoShareContractClient::new(&test_env.env, &test_env.autoshare_contract);
+    let creator = test_env.users.get(0).unwrap().clone();
+    let accessor = test_env.users.get(2).unwrap().clone();
+
+    let id = make_id(&test_env.env, 92);
+    client.schedule_notification(
+        &id,
+        &creator,
+        &ONE_HOUR,
+        &title(&test_env.env),
+        &NotificationPriority::Low,
+    );
+    client.record_notification_access(&id, &accessor);
+
+    let topics = topics_of(&test_env.env, "notification_accessed")
+        .expect("notification_accessed event must be emitted");
+    // topics: [0] name, [1] notification_id, [2] accessor, [3] category, [4] priority
+    assert_eq!(topics.len(), 5, "notification_accessed must have 5 topics");
+    let priority =
+        NotificationPriority::try_from_val(&test_env.env, &topics.get(4).unwrap())
+            .expect("topic[4] must be a NotificationPriority");
+    assert_eq!(
+        priority,
+        NotificationPriority::Low,
+        "notification_accessed must carry Low priority"
+    );
+}
+
+#[test]
+fn test_audit_record_appended_carries_high_priority() {
+    let test_env = setup_test_env();
+    let client = AutoShareContractClient::new(&test_env.env, &test_env.autoshare_contract);
+    let creator = test_env.users.get(0).unwrap().clone();
+    let relay = test_env.users.get(1).unwrap().clone();
+
+    let id = make_id(&test_env.env, 93);
+    client.schedule_notification(
+        &id,
+        &creator,
+        &ONE_HOUR,
+        &title(&test_env.env),
+        &NotificationPriority::High,
+    );
+    // record_delivery_attempt appends a DeliveryAttempt audit record for the
+    // same notification, carrying its stored (High) priority.
+    client.record_delivery_attempt(&id, &relay);
+
+    let topics = topics_of(&test_env.env, "audit_record_appended")
+        .expect("audit_record_appended event must be emitted");
+    // topics: [0] name, [1] notification_id, [2] action, [3] category, [4] priority
+    assert_eq!(topics.len(), 5, "audit_record_appended must have 5 topics");
+    let priority =
+        NotificationPriority::try_from_val(&test_env.env, &topics.get(4).unwrap())
+            .expect("topic[4] must be a NotificationPriority");
+    assert_eq!(
+        priority,
+        NotificationPriority::High,
+        "audit_record_appended must carry High priority"
+    );
+}
+
+#[test]
+fn test_audit_record_appended_missing_notification_falls_back_to_medium_priority() {
+    let test_env = setup_test_env();
+    let client = AutoShareContractClient::new(&test_env.env, &test_env.autoshare_contract);
+    let actor = test_env.users.get(1).unwrap().clone();
+
+    // record_delivery_attempt does not gate on the notification existing, so
+    // append_audit_record runs with load_notification returning None and must
+    // fall back to NotificationPriority::Medium.
+    let ghost = make_id(&test_env.env, 94);
+    let result = client.try_record_delivery_attempt(&ghost, &actor);
+    assert!(
+        result.is_ok(),
+        "delivery attempt on unknown id must append an audit record"
+    );
+
+    let topics = topics_of(&test_env.env, "audit_record_appended")
+        .expect("audit_record_appended event must be emitted");
+    // topics: [0] name, [1] notification_id, [2] action, [3] category, [4] priority
+    assert_eq!(topics.len(), 5, "audit_record_appended must have 5 topics");
+    let priority =
+        NotificationPriority::try_from_val(&test_env.env, &topics.get(4).unwrap())
+            .expect("topic[4] must be a NotificationPriority");
+    assert_eq!(
+        priority,
+        NotificationPriority::Medium,
+        "missing notification must fall back to Medium priority"
+    );
 }

@@ -1957,10 +1957,15 @@ fn append_audit_record(
     log.push_back(record);
     env.storage().persistent().set(&log_key, &log);
 
+    let priority = load_notification(env, &notification_id)
+        .map(|notification| notification.priority)
+        .unwrap_or(NotificationPriority::Medium);
+
     AuditRecordAppended {
         notification_id,
         action,
         category: NotificationCategory::Notification,
+        priority,
         seq,
         actor,
     }
@@ -2408,10 +2413,15 @@ pub fn record_notification_access(
         return Err(Error::NotFound);
     }
 
+    let priority = load_notification(&env, &notification_id)
+        .map(|notification| notification.priority)
+        .unwrap_or(NotificationPriority::Medium);
+
     NotificationAccessed {
         notification_id,
         accessor,
         category: NotificationCategory::Notification,
+        priority,
         accessed_at: current_time(&env),
     }
     .publish(&env);

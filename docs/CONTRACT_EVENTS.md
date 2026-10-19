@@ -127,8 +127,8 @@ Emitted when batch event processing finishes.
 
 ### `AuditRecordAppended`
 Emitted when an immutable audit trail entry is logged.
-* **Topics**: `category: NotificationCategory`, `priority: NotificationPriority`
-* **Data**: `record_id: u64`
+* **Topics**: `notification_id: BytesN<32>`, `action: AuditAction`, `category: NotificationCategory`, `priority: NotificationPriority`
+* **Data**: `seq: u64`, `actor: Address`
 
 ### `OwnershipTransferInitiated`
 Emitted when contract ownership transfer is queued.
@@ -162,8 +162,8 @@ Emitted when protocol schema version is updated.
 
 ### `NotificationAccessed`
 Emitted upon reading secured notification content.
-* **Topics**: `reader: Address`
-* **Data**: `notification_id: BytesN<32>`
+* **Topics**: `notification_id: BytesN<32>`, `accessor: Address`, `category: NotificationCategory`, `priority: NotificationPriority`
+* **Data**: `accessed_at: u64`
 
 ### `ChannelMetadataUpdated`
 Emitted when channel metadata is modified.
