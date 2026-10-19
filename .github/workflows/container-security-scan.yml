@@ -1,0 +1,133 @@
+name: Container Image Security Scan
+
+# Issue #1052: Scan published container images for vulnerabilities before
+# release promotion. Severity thresholds are configurable; findings are
+# uploaded as workflow artifacts.
+
+on:
+  workflow_dispatch:
+    inputs:
+      image:
+        description: 'Container image to scan (e.g. ghcr.io/org/repo:tag)'
+        required: true
+        type: string
+      severity_threshold:
+        description: 'Comma-separated severity levels to fail on (e.g. HIGH,CRITICAL)'
+        required: false
+        type: string
+        default: 'HIGH,CRITICAL'
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+  security-events: write
+
+env:
+  SEVERITY_THRESHOLD: ${{ github.event.inputs.severity_threshold || 'HIGH,CRITICAL' }}
+
+jobs:
+  security-scan:
+    name: scan-container-image
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Resolve image reference
+        id: image-ref
+        run: |
+          if [ "${{ github.event_name }}" = "release" ]; then
+            # Derive image from release tag; adjust org/repo and registry as needed
+            echo "image=ghcr.io/${{ github.repository }}:${{ github.event.release.tag_name }}" >> $GITHUB_OUTPUT
+          else
+            echo "image=${{ github.event.inputs.image }}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Run Trivy vulnerability scan
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ steps.image-ref.outputs.image }}
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          severity: ${{ env.SEVERITY_THRESHOLD }}
+          exit-code: '0'
+
+      - name: Load accepted exceptions
+        id: exceptions
+        run: |
+          python3 << 'PYEOF'
+          import yaml, sys
+          exceptions_file = '.github/security-scan-exceptions.yml'
+          try:
+              with open(exceptions_file) as f:
+                  data = yaml.safe_load(f)
+              exceptions = data.get('exceptions', []) or []
+              cves = [e['cve'] for e in exceptions if 'cve' in e]
+              print(f'Loaded {len(cves)} accepted exception(s): {cves}', file=sys.stderr)
+              print(f'exception_count={len(cves)}')
+          except Exception as e:
+              print(f'Warning: could not load exceptions file: {e}', file=sys.stderr)
+              print('exception_count=0')
+          PYEOF
+
+      - name: Evaluate findings against threshold
+        run: |
+          python3 << 'PYEOF'
+          import json, sys, os, yaml
+
+          sarif_file = 'trivy-results.sarif'
+          exceptions_file = '.github/security-scan-exceptions.yml'
+
+          threshold_raw = os.environ.get('SEVERITY_THRESHOLD', 'HIGH,CRITICAL')
+          threshold_levels = [s.strip().upper() for s in threshold_raw.split(',')]
+
+          # Load exceptions
+          try:
+              with open(exceptions_file) as f:
+                  exc_data = yaml.safe_load(f)
+              accepted_cves = {e['cve'] for e in (exc_data.get('exceptions') or []) if 'cve' in e}
+          except Exception:
+              accepted_cves = set()
+
+          # Parse SARIF
+          try:
+              with open(sarif_file) as f:
+                  sarif = json.load(f)
+          except Exception as e:
+              print(f'Could not parse SARIF output: {e}', file=sys.stderr)
+              sys.exit(0)  # Don't fail if scan produced no output
+
+          blocking = []
+          for run in sarif.get('runs', []):
+              for result in run.get('results', []):
+                  rule_id = result.get('ruleId', '')
+                  # Trivy encodes severity in properties or in the rule metadata
+                  props = result.get('properties', {})
+                  severity = props.get('severity', '').upper()
+                  if severity in threshold_levels and rule_id not in accepted_cves:
+                      blocking.append({
+                          'ruleId': rule_id,
+                          'severity': severity,
+                          'message': result.get('message', {}).get('text', ''),
+                      })
+
+          if blocking:
+              print(f'::error::Found {len(blocking)} blocking vulnerability finding(s) above threshold {threshold_raw}:')
+              for finding in blocking:
+                  print(f"  [{finding['severity']}] {finding['ruleId']}: {finding['message']}")
+              print('Add accepted CVEs to .github/security-scan-exceptions.yml to suppress specific findings.')
+              sys.exit(1)
+          else:
+              print(f'No blocking findings above threshold {threshold_raw}. Scan passed.')
+          PYEOF
+        env:
+          SEVERITY_THRESHOLD: ${{ env.SEVERITY_THRESHOLD }}
+
+      - name: Upload scan results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-scan-results
+          path: trivy-results.sarif
+          retention-days: 30

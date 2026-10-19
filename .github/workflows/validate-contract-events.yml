@@ -4,13 +4,19 @@ on:
   pull_request:
     paths:
       - "contract/**/events.rs"
+      - "contract/**/*.rs"
       - "docs/CONTRACT_EVENTS.md"
       - "scripts/validate-contract-events.py"
+      - "scripts/check_contract_event_conventions.py"
+      - "scripts/test_contract_event_conventions.py"
   push:
     branches: [main]
     paths:
       - "contract/**/events.rs"
+      - "contract/**/*.rs"
       - "docs/CONTRACT_EVENTS.md"
+      - "scripts/check_contract_event_conventions.py"
+      - "scripts/test_contract_event_conventions.py"
 
 concurrency:
   group: event-docs-${{ github.ref }}
@@ -36,3 +42,8 @@ jobs:
       - name: Validate Contract Event Documentation Drift
         run: |
           python3 scripts/validate-contract-events.py
+
+      - name: Test contract event naming and topic conventions
+        run: |
+          python3 -m unittest discover -s scripts -p 'test_contract_event_conventions.py'
+          python3 scripts/check_contract_event_conventions.py
