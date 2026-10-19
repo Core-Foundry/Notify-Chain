@@ -7,6 +7,77 @@ on:
     branches: [main]
 
 jobs:
+  contracts:
+    name: Soroban contract validation (Rust 1.86.0)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.86.0
+          targets: wasm32v1-none
+          components: rustfmt
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: contract
+
+      - name: Report resolved Soroban SDK
+        working-directory: contract
+        run: cargo tree --locked --workspace --all-features -i soroban-sdk
+
+      - name: Test and build contract workspace
+        working-directory: contract
+        run: |
+          set +e
+          cargo test --workspace --all-features --locked
+          test_status=$?
+          cargo build --workspace --release --locked --target wasm32v1-none
+          build_status=$?
+          if [ "$test_status" -ne 0 ] || [ "$build_status" -ne 0 ]; then
+            echo "Contract validation failed (tests: $test_status, Wasm build: $build_status)."
+            exit 1
+          fi
+
+  dashboard-visual:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install dashboard dependencies
+        working-directory: dashboard
+        run: npm ci --legacy-peer-deps
+
+      - name: Install Playwright browser
+        working-directory: dashboard
+        run: npx playwright install chrome
+
+      - name: Compare dashboard screenshots
+        working-directory: dashboard
+        run: npm run test:visual
+
+      - name: Upload visual comparison artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dashboard-visual-comparison
+          path: |
+            dashboard/test-results/
+            dashboard/playwright-report/
+          if-no-files-found: ignore
+          retention-days: 14
+
   migrations:
     runs-on: ubuntu-latest
     steps:

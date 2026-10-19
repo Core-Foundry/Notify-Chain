@@ -189,11 +189,14 @@ fn test_batch_ttl_overflow_rejected() {
     let mut ids: Vec<BytesN<32>> = Vec::new(&test_env.env);
     let mut ttls: Vec<u64> = Vec::new(&test_env.env);
     let mut titles: Vec<String> = Vec::new(&test_env.env);
+    let mut priorities: Vec<NotificationPriority> = Vec::new(&test_env.env);
     ids.push_back(make_id(&test_env.env, 1));
     ttls.push_back(u64::MAX); // will overflow when added to timestamp
     titles.push_back(title(&test_env.env));
+    priorities.push_back(NotificationPriority::Medium);
 
-    let result = client.try_batch_schedule_notifications(&ids, &creator, &ttls, &titles);
+    let result =
+        client.try_batch_schedule_notifications(&ids, &creator, &ttls, &titles, &priorities);
     assert!(
         result.is_err(),
         "batch with overflow TTL must be rejected"
@@ -299,7 +302,7 @@ fn test_category_registered_event_carries_category_and_priority() {
     let test_env = setup_test_env();
     let client = AutoShareContractClient::new(&test_env.env, &test_env.autoshare_contract);
 
-    client.register_category(&test_env.admin, &NotificationCategory::Group);
+    client.register_category(&test_env.admin, &NotificationCategory::System);
 
     let topics = topics_of(&test_env.env, "category_registered")
         .expect("category_registered event must be emitted");
@@ -312,7 +315,7 @@ fn test_category_registered_event_carries_category_and_priority() {
             .expect("topic[2] must be a NotificationCategory");
     assert_eq!(
         category,
-        NotificationCategory::Group,
+        NotificationCategory::System,
         "registered category must match"
     );
 
