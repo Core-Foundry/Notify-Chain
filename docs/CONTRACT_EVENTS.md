@@ -194,3 +194,18 @@ Run the documentation drift validation script:
 ```bash
 python3 scripts/validate-contract-events.py
 ```
+
+## 4. Naming and Topic Conventions
+
+- Declare event structs with unique `PascalCase` names. Soroban exposes the generated event name in `snake_case`.
+- Use `snake_case` for event fields.
+- Mark indexed fields with `#[topic]` and place all indexed fields before unindexed data fields.
+- Declare no more than four indexed fields per event.
+- When both `category` and `priority` are indexed, keep them as the final two topics in that order.
+
+Run the naming and topic convention tests and validator:
+
+```bash
+python3 -m unittest discover -s scripts -p 'test_contract_event_conventions.py'
+python3 scripts/check_contract_event_conventions.py
+```

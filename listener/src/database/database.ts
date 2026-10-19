@@ -199,10 +199,12 @@ export class Database {
 
     const schema = fs.readFileSync(schemaPath, 'utf-8');
 
-    // Execute the schema as one script so trigger bodies with semicolons work.
-    await this.exec(schema);
-
-    await this.applyIncrementalMigrations();
+    // Keep bootstrap DDL atomic so a failed schema update does not leave a
+    // partially upgraded database behind.
+    await this.transaction(async () => {
+      await this.applyIncrementalMigrations();
+      await this.exec(schema);
+    });
 
     logger.info('Database migrations completed');
   }
@@ -255,12 +257,19 @@ export class Database {
    */
 
   private async applyIncrementalMigrations(): Promise<void> {
-    try {
-      await this.run('ALTER TABLE scheduled_notifications ADD COLUMN next_retry_at DATETIME');
-    } catch (error: any) {
-      // Completely ignore ALL errors here. SQLite might complain the column exists.
+    const table = await this.get<{ name: string }>(
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'scheduled_notifications'",
+    );
+    if (!table) {
       return;
     }
+
+    const columns = await this.all<{ name: string }>('PRAGMA table_info(scheduled_notifications)');
+    if (columns.some(({ name }) => name === 'next_retry_at')) {
+      return;
+    }
+
+    await this.run('ALTER TABLE scheduled_notifications ADD COLUMN next_retry_at DATETIME');
   }
 
   /**
