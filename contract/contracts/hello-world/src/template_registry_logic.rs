@@ -5,6 +5,7 @@
 /// `BytesN<32>` ID.  Only the original owner (creator) of a template may update
 /// it.  Attempting to reference a non-existent template ID reverts with a clear
 /// error.
+use crate::base::clock::current_time;
 use crate::base::errors::Error;
 use crate::base::events::{
     AuthorizationFailure, NotificationCategory, NotificationPriority, TemplateRegistered,
@@ -85,7 +86,7 @@ pub fn register_template(
         owner: creator.clone(),
         name,
         content,
-        created_at: env.ledger().timestamp(),
+        created_at: current_time(&env),
         updated_at: None,
     };
 
@@ -149,7 +150,7 @@ pub fn update_template(
 
     template.name = name;
     template.content = content;
-    template.updated_at = Some(env.ledger().timestamp());
+    template.updated_at = Some(current_time(&env));
 
     env.storage().persistent().set(&key, &template);
 

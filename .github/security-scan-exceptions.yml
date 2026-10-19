@@ -1,0 +1,23 @@
+# Container Image Security Scan — Accepted Exceptions
+#
+# This file records CVEs and vulnerability findings that have been reviewed
+# and accepted or deferred for this project. Each entry must be approved
+# by a project maintainer and include an expiry date for review.
+#
+# Required fields per entry:
+#   cve:         The CVE identifier (e.g. CVE-2024-12345)
+#   reason:      Why this finding is accepted or deferred
+#   accepted_by: GitHub username of the approving maintainer
+#   expires:     ISO-8601 date after which this exception must be re-reviewed
+#
+# Example (do not uncomment without a real reviewed CVE):
+#
+# exceptions:
+#   - cve: CVE-2024-00000
+#     reason: |
+#       This vulnerability requires local access to exploit and does not
+#       apply to our containerized deployment model.
+#     accepted_by: maintainer-username
+#     expires: '2025-12-31'
+
+exceptions: []

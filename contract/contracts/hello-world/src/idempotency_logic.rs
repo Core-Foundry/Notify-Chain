@@ -4,6 +4,7 @@
 /// retried or concurrently submitted requests do not create duplicate
 /// deliveries. The first caller to commit a given key wins; every later caller
 /// with the same key observes the recorded outcome.
+use crate::base::clock::current_time;
 use crate::base::errors::Error;
 use crate::base::idempotency::{IdempotencyKey, IdempotencyRecord};
 use soroban_sdk::{Address, BytesN, Env, String};
@@ -37,7 +38,7 @@ pub fn deliver_notification_idempotent(
         key: idempotency_key,
         notification_id: notification_id.clone(),
         submitter: recipient,
-        created_at: env.ledger().timestamp(),
+        created_at: current_time(&env),
         delivered: true,
         result: String::from_str(&env, "delivered"),
     };
