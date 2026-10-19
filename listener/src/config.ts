@@ -19,7 +19,11 @@ import {
   DigestConfig,
   LocalizationConfig,
 } from './types';
-import { validateCorsOrigin, CorsValidationError } from './utils/cors-validator';
+import {
+  validateCorsOrigin,
+  CorsValidationError,
+  resolveCorsAllowedOrigins,
+} from './utils/cors-validator';
 import { validateSecrets } from './config/validate-secrets';
 import { ConfigurationSchemaValidator, APP_CONFIG_SCHEMA } from './config-schema';
 import { DEFAULT_LOCALE, SUPPORTED_LOCALES } from './i18n';
@@ -90,6 +94,17 @@ function loadNotificationDefaultTtlSeconds(): number {
     throw new ConfigError('NOTIFICATION_DEFAULT_TTL_SECONDS must be a supported non-negative integer');
   }
   return seconds;
+}
+
+function loadCorsAllowedOrigins(): string[] {
+  try {
+    return resolveCorsAllowedOrigins(trimEnv('CORS_ALLOWED_ORIGINS'), trimEnv('NODE_ENV'));
+  } catch (error) {
+    if (error instanceof CorsValidationError) {
+      throw new ConfigError(error.message);
+    }
+    throw error;
+  }
 }
 
 function parseStrictIntegerEnv(name: string, defaultValue: string): number {

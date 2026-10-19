@@ -2474,6 +2474,32 @@ export function createEventsServer(options: EventsServerOptions = {}): http.Serv
     sendErr(res, 404, 'Not found', ErrorCode.NOT_FOUND);
   };
 
+  // Per-client usage accounting (#989): record the resolved non-secret client
+  // identifier, route, method and status once the response is finished. The
+  // recorder is fire-and-forget so it never blocks or fails the request, and
+  // only the sanitized client id is passed through — never raw credentials.
+  const recordUsage = (req: http.IncomingMessage, res: http.ServerResponse): void => {
+    const usageAccounting = options.usageAccounting;
+    if (!usageAccounting) return;
+    try {
+      const clientId = resolveUsageClientId(req);
+      const route = resolveUsageRoute(req);
+      const status = res.statusCode;
+      void Promise.resolve(
+        usageAccounting.record({
+          clientId,
+          method: req.method ?? 'UNKNOWN',
+          route,
+          status,
+        }),
+      ).catch((error: unknown) => {
+        logger.warn('Usage accounting record failed', { error });
+      });
+    } catch (error: unknown) {
+      logger.warn('Usage accounting record failed', { error });
+    }
+  };
+
   const server = http.createServer((req, res) => {
     runWithRequestCorrelation(req, res, (requestContext) => {
       void handleRequest(req, res).catch((error: unknown) => {
