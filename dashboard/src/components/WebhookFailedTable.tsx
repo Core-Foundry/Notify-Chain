@@ -1,7 +1,7 @@
-import { memo, useState, useMemo, useCallback } from 'react';
+import { Fragment, memo, useMemo, useState } from 'react';
 import type { WebhookDelivery } from '../types/webhook';
-import { formatTimestamp } from '../utils/formatTime';
 import { getErrorCategory } from '../utils/webhookData';
+import { formatTimestamp } from '../utils/formatTime';
 import { EmptyState } from './EmptyState';
 
 interface WebhookFailedTableProps {
@@ -9,309 +9,251 @@ interface WebhookFailedTableProps {
   isLoading: boolean;
 }
 
-type SortField = 'attemptedAt' | 'httpStatus' | 'latencyMs' | 'targetUrl' | 'eventType';
-type SortDir = 'asc' | 'desc';
+type SortKey = 'eventType' | 'targetUrl' | 'httpStatus' | 'attemptNumber' | 'attemptedAt';
+type SortDirection = 'asc' | 'desc';
 
-const PAGE_SIZE_OPTIONS = [10, 20, 50];
+const PAGE_SIZE = 10;
+const SORT_COLUMNS: { key: SortKey; label: string }[] = [
+  { key: 'eventType', label: 'Event type' },
+  { key: 'targetUrl', label: 'Endpoint' },
+  { key: 'httpStatus', label: 'Response' },
+  { key: 'attemptNumber', label: 'Attempt' },
+  { key: 'attemptedAt', label: 'Last attempted' },
+];
 
-/** Truncate a URL for display without breaking layout. */
-function truncateUrl(url: string, maxLen = 52): string {
-  if (url.length <= maxLen) return url;
-  return `${url.slice(0, maxLen - 1)}…`;
+function compareDeliveries(a: WebhookDelivery, b: WebhookDelivery, key: SortKey) {
+  const left = a[key];
+  const right = b[key];
+
+  if (typeof left === 'number' && typeof right === 'number') {
+    return left - right;
+  }
+
+  return String(left ?? '').localeCompare(String(right ?? ''));
 }
 
-/** Map HTTP status to a CSS modifier. */
-function statusCodeClass(code: number | null): string {
-  if (code === null) return 'webhook-failed-table__code--network';
-  if (code >= 500) return 'webhook-failed-table__code--5xx';
-  if (code >= 400) return 'webhook-failed-table__code--4xx';
-  return '';
-}
-
-const SkeletonRow = () => (
-  <tr className="webhook-failed-table__row webhook-failed-table__row--skeleton" aria-hidden="true">
-    {Array.from({ length: 6 }).map((_, i) => (
-      <td key={i} className="webhook-failed-table__cell">
-        <span className="webhook-failed-table__skeleton" style={{ width: `${50 + (i * 23) % 40}%` }} />
-      </td>
-    ))}
-  </tr>
-);
-
-function SortButton({
-  field,
-  currentField,
-  currentDir,
-  label,
-  onSort,
-}: {
-  field: SortField;
-  currentField: SortField;
-  currentDir: SortDir;
-  label: string;
-  onSort: (f: SortField) => void;
-}) {
-  const isActive = field === currentField;
-  const arrow = isActive ? (currentDir === 'asc' ? ' ↑' : ' ↓') : '';
-  return (
-    <button
-      type="button"
-      className={`webhook-failed-table__sort-btn${isActive ? ' webhook-failed-table__sort-btn--active' : ''}`}
-      onClick={() => onSort(field)}
-      aria-sort={isActive ? (currentDir === 'asc' ? 'ascending' : 'descending') : 'none'}
-    >
-      {label}{arrow}
-    </button>
-  );
+function sortLabel(key: SortKey, direction: SortDirection) {
+  return `${key} ${direction === 'asc' ? 'ascending' : 'descending'}`;
 }
 
 export const WebhookFailedTable = memo(function WebhookFailedTable({
   deliveries,
   isLoading,
 }: WebhookFailedTableProps) {
-  const [sortField, setSortField] = useState<SortField>('attemptedAt');
-  const [sortDir, setSortDir] = useState<SortDir>('desc');
+  const [sortKey, setSortKey] = useState<SortKey>('attemptedAt');
+  const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
   const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(10);
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
-  const handleSort = useCallback((field: SortField) => {
-    setSortField((prev) => {
-      if (prev === field) {
-        setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
-        return field;
-      }
-      setSortDir('desc');
-      return field;
-    });
+  const sortedDeliveries = useMemo(
+    () =>
+      [...deliveries].sort((a, b) => {
+        const comparison = compareDeliveries(a, b, sortKey);
+        return sortDirection === 'asc' ? comparison : -comparison;
+      }),
+    [deliveries, sortDirection, sortKey],
+  );
+
+  const pageCount = Math.max(1, Math.ceil(sortedDeliveries.length / PAGE_SIZE));
+  const visibleDeliveries = sortedDeliveries.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+
+  function toggleSort(key: SortKey) {
+    if (key === sortKey) {
+      setSortDirection((direction) => (direction === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setSortKey(key);
+      setSortDirection(key === 'attemptedAt' ? 'desc' : 'asc');
+    }
     setPage(1);
-  }, []);
-
-  const sorted = useMemo(() => {
-    return [...deliveries].sort((a, b) => {
-      let aVal: number | string | null;
-      let bVal: number | string | null;
-
-      switch (sortField) {
-        case 'attemptedAt':
-          aVal = a.attemptedAt;
-          bVal = b.attemptedAt;
-          break;
-        case 'httpStatus':
-          aVal = a.httpStatus ?? -1;
-          bVal = b.httpStatus ?? -1;
-          break;
-        case 'latencyMs':
-          aVal = a.latencyMs ?? -1;
-          bVal = b.latencyMs ?? -1;
-          break;
-        case 'targetUrl':
-          aVal = a.targetUrl;
-          bVal = b.targetUrl;
-          break;
-        case 'eventType':
-          aVal = a.eventType;
-          bVal = b.eventType;
-          break;
-        default:
-          return 0;
-      }
-
-      if (aVal === bVal) return 0;
-      const cmp = aVal < bVal ? -1 : 1;
-      return sortDir === 'asc' ? cmp : -cmp;
-    });
-  }, [deliveries, sortField, sortDir]);
-
-  const pageCount = Math.max(1, Math.ceil(sorted.length / pageSize));
-  const safePage = Math.min(page, pageCount);
-  const pageItems = sorted.slice((safePage - 1) * pageSize, safePage * pageSize);
-
-  const toggleExpand = useCallback((id: string) => {
-    setExpandedId((prev) => (prev === id ? null : id));
-  }, []);
+  }
 
   return (
-    <section className="webhook-failed-table-section" aria-labelledby="failed-table-title">
-      <div className="webhook-failed-table-section__header">
-        <h3 id="failed-table-title" className="webhook-failed-table-section__title">
+    <section className="webhook-failed-table-section" aria-labelledby="failed-deliveries-title">
+      <header className="webhook-failed-table-section__header">
+        <h2 className="webhook-failed-table-section__title" id="failed-deliveries-title">
           Failed Deliveries
-        </h3>
-        <span className="webhook-failed-table-section__count" aria-live="polite" role="status">
-          {isLoading ? '—' : `${deliveries.length.toLocaleString()} records`}
+        </h2>
+        <span className="webhook-failed-table-section__count">
+          {isLoading ? 'Loading…' : `${deliveries.length.toLocaleString()} failed`}
         </span>
-      </div>
+      </header>
 
-      <div className="webhook-failed-table__wrapper" role="region" aria-label="Failed deliveries table" tabIndex={0}>
-        <table className="webhook-failed-table" aria-labelledby="failed-table-title" aria-rowcount={deliveries.length}>
+      <div className="webhook-failed-table__wrapper">
+        <table className="webhook-failed-table">
           <thead>
             <tr>
-              <th scope="col" className="webhook-failed-table__th">
-                <SortButton field="attemptedAt" currentField={sortField} currentDir={sortDir} label="Timestamp" onSort={handleSort} />
-              </th>
-              <th scope="col" className="webhook-failed-table__th">
-                <SortButton field="eventType" currentField={sortField} currentDir={sortDir} label="Event" onSort={handleSort} />
-              </th>
-              <th scope="col" className="webhook-failed-table__th">
-                <SortButton field="targetUrl" currentField={sortField} currentDir={sortDir} label="Target URL" onSort={handleSort} />
-              </th>
-              <th scope="col" className="webhook-failed-table__th">
-                <SortButton field="httpStatus" currentField={sortField} currentDir={sortDir} label="HTTP Status" onSort={handleSort} />
-              </th>
-              <th scope="col" className="webhook-failed-table__th">
-                <SortButton field="latencyMs" currentField={sortField} currentDir={sortDir} label="Latency" onSort={handleSort} />
-              </th>
-              <th scope="col" className="webhook-failed-table__th">
-                Error Category
+              {SORT_COLUMNS.map(({ key, label }) => (
+                <th
+                  key={key}
+                  className="webhook-failed-table__th"
+                  scope="col"
+                  aria-sort={
+                    sortKey === key
+                      ? sortDirection === 'asc'
+                        ? 'ascending'
+                        : 'descending'
+                      : 'none'
+                  }
+                >
+                  <button
+                    type="button"
+                    className={`webhook-failed-table__sort-btn${sortKey === key ? ' webhook-failed-table__sort-btn--active' : ''}`}
+                    onClick={() => toggleSort(key)}
+                    aria-label={`Sort by ${label}, ${sortLabel(key, sortKey === key ? sortDirection : 'asc')}`}
+                  >
+                    {label}
+                  </button>
+                </th>
+              ))}
+              <th className="webhook-failed-table__th" scope="col">
+                Error
               </th>
             </tr>
           </thead>
           <tbody>
-            {isLoading ? (
-              Array.from({ length: 5 }).map((_, i) => <SkeletonRow key={i} />)
-            ) : pageItems.length === 0 ? (
-              <tr>
-                <td colSpan={6} style={{ padding: 0, border: 'none' }}>
-                  <EmptyState
-                    className="empty-state--compact"
-                    icon="✅"
-                    title="No failed deliveries"
-                    description="No failed deliveries match the selected filters."
-                  />
-                </td>
-              </tr>
-            ) : (
-              pageItems.map((d) => {
-                const isExpanded = expandedId === d.id;
-                const category = getErrorCategory(d);
-                return (
-                  <>
-                    <tr
-                      key={d.id}
-                      className={`webhook-failed-table__row${isExpanded ? ' webhook-failed-table__row--expanded' : ''}`}
-                      aria-expanded={isExpanded}
-                      aria-controls={`wh-error-detail-${d.id}`}
-                    >
-                      <td className="webhook-failed-table__cell webhook-failed-table__cell--mono">
-                        <time dateTime={new Date(d.attemptedAt).toISOString()}>
-                          {formatTimestamp(d.attemptedAt)}
-                        </time>
+            {isLoading
+              ? Array.from({ length: 4 }, (_, index) => (
+                  <tr
+                    key={`skeleton-${index}`}
+                    className="webhook-failed-table__row webhook-failed-table__row--skeleton"
+                    aria-hidden="true"
+                  >
+                    {SORT_COLUMNS.map(({ key }) => (
+                      <td key={key} className="webhook-failed-table__cell">
+                        <span className="webhook-failed-table__skeleton" />
                       </td>
-                      <td className="webhook-failed-table__cell">
-                        <span className="webhook-failed-table__event-badge">{d.eventType}</span>
-                      </td>
-                      <td
-                        className="webhook-failed-table__cell webhook-failed-table__cell--url"
-                        title={d.targetUrl}
+                    ))}
+                    <td className="webhook-failed-table__cell">
+                      <span className="webhook-failed-table__skeleton" />
+                    </td>
+                  </tr>
+                ))
+              : visibleDeliveries.map((delivery) => {
+                  const category = getErrorCategory(delivery);
+                  const isExpanded = expandedId === delivery.id;
+                  const codeClass =
+                    category === 'network' ? 'network' : category === '4xx' ? '4xx' : '5xx';
+                  return (
+                    <Fragment key={delivery.id}>
+                      <tr
+                        key={delivery.id}
+                        className={`webhook-failed-table__row${isExpanded ? ' webhook-failed-table__row--expanded' : ''}`}
                       >
-                        {truncateUrl(d.targetUrl)}
-                      </td>
-                      <td className="webhook-failed-table__cell">
-                        <span className={`webhook-failed-table__code ${statusCodeClass(d.httpStatus)}`}>
-                          {d.httpStatus !== null ? d.httpStatus : 'None'}
-                        </span>
-                      </td>
-                      <td className="webhook-failed-table__cell webhook-failed-table__cell--mono">
-                        {d.latencyMs !== null ? `${d.latencyMs} ms` : '—'}
-                      </td>
-                      <td className="webhook-failed-table__cell">
-                        <div className="webhook-failed-table__cell-row">
-                          {category && (
-                            <span className={`webhook-failed-table__category webhook-failed-table__category--${category}`}>
-                              {category}
+                        <td className="webhook-failed-table__cell" data-label="Event type">
+                          <span className="webhook-failed-table__event-badge">
+                            {delivery.eventType}
+                          </span>
+                        </td>
+                        <td
+                          className="webhook-failed-table__cell webhook-failed-table__cell--url"
+                          data-label="Endpoint"
+                          title={delivery.targetUrl}
+                        >
+                          {delivery.targetUrl}
+                        </td>
+                        <td className="webhook-failed-table__cell" data-label="Response">
+                          <div className="webhook-failed-table__cell-row">
+                            <span
+                              className={`webhook-failed-table__code webhook-failed-table__code--${codeClass}`}
+                            >
+                              {delivery.httpStatus ?? 'Network'}
                             </span>
-                          )}
-                          {d.errorPayload && (
+                            {category && (
+                              <span
+                                className={`webhook-failed-table__category webhook-failed-table__category--${category}`}
+                              >
+                                {category}
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                        <td
+                          className="webhook-failed-table__cell webhook-failed-table__cell--mono"
+                          data-label="Attempt"
+                        >
+                          #{delivery.attemptNumber}
+                        </td>
+                        <td className="webhook-failed-table__cell" data-label="Last attempted">
+                          <time dateTime={new Date(delivery.attemptedAt).toISOString()}>
+                            {formatTimestamp(delivery.attemptedAt)}
+                          </time>
+                        </td>
+                        <td className="webhook-failed-table__cell" data-label="Error">
+                          {delivery.errorPayload ? (
                             <button
                               type="button"
                               className="webhook-failed-table__expand-btn"
-                              onClick={() => toggleExpand(d.id)}
                               aria-expanded={isExpanded}
-                              aria-controls={`wh-error-detail-${d.id}`}
-                              aria-label={`${isExpanded ? 'Collapse' : 'Expand'} error payload for delivery ${d.id}`}
-                            >
-                              {isExpanded ? '▲ Hide' : '▼ Payload'}
-                            </button>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                    {isExpanded && d.errorPayload && (
-                      <tr
-                        key={`${d.id}-detail`}
-                        id={`wh-error-detail-${d.id}`}
-                        className="webhook-failed-table__detail-row"
-                        aria-label="Error payload detail"
-                      >
-                        <td colSpan={6} className="webhook-failed-table__detail-cell">
-                          <pre className="webhook-failed-table__error-payload">
-                            {(() => {
-                              try {
-                                return JSON.stringify(JSON.parse(d.errorPayload), null, 2);
-                              } catch {
-                                return d.errorPayload;
+                              onClick={() =>
+                                setExpandedId(isExpanded ? null : delivery.id)
                               }
-                            })()}
-                          </pre>
+                            >
+                              {isExpanded ? 'Hide details' : 'View details'}
+                            </button>
+                          ) : (
+                            '—'
+                          )}
                         </td>
                       </tr>
-                    )}
-                  </>
-                );
-              })
+                      {isExpanded && delivery.errorPayload && (
+                        <tr
+                          key={`${delivery.id}-details`}
+                          className="webhook-failed-table__detail-row"
+                        >
+                          <td colSpan={SORT_COLUMNS.length + 1} className="webhook-failed-table__detail-cell">
+                            <pre className="webhook-failed-table__error-payload">
+                              {delivery.errorPayload}
+                            </pre>
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
+                  );
+                })}
+            {!isLoading && deliveries.length === 0 && (
+              <tr>
+                <td colSpan={SORT_COLUMNS.length + 1}>
+                  <EmptyState
+                    className="webhook-failed-table__empty"
+                    size="compact"
+                    title="No failed deliveries"
+                    description="All webhook attempts in this time range were successful."
+                  />
+                </td>
+              </tr>
             )}
           </tbody>
         </table>
       </div>
 
-      {/* Pagination */}
-      {!isLoading && deliveries.length > 0 && (
-        <div className="webhook-failed-table__pagination">
+      {!isLoading && pageCount > 1 && (
+        <nav className="webhook-failed-table__pagination" aria-label="Failed deliveries pages">
           <span className="webhook-failed-table__pagination-info">
-            {deliveries.length === 0
-              ? '0 records'
-              : `${(safePage - 1) * pageSize + 1}–${Math.min(safePage * pageSize, sorted.length)} of ${sorted.length.toLocaleString()}`}
+            Showing {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, deliveries.length)} of{' '}
+            {deliveries.length}
           </span>
           <div className="webhook-failed-table__pagination-controls">
             <button
               type="button"
               className="webhook-failed-table__page-btn"
-              onClick={() => setPage((p) => Math.max(1, p - 1))}
-              disabled={safePage <= 1}
+              onClick={() => setPage((current) => Math.max(1, current - 1))}
+              disabled={page === 1}
             >
-              Prev
+              Previous
             </button>
             <span className="webhook-failed-table__page-indicator">
-              {safePage} / {pageCount}
+              Page {page} of {pageCount}
             </span>
             <button
               type="button"
               className="webhook-failed-table__page-btn"
-              onClick={() => setPage((p) => Math.min(pageCount, p + 1))}
-              disabled={safePage >= pageCount}
+              onClick={() => setPage((current) => Math.min(pageCount, current + 1))}
+              disabled={page === pageCount}
             >
               Next
             </button>
-            <label htmlFor="wh-failed-page-size" className="webhook-failed-table__page-size-label">
-              Per page
-            </label>
-            <select
-              id="wh-failed-page-size"
-              className="webhook-failed-table__page-size-select"
-              value={pageSize}
-              onChange={(e) => {
-                setPageSize(Number(e.target.value));
-                setPage(1);
-              }}
-            >
-              {PAGE_SIZE_OPTIONS.map((n) => (
-                <option key={n} value={n}>
-                  {n}
-                </option>
-              ))}
-            </select>
           </div>
-        </div>
+        </nav>
       )}
     </section>
   );

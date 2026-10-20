@@ -1,0 +1,49 @@
+name: Contract Event Documentation Drift Check
+
+on:
+  pull_request:
+    paths:
+      - "contract/**/events.rs"
+      - "contract/**/*.rs"
+      - "docs/CONTRACT_EVENTS.md"
+      - "scripts/validate-contract-events.py"
+      - "scripts/check_contract_event_conventions.py"
+      - "scripts/test_contract_event_conventions.py"
+  push:
+    branches: [main]
+    paths:
+      - "contract/**/events.rs"
+      - "contract/**/*.rs"
+      - "docs/CONTRACT_EVENTS.md"
+      - "scripts/check_contract_event_conventions.py"
+      - "scripts/test_contract_event_conventions.py"
+
+concurrency:
+  group: event-docs-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  validate-events:
+    name: check-event-documentation-drift
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Validate Contract Event Documentation Drift
+        run: |
+          python3 scripts/validate-contract-events.py
+
+      - name: Test contract event naming and topic conventions
+        run: |
+          python3 -m unittest discover -s scripts -p 'test_contract_event_conventions.py'
+          python3 scripts/check_contract_event_conventions.py

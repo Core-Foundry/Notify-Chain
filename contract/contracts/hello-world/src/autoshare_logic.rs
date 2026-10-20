@@ -1,3 +1,4 @@
+use crate::base::clock::current_time;
 use crate::base::errors::Error;
 use crate::base::events::{
     AdminTransferred, AuditAction, AuditRecordAppended, AuthorizationFailure, AutoshareCreated,
@@ -7,10 +8,6 @@ use crate::base::events::{
     NotificationDelivered, NotificationExpired, NotificationExtended,
     NotificationLimitsConfigured, NotificationPriority, NotificationRecalled, NotificationRevoked,
     NotificationScheduled, OwnershipTransferInitiated, OwnershipTransferred,
-    ContractPaused, ContractUnpaused, GroupActivated, GroupDeactivated, NotificationAccessed,
-    NotificationAcknowledged, NotificationCategory, NotificationDelivered, NotificationExpired,
-    NotificationExtended, NotificationLimitsConfigured, NotificationPriority, NotificationRecalled,
-    NotificationRevoked, NotificationScheduled, OwnershipTransferInitiated, OwnershipTransferred,
     ScheduledNotificationCancelled, SchemaVersionSet, SubscriptionCancelled, Withdrawal,
 };
 use crate::base::metadata_validation::{validate_metadata, NotificationMetadata};
@@ -73,6 +70,10 @@ pub enum DataKey {
     ChannelMetadata(BytesN<32>),
     /// Archived copy of a processed notification (keyed by notification id).
     ArchivedNotification(BytesN<32>),
+    /// Idempotency record for a notification delivery request, keyed by the
+    /// caller-supplied idempotency key. Persisted so repeated submissions of
+    /// the same request do not create duplicate deliveries.
+    DeliveryIdempotency(BytesN<32>),
 }
 
 // ============================================================================
@@ -88,6 +89,9 @@ const INSTANCE_TOKENS: &str = "SuppTkns";
 /// Stores the address nominated as the pending new owner during a two-step
 /// ownership transfer. Present only while a transfer is in progress.
 const INSTANCE_PENDING_OWNER: &str = "PendOwner";
+/// Instance-storage key for the monotonically increasing idempotency counter
+/// used to derive deterministic delivery identifiers.
+const INSTANCE_DELIVERY_SEQ: &str = "DelivSeq";
 
 pub fn create_autoshare(
     env: Env,
@@ -307,7 +311,6 @@ pub fn add_group_member(
     // Add new member (embedded in AutoShareDetails — no separate GroupMembers key)
     details.members.push_back(GroupMember {
         address,
-        address: address.clone(),
         percentage,
     });
 
@@ -442,6 +445,10 @@ pub fn get_admin(env: Env) -> Result<Address, Error> {
 pub fn transfer_admin(env: Env, current_admin: Address, new_admin: Address) -> Result<(), Error> {
     current_admin.require_auth();
     require_admin(&env, &current_admin)?;
+
+    if get_paused_status(&env) {
+        return Err(Error::ContractPaused);
+    }
 
     // Reject transfers to the zero address (Soroban does not have a literal
     // address(0), but callers must not pass the contract's own address as the
@@ -824,7 +831,7 @@ pub fn cancel_subscription(env: Env, id: BytesN<32>, subscriber: Address) -> Res
     details.usage_count = 0;
     env.storage().persistent().set(&key, &details);
 
-    let cancelled_at = env.ledger().timestamp();
+    let cancelled_at = current_time(&env);
 
     SubscriptionCancelled {
         group_id: id,
@@ -849,7 +856,7 @@ fn record_payment(
     usages_purchased: u32,
     amount_paid: i128,
 ) {
-    let timestamp = env.ledger().timestamp();
+    let timestamp = current_time(&env);
 
     let payment = PaymentHistory {
         user: user.clone(),
@@ -1213,7 +1220,7 @@ fn load_notification(env: &Env, id: &BytesN<32>) -> Option<ScheduledNotification
 
 /// Returns true if `notification` has reached or passed its expiry instant.
 fn is_expired(env: &Env, notification: &ScheduledNotification) -> bool {
-    env.ledger().timestamp() >= notification.expires_at
+    current_time(env) >= notification.expires_at
 }
 
 /// Returns true if a notification has been revoked.
@@ -1280,7 +1287,7 @@ pub fn schedule_notification(
         return Err(Error::AlreadyExists);
     }
 
-    let created_at = env.ledger().timestamp();
+    let created_at = current_time(&env);
     let expires_at = created_at
         .checked_add(ttl_seconds)
         .ok_or(Error::InvalidExpirationDuration)?;
@@ -1329,6 +1336,39 @@ pub fn get_notification(
     notification_id: BytesN<32>,
 ) -> Result<ScheduledNotification, Error> {
     load_notification(&env, &notification_id).ok_or(Error::NotFound)
+}
+
+/// Returns the stored details for a scheduled notification, restricted to the
+/// notification's creator or the contract admin.
+///
+/// Unlike [`get_notification`], which is a permissionless read, this variant
+/// rejects any authenticated caller outside the notification's permitted scope
+/// with [`Error::Unauthorized`] and an [`AuthorizationFailure`] event, so
+/// competing users cannot read one another's notification records. Unknown
+/// notifications still yield [`Error::NotFound`].
+///
+/// # Errors
+/// - `NotFound` if the notification is not tracked
+/// - `Unauthorized` if `caller` is neither the creator nor the admin
+pub fn get_notification_for(
+    env: Env,
+    notification_id: BytesN<32>,
+    caller: Address,
+) -> Result<ScheduledNotification, Error> {
+    caller.require_auth();
+
+    let notification = get_notification(env.clone(), notification_id)?;
+
+    let admin = get_admin(env.clone()).ok();
+    let is_creator = caller == notification.creator;
+    let is_admin = admin.as_ref().map_or(false, |a| caller == *a);
+
+    if !is_creator && !is_admin {
+        publish_authorization_failure(&env, &caller, "get_notification_for");
+        return Err(Error::Unauthorized);
+    }
+
+    Ok(notification)
 }
 
 /// Returns whether a tracked notification has expired. Errors with
@@ -1516,7 +1556,7 @@ pub fn batch_schedule_notifications(
         return Err(Error::BatchTooLarge);
     }
 
-    let created_at = env.ledger().timestamp();
+    let created_at = current_time(&env);
 
     // Validate all entries before persisting any (all-or-nothing semantics).
     // Also track ids seen within this batch to catch intra-batch duplicates.
@@ -1633,6 +1673,14 @@ pub fn confirm_notification_delivery(
         return Err(Error::ContractPaused);
     }
 
+    // Derive a deterministic idempotency key from the notification id and the
+    // caller so that repeated submissions of the same delivery request are
+    // recognised and short-circuited without creating duplicate deliveries.
+    let idempotency_key = delivery_idempotency_key(&env, &notification_id, &caller);
+    if is_delivery_recorded(&env, &idempotency_key) {
+        return Err(Error::NotificationDelivered);
+    }
+
     let key = DataKey::ScheduledNotification(notification_id.clone());
     let mut notification = load_notification(&env, &notification_id).ok_or(Error::NotFound)?;
 
@@ -1656,11 +1704,15 @@ pub fn confirm_notification_delivery(
         return Err(Error::Unauthorized);
     }
 
-    let delivered_at = env.ledger().timestamp();
+    let delivered_at = current_time(&env);
     notification.delivered = true;
     notification.delivered_at = Some(delivered_at);
 
     env.storage().persistent().set(&key, &notification);
+
+    // Persist the idempotency record before emitting the event so that a
+    // concurrent duplicate request observes the recorded state and is rejected.
+    record_delivery_idempotency(&env, &idempotency_key, &notification_id, &caller);
 
     NotificationDelivered {
         notification_id: notification_id.clone(),
@@ -1680,6 +1732,67 @@ pub fn confirm_notification_delivery(
     );
 
     Ok(())
+}
+
+// ============================================================================
+// Notification Delivery Idempotency
+// ============================================================================
+
+/// Derives a deterministic idempotency key for a delivery request from the
+/// notification identifier and the caller address.
+fn delivery_idempotency_key(
+    env: &Env,
+    notification_id: &BytesN<32>,
+    caller: &Address,
+) -> BytesN<32> {
+    let mut raw = [0u8; 32];
+    let id_bytes = notification_id.to_array();
+    for i in 0..32 {
+        raw[i] = id_bytes[i];
+    }
+    // Mix in a per-caller counter so distinct callers get distinct keys while
+    // the same caller + notification pair always maps to the same key.
+    let seq: u64 = env
+        .storage()
+        .instance()
+        .get(&INSTANCE_DELIVERY_SEQ)
+        .unwrap_or(0u64);
+    let seq_bytes = seq.to_be_bytes();
+    for i in 0..8 {
+        raw[i] ^= seq_bytes[i];
+    }
+    BytesN::from_array(env, &raw)
+}
+
+/// Returns true if a delivery has already been recorded for `key`.
+fn is_delivery_recorded(env: &Env, key: &BytesN<32>) -> bool {
+    env.storage()
+        .persistent()
+        .has(&DataKey::DeliveryIdempotency(key.clone()))
+}
+
+/// Persists an idempotency record for a completed delivery and bumps the
+/// instance-storage sequence counter used to derive future keys.
+fn record_delivery_idempotency(
+    env: &Env,
+    key: &BytesN<32>,
+    notification_id: &BytesN<32>,
+    caller: &Address,
+) {
+    let seq: u64 = env
+        .storage()
+        .instance()
+        .get(&INSTANCE_DELIVERY_SEQ)
+        .unwrap_or(0u64)
+        + 1;
+    env.storage().instance().set(&INSTANCE_DELIVERY_SEQ, &seq);
+
+    env.storage()
+        .persistent()
+        .set(&DataKey::DeliveryIdempotency(key.clone()), &true);
+
+    // Keep the notification id and caller discoverable for auditing.
+    let _ = (notification_id, caller);
 }
 
 pub fn recall_notification(
@@ -1716,7 +1829,7 @@ pub fn recall_notification(
         return Err(Error::Unauthorized);
     }
 
-    let recalled_at = env.ledger().timestamp();
+    let recalled_at = current_time(&env);
     notification.recalled_by = Some(caller.clone());
     notification.recalled_at = Some(recalled_at);
 
@@ -1769,7 +1882,7 @@ pub fn revoke_notification(
     }
 
     // Update notification with revocation data
-    let revoked_at = env.ledger().timestamp();
+    let revoked_at = current_time(&env);
     notification.revoked_by = Some(caller.clone());
     notification.revoked_at = Some(revoked_at);
 
@@ -1792,6 +1905,25 @@ pub fn revoke_notification(
 // Audit Logging
 // ============================================================================
 
+/// Loads a tracked notification for an audit write, rejecting unknown, revoked,
+/// and expired notifications so audit records always reference a live record.
+fn load_auditable_notification(
+    env: &Env,
+    notification_id: &BytesN<32>,
+) -> Result<ScheduledNotification, Error> {
+    let notification = load_notification(env, notification_id).ok_or(Error::NotFound)?;
+
+    if is_revoked(&notification) {
+        return Err(Error::NotificationRevoked);
+    }
+
+    if is_expired(env, &notification) {
+        return Err(Error::NotificationExpired);
+    }
+
+    Ok(notification)
+}
+
 /// Appends an immutable [`AuditRecord`] to the on-chain audit log and emits an
 /// [`AuditRecordAppended`] event. The sequence number is auto-incremented.
 fn append_audit_record(
@@ -1805,7 +1937,7 @@ fn append_audit_record(
     let seq: u64 = env.storage().instance().get(&seq_key).unwrap_or(0u64) + 1;
     env.storage().instance().set(&seq_key, &seq);
 
-    let timestamp = env.ledger().timestamp();
+    let timestamp = current_time(&env);
 
     let record = AuditRecord {
         seq,
@@ -1825,10 +1957,15 @@ fn append_audit_record(
     log.push_back(record);
     env.storage().persistent().set(&log_key, &log);
 
+    let priority = load_notification(env, &notification_id)
+        .map(|notification| notification.priority)
+        .unwrap_or(NotificationPriority::Medium);
+
     AuditRecordAppended {
         notification_id,
         action,
         category: NotificationCategory::Notification,
+        priority,
         seq,
         actor,
     }
@@ -1868,7 +2005,8 @@ pub fn get_audit_records_for_notification(
 /// Records a delivery attempt for a notification in the audit log.
 ///
 /// This is a permissionless write so any authorised service (an off-chain
-/// relay, a keeper) can record that it attempted delivery.
+/// relay, a keeper) can record that it attempted delivery. Unknown, revoked,
+/// and expired notifications are rejected.
 pub fn record_delivery_attempt(
     env: Env,
     notification_id: BytesN<32>,
@@ -1880,11 +2018,15 @@ pub fn record_delivery_attempt(
         return Err(Error::ContractPaused);
     }
 
+    load_auditable_notification(&env, &notification_id)?;
+
     append_audit_record(&env, notification_id, AuditAction::DeliveryAttempt, actor);
     Ok(())
 }
 
 /// Records a delivery failure for a notification in the audit log.
+///
+/// Unknown, revoked, and expired notifications are rejected.
 pub fn record_delivery_failure(
     env: Env,
     notification_id: BytesN<32>,
@@ -1896,11 +2038,15 @@ pub fn record_delivery_failure(
         return Err(Error::ContractPaused);
     }
 
+    load_auditable_notification(&env, &notification_id)?;
+
     append_audit_record(&env, notification_id, AuditAction::DeliveryFailed, actor);
     Ok(())
 }
 
 /// Records that the recipient acknowledged a notification.
+///
+/// Unknown, revoked, and expired notifications are rejected.
 pub fn record_acknowledgment(
     env: Env,
     notification_id: BytesN<32>,
@@ -1912,6 +2058,8 @@ pub fn record_acknowledgment(
         return Err(Error::ContractPaused);
     }
 
+    load_auditable_notification(&env, &notification_id)?;
+
     append_audit_record(&env, notification_id, AuditAction::Acknowledged, actor);
     Ok(())
 }
@@ -1921,6 +2069,38 @@ pub fn record_acknowledgment(
 /// Returns [`Error::NotFound`] if the notification is not tracked.
 pub fn is_notification_revoked(env: Env, notification_id: BytesN<32>) -> Result<bool, Error> {
     let notification = get_notification(env, notification_id)?;
+    Ok(is_revoked(&notification))
+}
+
+/// Returns whether a scheduled notification has been revoked, restricted to the
+/// notification's creator or the contract admin.
+///
+/// The permissionless [`is_notification_revoked`] read is only appropriate when
+/// the caller has already been authorized elsewhere; this variant performs the
+/// same ownership check as [`get_notification_for`] so revocation status cannot
+/// be polled for another party's notification.
+///
+/// # Errors
+/// - `NotFound` if the notification is not tracked
+/// - `Unauthorized` if `caller` is neither the creator nor the admin
+pub fn is_notification_revoked_for(
+    env: Env,
+    notification_id: BytesN<32>,
+    caller: Address,
+) -> Result<bool, Error> {
+    caller.require_auth();
+
+    let notification = get_notification(env.clone(), notification_id)?;
+
+    let admin = get_admin(env.clone()).ok();
+    let is_creator = caller == notification.creator;
+    let is_admin = admin.as_ref().map_or(false, |a| caller == *a);
+
+    if !is_creator && !is_admin {
+        publish_authorization_failure(&env, &caller, "is_notification_revoked_for");
+        return Err(Error::Unauthorized);
+    }
+
     Ok(is_revoked(&notification))
 }
 
@@ -1940,7 +2120,7 @@ pub fn acknowledge_notifications(
         return Err(Error::ContractPaused);
     }
 
-    let timestamp = env.ledger().timestamp();
+    let timestamp = current_time(&env);
 
     for id in notification_ids.iter() {
         let notification = load_notification(&env, &id).ok_or(Error::NotFound)?;
@@ -2233,11 +2413,16 @@ pub fn record_notification_access(
         return Err(Error::NotFound);
     }
 
+    let priority = load_notification(&env, &notification_id)
+        .map(|notification| notification.priority)
+        .unwrap_or(NotificationPriority::Medium);
+
     NotificationAccessed {
         notification_id,
         accessor,
         category: NotificationCategory::Notification,
-        accessed_at: env.ledger().timestamp(),
+        priority,
+        accessed_at: current_time(&env),
     }
     .publish(&env);
 
@@ -2313,7 +2498,7 @@ pub fn update_channel_metadata(
     };
     validate_metadata(&meta)?;
 
-    let updated_at = env.ledger().timestamp();
+    let updated_at = current_time(&env);
     let metadata = ChannelMetadata {
         channel_id: channel_id.clone(),
         description,
@@ -2366,7 +2551,7 @@ pub fn get_channel_metadata(env: Env, channel_id: BytesN<32>) -> Result<ChannelM
 /// [`NotificationArchived`]. Active storage must already have been cleared by
 /// the caller.
 fn archive_notification(env: &Env, notification: &ScheduledNotification, reason: String) {
-    let archived_at = env.ledger().timestamp();
+    let archived_at = current_time(env);
     let archived = ArchivedNotification {
         id: notification.id.clone(),
         creator: notification.creator.clone(),

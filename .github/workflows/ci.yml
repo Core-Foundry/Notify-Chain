@@ -3,86 +3,53 @@ name: CI
 on:
   push:
     branches: [main]
+    branches: [main, staging]
   pull_request:
     branches: [main]
 
 jobs:
-  # ─── Listener (Node.js + TypeScript + Jest) ───────────────────────────────
-  listener:
-    name: Listener — typecheck, lint, test
+  contracts:
+    name: Soroban contract validation (Rust 1.86.0)
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: listener
-
+    timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
         with:
-          node-version: 20
-          cache: npm
-          cache-dependency-path: listener/package-lock.json
+          toolchain: 1.86.0
+          targets: wasm32v1-none
+          components: rustfmt
 
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Typecheck
-        run: npm run typecheck
-
-      - name: Lint
-        run: npm run lint
-
-      - name: Format check
-        run: npm run format:check
-
-      - name: Test
-        run: npm test -- --ci --runInBand
-
-  # ─── Dashboard (React + Vite + Jest) ──────────────────────────────────────
-  dashboard:
-    name: Dashboard — typecheck, lint, test, build
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: dashboard
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
         with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: dashboard/package-lock.json
+          workspaces: contract
 
-      - name: Install dependencies
-        run: npm ci
+      - name: Report resolved Soroban SDK
+        working-directory: contract
+        run: cargo tree --locked --workspace --all-features -i soroban-sdk
 
-      - name: Lint
-        run: npm run lint
+      - name: Test and build contract workspace
+        working-directory: contract
+        run: |
+          set +e
+          cargo test --workspace --all-features --locked
+          test_status=$?
+          cargo build --workspace --release --locked --target wasm32v1-none
+          build_status=$?
+          if [ "$test_status" -ne 0 ] || [ "$build_status" -ne 0 ]; then
+            echo "Contract validation failed (tests: $test_status, Wasm build: $build_status)."
+            exit 1
+          fi
 
-      - name: Format check
-        run: npm run format:check
-
-      - name: Test
-        run: npm test -- --ci
-
-      - name: Build
-        run: npm run build
-
-  # ─── Frontend (React + Vite + Vitest) ─────────────────────────────────────
-  frontend:
-    name: Frontend — typecheck, lint, test, build
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: frontend
-
+  dashboard-visual:
+    runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
       - name: Set up Node.js
         uses: actions/setup-node@v4

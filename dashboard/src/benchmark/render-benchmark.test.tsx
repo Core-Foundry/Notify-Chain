@@ -49,7 +49,7 @@ describe('event list render performance', () => {
     const { container } = render(
       <div style={{ height: 600, width: 800 }}>
         <EventList events={events} />
-      </div>
+      </div>,
     );
     const duration = performance.now() - startTime;
 
@@ -75,7 +75,7 @@ describe('event list render performance', () => {
     const virtualRender = render(
       <div style={{ height: 600, width: 800 }}>
         <EventList events={events} />
-      </div>
+      </div>,
     );
     const virtualDuration = performance.now() - virtualStart;
     const virtualRows = countRenderedRows(virtualRender.container);
