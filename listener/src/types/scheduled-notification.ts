@@ -19,6 +19,15 @@ export enum NotificationType {
   SMS = 'sms',
 }
 
+export type RecurrenceFrequency = 'minutely' | 'hourly' | 'daily' | 'weekly' | 'monthly';
+
+export interface RecurrenceRule {
+  frequency: RecurrenceFrequency;
+  interval?: number;
+  until?: Date | string;
+  count?: number;
+}
+
 export interface ScheduledNotification {
   id?: number;
   payload: string; // JSON string
@@ -48,6 +57,10 @@ export interface ScheduledNotification {
   nextRetryAt?: Date | null;
   /** Stable logical key used to prevent duplicate delivery of the same notification. */
   deduplicationKey?: string | null;
+  recurrence?: RecurrenceRule | null;
+  /** Number of executed or skipped series occurrences. */
+  occurrenceCount?: number;
+  lastRunAt?: Date | null;
 }
 
 export interface CreateScheduledNotificationInput {
@@ -64,6 +77,7 @@ export interface CreateScheduledNotificationInput {
   contractAddress?: string;
   priority?: number;
   metadata?: Record<string, any>;
+  recurrence?: RecurrenceRule;
 }
 
 export interface ScheduledNotificationRow {
@@ -91,6 +105,9 @@ export interface ScheduledNotificationRow {
   metadata: string | null;
   next_retry_at: string | null;
   deduplication_key: string | null;
+  recurrence_rule?: string | null;
+  occurrence_count?: number;
+  last_run_at?: string | null;
 }
 
 export interface NotificationExecutionLog {

@@ -7,7 +7,7 @@ export interface NotificationProvider {
   sendEventNotification(
     event: StellarSDK.rpc.Api.EventResponse,
     contractConfig: ContractConfig,
-    requestId?: string
+    requestId?: string,
   ): Promise<boolean>;
 
   sendTestMessage(requestId?: string): Promise<boolean>;
@@ -45,8 +45,8 @@ export interface RetryQueueConfig {
 export interface WebhookSecret {
   id: string;
   secret: string;
-}  
-  
+}
+
 export interface RateLimitConfig {
   enabled: boolean;
   windowMs: number;
@@ -164,6 +164,8 @@ export interface SchedulerConfig {
   batchSize: number;
   concurrency: number;
   timingBufferMs: number;
+  /** Maximum future schedule time in milliseconds; null disables the horizon. */
+  maxSchedulingHorizonMs?: number | null;
 }
 
 export interface EventQueueConfig {
@@ -212,7 +214,7 @@ export interface RetrySchedulerOptions {
   multiplier: number;
   maxDelayMs: number;
   jitter: boolean;
-/**
+  /**
    * Timeout (ms) for outbound webhook requests (`WEBHOOK_TIMEOUT_MS`).
    * Defaults to `DEFAULT_WEBHOOK_TIMEOUT_MS` (10 000 ms).
    */

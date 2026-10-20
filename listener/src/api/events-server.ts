@@ -6,7 +6,11 @@ import { eventRegistry } from '../store/event-registry';
 import { preferenceStore } from '../store/preference-store';
 import { PreferencesUpdateInput } from '../types/preferences';
 import { NotificationAPI } from '../services/notification-api';
+import { ApiCredentialService } from '../services/api-credential-service';
+import { handleCredentialRoutes } from './credentials-api';
+import { authorizeRequest, type AuthPrincipal } from './api-key-auth';
 import { NotificationType } from '../types/scheduled-notification';
+import { ScheduleValidationError, toScheduleValidationResponse } from '../services/schedule-validator';
 import {
   formatInTimezone,
   InvalidTimezoneError,
@@ -20,9 +24,6 @@ import { sendOk, sendErr, sendJson, ErrorCode } from '../utils/response';
 import { normalizePaginationParams } from '../utils/pagination';
 import { handleApiError, ApiError } from './error-handler';
 import { applyRequestIdMiddleware } from '../middleware/request-id';
-import { TemplateService } from '../services/template-service';
-import { handleTemplateRoutes } from './template-routes';
-import { sendOk, sendErr, sendJson, ErrorCode } from '../utils/response';
 import { validateContentType, getMimeType } from '../middleware/content-type';
 import { NotificationHistoryService } from '../services/notification-history';
 import { SearchSuggestionService } from '../services/search-suggestion';
@@ -33,9 +34,10 @@ import {
   IdempotencyKeyReuseError,
 } from '../services/idempotency-key-service';
 import { WebhookReplayCache } from '../services/webhook-replay-cache';
-import { IdempotencyKeyService, IdempotencyKeyReuseError } from '../services/idempotency-key-service';
 import { WebhookSecret, RateLimitConfig, ContractConfig } from '../types';
+import { DeliveryReceiptStatus } from '../types/delivery-receipt';
 import { RateLimiter } from './rate-limiter';
+import { authenticateApiKey, API_KEY_AUTH_MESSAGES } from './api-key-auth';
 import {
   normaliseApiPath,
   applyVersionHeaders,
@@ -68,6 +70,12 @@ import { NotificationMetricsStore } from '../services/notification-metrics-store
 import { NotificationHealthMonitor } from '../services/notification-health-monitor';
 import { getJobMonitor } from '../services/job-monitor';
 import { NotificationImportService } from '../services/notification-import-service';
+import { DeliveryReceiptRepository } from '../services/delivery-receipt-repository';
+import { DataExportService } from '../services/data-export-service';
+import { SecurityAuditService } from '../services/security-audit';
+import { validatePayload, Schemas } from '../middleware/request-validator';
+import { parseLedgerRangeParams } from '../utils/ledger-range-validator';
+import { ValidationError, validationErrorBody } from '../utils/validation';
 import { ResponseTimeMiddleware } from '../middleware/response-time';
 import { addSecurityHeaders } from '../middleware/security-headers';
 import { DEFAULT_MAX_BODY_BYTES, enforceBodyLimit } from '../middleware/body-limit';
@@ -94,6 +102,7 @@ export interface EventsServerOptions {
   webhookSecrets?: WebhookSecret[];
   apiKeys?: Array<{ key: string; name?: string }>;
   notificationAPI?: NotificationAPI | null;
+  credentialService?: ApiCredentialService | null;
   /** Idempotency-Key replay protection for mutating endpoints (webhooks, schedule). */
   idempotencyService?: IdempotencyKeyService | null;
   templateService?: NotificationTemplateService | null;
@@ -144,17 +153,9 @@ export interface EventsServerOptions {
    * are never parsed. Defaults to {@link DEFAULT_MAX_BODY_BYTES}.
    */
   maxBodyBytes?: number;
-  /**
-   * Largest *compressed* request body accepted when a `Content-Encoding` is
-   * present, in bytes (issue #999). Defaults to
-   * {@link DEFAULT_MAX_COMPRESSED_BYTES}.
-   */
+  /** Maximum compressed request body size, in bytes. */
   maxCompressedBytes?: number;
-  /**
-   * Largest *decompressed* request body accepted when a `Content-Encoding` is
-   * present, in bytes (issue #999). Bounds decompression bombs. Defaults to
-   * {@link DEFAULT_MAX_DECOMPRESSED_BYTES}.
-   */
+  /** Maximum decompressed request body size, in bytes. */
   maxDecompressedBytes?: number;
   /** Optional DataExportService override for administrative exports (#850). */
   dataExportService?: DataExportService | null;
@@ -477,6 +478,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
   const webhookReplayCache = new WebhookReplayCache({
     maxEntries: options.webhookReplayCacheMaxEntries ?? 10_000,
   });
+  const webhookAuditService = new SecurityAuditService(getDatabase());
   // Response-time tracking (#491)
   const responseTime =
     options.responseTimeMiddleware !== undefined && options.responseTimeMiddleware !== null
@@ -503,7 +505,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
     // the socket destroyed before any route handler attaches its own `data`
     // listener and starts accumulating the body in memory.
     const maxBodyBytes = options.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES;
-    const bodyLimit = enforceBodyLimit(req, res, {
+    const bodyLimit = await enforceBodyLimit(req, res, {
       maxBytes: maxBodyBytes,
       onRejected: (reason, observedBytes) => {
         logger.warn('Request body exceeded size limit', {
@@ -521,13 +523,6 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
       return;
     }
 
-    // Compressed request body limits (#999).
-    //
-    // The body-size guard above bounds the bytes on the wire, but a
-    // `Content-Encoding: gzip` body inflates in memory, so a small upload can
-    // still exhaust the heap. This screens both the compressed and the inflated
-    // size before any route handler reads the body, and refuses encodings we
-    // cannot inflate. On success the decoded body is replayed to the handlers.
     const decompression = await applyDecompressionLimit(req, res, {
       maxCompressedBytes: options.maxCompressedBytes ?? DEFAULT_MAX_COMPRESSED_BYTES,
       maxDecompressedBytes: options.maxDecompressedBytes ?? DEFAULT_MAX_DECOMPRESSED_BYTES,
@@ -551,7 +546,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
     res.setHeader(
       'Access-Control-Allow-Headers',
       'Content-Type, X-API-Key, Authorization, X-Correlation-Id, X-Request-Id',
-   );
+    );
     res.setHeader(
       'Access-Control-Expose-Headers',
       'X-Request-Id, X-Correlation-Id, X-Response-Time',
@@ -607,256 +602,6 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
 
     if (req.method === 'OPTIONS') {
       res.removeHeader('Content-Type');
-import crypto from 'crypto';
-import http from 'http';
-import { DEFAULT_MAX_BODY_BYTES, enforceBodyLimit } from '../middleware/body-limit';
-import { validateContentType } from '../middleware/content-type';
-import { runWithRequestCorrelation } from '../middleware/correlation';
-import { eventRegistry } from '../store/event-registry';
-import { preferenceStore } from '../store/preference-store';
-import { getDatabase } from '../database/database';
-import logger from '../utils/logger';
-import { sendJson, sendOk, sendErr, ErrorCode } from '../utils/response';
-import { NotificationAnalyticsAggregator } from '../services/notification-analytics-aggregator';
-import { applyVersionHeaders, normaliseApiPath } from './api-version-registry';
-
-export interface EventsServerOptions {
-  port?: number;
-  isProduction?: boolean;
-  stellarRpcUrl?: string;
-  stellarNetwork?: string;
-  stellarNetworkPassphrase?: string;
-  contractAddresses?: Array<{ address: string; events?: string[]; userId?: string; paused?: boolean }>;
-  discordWebhookUrl?: string;
-  webhookSecrets?: Array<{ id: string; secret: string }>;
-  analyticsAggregator?: NotificationAnalyticsAggregator;
-  metricsStore?: { getHistory?: (limit?: number, since?: string) => Promise<unknown[]> };
-  notificationAPI?: unknown;
-  api?: { maxBodyBytes?: number };
-}
-
-export interface HealthServiceStatus {
-  status: 'ok' | 'error' | 'degraded' | 'not_configured';
-  detail?: string;
-  latencyMs?: number;
-  [key: string]: unknown;
-}
-
-export type HealthStatus = 'ok' | 'degraded' | 'error';
-
-const DEFAULT_BODY_LIMIT = DEFAULT_MAX_BODY_BYTES;
-const MAX_EVENT_LIMIT = 100;
-const MAX_BATCH_SIZE = 500;
-
-function normalizeContractEntry(contract: string | { address: string; events?: string[]; userId?: string; paused?: boolean }): { address: string } {
-  if (typeof contract === 'string') {
-    return { address: contract };
-  }
-  return { address: contract.address };
-}
-
-function parseQueryInt(raw: string | undefined, fallback: number, max: number): number {
-  const parsed = Number.parseInt(raw ?? '', 10);
-  if (!Number.isFinite(parsed)) return fallback;
-  if (parsed < 1) return 1;
-  return Math.min(parsed, max);
-}
-
-function isSuccessStatus(status: string | undefined): boolean {
-  return status === 'ok';
-}
-
-export async function checkDatabase(): Promise<HealthServiceStatus> {
-  const started = Date.now();
-  try {
-    const db = getDatabase();
-    if (typeof (db as any).isConnected === 'function' && !(db as any).isConnected()) {
-      return { status: 'error', detail: 'Database not initialized', latencyMs: Date.now() - started };
-    }
-    if (typeof (db as any).get === 'function') {
-      await (db as any).get('SELECT 1');
-    }
-    return { status: 'ok', latencyMs: Date.now() - started };
-  } catch (error) {
-    return {
-      status: 'error',
-      detail: error instanceof Error ? error.message : 'Database unavailable',
-      latencyMs: Date.now() - started,
-    };
-  }
-}
-
-export async function checkStellarRpc(rpcUrl: string): Promise<HealthServiceStatus> {
-  const started = Date.now();
-  try {
-    const StellarSDK = await import('@stellar/stellar-sdk');
-    const server = new (StellarSDK.rpc as any).Server(rpcUrl);
-    const health = await server.getHealth();
-    const status = health?.status === 'healthy' || health?.status === 'ok' ? 'ok' : 'error';
-    return { status, latencyMs: Date.now() - started, detail: status === 'ok' ? undefined : String(health?.status ?? 'unhealthy') };
-  } catch (error) {
-    return {
-      status: 'error',
-      detail: error instanceof Error ? error.message : 'RPC unavailable',
-      latencyMs: Date.now() - started,
-    };
-  }
-}
-
-export async function checkDiscord(webhookUrl?: string): Promise<HealthServiceStatus> {
-  if (!webhookUrl) {
-    return { status: 'not_configured' };
-  }
-
-  const started = Date.now();
-  try {
-    const response = await fetch(webhookUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ type: 'healthcheck' }),
-    });
-
-    if (!response.ok) {
-      return {
-        status: 'error',
-        detail: `HTTP ${response.status}`,
-        latencyMs: Date.now() - started,
-      };
-    }
-
-    return { status: 'ok', latencyMs: Date.now() - started };
-  } catch (error) {
-    return {
-      status: 'error',
-      detail: error instanceof Error ? error.message : 'Discord webhook unavailable',
-      latencyMs: Date.now() - started,
-    };
-  }
-}
-
-function sendAccessibleHeaders(res: http.ServerResponse, isProduction: boolean = false): void {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Webhook-Signature, X-Webhook-Key-Id, X-Webhook-Timestamp, X-Correlation-Id, X-Request-Id');
-  res.setHeader('X-Content-Type-Options', 'nosniff');
-  res.setHeader('X-Frame-Options', 'SAMEORIGIN');
-  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
-  if (isProduction) {
-    res.setHeader('Strict-Transport-Security', 'max-age=31536000');
-  }
-}
-
-async function readJsonBody(req: http.IncomingMessage): Promise<unknown> {
-  return await new Promise((resolve, reject) => {
-    const chunks: Buffer[] = [];
-    req.on('data', (chunk) => chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)));
-    req.on('end', () => {
-      const raw = Buffer.concat(chunks).toString('utf8');
-      if (!raw.trim()) {
-        resolve(undefined);
-        return;
-      }
-      try {
-        resolve(JSON.parse(raw));
-      } catch {
-        reject(new Error('Invalid JSON'));
-      }
-    });
-    req.on('error', reject);
-  });
-}
-
-function statusFromServiceMap(services: Record<string, HealthServiceStatus>): HealthStatus {
-  const values = Object.values(services);
-  if (values.some((svc) => svc.status === 'error')) return 'error';
-  if (values.some((svc) => svc.status === 'degraded' || svc.status === 'not_configured')) return 'degraded';
-  return 'ok';
-}
-
-function signHmac(secret: string, payload: string): string {
-  return `sha256=${crypto.createHmac('sha256', secret).update(payload, 'utf8').digest('hex')}`;
-}
-
-function verifyWebhookSignature(payload: string, signature: string, secret: string, timestamp?: string): { valid: boolean; code?: string; message?: string } {
-  const provided = signature.trim();
-  const headerTimestamp = timestamp?.trim();
-
-  if (headerTimestamp) {
-    const now = Math.floor(Date.now() / 1000);
-    const ts = Number.parseInt(headerTimestamp, 10);
-    if (!Number.isFinite(ts)) {
-      return { valid: false, code: 'AUTH_INVALID_TIMESTAMP', message: 'Invalid timestamp header' };
-    }
-    if (Math.abs(now - ts) > 600) {
-      return { valid: false, code: 'AUTH_TIMESTAMP_EXPIRED', message: 'Request signature expired' };
-    }
-    const expected = signHmac(secret, `${headerTimestamp}.${payload}`);
-    if (provided !== expected) {
-      return { valid: false, code: 'AUTH_INVALID_SIGNATURE', message: 'Invalid signature' };
-    }
-    return { valid: true };
-  }
-
-  const legacyExpected = signHmac(secret, payload);
-  if (provided !== legacyExpected) {
-    return { valid: false, code: 'AUTH_INVALID_SIGNATURE', message: 'Invalid signature' };
-  }
-  return { valid: true };
-}
-
-function validateBatch(body: unknown): { valid: boolean; processedCount: number; errors: Array<{ code: string; message: string; index?: number }> } {
-  const items = Array.isArray(body) ? body : [];
-  const errors: Array<{ code: string; message: string; index?: number }> = [];
-  const recipients = new Set<string>();
-
-  for (let index = 0; index < items.length; index++) {
-    const item = items[index];
-    if (!item || typeof item !== 'object' || Array.isArray(item)) {
-      errors.push({ code: 'INVALID_ITEM', message: `Item at index ${index} is not an object` });
-      continue;
-    }
-
-    const entry = item as Record<string, unknown>;
-    const id = typeof entry.id === 'string' ? entry.id.trim() : '';
-    const recipient = typeof entry.recipient === 'string' ? entry.recipient.trim() : '';
-    const channel = typeof entry.channel === 'string' ? entry.channel.trim() : '';
-    const message = typeof entry.message === 'string' ? entry.message.trim() : '';
-
-    if (!id || !recipient || !channel || !message) {
-      errors.push({ code: 'MISSING_FIELD', message: `Missing required fields for item ${index}`, index });
-      continue;
-    }
-
-    if (recipients.has(recipient)) {
-      errors.push({ code: 'DUPLICATE_RECIPIENT', message: `Duplicate recipient: ${recipient}`, index });
-      continue;
-    }
-    recipients.add(recipient);
-  }
-
-  return {
-    valid: errors.length === 0,
-    processedCount: items.length,
-    errors,
-  };
-}
-
-export function createEventsServer(options: EventsServerOptions = {}): http.Server {
-  const bodyLimitBytes = options.api?.maxBodyBytes ?? DEFAULT_BODY_LIMIT;
-  const configContractAddresses = options.contractAddresses ?? [];
-  const webhookSecrets = new Map((options.webhookSecrets ?? []).map((entry) => [entry.id, entry.secret]));
-  const analyticsAggregator = options.analyticsAggregator ?? new NotificationAnalyticsAggregator();
-  const metricsStore = options.metricsStore ?? null;
-  const isProduction = options.isProduction ?? process.env.NODE_ENV === 'production';
-
-  const handleRequest = async (req: http.IncomingMessage, res: http.ServerResponse): Promise<void> => {
-    const url = new URL(req.url ?? '/', 'http://localhost');
-    const { normalisedPath } = normaliseApiPath(url.pathname);
-    const pathname = normalisedPath;
-    sendAccessibleHeaders(res, isProduction);
-    applyVersionHeaders(req.method ?? 'GET', pathname, res);
-
-    if (req.method === 'OPTIONS') {
       res.writeHead(204);
       res.end();
       return;
@@ -866,6 +611,17 @@ export function createEventsServer(options: EventsServerOptions = {}): http.Serv
     // Note: route matching is handled inline below for NotificationTemplateService compatibility.
     // url.pathname is already rewritten from /api/v1/* → /api/* above
     if (options.schedulerTemplateService && url.pathname.startsWith('/api/templates')) {
+      const auth = await authorizeRequest(req, {
+        apiKeys: options.apiKeys,
+        credentialService: options.credentialService,
+      });
+      if (!auth.allowed) {
+        if (auth.status === 401) res.setHeader('WWW-Authenticate', 'ApiKey header="X-API-Key"');
+        sendErr(res, auth.status, auth.message, auth.code, auth.details);
+        return;
+      }
+      (req as http.IncomingMessage & { authPrincipal?: AuthPrincipal }).authPrincipal =
+        auth.principal;
       handleTemplateRoutes(req, res, requestId, options.schedulerTemplateService)
         .then((handled) => {
           if (!handled) {
@@ -876,6 +632,15 @@ export function createEventsServer(options: EventsServerOptions = {}): http.Serv
           logger.error('Template route handler error', { error, requestId, correlationId });
           handleApiError(res, error, requestId, correlationId);
         });
+      return;
+    }
+
+    if (
+      await handleCredentialRoutes(req, res, url, {
+        credentialService: options.credentialService,
+        apiKeys: options.apiKeys,
+      })
+    ) {
       return;
     }
 
@@ -1131,13 +896,6 @@ export function createEventsServer(options: EventsServerOptions = {}): http.Serv
 
           const secrets = options.webhookSecrets ?? [];
           const maxAgeSeconds = options.signatureExpirationSeconds ?? 300;
-
-          // Use default database for audit log or mock one if not available.
-          // Actually since SecurityAuditService requires Database, let's pass a real one.
-          const db = getDatabase();
-          const { SecurityAuditService } = require('../services/security-audit');
-          const auditService = new SecurityAuditService(db);
-
           const auth = await verifyWebhookRequest({
             headers: req.headers as Record<string, string | string[] | undefined>,
             rawBody,
@@ -1147,8 +905,8 @@ export function createEventsServer(options: EventsServerOptions = {}): http.Serv
             correlationId,
             maxAgeSeconds,
             requireTimestamp: options.requireWebhookTimestamp !== false,
-            replayCache: webhookReplayCache,
-            auditService,
+            replayCache: idempotencyKey ? undefined : webhookReplayCache,
+            auditService: webhookAuditService,
           });
 
           if (!auth.authenticated) {
@@ -1510,6 +1268,7 @@ export function createEventsServer(options: EventsServerOptions = {}): http.Serv
               eventId: data.eventId,
               contractAddress: data.contractAddress,
               metadata: data.metadata,
+              recurrence: data.recurrence,
             });
             logger.info('Notification scheduled via API', {
               requestId,
@@ -1560,6 +1319,12 @@ export function createEventsServer(options: EventsServerOptions = {}): http.Serv
           res.writeHead(201, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify(scheduled));
         } catch (error) {
+          if (error instanceof ScheduleValidationError) {
+            const response = toScheduleValidationResponse(error);
+            res.writeHead(response.statusCode, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify(response.body));
+            return;
+          }
           if (error instanceof InvalidTimezoneError) {
             res.writeHead(400, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ error: error.message, code: 'INVALID_TIMEZONE' }));
@@ -1666,37 +1431,6 @@ export function createEventsServer(options: EventsServerOptions = {}): http.Serv
         ...monitor.getSnapshot(),
         recentJobs: monitor.listRecentJobs(limit),
         recentFailures: monitor.listFailures(limit),
-    const bodyMethods = new Set(['POST', 'PUT', 'PATCH']);
-    if (bodyMethods.has((req.method ?? 'GET').toUpperCase())) {
-      if (!validateContentType(req, res, ['application/json'])) {
-        return;
-      }
-      const limitCheck = enforceBodyLimit(req, res, {
-        maxBytes: bodyLimitBytes,
-        onRejected: (reason, observedBytes) => {
-          logger.warn('Rejected oversized request body', { reason, observedBytes, path: pathname });
-        },
-      });
-      if (!limitCheck.allowed) {
-        return;
-      }
-    }
-
-    if (pathname === '/health') {
-      const services: Record<string, HealthServiceStatus> = {
-        stellarRpc: await checkStellarRpc(options.stellarRpcUrl ?? 'http://localhost:8000'),
-        discord: await checkDiscord(options.discordWebhookUrl),
-        database: await checkDatabase(),
-        eventRegistry: { status: eventRegistry.count() > 0 ? 'ok' : 'ok', eventCount: eventRegistry.count() },
-      };
-      const overall = statusFromServiceMap(services);
-      const httpStatus = overall === 'error' ? 503 : 200;
-      sendJson(res, httpStatus, {
-        status: overall,
-        timestamp: new Date().toISOString(),
-        uptimeSeconds: Number(((Date.now() - (globalThis as any).__notifyStartTs) / 1000).toFixed(3)) || 0,
-        version: process.env.npm_package_version ?? 'unknown',
-        services,
       });
       return;
     }
@@ -1709,14 +1443,6 @@ export function createEventsServer(options: EventsServerOptions = {}): http.Serv
       sendOk(res, 200, {
         failures: monitor.listFailures(limit),
         count: monitor.listFailures(limit).length,
-    if (pathname === '/api/status') {
-      const contracts = (configContractAddresses ?? []).map((contract) => normalizeContractEntry(contract));
-      sendOk(res, 200, {
-        timestamp: new Date().toISOString(),
-        contracts: contracts.map((item) => ({
-          address: item.address,
-          paused: false,
-        })),
       });
       return;
     }
@@ -2443,193 +2169,111 @@ export function createEventsServer(options: EventsServerOptions = {}): http.Serv
       let body = '';
       req.on('data', (chunk) => {
         body += chunk;
-    if (pathname === '/api/events') {
-      const limit = parseQueryInt(url.searchParams.get('limit') ?? undefined, 20, MAX_EVENT_LIMIT);
-      const items = eventRegistry.getEvents(limit);
-      sendOk(res, 200, { count: eventRegistry.count(), events: items });
-      return;
-    }
-
-    if (pathname === '/api/indexing/health') {
-      const snapshot = eventRegistry.getIngestionSnapshot();
-      const indexedLedger = snapshot.lastIngestedLedger ?? null;
-      const networkTipLedger = snapshot.maxLedgerSeen ?? null;
-      const ledgerLag = indexedLedger !== null && networkTipLedger !== null ? Math.max(networkTipLedger - indexedLedger, 0) : null;
-      const lastIngestedAt = snapshot.lastIngestedAt !== null ? new Date(snapshot.lastIngestedAt).toISOString() : null;
-      const processingDelayMs = snapshot.lastIngestedAt !== null ? Math.max(Date.now() - snapshot.lastIngestedAt, 0) : null;
-
-      let status: 'synced' | 'syncing' | 'degraded' = 'syncing';
-      if (indexedLedger !== null && networkTipLedger !== null) {
-        status = ledgerLag !== null && ledgerLag <= 5 ? 'synced' : 'degraded';
-      } else if (indexedLedger !== null || networkTipLedger !== null) {
-        status = 'syncing';
-      }
-
-      sendOk(res, 200, {
-        status,
-        timestamp: new Date().toISOString(),
-        indexedLedger,
-        networkTipLedger,
-        ledgerLag,
-        processingDelayMs,
-        lastIngestedAt,
       });
-      return;
-    }
-
-    if (pathname.startsWith('/api/preferences/')) {
-      const userId = pathname.split('/api/preferences/')[1]?.split('/')[0];
-      if (!userId) {
-        sendErr(res, 404, 'Preference user not found', ErrorCode.NOT_FOUND);
-        return;
-      }
-
-      if (req.method === 'GET') {
-        sendOk(res, 200, preferenceStore.get(userId));
-        return;
-      }
-
-      if (req.method === 'PUT') {
+      req.on('end', () => {
         try {
-          const input = (await readJsonBody(req)) as Record<string, unknown>;
-          if (!input || typeof input !== 'object' || !('categories' in input) || typeof (input as any).categories !== 'object') {
-            sendErr(res, 400, 'Invalid body: expected { categories: { [key]: boolean } }', ErrorCode.BAD_REQUEST, { field: 'categories' });
+          const input: PreferencesUpdateInput = JSON.parse(body);
+          if (!input || typeof input.categories !== 'object') {
+            logger.warn('PUT /api/preferences/:userId invalid body', {
+              requestId,
+              correlationId,
+              userId,
+            });
+            sendErr(
+              res,
+              400,
+              'Invalid body: expected { categories: { [key]: boolean } }',
+              ErrorCode.BAD_REQUEST,
+            );
             return;
           }
-          const updated = preferenceStore.update(userId, input as { categories: Record<string, boolean> });
+          const updated = preferenceStore.update(userId, input);
+          logger.info('PUT /api/preferences/:userId complete', {
+            requestId,
+            correlationId,
+            userId,
+            durationMs: Date.now() - startTime,
+          });
           sendOk(res, 200, updated);
-          return;
-        } catch (error) {
-          sendErr(res, 400, error instanceof Error ? error.message : 'Invalid JSON', ErrorCode.PARSE_ERROR, []);
-          return;
+        } catch {
+          logger.error('PUT /api/preferences/:userId invalid JSON', {
+            requestId,
+            correlationId,
+            userId,
+          });
+          sendErr(res, 400, 'Invalid JSON', ErrorCode.PARSE_ERROR);
         }
-      }
-    }
-
-    if (pathname === '/api/webhooks' && req.method === 'POST') {
-      const payload = await readJsonBody(req).catch(() => undefined);
-      const rawBody = typeof payload === 'string' ? payload : JSON.stringify(payload ?? {});
-      const keyId = req.headers['x-webhook-key-id'];
-      const signature = req.headers['x-webhook-signature'];
-      const timestamp = req.headers['x-webhook-timestamp'];
-
-      if (!keyId || Array.isArray(keyId)) {
-        sendErr(res, 401, 'Missing key-id header', 'AUTH_MISSING_KEY_ID');
-        return;
-      }
-      if (!signature || Array.isArray(signature)) {
-        sendErr(res, 401, 'Missing signature header', 'AUTH_MISSING_SIGNATURE');
-        return;
-      }
-      const secret = webhookSecrets.get(keyId);
-      if (!secret) {
-        sendErr(res, 401, 'Unknown key-id', 'AUTH_UNKNOWN_KEY_ID');
-        return;
-      }
-      const verification = verifyWebhookSignature(rawBody, signature, secret, Array.isArray(timestamp) ? timestamp[0] : timestamp);
-      if (!verification.valid) {
-        sendErr(res, 401, verification.message ?? 'Invalid signature', verification.code ?? 'AUTH_INVALID_SIGNATURE');
-        return;
-      }
-
-      sendOk(res, 202, { status: 'accepted', verified: true });
+      });
       return;
     }
 
-    if (pathname === '/api/analytics') {
-      const snapshot = analyticsAggregator.snapshot();
+    // GET /api/archive, GET /api/archive/:id, POST /api/archive/run
+    if (
+      options.archiveStore &&
+      (url.pathname === '/api/archive' || url.pathname.startsWith('/api/archive/'))
+    ) {
+      const handled = await handleArchiveRequest(
+        req,
+        res,
+        {
+          store: options.archiveStore,
+          service: options.archiveService,
+        },
+        requestId,
+      );
+      if (handled) return;
+    }
+
+    // GET /api/notifications/delivery-metrics and /history  (Issue #482)
+    const deliveryMetricsHandled = handleDeliveryMetricsRequest(
+      req,
+      res,
+      url,
+      {
+        analyticsAggregator: options.analyticsAggregator,
+        metricsStore: options.metricsStore,
+      },
+      { requestId, correlationId, startTime },
+    );
+    if (deliveryMetricsHandled) return;
+
+    // GET /api/metrics/response-time — expose response-time counters (#491)
+    if (req.method === 'GET' && url.pathname === '/api/metrics/response-time') {
+      const metrics = responseTime.getMetrics();
       const reset = url.searchParams.get('reset') === 'true';
+      sendOk(res, 200, metrics);
       if (reset) {
-        analyticsAggregator.reset();
+        responseTime.resetMetrics();
+        logger.info('Response-time metrics reset', { requestId });
       }
-      sendOk(res, 200, snapshot);
       return;
     }
 
-    if (pathname === '/api/analytics/history') {
-      if (!metricsStore || typeof metricsStore.getHistory !== 'function') {
-        sendOk(res, 200, { count: 0, snapshots: [] });
-        return;
-      }
-      const limit = parseQueryInt(url.searchParams.get('limit') ?? undefined, 10, 100);
-      const since = url.searchParams.get('since') ?? undefined;
-      const snapshots = await metricsStore.getHistory(limit, since);
-      sendOk(res, 200, { count: Array.isArray(snapshots) ? snapshots.length : 0, snapshots: Array.isArray(snapshots) ? snapshots : [] });
-      return;
-    }
-
-    if (pathname === '/api/notifications/validate-batch') {
-      try {
-        const body = await readJsonBody(req);
-        const result = validateBatch(body);
-        const payload = {
-          success: true,
-          data: {
-            valid: result.valid,
-            processedCount: result.processedCount,
-            errors: result.errors,
-          },
-        };
-        sendJson(res, result.valid ? 200 : 200, payload);
-        return;
-      } catch {
-        sendErr(res, 400, 'Failed to read request body', ErrorCode.PARSE_ERROR);
-        return;
-      }
-    }
-
-    sendErr(res, 404, 'Not found', ErrorCode.NOT_FOUND);
-  };
-
-  // Per-client usage accounting (#989): record the resolved non-secret client
-  // identifier, route, method and status once the response is finished. The
-  // recorder is fire-and-forget so it never blocks or fails the request, and
-  // only the sanitized client id is passed through — never raw credentials.
-  const recordUsage = (req: http.IncomingMessage, res: http.ServerResponse): void => {
-    const usageAccounting = options.usageAccounting;
-    if (!usageAccounting) return;
-    try {
-      const clientId = resolveUsageClientId(req);
-      const route = resolveUsageRoute(req);
-      const status = res.statusCode;
-      void Promise.resolve(
-        usageAccounting.record({
-          clientId,
-          method: req.method ?? 'UNKNOWN',
-          route,
-          status,
-        }),
-      ).catch((error: unknown) => {
-        logger.warn('Usage accounting record failed', { error });
-      });
-    } catch (error: unknown) {
-      logger.warn('Usage accounting record failed', { error });
-    }
-  };
-
-  const server = http.createServer((req, res) => {
-    runWithRequestCorrelation(req, res, (requestContext) => {
-      void handleRequest(req, res).catch((error: unknown) => {
-        logger.error('Unhandled error in events server request handler', { error, requestId: requestContext.requestId, correlationId: requestContext.correlationId });
-        if (!res.headersSent) {
-          sendErr(res, 500, 'Internal server error', ErrorCode.INTERNAL_ERROR, undefined, requestContext.correlationId);
-        }
-      });
+    logger.warn('Unhandled request', {
+      requestId,
+      correlationId,
+      method: req.method,
+      url: req.url,
     });
+    sendErr(res, 404, 'Not found', ErrorCode.NOT_FOUND);
+    responseTime.finish(req, res, requestId, 404);
   });
 
-  const startupTs = Date.now();
-  (globalThis as any).__notifyStartTs ??= startupTs;
+  if (rateLimiter) {
+    const originalClose = server.close.bind(server);
+    server.close = (callback?: (err?: Error) => void) => {
+      rateLimiter.destroy();
+      return originalClose(callback);
+    };
+  }
 
   return server;
 }
 
-export function startEventsServer(options: EventsServerOptions = {}): http.Server {
+export function startEventsServer(options: EventsServerOptions): http.Server {
   const server = createEventsServer(options);
-  server.listen(options.port ?? 0, () => {
-    const address = server.address();
-    const port = typeof address === 'object' && address !== null && 'port' in address ? address.port : options.port ?? 0;
-    logger.info('Events API server listening', { port });
+  server.listen(options.port, () => {
+    logger.info('Events API server listening', { port: options.port });
   });
   return server;
 }

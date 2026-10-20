@@ -77,7 +77,6 @@ async function main() {
       config.notificationDefaultTtlSeconds ?? 0,
     );
     deliveryReceiptRepository = new DeliveryReceiptRepository(db);
-    
 
     healthMonitor = new NotificationHealthMonitor(null, getWorkerManager(), {
       repository,
@@ -129,7 +128,12 @@ async function main() {
     if (config.scheduler?.enabled) {
       const scheduleAudit = new ScheduleAuditTrail(db);
       repository.setScheduleAuditTrail(scheduleAudit);
-      notificationAPI = new NotificationAPI(repository);
+      notificationAPI = new NotificationAPI(
+        repository,
+        undefined,
+        undefined,
+        config.scheduler.maxSchedulingHorizonMs,
+      );
       notificationAPI.setScheduleAuditTrail(scheduleAudit);
 
       const legacyTemplateRepo = new TemplateRepository(db);
@@ -161,6 +165,7 @@ async function main() {
           discordService,
           undefined,
           deliveryReceiptRepository,
+          () => new Date(),
         );
         await retryScheduler.start();
         logger.info('Retry scheduler started successfully');

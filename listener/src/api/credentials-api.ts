@@ -36,7 +36,7 @@ import {
   validateCreateCredentialInput,
   type ApiCredentialService,
 } from '../services/api-credential-service';
-import type { CreateApiCredentialInput } from '../types/api-credential';
+import type { ApiScope, CreateApiCredentialInput } from '../types/api-credential';
 
 export interface CredentialRoutesDeps {
   credentialService: ApiCredentialService | null | undefined;
@@ -50,14 +50,14 @@ export interface CredentialRoutesDeps {
 export type PermissionLevel = 'admin' | 'read';
 
 /** Scope required for each permission level on credential routes. */
-export const CREDENTIAL_SCOPES: Record<PermissionLevel, string> = {
+export const CREDENTIAL_SCOPES: Record<PermissionLevel, ApiScope> = {
   admin: 'credentials:manage',
   read: 'credentials:read',
 };
 
 interface RoutePermission {
   level: PermissionLevel;
-  scope: string;
+  scope: ApiScope;
 }
 
 /**

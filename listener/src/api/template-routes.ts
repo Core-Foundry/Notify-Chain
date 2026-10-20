@@ -18,7 +18,21 @@ import {
 } from '../utils/validation';
 import { sendOk, sendErr, ErrorCode } from '../utils/response';
 import { validateContentType } from '../middleware/content-type';
-import { hasPermission, PermissionScope } from '../utils/permissions';
+import { principalHasScopes, type AuthPrincipal } from './api-key-auth';
+import type { ApiScope } from '../types/api-credential';
+
+const PermissionScope = {
+  ADMIN: 'notifications:write',
+  READ: 'notifications:read',
+} as const satisfies Record<'ADMIN' | 'READ', ApiScope>;
+type PermissionScope = (typeof PermissionScope)[keyof typeof PermissionScope];
+
+type AuthenticatedRequest = http.IncomingMessage & { authPrincipal?: AuthPrincipal };
+
+function hasPermission(req: http.IncomingMessage, scope: PermissionScope): boolean {
+  const principal = (req as AuthenticatedRequest).authPrincipal;
+  return principal !== undefined && principalHasScopes(principal, [scope]);
+}
 
 interface TemplateRouteContext {
   req: http.IncomingMessage;
