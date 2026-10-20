@@ -7,6 +7,7 @@ import { ScheduledNotificationRepository } from './services/scheduled-notificati
 import { NotificationTemplateRepository } from './services/notification-template-repository';
 import { NotificationTemplateService } from './services/notification-template-service';
 import { TemplateAuditTrail } from './services/template-audit-trail';
+import { ScheduleAuditTrail } from './services/schedule-audit-trail';
 import { getTemplateCache } from './services/notification-template-cache';
 import { NotificationAPI } from './services/notification-api';
 import { DatabaseCleanupJob } from './services/database-cleanup-job';
@@ -126,7 +127,10 @@ async function main() {
     templateService = new NotificationTemplateService(templateRepository);
 
     if (config.scheduler?.enabled) {
+      const scheduleAudit = new ScheduleAuditTrail(db);
+      repository.setScheduleAuditTrail(scheduleAudit);
       notificationAPI = new NotificationAPI(repository);
+      notificationAPI.setScheduleAuditTrail(scheduleAudit);
 
       const legacyTemplateRepo = new TemplateRepository(db);
       legacyTemplateService = new TemplateService(legacyTemplateRepo);

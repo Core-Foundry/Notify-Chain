@@ -16,6 +16,7 @@ import {
   NotificationStats,
   QueueOperationalMetrics,
 } from './notification-stats-cache';
+import { ScheduleAuditTrail } from './schedule-audit-trail';
 
 /**
  * Repository for scheduled notifications database operations
@@ -23,6 +24,7 @@ import {
  */
 export class ScheduledNotificationRepository {
   private statsCache: NotificationStatsCache;
+  private scheduleAudit: ScheduleAuditTrail | null = null;
 
   constructor(
     private db: Database,
@@ -30,6 +32,10 @@ export class ScheduledNotificationRepository {
     private defaultTtlSeconds: number = 0,
   ) {
     this.statsCache = statsCache ?? getStatsCache();
+  }
+
+  setScheduleAuditTrail(audit: ScheduleAuditTrail | null): void {
+    this.scheduleAudit = audit;
   }
 
   /**
@@ -140,9 +146,22 @@ export class ScheduledNotificationRepository {
   }
 
   /**
+   * Hard upper bound on scheduler claim batch size (#970).
+   * Prevents a single poll from locking an unbounded due set.
+   */
+  static readonly MAX_SCHEDULER_BATCH_SIZE = 100;
+
+  /**
    * Dequeue pending notifications due for execution with distributed locking.
    * Uses a single atomic UPDATE ... WHERE id IN (SELECT ...) so two workers
    * polling at the same time can never claim the same row.
+   *
+   * ## Fairness selection policy (#970)
+   * Due jobs are grouped by `COALESCE(contract_address, event_id, notification_type, 'default')`.
+   * Within each group, jobs are ordered by priority ASC, execute_at ASC, id ASC.
+   * The batch is filled **round-robin across groups** (rank 1 from every group,
+   * then rank 2, …) so one large due group cannot indefinitely delay other
+   * eligible schedule groups. Batch size is capped at MAX_SCHEDULER_BATCH_SIZE.
    *
    * A job whose `next_retry_at` is still in the future is deliberately skipped:
    * it is waiting out its exponential backoff and is claimed by the retry path
@@ -158,8 +177,12 @@ export class ScheduledNotificationRepository {
   ): Promise<ScheduledNotification[]> {
     const now = new Date();
     const lockExpiresAt = new Date(now.getTime() + lockTimeoutMs);
+    const cappedBatch = Math.min(
+      Math.max(1, Math.floor(batchSize) || 1),
+      ScheduledNotificationRepository.MAX_SCHEDULER_BATCH_SIZE,
+    );
 
-    // First, atomically lock available notifications
+    // Fair round-robin selection across schedule groups, then atomic lock.
     const updateSql = `
       UPDATE scheduled_notifications
       SET 
@@ -168,12 +191,32 @@ export class ScheduledNotificationRepository {
         lock_expires_at = ?,
         processing_started_at = ?
       WHERE id IN (
-        SELECT id FROM scheduled_notifications
-        WHERE status = ?
-          AND execute_at <= ?
-          AND (next_retry_at IS NULL OR next_retry_at <= ?)
-        ORDER BY priority ASC, execute_at ASC
-        LIMIT ?
+        WITH due AS (
+          SELECT
+            id,
+            priority,
+            execute_at,
+            COALESCE(contract_address, event_id, notification_type, 'default') AS schedule_group,
+            ROW_NUMBER() OVER (
+              PARTITION BY COALESCE(contract_address, event_id, notification_type, 'default')
+              ORDER BY priority ASC, execute_at ASC, id ASC
+            ) AS group_rank
+          FROM scheduled_notifications
+          WHERE status = ?
+            AND execute_at <= ?
+            AND (next_retry_at IS NULL OR next_retry_at <= ?)
+        ),
+        fair AS (
+          SELECT
+            id,
+            ROW_NUMBER() OVER (
+              ORDER BY group_rank ASC, priority ASC, execute_at ASC, id ASC
+            ) AS pick_order
+          FROM due
+        )
+        SELECT id FROM fair
+        WHERE pick_order <= ?
+        ORDER BY pick_order
       )
     `;
 
@@ -185,7 +228,7 @@ export class ScheduledNotificationRepository {
       NotificationStatus.PENDING,
       now.toISOString(),
       now.toISOString(),
-      batchSize,
+      cappedBatch,
     ];
 
     const updateResult = await this.db.run(updateSql, updateParams);
@@ -210,6 +253,8 @@ export class ScheduledNotificationRepository {
       requestId,
       count: rows.length,
       processorId,
+      batchSize: cappedBatch,
+      selectionPolicy: 'round-robin-by-schedule-group',
     });
 
     return rows.map(this.rowToModel);
@@ -356,6 +401,15 @@ export class ScheduledNotificationRepository {
 
     // Invalidate stats cache after completion
     this.statsCache.invalidate();
+
+    await this.scheduleAudit?.record({
+      scheduledNotificationId: id,
+      action: 'EXECUTED',
+      actor: 'scheduler',
+      fromStatus: NotificationStatus.PROCESSING,
+      toStatus: NotificationStatus.COMPLETED,
+      details: { requestId: requestId ?? null },
+    });
 
     logger.info('Notification marked as completed', { requestId, id });
   }
@@ -628,6 +682,40 @@ export class ScheduledNotificationRepository {
     const sql = 'SELECT * FROM scheduled_notifications WHERE id = ?';
     const row = await this.db.get<ScheduledNotificationRow>(sql, [id]);
     return row ? this.rowToModel(row) : null;
+  }
+
+  /**
+   * Update mutable fields on a PENDING scheduled notification.
+   */
+  async updatePending(
+    id: number,
+    updates: { executeAt?: Date; priority?: number },
+  ): Promise<boolean> {
+    const sets: string[] = ['updated_at = ?'];
+    const params: unknown[] = [new Date().toISOString()];
+
+    if (updates.executeAt !== undefined) {
+      sets.push('execute_at = ?');
+      params.push(updates.executeAt.toISOString());
+    }
+    if (updates.priority !== undefined) {
+      sets.push('priority = ?');
+      params.push(updates.priority);
+    }
+
+    if (sets.length === 1) {
+      return false;
+    }
+
+    params.push(id, NotificationStatus.PENDING);
+    const result = await this.db.run(
+      `UPDATE scheduled_notifications SET ${sets.join(', ')} WHERE id = ? AND status = ?`,
+      params,
+    );
+    if (result.changes > 0) {
+      this.statsCache.invalidate();
+    }
+    return result.changes > 0;
   }
 
   /**
