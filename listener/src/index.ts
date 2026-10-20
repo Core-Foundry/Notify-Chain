@@ -7,6 +7,7 @@ import { ScheduledNotificationRepository } from './services/scheduled-notificati
 import { NotificationTemplateRepository } from './services/notification-template-repository';
 import { NotificationTemplateService } from './services/notification-template-service';
 import { TemplateAuditTrail } from './services/template-audit-trail';
+import { ScheduleAuditTrail } from './services/schedule-audit-trail';
 import { getTemplateCache } from './services/notification-template-cache';
 import { NotificationAPI } from './services/notification-api';
 import { DatabaseCleanupJob } from './services/database-cleanup-job';
@@ -32,8 +33,8 @@ import { loadConfig, validateConfig, ConfigError } from './config';
 import { SecretValidationError } from './config/validate-secrets';
 import { NotificationHealthMonitor } from './services/notification-health-monitor';
 import { getWorkerManager } from './services/worker-manager';
-import { EventDeduplicationService } from './services/event-deduplication-service';
 import { DeliveryReceiptRepository } from './services/delivery-receipt-repository';
+import { ApiCredentialService } from './services/api-credential-service';
 
 dotenv.config();
 
@@ -126,7 +127,10 @@ async function main() {
     templateService = new NotificationTemplateService(templateRepository);
 
     if (config.scheduler?.enabled) {
+      const scheduleAudit = new ScheduleAuditTrail(db);
+      repository.setScheduleAuditTrail(scheduleAudit);
       notificationAPI = new NotificationAPI(repository);
+      notificationAPI.setScheduleAuditTrail(scheduleAudit);
 
       const legacyTemplateRepo = new TemplateRepository(db);
       legacyTemplateService = new TemplateService(legacyTemplateRepo);
@@ -180,6 +184,7 @@ async function main() {
     schedulerTemplateService: legacyTemplateService,
     webhookSecrets: config.webhookSecrets,
     apiKeys: config.apiKeys,
+    credentialService: new ApiCredentialService(),
     rateLimit: config.rateLimit,
     archiveStore,
     archiveService,

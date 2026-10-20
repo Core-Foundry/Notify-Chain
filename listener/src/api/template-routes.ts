@@ -18,12 +18,35 @@ import {
 } from '../utils/validation';
 import { sendOk, sendErr, ErrorCode } from '../utils/response';
 import { validateContentType } from '../middleware/content-type';
+import { hasPermission, PermissionScope } from '../utils/permissions';
 
 interface TemplateRouteContext {
   req: http.IncomingMessage;
   res: http.ServerResponse;
   requestId: string;
   templateService: any;
+}
+
+/**
+ * Enforce that the caller holds the given permission scope. Responds with
+ * 403 INVALID_PERMISSIONS and returns false when the scope is missing.
+ */
+function requirePermission(
+  ctx: TemplateRouteContext,
+  scope: PermissionScope,
+  operation: string,
+): boolean {
+  const { req, res, requestId } = ctx;
+  if (hasPermission(req, scope)) {
+    return true;
+  }
+  logger.warn('Template operation rejected: insufficient permissions', {
+    requestId,
+    operation,
+    requiredScope: scope,
+  });
+  sendErr(res, 403, 'Insufficient permissions', ErrorCode.INVALID_PERMISSIONS);
+  return false;
 }
 
 /**
@@ -50,7 +73,6 @@ async function parseBody(req: http.IncomingMessage): Promise<any> {
  * Send JSON response
  */
 function sendJson(res: http.ServerResponse, statusCode: number, data: any): void {
-  res.setHeader('Content-Type', 'application/json');
   res.writeHead(statusCode, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify(data));
 }
@@ -97,6 +119,11 @@ function respondWithError(
  */
 export async function handleCreateTemplate(ctx: TemplateRouteContext): Promise<void> {
   const { req, res, requestId, templateService } = ctx;
+
+  // Requires admin scope: creates a new template.
+  if (!requirePermission(ctx, PermissionScope.ADMIN, 'createTemplate')) {
+    return;
+  }
 
   if (!validateContentType(req, res, ['application/json'])) {
     return;
@@ -170,6 +197,11 @@ export async function handleCreateTemplate(ctx: TemplateRouteContext): Promise<v
 export async function handleListTemplates(ctx: TemplateRouteContext): Promise<void> {
   const { req, res, requestId, templateService } = ctx;
 
+  // Read-only access: accepts read scope.
+  if (!requirePermission(ctx, PermissionScope.READ, 'listTemplates')) {
+    return;
+  }
+
   try {
     const url = new URL(req.url!, 'http://localhost');
     const channelTypeParam = url.searchParams.get('channelType') || undefined;
@@ -209,6 +241,11 @@ export async function handleListTemplates(ctx: TemplateRouteContext): Promise<vo
 export async function handleGetTemplate(ctx: TemplateRouteContext): Promise<void> {
   const { req, res, requestId, templateService } = ctx;
 
+  // Read-only access: accepts read scope.
+  if (!requirePermission(ctx, PermissionScope.READ, 'getTemplate')) {
+    return;
+  }
+
   try {
     const id = parseInt(req.url!.split('/').pop() || '', 10);
     if (isNaN(id)) {
@@ -236,6 +273,11 @@ export async function handleGetTemplate(ctx: TemplateRouteContext): Promise<void
 export async function handleGetTemplateByKey(ctx: TemplateRouteContext): Promise<void> {
   const { req, res, requestId, templateService } = ctx;
 
+  // Read-only access: accepts read scope.
+  if (!requirePermission(ctx, PermissionScope.READ, 'getTemplateByKey')) {
+    return;
+  }
+
   try {
     const uniqueKey = req.url!.split('/').pop();
     if (!uniqueKey) {
@@ -262,6 +304,11 @@ export async function handleGetTemplateByKey(ctx: TemplateRouteContext): Promise
  */
 export async function handleUpdateTemplate(ctx: TemplateRouteContext): Promise<void> {
   const { req, res, requestId, templateService } = ctx;
+
+  // Requires admin scope: modifies an existing template.
+  if (!requirePermission(ctx, PermissionScope.ADMIN, 'updateTemplate')) {
+    return;
+  }
 
   if (!validateContentType(req, res, ['application/json'])) {
     return;
@@ -303,6 +350,11 @@ export async function handleUpdateTemplate(ctx: TemplateRouteContext): Promise<v
 export async function handleDeleteTemplate(ctx: TemplateRouteContext): Promise<void> {
   const { req, res, requestId, templateService } = ctx;
 
+  // Requires admin scope: deletes or deactivates a template.
+  if (!requirePermission(ctx, PermissionScope.ADMIN, 'deleteTemplate')) {
+    return;
+  }
+
   try {
     const url = new URL(req.url!, 'http://localhost');
     const id = parseInt(url.pathname.split('/').pop() || '', 10);
@@ -335,6 +387,11 @@ export async function handleDeleteTemplate(ctx: TemplateRouteContext): Promise<v
  */
 export async function handleRenderTemplate(ctx: TemplateRouteContext): Promise<void> {
   const { req, res, requestId, templateService } = ctx;
+
+  // Read-only access: rendering does not mutate stored templates.
+  if (!requirePermission(ctx, PermissionScope.READ, 'renderTemplate')) {
+    return;
+  }
 
   if (!validateContentType(req, res, ['application/json'])) {
     return;
@@ -385,6 +442,11 @@ export async function handleRenderTemplate(ctx: TemplateRouteContext): Promise<v
  */
 export async function handleGetTemplateStats(ctx: TemplateRouteContext): Promise<void> {
   const { req, res, requestId, templateService } = ctx;
+
+  // Read-only access: accepts read scope.
+  if (!requirePermission(ctx, PermissionScope.READ, 'getTemplateStats')) {
+    return;
+  }
 
   try {
     const url = new URL(req.url!, 'http://localhost');

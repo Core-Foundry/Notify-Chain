@@ -7,6 +7,11 @@ import { preferenceStore } from '../store/preference-store';
 import { PreferencesUpdateInput } from '../types/preferences';
 import { NotificationAPI } from '../services/notification-api';
 import { NotificationType } from '../types/scheduled-notification';
+import {
+  formatInTimezone,
+  InvalidTimezoneError,
+  parseExecuteAtWithTimezone,
+} from '../utils/timezone';
 import logger from '../utils/logger';
 import { generateRequestId, resolveCorrelationId } from '../utils/request-id';
 import { TemplateService } from '../services/template-service';
@@ -66,6 +71,11 @@ import { NotificationImportService } from '../services/notification-import-servi
 import { ResponseTimeMiddleware } from '../middleware/response-time';
 import { addSecurityHeaders } from '../middleware/security-headers';
 import { DEFAULT_MAX_BODY_BYTES, enforceBodyLimit } from '../middleware/body-limit';
+import {
+  DEFAULT_MAX_COMPRESSED_BYTES,
+  DEFAULT_MAX_DECOMPRESSED_BYTES,
+  applyDecompressionLimit,
+} from '../middleware/decompression-limit';
 import { sanitizeUrl } from '../utils/logger';
 import { sanitizeCredentials } from '../utils/credential-sanitizer';
 import { DiscordNotificationProvider } from '../services/providers/discord-provider';
@@ -134,6 +144,18 @@ export interface EventsServerOptions {
    * are never parsed. Defaults to {@link DEFAULT_MAX_BODY_BYTES}.
    */
   maxBodyBytes?: number;
+  /**
+   * Largest *compressed* request body accepted when a `Content-Encoding` is
+   * present, in bytes (issue #999). Defaults to
+   * {@link DEFAULT_MAX_COMPRESSED_BYTES}.
+   */
+  maxCompressedBytes?: number;
+  /**
+   * Largest *decompressed* request body accepted when a `Content-Encoding` is
+   * present, in bytes (issue #999). Bounds decompression bombs. Defaults to
+   * {@link DEFAULT_MAX_DECOMPRESSED_BYTES}.
+   */
+  maxDecompressedBytes?: number;
   /** Optional DataExportService override for administrative exports (#850). */
   dataExportService?: DataExportService | null;
 }
@@ -499,12 +521,37 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
       return;
     }
 
+    // Compressed request body limits (#999).
+    //
+    // The body-size guard above bounds the bytes on the wire, but a
+    // `Content-Encoding: gzip` body inflates in memory, so a small upload can
+    // still exhaust the heap. This screens both the compressed and the inflated
+    // size before any route handler reads the body, and refuses encodings we
+    // cannot inflate. On success the decoded body is replayed to the handlers.
+    const decompression = await applyDecompressionLimit(req, res, {
+      maxCompressedBytes: options.maxCompressedBytes ?? DEFAULT_MAX_COMPRESSED_BYTES,
+      maxDecompressedBytes: options.maxDecompressedBytes ?? DEFAULT_MAX_DECOMPRESSED_BYTES,
+      onRejected: (reason, detail) => {
+        logger.warn('Compressed request body rejected', {
+          requestId,
+          correlationId,
+          method: req.method,
+          url: sanitizeUrl(req.url ?? '/'),
+          reason,
+          ...detail,
+        });
+      },
+    });
+    if (decompression.rejected) {
+      return;
+    }
+
     res.setHeader('Access-Control-Allow-Origin', corsOrigin);
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
     res.setHeader(
       'Access-Control-Allow-Headers',
       'Content-Type, X-API-Key, Authorization, X-Correlation-Id, X-Request-Id',
-    );
+   );
     res.setHeader(
       'Access-Control-Expose-Headers',
       'X-Request-Id, X-Correlation-Id, X-Response-Time',
@@ -560,6 +607,256 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
 
     if (req.method === 'OPTIONS') {
       res.removeHeader('Content-Type');
+import crypto from 'crypto';
+import http from 'http';
+import { DEFAULT_MAX_BODY_BYTES, enforceBodyLimit } from '../middleware/body-limit';
+import { validateContentType } from '../middleware/content-type';
+import { runWithRequestCorrelation } from '../middleware/correlation';
+import { eventRegistry } from '../store/event-registry';
+import { preferenceStore } from '../store/preference-store';
+import { getDatabase } from '../database/database';
+import logger from '../utils/logger';
+import { sendJson, sendOk, sendErr, ErrorCode } from '../utils/response';
+import { NotificationAnalyticsAggregator } from '../services/notification-analytics-aggregator';
+import { applyVersionHeaders, normaliseApiPath } from './api-version-registry';
+
+export interface EventsServerOptions {
+  port?: number;
+  isProduction?: boolean;
+  stellarRpcUrl?: string;
+  stellarNetwork?: string;
+  stellarNetworkPassphrase?: string;
+  contractAddresses?: Array<{ address: string; events?: string[]; userId?: string; paused?: boolean }>;
+  discordWebhookUrl?: string;
+  webhookSecrets?: Array<{ id: string; secret: string }>;
+  analyticsAggregator?: NotificationAnalyticsAggregator;
+  metricsStore?: { getHistory?: (limit?: number, since?: string) => Promise<unknown[]> };
+  notificationAPI?: unknown;
+  api?: { maxBodyBytes?: number };
+}
+
+export interface HealthServiceStatus {
+  status: 'ok' | 'error' | 'degraded' | 'not_configured';
+  detail?: string;
+  latencyMs?: number;
+  [key: string]: unknown;
+}
+
+export type HealthStatus = 'ok' | 'degraded' | 'error';
+
+const DEFAULT_BODY_LIMIT = DEFAULT_MAX_BODY_BYTES;
+const MAX_EVENT_LIMIT = 100;
+const MAX_BATCH_SIZE = 500;
+
+function normalizeContractEntry(contract: string | { address: string; events?: string[]; userId?: string; paused?: boolean }): { address: string } {
+  if (typeof contract === 'string') {
+    return { address: contract };
+  }
+  return { address: contract.address };
+}
+
+function parseQueryInt(raw: string | undefined, fallback: number, max: number): number {
+  const parsed = Number.parseInt(raw ?? '', 10);
+  if (!Number.isFinite(parsed)) return fallback;
+  if (parsed < 1) return 1;
+  return Math.min(parsed, max);
+}
+
+function isSuccessStatus(status: string | undefined): boolean {
+  return status === 'ok';
+}
+
+export async function checkDatabase(): Promise<HealthServiceStatus> {
+  const started = Date.now();
+  try {
+    const db = getDatabase();
+    if (typeof (db as any).isConnected === 'function' && !(db as any).isConnected()) {
+      return { status: 'error', detail: 'Database not initialized', latencyMs: Date.now() - started };
+    }
+    if (typeof (db as any).get === 'function') {
+      await (db as any).get('SELECT 1');
+    }
+    return { status: 'ok', latencyMs: Date.now() - started };
+  } catch (error) {
+    return {
+      status: 'error',
+      detail: error instanceof Error ? error.message : 'Database unavailable',
+      latencyMs: Date.now() - started,
+    };
+  }
+}
+
+export async function checkStellarRpc(rpcUrl: string): Promise<HealthServiceStatus> {
+  const started = Date.now();
+  try {
+    const StellarSDK = await import('@stellar/stellar-sdk');
+    const server = new (StellarSDK.rpc as any).Server(rpcUrl);
+    const health = await server.getHealth();
+    const status = health?.status === 'healthy' || health?.status === 'ok' ? 'ok' : 'error';
+    return { status, latencyMs: Date.now() - started, detail: status === 'ok' ? undefined : String(health?.status ?? 'unhealthy') };
+  } catch (error) {
+    return {
+      status: 'error',
+      detail: error instanceof Error ? error.message : 'RPC unavailable',
+      latencyMs: Date.now() - started,
+    };
+  }
+}
+
+export async function checkDiscord(webhookUrl?: string): Promise<HealthServiceStatus> {
+  if (!webhookUrl) {
+    return { status: 'not_configured' };
+  }
+
+  const started = Date.now();
+  try {
+    const response = await fetch(webhookUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type: 'healthcheck' }),
+    });
+
+    if (!response.ok) {
+      return {
+        status: 'error',
+        detail: `HTTP ${response.status}`,
+        latencyMs: Date.now() - started,
+      };
+    }
+
+    return { status: 'ok', latencyMs: Date.now() - started };
+  } catch (error) {
+    return {
+      status: 'error',
+      detail: error instanceof Error ? error.message : 'Discord webhook unavailable',
+      latencyMs: Date.now() - started,
+    };
+  }
+}
+
+function sendAccessibleHeaders(res: http.ServerResponse, isProduction: boolean = false): void {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Webhook-Signature, X-Webhook-Key-Id, X-Webhook-Timestamp, X-Correlation-Id, X-Request-Id');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  if (isProduction) {
+    res.setHeader('Strict-Transport-Security', 'max-age=31536000');
+  }
+}
+
+async function readJsonBody(req: http.IncomingMessage): Promise<unknown> {
+  return await new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    req.on('data', (chunk) => chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)));
+    req.on('end', () => {
+      const raw = Buffer.concat(chunks).toString('utf8');
+      if (!raw.trim()) {
+        resolve(undefined);
+        return;
+      }
+      try {
+        resolve(JSON.parse(raw));
+      } catch {
+        reject(new Error('Invalid JSON'));
+      }
+    });
+    req.on('error', reject);
+  });
+}
+
+function statusFromServiceMap(services: Record<string, HealthServiceStatus>): HealthStatus {
+  const values = Object.values(services);
+  if (values.some((svc) => svc.status === 'error')) return 'error';
+  if (values.some((svc) => svc.status === 'degraded' || svc.status === 'not_configured')) return 'degraded';
+  return 'ok';
+}
+
+function signHmac(secret: string, payload: string): string {
+  return `sha256=${crypto.createHmac('sha256', secret).update(payload, 'utf8').digest('hex')}`;
+}
+
+function verifyWebhookSignature(payload: string, signature: string, secret: string, timestamp?: string): { valid: boolean; code?: string; message?: string } {
+  const provided = signature.trim();
+  const headerTimestamp = timestamp?.trim();
+
+  if (headerTimestamp) {
+    const now = Math.floor(Date.now() / 1000);
+    const ts = Number.parseInt(headerTimestamp, 10);
+    if (!Number.isFinite(ts)) {
+      return { valid: false, code: 'AUTH_INVALID_TIMESTAMP', message: 'Invalid timestamp header' };
+    }
+    if (Math.abs(now - ts) > 600) {
+      return { valid: false, code: 'AUTH_TIMESTAMP_EXPIRED', message: 'Request signature expired' };
+    }
+    const expected = signHmac(secret, `${headerTimestamp}.${payload}`);
+    if (provided !== expected) {
+      return { valid: false, code: 'AUTH_INVALID_SIGNATURE', message: 'Invalid signature' };
+    }
+    return { valid: true };
+  }
+
+  const legacyExpected = signHmac(secret, payload);
+  if (provided !== legacyExpected) {
+    return { valid: false, code: 'AUTH_INVALID_SIGNATURE', message: 'Invalid signature' };
+  }
+  return { valid: true };
+}
+
+function validateBatch(body: unknown): { valid: boolean; processedCount: number; errors: Array<{ code: string; message: string; index?: number }> } {
+  const items = Array.isArray(body) ? body : [];
+  const errors: Array<{ code: string; message: string; index?: number }> = [];
+  const recipients = new Set<string>();
+
+  for (let index = 0; index < items.length; index++) {
+    const item = items[index];
+    if (!item || typeof item !== 'object' || Array.isArray(item)) {
+      errors.push({ code: 'INVALID_ITEM', message: `Item at index ${index} is not an object` });
+      continue;
+    }
+
+    const entry = item as Record<string, unknown>;
+    const id = typeof entry.id === 'string' ? entry.id.trim() : '';
+    const recipient = typeof entry.recipient === 'string' ? entry.recipient.trim() : '';
+    const channel = typeof entry.channel === 'string' ? entry.channel.trim() : '';
+    const message = typeof entry.message === 'string' ? entry.message.trim() : '';
+
+    if (!id || !recipient || !channel || !message) {
+      errors.push({ code: 'MISSING_FIELD', message: `Missing required fields for item ${index}`, index });
+      continue;
+    }
+
+    if (recipients.has(recipient)) {
+      errors.push({ code: 'DUPLICATE_RECIPIENT', message: `Duplicate recipient: ${recipient}`, index });
+      continue;
+    }
+    recipients.add(recipient);
+  }
+
+  return {
+    valid: errors.length === 0,
+    processedCount: items.length,
+    errors,
+  };
+}
+
+export function createEventsServer(options: EventsServerOptions = {}): http.Server {
+  const bodyLimitBytes = options.api?.maxBodyBytes ?? DEFAULT_BODY_LIMIT;
+  const configContractAddresses = options.contractAddresses ?? [];
+  const webhookSecrets = new Map((options.webhookSecrets ?? []).map((entry) => [entry.id, entry.secret]));
+  const analyticsAggregator = options.analyticsAggregator ?? new NotificationAnalyticsAggregator();
+  const metricsStore = options.metricsStore ?? null;
+  const isProduction = options.isProduction ?? process.env.NODE_ENV === 'production';
+
+  const handleRequest = async (req: http.IncomingMessage, res: http.ServerResponse): Promise<void> => {
+    const url = new URL(req.url ?? '/', 'http://localhost');
+    const { normalisedPath } = normaliseApiPath(url.pathname);
+    const pathname = normalisedPath;
+    sendAccessibleHeaders(res, isProduction);
+    applyVersionHeaders(req.method ?? 'GET', pathname, res);
+
+    if (req.method === 'OPTIONS') {
       res.writeHead(204);
       res.end();
       return;
@@ -834,29 +1131,14 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
 
           const secrets = options.webhookSecrets ?? [];
           const maxAgeSeconds = options.signatureExpirationSeconds ?? 300;
-        const secrets = options.webhookSecrets ?? [];
-        const maxAgeSeconds = options.signatureExpirationSeconds ?? 300;
-        
-        // Use default database for audit log or mock one if not available.
-        // Actually since SecurityAuditService requires Database, let's pass a real one.
-        const db = getDatabase();
-        const { SecurityAuditService } = require('../services/security-audit');
-        const auditService = new SecurityAuditService(db);
 
-        const auth = await verifyWebhookRequest({
-          headers: req.headers as Record<string, string | string[] | undefined>,
-          rawBody,
-          secrets,
-          sourceIp,
-          requestId,
-          correlationId,
-          maxAgeSeconds,
-          requireTimestamp: options.requireWebhookTimestamp !== false,
-          replayCache: webhookReplayCache,
-          auditService,
-        });
+          // Use default database for audit log or mock one if not available.
+          // Actually since SecurityAuditService requires Database, let's pass a real one.
+          const db = getDatabase();
+          const { SecurityAuditService } = require('../services/security-audit');
+          const auditService = new SecurityAuditService(db);
 
-          const auth = verifyWebhookRequest({
+          const auth = await verifyWebhookRequest({
             headers: req.headers as Record<string, string | string[] | undefined>,
             rawBody,
             secrets,
@@ -864,6 +1146,9 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
             requestId,
             correlationId,
             maxAgeSeconds,
+            requireTimestamp: options.requireWebhookTimestamp !== false,
+            replayCache: webhookReplayCache,
+            auditService,
           });
 
           if (!auth.authenticated) {
@@ -1186,8 +1471,20 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
             return;
           }
 
-          const executeAt = new Date(data.executeAt);
-          if (isNaN(executeAt.getTime())) {
+          let executeAt: Date;
+          let timezone = 'UTC';
+          try {
+            const parsed = parseExecuteAtWithTimezone(data.executeAt, data.timezone);
+            executeAt = parsed.utcDate;
+            timezone = parsed.timezone;
+          } catch (tzErr) {
+            if (tzErr instanceof InvalidTimezoneError) {
+              res.writeHead(400, { 'Content-Type': 'application/json' });
+              res.end(
+                JSON.stringify({ error: tzErr.message, code: 'INVALID_TIMEZONE' }),
+              );
+              return;
+            }
             res.writeHead(400, { 'Content-Type': 'application/json' });
             res.end(
               JSON.stringify({ error: 'executeAt is not a valid date', code: 'INVALID_DATE' }),
@@ -1195,12 +1492,18 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
             return;
           }
 
-          const schedule = async (): Promise<{ id: number }> => {
+          const schedule = async (): Promise<{
+            id: number;
+            executeAt: string;
+            timezone: string;
+            executeAtLocal: string;
+          }> => {
             const notificationId = await options.notificationAPI!.scheduleNotification({
               payload: data.payload,
               notificationType: data.notificationType || NotificationType.DISCORD,
               targetRecipient: data.targetRecipient,
               executeAt,
+              timezone,
               expiresAt: data.expiresAt,
               maxRetries: data.maxRetries,
               priority: data.priority,
@@ -1212,9 +1515,15 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
               requestId,
               correlationId,
               notificationId,
-              executeAt: data.executeAt,
+              executeAt: executeAt.toISOString(),
+              timezone,
             });
-            return { id: notificationId };
+            return {
+              id: notificationId,
+              executeAt: executeAt.toISOString(),
+              timezone,
+              executeAtLocal: formatInTimezone(executeAt, timezone),
+            };
           };
 
           if (options.idempotencyService && idempotencyKey) {
@@ -1225,23 +1534,37 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
               { requestId, correlationId },
             );
             const statusCode = outcome.isDuplicate ? 200 : 201;
+            const result = outcome.result as {
+              id: number;
+              executeAt: string;
+              timezone: string;
+              executeAtLocal: string;
+            };
             res.writeHead(statusCode, {
               'Content-Type': 'application/json',
               'X-Idempotent-Replay': outcome.isDuplicate ? 'true' : 'false',
             });
             res.end(
               JSON.stringify({
-                id: (outcome.result as { id: number }).id,
+                id: result.id,
+                executeAt: result.executeAt,
+                timezone: result.timezone,
+                executeAtLocal: result.executeAtLocal,
                 replay: outcome.isDuplicate,
               }),
             );
             return;
           }
 
-          const { id } = await schedule();
+          const scheduled = await schedule();
           res.writeHead(201, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ id }));
+          res.end(JSON.stringify(scheduled));
         } catch (error) {
+          if (error instanceof InvalidTimezoneError) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: error.message, code: 'INVALID_TIMEZONE' }));
+            return;
+          }
           if (error instanceof IdempotencyKeyReuseError) {
             logger.warn('Schedule API rejected request: idempotency key body mismatch', {
               requestId,
@@ -1343,6 +1666,37 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
         ...monitor.getSnapshot(),
         recentJobs: monitor.listRecentJobs(limit),
         recentFailures: monitor.listFailures(limit),
+    const bodyMethods = new Set(['POST', 'PUT', 'PATCH']);
+    if (bodyMethods.has((req.method ?? 'GET').toUpperCase())) {
+      if (!validateContentType(req, res, ['application/json'])) {
+        return;
+      }
+      const limitCheck = enforceBodyLimit(req, res, {
+        maxBytes: bodyLimitBytes,
+        onRejected: (reason, observedBytes) => {
+          logger.warn('Rejected oversized request body', { reason, observedBytes, path: pathname });
+        },
+      });
+      if (!limitCheck.allowed) {
+        return;
+      }
+    }
+
+    if (pathname === '/health') {
+      const services: Record<string, HealthServiceStatus> = {
+        stellarRpc: await checkStellarRpc(options.stellarRpcUrl ?? 'http://localhost:8000'),
+        discord: await checkDiscord(options.discordWebhookUrl),
+        database: await checkDatabase(),
+        eventRegistry: { status: eventRegistry.count() > 0 ? 'ok' : 'ok', eventCount: eventRegistry.count() },
+      };
+      const overall = statusFromServiceMap(services);
+      const httpStatus = overall === 'error' ? 503 : 200;
+      sendJson(res, httpStatus, {
+        status: overall,
+        timestamp: new Date().toISOString(),
+        uptimeSeconds: Number(((Date.now() - (globalThis as any).__notifyStartTs) / 1000).toFixed(3)) || 0,
+        version: process.env.npm_package_version ?? 'unknown',
+        services,
       });
       return;
     }
@@ -1355,6 +1709,14 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
       sendOk(res, 200, {
         failures: monitor.listFailures(limit),
         count: monitor.listFailures(limit).length,
+    if (pathname === '/api/status') {
+      const contracts = (configContractAddresses ?? []).map((contract) => normalizeContractEntry(contract));
+      sendOk(res, 200, {
+        timestamp: new Date().toISOString(),
+        contracts: contracts.map((item) => ({
+          address: item.address,
+          paused: false,
+        })),
       });
       return;
     }
@@ -1444,6 +1806,43 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
       return;
     }
 
+    // GET /api/schedule/:id/audit — schedule change audit trail (#966)
+    const scheduleAuditMatch = url.pathname.match(/^\/api\/schedule\/(\d+)\/audit$/);
+    if (req.method === 'GET' && scheduleAuditMatch) {
+      if (!options.notificationAPI) {
+        sendErr(res, 503, 'Scheduler not enabled', ErrorCode.SERVICE_UNAVAILABLE);
+        return;
+      }
+
+      const id = parseInt(scheduleAuditMatch[1], 10);
+      options.notificationAPI
+        .getScheduleAuditHistory(id)
+        .then((records) => {
+          sendOk(res, 200, {
+            scheduledNotificationId: id,
+            records: records.map((r) => ({
+              id: r.id,
+              action: r.action,
+              actor: r.actor,
+              timestamp: r.timestamp.toISOString(),
+              fromStatus: r.fromStatus,
+              toStatus: r.toStatus,
+              details: r.details,
+            })),
+          });
+        })
+        .catch((error) => {
+          logger.error('Failed to get schedule audit history', {
+            error,
+            requestId,
+            correlationId,
+            id,
+          });
+          sendErr(res, 500, (error as Error).message, ErrorCode.INTERNAL_ERROR);
+        });
+      return;
+    }
+
     // GET /api/schedule/:id
     if (req.method === 'GET' && url.pathname.startsWith('/api/schedule/')) {
       if (!options.notificationAPI) {
@@ -1473,35 +1872,62 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
       return;
     }
 
-    // POST /api/notifications/:id/cancel
-    const cancelMatch = url.pathname.match(/^\/api\/notifications\/([^/]+)\/cancel$/);
-    if (req.method === 'POST' && cancelMatch) {
+    // POST /api/schedule/:id/cancel — primary schedule cancellation endpoint (#969)
+    // Also supports legacy POST /api/notifications/:id/cancel
+    const scheduleCancelMatch = url.pathname.match(
+      /^\/api\/(?:schedule|notifications)\/(\d+)\/cancel$/,
+    );
+    if (req.method === 'POST' && scheduleCancelMatch) {
       if (!options.notificationAPI) {
         sendErr(res, 503, 'Scheduler not enabled', ErrorCode.SERVICE_UNAVAILABLE);
         return;
       }
 
-      const id = parseInt(cancelMatch[1], 10);
+      const id = parseInt(scheduleCancelMatch[1], 10);
       if (isNaN(id)) {
         sendErr(res, 400, 'Invalid notification ID', ErrorCode.BAD_REQUEST);
         return;
       }
 
       let body = '';
-      req.on('data', (chunk) => { body += chunk; });
+      req.on('data', (chunk) => {
+        body += chunk;
+      });
       req.on('end', () => {
         void (async () => {
           try {
-            const parsed = body ? JSON.parse(body) as { reason?: string } : {};
-            const ok = await options.notificationAPI!.cancelNotification(id, parsed.reason, requestId);
-            
-            if (!ok) {
-              sendErr(res, 400, 'Unable to cancel notification', ErrorCode.BAD_REQUEST);
+            const parsed = body ? (JSON.parse(body) as { reason?: string }) : {};
+            const result = await options.notificationAPI!.cancelSchedule(
+              id,
+              parsed.reason,
+              requestId,
+            );
+
+            if (result.state === 'not_found') {
+              sendErr(res, 404, result.message, ErrorCode.NOT_FOUND);
               return;
             }
-            
-            const notification = await options.notificationAPI!.getNotification(id);
-            sendOk(res, 200, notification);
+
+            if (result.state === 'already_final') {
+              // Completed / failed / processing — do not silently undo.
+              sendJson(res, 409, {
+                cancelled: false,
+                state: result.state,
+                status: result.status,
+                message: result.message,
+                notification: result.notification ?? null,
+              });
+              return;
+            }
+
+            // Fresh cancel and idempotent already_cancelled both return 200.
+            sendOk(res, 200, {
+              cancelled: result.cancelled,
+              state: result.state,
+              status: result.status,
+              message: result.message,
+              notification: result.notification ?? null,
+            });
           } catch (error) {
             if (error instanceof SyntaxError) {
               sendErr(res, 400, 'Invalid JSON', ErrorCode.PARSE_ERROR);
@@ -1515,7 +1941,6 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
       return;
     }
 
-    function isValidApiKey(apiKey: string | undefined, allowedKeys: Array<{ key: string; name?: string }> | undefined): boolean {
     function isValidApiKey(
       apiKey: string | undefined,
       allowedKeys: Array<{ key: string; name?: string }> | undefined,
@@ -1561,21 +1986,6 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
       return;
     }
 
-    // Get notification delivery history endpoint
-    if (req.method === 'GET' && req.url?.startsWith('/api/notifications/history')) {
-      const apiKey = req.headers['x-api-key'] as string | undefined;
-      if (!isValidApiKey(apiKey, options.apiKeys)) {
-        sendErr(res, 401, 'Unauthorized: Invalid or missing API key', ErrorCode.UNAUTHORIZED);
-        return;
-      }
-
-      const url = new URL(req.url, 'http://localhost');
-      const limit = url.searchParams.get('limit')
-        ? parseInt(url.searchParams.get('limit')!, 10)
-        : undefined;
-      const offset = url.searchParams.get('offset')
-        ? parseInt(url.searchParams.get('offset')!, 10)
-        : undefined;
     // Get notification delivery history endpoint.
     // Matched on the rewritten pathname so /api/v1/notifications/history is
     // routed (and authenticated) the same as the unversioned path.
@@ -2033,111 +2443,193 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
       let body = '';
       req.on('data', (chunk) => {
         body += chunk;
+    if (pathname === '/api/events') {
+      const limit = parseQueryInt(url.searchParams.get('limit') ?? undefined, 20, MAX_EVENT_LIMIT);
+      const items = eventRegistry.getEvents(limit);
+      sendOk(res, 200, { count: eventRegistry.count(), events: items });
+      return;
+    }
+
+    if (pathname === '/api/indexing/health') {
+      const snapshot = eventRegistry.getIngestionSnapshot();
+      const indexedLedger = snapshot.lastIngestedLedger ?? null;
+      const networkTipLedger = snapshot.maxLedgerSeen ?? null;
+      const ledgerLag = indexedLedger !== null && networkTipLedger !== null ? Math.max(networkTipLedger - indexedLedger, 0) : null;
+      const lastIngestedAt = snapshot.lastIngestedAt !== null ? new Date(snapshot.lastIngestedAt).toISOString() : null;
+      const processingDelayMs = snapshot.lastIngestedAt !== null ? Math.max(Date.now() - snapshot.lastIngestedAt, 0) : null;
+
+      let status: 'synced' | 'syncing' | 'degraded' = 'syncing';
+      if (indexedLedger !== null && networkTipLedger !== null) {
+        status = ledgerLag !== null && ledgerLag <= 5 ? 'synced' : 'degraded';
+      } else if (indexedLedger !== null || networkTipLedger !== null) {
+        status = 'syncing';
+      }
+
+      sendOk(res, 200, {
+        status,
+        timestamp: new Date().toISOString(),
+        indexedLedger,
+        networkTipLedger,
+        ledgerLag,
+        processingDelayMs,
+        lastIngestedAt,
       });
-      req.on('end', () => {
+      return;
+    }
+
+    if (pathname.startsWith('/api/preferences/')) {
+      const userId = pathname.split('/api/preferences/')[1]?.split('/')[0];
+      if (!userId) {
+        sendErr(res, 404, 'Preference user not found', ErrorCode.NOT_FOUND);
+        return;
+      }
+
+      if (req.method === 'GET') {
+        sendOk(res, 200, preferenceStore.get(userId));
+        return;
+      }
+
+      if (req.method === 'PUT') {
         try {
-          const input: PreferencesUpdateInput = JSON.parse(body);
-          if (!input || typeof input.categories !== 'object') {
-            logger.warn('PUT /api/preferences/:userId invalid body', {
-              requestId,
-              correlationId,
-              userId,
-            });
-            sendErr(
-              res,
-              400,
-              'Invalid body: expected { categories: { [key]: boolean } }',
-              ErrorCode.BAD_REQUEST,
-            );
+          const input = (await readJsonBody(req)) as Record<string, unknown>;
+          if (!input || typeof input !== 'object' || !('categories' in input) || typeof (input as any).categories !== 'object') {
+            sendErr(res, 400, 'Invalid body: expected { categories: { [key]: boolean } }', ErrorCode.BAD_REQUEST, { field: 'categories' });
             return;
           }
-          const updated = preferenceStore.update(userId, input);
-          logger.info('PUT /api/preferences/:userId complete', {
-            requestId,
-            correlationId,
-            userId,
-            durationMs: Date.now() - startTime,
-          });
+          const updated = preferenceStore.update(userId, input as { categories: Record<string, boolean> });
           sendOk(res, 200, updated);
-        } catch {
-          logger.error('PUT /api/preferences/:userId invalid JSON', {
-            requestId,
-            correlationId,
-            userId,
-          });
-          sendErr(res, 400, 'Invalid JSON', ErrorCode.PARSE_ERROR);
+          return;
+        } catch (error) {
+          sendErr(res, 400, error instanceof Error ? error.message : 'Invalid JSON', ErrorCode.PARSE_ERROR, []);
+          return;
+        }
+      }
+    }
+
+    if (pathname === '/api/webhooks' && req.method === 'POST') {
+      const payload = await readJsonBody(req).catch(() => undefined);
+      const rawBody = typeof payload === 'string' ? payload : JSON.stringify(payload ?? {});
+      const keyId = req.headers['x-webhook-key-id'];
+      const signature = req.headers['x-webhook-signature'];
+      const timestamp = req.headers['x-webhook-timestamp'];
+
+      if (!keyId || Array.isArray(keyId)) {
+        sendErr(res, 401, 'Missing key-id header', 'AUTH_MISSING_KEY_ID');
+        return;
+      }
+      if (!signature || Array.isArray(signature)) {
+        sendErr(res, 401, 'Missing signature header', 'AUTH_MISSING_SIGNATURE');
+        return;
+      }
+      const secret = webhookSecrets.get(keyId);
+      if (!secret) {
+        sendErr(res, 401, 'Unknown key-id', 'AUTH_UNKNOWN_KEY_ID');
+        return;
+      }
+      const verification = verifyWebhookSignature(rawBody, signature, secret, Array.isArray(timestamp) ? timestamp[0] : timestamp);
+      if (!verification.valid) {
+        sendErr(res, 401, verification.message ?? 'Invalid signature', verification.code ?? 'AUTH_INVALID_SIGNATURE');
+        return;
+      }
+
+      sendOk(res, 202, { status: 'accepted', verified: true });
+      return;
+    }
+
+    if (pathname === '/api/analytics') {
+      const snapshot = analyticsAggregator.snapshot();
+      const reset = url.searchParams.get('reset') === 'true';
+      if (reset) {
+        analyticsAggregator.reset();
+      }
+      sendOk(res, 200, snapshot);
+      return;
+    }
+
+    if (pathname === '/api/analytics/history') {
+      if (!metricsStore || typeof metricsStore.getHistory !== 'function') {
+        sendOk(res, 200, { count: 0, snapshots: [] });
+        return;
+      }
+      const limit = parseQueryInt(url.searchParams.get('limit') ?? undefined, 10, 100);
+      const since = url.searchParams.get('since') ?? undefined;
+      const snapshots = await metricsStore.getHistory(limit, since);
+      sendOk(res, 200, { count: Array.isArray(snapshots) ? snapshots.length : 0, snapshots: Array.isArray(snapshots) ? snapshots : [] });
+      return;
+    }
+
+    if (pathname === '/api/notifications/validate-batch') {
+      try {
+        const body = await readJsonBody(req);
+        const result = validateBatch(body);
+        const payload = {
+          success: true,
+          data: {
+            valid: result.valid,
+            processedCount: result.processedCount,
+            errors: result.errors,
+          },
+        };
+        sendJson(res, result.valid ? 200 : 200, payload);
+        return;
+      } catch {
+        sendErr(res, 400, 'Failed to read request body', ErrorCode.PARSE_ERROR);
+        return;
+      }
+    }
+
+    sendErr(res, 404, 'Not found', ErrorCode.NOT_FOUND);
+  };
+
+  // Per-client usage accounting (#989): record the resolved non-secret client
+  // identifier, route, method and status once the response is finished. The
+  // recorder is fire-and-forget so it never blocks or fails the request, and
+  // only the sanitized client id is passed through — never raw credentials.
+  const recordUsage = (req: http.IncomingMessage, res: http.ServerResponse): void => {
+    const usageAccounting = options.usageAccounting;
+    if (!usageAccounting) return;
+    try {
+      const clientId = resolveUsageClientId(req);
+      const route = resolveUsageRoute(req);
+      const status = res.statusCode;
+      void Promise.resolve(
+        usageAccounting.record({
+          clientId,
+          method: req.method ?? 'UNKNOWN',
+          route,
+          status,
+        }),
+      ).catch((error: unknown) => {
+        logger.warn('Usage accounting record failed', { error });
+      });
+    } catch (error: unknown) {
+      logger.warn('Usage accounting record failed', { error });
+    }
+  };
+
+  const server = http.createServer((req, res) => {
+    runWithRequestCorrelation(req, res, (requestContext) => {
+      void handleRequest(req, res).catch((error: unknown) => {
+        logger.error('Unhandled error in events server request handler', { error, requestId: requestContext.requestId, correlationId: requestContext.correlationId });
+        if (!res.headersSent) {
+          sendErr(res, 500, 'Internal server error', ErrorCode.INTERNAL_ERROR, undefined, requestContext.correlationId);
         }
       });
-      return;
-    }
-
-    // GET /api/archive, GET /api/archive/:id, POST /api/archive/run
-    if (
-      options.archiveStore &&
-      (url.pathname === '/api/archive' || url.pathname.startsWith('/api/archive/'))
-    ) {
-      const handled = await handleArchiveRequest(
-        req,
-        res,
-        {
-          store: options.archiveStore,
-          service: options.archiveService,
-        },
-        requestId,
-      );
-      if (handled) return;
-    }
-
-    // GET /api/notifications/delivery-metrics and /history  (Issue #482)
-    const deliveryMetricsHandled = handleDeliveryMetricsRequest(
-      req,
-      res,
-      url,
-      {
-        analyticsAggregator: options.analyticsAggregator,
-        metricsStore: options.metricsStore,
-      },
-      { requestId, correlationId, startTime },
-    );
-    if (deliveryMetricsHandled) return;
-
-    // GET /api/metrics/response-time — expose response-time counters (#491)
-    if (req.method === 'GET' && url.pathname === '/api/metrics/response-time') {
-      const metrics = responseTime.getMetrics();
-      const reset = url.searchParams.get('reset') === 'true';
-      sendOk(res, 200, metrics);
-      if (reset) {
-        responseTime.resetMetrics();
-        logger.info('Response-time metrics reset', { requestId });
-      }
-      return;
-    }
-
-    logger.warn('Unhandled request', {
-      requestId,
-      correlationId,
-      method: req.method,
-      url: req.url,
     });
-    sendErr(res, 404, 'Not found', ErrorCode.NOT_FOUND);
-    responseTime.finish(req, res, requestId, 404);
   });
 
-  if (rateLimiter) {
-    const originalClose = server.close.bind(server);
-    server.close = (callback?: (err?: Error) => void) => {
-      rateLimiter.destroy();
-      return originalClose(callback);
-    };
-  }
+  const startupTs = Date.now();
+  (globalThis as any).__notifyStartTs ??= startupTs;
 
   return server;
 }
 
-export function startEventsServer(options: EventsServerOptions): http.Server {
+export function startEventsServer(options: EventsServerOptions = {}): http.Server {
   const server = createEventsServer(options);
-  server.listen(options.port, () => {
-    logger.info('Events API server listening', { port: options.port });
+  server.listen(options.port ?? 0, () => {
+    const address = server.address();
+    const port = typeof address === 'object' && address !== null && 'port' in address ? address.port : options.port ?? 0;
+    logger.info('Events API server listening', { port });
   });
   return server;
 }

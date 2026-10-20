@@ -7,10 +7,9 @@ check. This is an explicit reproducibility check, not a contract test suite.
 
 ## Fixed inputs and normalization
 
-- `contract/rust-toolchain.toml` pins Rust/Cargo to **1.90.0** with the minimal
-  profile and the `wasm32v1-none` target. This is newer than the Rust 1.88
-  requirement of dependencies such as `time` 0.3.46 and `serde_with` 3.16.1
-  currently present in `contract/Cargo.lock`.
+- `contract/rust-toolchain.toml` pins Rust/Cargo to **1.86.0** with the minimal
+  profile, `rustfmt`, and the `wasm32v1-none` target. The lockfile and toolchain
+  pin are reviewed together when contract dependencies change.
 - Both builds use the same Git commit, package, target, and release profile.
   `cargo build --locked` rejects lockfile changes. The lockfile checksum,
   compiler version (including commit and host), Cargo version, kernel, paths,

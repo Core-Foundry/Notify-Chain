@@ -10,6 +10,13 @@ import { IndexingHealthPanel } from '../components/IndexingHealthPanel';
 import { NotificationHealthPanel } from '../components/NotificationHealthPanel';
 import { NotificationSummaryPanel } from '../components/NotificationSummaryPanel';
 import { EmptyState } from '../components/EmptyState';
+import { EventActivityChart } from '../components/EventActivityChart';
+import {
+  computeEventActivity,
+  DEFAULT_EVENT_ACTIVITY_RANGE,
+  EVENT_ACTIVITY_RANGES,
+  type EventActivityRange,
+} from '../utils/eventActivityData';
 import {
   useEventFilters,
   useEventLoadingState,
@@ -41,6 +48,13 @@ const INDEXING_HEALTH_URL =
 const NOTIFICATION_HEALTH_URL =
   import.meta.env.VITE_NOTIFICATION_HEALTH_URL ?? resolveNotificationHealthUrl(API_URL);
 
+const ACTIVITY_RANGE_LABELS: Record<EventActivityRange, string> = {
+  '1h': 'the last hour',
+  '6h': 'the last 6 hours',
+  '24h': 'the last 24 hours',
+  '7d': 'the last 7 days',
+};
+
 function parsePageParam(search: string) {
   const params = new URLSearchParams(search);
   const value = Number(params.get('page'));
@@ -69,6 +83,8 @@ export function EventExplorerPage() {
   const [limit, setLimit] = useState(() => parseLimitParam(initialSearch));
   const [selectedNotification, setSelectedNotification] = useState<BlockchainEvent | null>(null);
   const [contractStatuses, setContractStatuses] = useState<ContractStatus[]>([]);
+  const [activityRange, setActivityRange] =
+    useState<EventActivityRange>(DEFAULT_EVENT_ACTIVITY_RANGE);
 
   const events = useEventStore((state) => state.events);
   const setEvents = useEventStore((state) => state.setEvents);
@@ -255,6 +271,13 @@ export function EventExplorerPage() {
     return filteredEvents.slice(startIndex, startIndex + limit);
   }, [filteredEvents, page, limit]);
 
+  // Event activity buckets (#982). Computed from the same filtered dataset the
+  // table renders so chart values reconcile with the underlying events.
+  const eventActivity = useMemo(
+    () => computeEventActivity(filteredEvents, activityRange),
+    [filteredEvents, activityRange],
+  );
+
   const fromIndex = filteredEvents.length === 0 ? 0 : (page - 1) * limit + 1;
   const toIndex = Math.min(filteredEvents.length, page * limit);
 
@@ -288,6 +311,10 @@ export function EventExplorerPage() {
   const handleSelectEvent = useCallback((event: BlockchainEvent) => {
     setSelectedNotification(event);
     replaceSelectedEventInUrl(event.eventId);
+  }, []);
+
+  const handleContractClick = useCallback((contractAddress: string) => {
+    window.location.hash = `contract-detail?address=${contractAddress}`;
   }, []);
 
   const handleCloseDrawer = useCallback(() => {
@@ -336,6 +363,33 @@ export function EventExplorerPage() {
       <EventFiltersBar />
       <NotificationSearchBar />
 
+      <section className="event-activity" aria-labelledby="event-activity-heading">
+        <div className="event-activity__header">
+          <h2 id="event-activity-heading">Event Activity</h2>
+          <div className="event-activity__range" role="group" aria-label="Activity time range">
+            {EVENT_ACTIVITY_RANGES.map((range) => (
+              <button
+                key={range}
+                type="button"
+                className={`event-activity__range-button${
+                  range === activityRange ? ' event-activity__range-button--active' : ''
+                }`}
+                aria-pressed={range === activityRange}
+                onClick={() => setActivityRange(range)}
+              >
+                {range}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <EventActivityChart
+          buckets={eventActivity.buckets}
+          isLoading={isLoading}
+          rangeLabel={ACTIVITY_RANGE_LABELS[activityRange]}
+        />
+      </section>
+
       {error && (
         <section className="event-explorer__error-banner" role="alert">
           <div>
@@ -362,6 +416,7 @@ export function EventExplorerPage() {
           events={currentPageEvents}
           onSelectEvent={handleSelectEvent}
           contractStatuses={contractStatuses}
+          onContractClick={handleContractClick}
         />
       ) : (
         <EmptyState
