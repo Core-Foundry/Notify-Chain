@@ -38,7 +38,10 @@ CREATE TABLE IF NOT EXISTS scheduled_notifications (
   priority INTEGER NOT NULL DEFAULT 5 CHECK (priority BETWEEN 1 AND 10),
   metadata TEXT,                            -- Additional JSON metadata
   next_retry_at DATETIME,                   -- When the next retry should be attempted
-  deduplication_key TEXT                    -- Caller-supplied key; duplicate inserts with the same key are silently skipped
+  deduplication_key TEXT,                   -- Caller-supplied key; duplicate inserts with the same key are silently skipped
+  recurrence_rule TEXT,                     -- Validated recurrence rule JSON (NULL for one-shot notifications)
+  occurrence_count INTEGER NOT NULL DEFAULT 0,
+  last_run_at DATETIME
 );
 
 -- Indexes for performance optimization
@@ -454,3 +457,40 @@ CREATE INDEX IF NOT EXISTS idx_scheduled_notifications_type_lower_created
 -- Processed-event search: case-insensitive type filter + processed_at sort
 CREATE INDEX IF NOT EXISTS idx_processed_events_type_lower_processed
   ON processed_events(LOWER(event_type), processed_at);
+
+-- Immutable audit trail for scheduled notification lifecycle changes (#966)
+CREATE TABLE IF NOT EXISTS schedule_audit_log (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  scheduled_notification_id INTEGER NOT NULL,
+  action TEXT NOT NULL CHECK (action IN ('CREATED', 'MODIFIED', 'CANCELLED', 'EXECUTED')),
+  actor TEXT NOT NULL DEFAULT 'system',
+  timestamp DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  from_status TEXT,
+  to_status TEXT,
+  -- Identifiers only — do not store full notification payloads here
+  details TEXT,
+  FOREIGN KEY (scheduled_notification_id) REFERENCES scheduled_notifications(id) ON DELETE RESTRICT
+);
+
+CREATE INDEX IF NOT EXISTS idx_schedule_audit_notification_id
+  ON schedule_audit_log(scheduled_notification_id);
+
+CREATE INDEX IF NOT EXISTS idx_schedule_audit_timestamp
+  ON schedule_audit_log(timestamp);
+
+CREATE INDEX IF NOT EXISTS idx_schedule_audit_action
+  ON schedule_audit_log(action);
+
+CREATE TRIGGER IF NOT EXISTS prevent_schedule_audit_update
+BEFORE UPDATE ON schedule_audit_log
+FOR EACH ROW
+BEGIN
+  SELECT RAISE(ABORT, 'Schedule audit records are immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS prevent_schedule_audit_delete
+BEFORE DELETE ON schedule_audit_log
+FOR EACH ROW
+BEGIN
+  SELECT RAISE(ABORT, 'Schedule audit records are immutable');
+END;

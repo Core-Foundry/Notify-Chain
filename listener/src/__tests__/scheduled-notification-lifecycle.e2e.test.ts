@@ -9,6 +9,7 @@ import { Database } from '../database/database';
 import { ScheduledNotificationRepository } from '../services/scheduled-notification-repository';
 import { NotificationScheduler } from '../services/notification-scheduler';
 import { NotificationAPI } from '../services/notification-api';
+import { ScheduleAuditTrail } from '../services/schedule-audit-trail';
 import { DiscordNotificationService } from '../services/discord-notification';
 import { CleanupService } from '../services/cleanup-service';
 import { resetWorkerManager } from '../services/worker-manager';
@@ -182,5 +183,38 @@ expect([NotificationStatus.PENDING, NotificationStatus.PROCESSING]).toContain(cu
 
     expect(result.notifications).toBeGreaterThanOrEqual(1);
     expect(await repository.getById(id)).toBeNull();
+  });
+
+  it('retains terminal notifications referenced by immutable schedule audit records', async () => {
+    const auditDb = new Database(':memory:');
+    await auditDb.initialize();
+
+    try {
+      const auditRepository = new ScheduledNotificationRepository(auditDb);
+      const auditTrail = new ScheduleAuditTrail(auditDb);
+      auditRepository.setScheduleAuditTrail(auditTrail);
+      const id = await auditRepository.create({
+        payload: { message: 'Audited notification' },
+        notificationType: NotificationType.WEBHOOK,
+        targetRecipient: 'https://example.test/hook',
+        executeAt: new Date(Date.now() + 60_000),
+      });
+      await auditDb.run(
+        'UPDATE scheduled_notifications SET status = ?, updated_at = ? WHERE id = ?',
+        [NotificationStatus.COMPLETED, '2000-01-01T00:00:00.000Z', id],
+      );
+      await auditTrail.record({
+        scheduledNotificationId: id,
+        action: 'EXECUTED',
+        fromStatus: NotificationStatus.PROCESSING,
+        toStatus: NotificationStatus.COMPLETED,
+      });
+
+      expect(await auditRepository.deleteExpiredNotifications(1)).toBe(0);
+      expect(await auditRepository.getById(id)).not.toBeNull();
+      expect(await auditTrail.getByNotificationId(id)).toHaveLength(1);
+    } finally {
+      await auditDb.close();
+    }
   });
 });

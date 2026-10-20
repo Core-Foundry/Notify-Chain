@@ -10,6 +10,7 @@ use soroban_sdk::{contract, contractimpl, Address, BytesN, Env, String, Vec};
 // 1. Declare the foundational modules (Requirement: Modular Structure)
 pub mod base {
     pub mod channel;
+    pub mod clock;
     pub mod errors;
     pub mod events;
     pub mod metadata_validation;
@@ -676,7 +677,7 @@ impl AutoShareContract {
     /// Includes successful deliveries, failed deliveries, and current score.
     pub fn get_sender_reputation(env: Env, sender: Address) -> base::reputation::SenderReputation {
         reputation_logic::get_reputation(&env, &sender)
-            .unwrap_or_else(|_| base::reputation::SenderReputation::new(sender, env.ledger().timestamp()))
+            .unwrap_or_else(|_| base::reputation::SenderReputation::new(sender, base::clock::current_time(&env)))
     }
 
     /// Get the reputation tier for a sender.
@@ -924,6 +925,7 @@ mod tests {
     mod category_registry_test;
     mod channel_metadata_test;
     mod channel_subscription_test;
+    mod clock_test;
     mod event_regression_test;
     mod expiration_test;
     mod extended_coverage_test;

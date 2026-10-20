@@ -113,8 +113,27 @@ describe('Config validation', () => {
       eventsApiPort: 8787,
       eventsApiCorsOrigin: 'http://localhost:5173',
       retryQueue: {
-        baseDelayMs: 5000,
-        maxRetries: 5,
+        backoff: {
+          initialDelayMs: 5000,
+          maxRetries: 5,
+          multiplier: 2,
+          jitter: true,
+          maxDelayMs: 3600000,
+        },
+        processIntervalMs: 5000,
+      },
+      eventBatching: {
+        enabled: false,
+        maxBatchSize: 50,
+        windowMs: 5000,
+      },
+      digest: {
+        enabled: false,
+        intervalMs: 3600000,
+        maxEventsPerDigest: 100,
+      },
+      localization: {
+        defaultLocale: 'en',
       },
       analytics: {
         enabled: true,

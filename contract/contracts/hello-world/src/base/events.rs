@@ -418,6 +418,12 @@ pub enum AuditAction {
 }
 
 /// Emitted when a new audit record is appended to the on-chain log.
+///
+/// The category and priority are both carried as trailing indexed topics so
+/// off-chain consumers can subscribe by notification type without decoding the
+/// payload. Existing listeners continue to read the first topic and the
+/// pre-existing fields unchanged because the new metadata is appended after the
+/// original data.
 #[contractevent]
 #[derive(Clone)]
 pub struct AuditRecordAppended {
@@ -427,6 +433,8 @@ pub struct AuditRecordAppended {
     pub action: AuditAction,
     #[topic]
     pub category: NotificationCategory,
+    #[topic]
+    pub priority: NotificationPriority,
     pub seq: u64,
     pub actor: Address,
     // GAS: Removed `timestamp` — derivable from ledger metadata
@@ -546,6 +554,8 @@ pub struct NotificationAccessed {
     pub accessor: Address,
     #[topic]
     pub category: NotificationCategory,
+    #[topic]
+    pub priority: NotificationPriority,
     /// Ledger timestamp (seconds) when the access occurred.
     pub accessed_at: u64,
 }

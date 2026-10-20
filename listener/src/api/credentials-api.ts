@@ -6,10 +6,20 @@
  *   GET    /api/credentials/:id   fetch one credential (no secret material)
  *   DELETE /api/credentials/:id   revoke a credential
  *
- * Every route requires the `credentials:manage` scope (static admin keys hold
- * it implicitly) and authentication even on deployments with no keys
- * configured, so an open dev server cannot be used to mint credentials.
- * A scoped caller may only grant scopes it holds itself.
+ * Authorization model (#997):
+ *
+ *   Administrative operations (write/manage) are separated from read-only
+ *   access. Each route declares an explicit permission requirement:
+ *
+ *     POST   /api/credentials       admin   — requires `credentials:manage`
+ *     DELETE /api/credentials/:id   admin   — requires `credentials:manage`
+ *     GET    /api/credentials       read    — requires `credentials:read`
+ *     GET    /api/credentials/:id   read    — requires `credentials:read`
+ *
+ *   Static admin keys hold every scope implicitly. Authentication is required
+ *   even on deployments with no keys configured, so an open dev server cannot
+ *   be used to mint credentials. A scoped caller may only grant scopes it
+ *   holds itself.
  */
 
 import http from 'http';
@@ -26,12 +36,40 @@ import {
   validateCreateCredentialInput,
   type ApiCredentialService,
 } from '../services/api-credential-service';
-import type { CreateApiCredentialInput } from '../types/api-credential';
+import type { ApiScope, CreateApiCredentialInput } from '../types/api-credential';
 
 export interface CredentialRoutesDeps {
   credentialService: ApiCredentialService | null | undefined;
   apiKeys?: ApiKeyEntry[];
 }
+
+/**
+ * Permission level for a route. Administrative routes mutate state and
+ * require a write/manage scope; read-only routes only expose non-secret data.
+ */
+export type PermissionLevel = 'admin' | 'read';
+
+/** Scope required for each permission level on credential routes. */
+export const CREDENTIAL_SCOPES: Record<PermissionLevel, ApiScope> = {
+  admin: 'credentials:manage',
+  read: 'credentials:read',
+};
+
+interface RoutePermission {
+  level: PermissionLevel;
+  scope: ApiScope;
+}
+
+/**
+ * Route-to-required-scope map. Every privileged route is listed here so the
+ * permission requirement is explicit and testable.
+ */
+export const CREDENTIAL_ROUTE_PERMISSIONS: Record<string, RoutePermission> = {
+  'POST /api/credentials': { level: 'admin', scope: CREDENTIAL_SCOPES.admin },
+  'GET /api/credentials': { level: 'read', scope: CREDENTIAL_SCOPES.read },
+  'GET /api/credentials/:id': { level: 'read', scope: CREDENTIAL_SCOPES.read },
+  'DELETE /api/credentials/:id': { level: 'admin', scope: CREDENTIAL_SCOPES.admin },
+};
 
 const COLLECTION_PATH = '/api/credentials';
 const ITEM_PATTERN = /^\/api\/credentials\/([0-9a-f]{16})$/;
@@ -54,6 +92,19 @@ function readJsonBody(req: http.IncomingMessage): Promise<unknown> {
 }
 
 /**
+ * Resolves the permission requirement for a request, or null when the
+ * method/path combination is not a supported route.
+ */
+function resolveRoutePermission(
+  method: string | undefined,
+  itemMatch: RegExpExecArray | null,
+  path: string,
+): RoutePermission | null {
+  const key = `${method ?? ''} ${itemMatch ? '/api/credentials/:id' : path}`;
+  return CREDENTIAL_ROUTE_PERMISSIONS[key] ?? null;
+}
+
+/**
  * Handles `/api/credentials` routes. Resolves true when the request was
  * handled (a response has been or will be sent).
  */
@@ -72,10 +123,16 @@ export async function handleCredentialRoutes(
   // Secrets may appear in these responses; never let an intermediary cache them.
   res.setHeader('Cache-Control', 'no-store');
 
+  const permission = resolveRoutePermission(req.method, itemMatch, path);
+
+  // Authenticate first so unauthenticated callers always get 401 regardless of
+  // whether the route exists. The required scope is derived from the route's
+  // declared permission level; unknown routes fall back to the admin scope so
+  // they cannot be probed without credentials.
   const auth = await authorizeRequest(req, {
     apiKeys: deps.apiKeys,
     credentialService: deps.credentialService,
-    requiredScopes: ['credentials:manage'],
+    requiredScopes: [permission ? permission.scope : CREDENTIAL_SCOPES.admin],
     requireAuthentication: true,
   });
   if (!auth.allowed) {

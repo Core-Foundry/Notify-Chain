@@ -185,6 +185,11 @@ export function checkSchemaCompatibility(
     safeAdditions.push(...result.safeAdditions);
   }
 
+  // Check 5: New data fields are safe (backward compatible)
+  // Any new data fields in the contract that weren't expected by the consumer
+  // are handled per-event by checkEventCompatibility above as trailing fields.
+
+  // Determine compatibility
   for (const eventName of contractEvents.keys()) {
     if (!consumerNames.has(eventName)) {
       safeAdditions.push(`Safe addition: New event '${eventName}' is ignored by existing consumers`);

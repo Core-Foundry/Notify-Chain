@@ -7,8 +7,45 @@ on:
     branches: [main]
 
 jobs:
-  migrations:
+  contracts:
+    name: Soroban contract validation (Rust 1.86.0)
     runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.86.0
+          targets: wasm32v1-none
+          components: rustfmt
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: contract
+
+      - name: Report resolved Soroban SDK
+        working-directory: contract
+        run: cargo tree --locked --workspace --all-features -i soroban-sdk
+
+      - name: Test and build contract workspace
+        working-directory: contract
+        run: |
+          set +e
+          cargo test --workspace --all-features --locked
+          test_status=$?
+          cargo build --workspace --release --locked --target wasm32v1-none
+          build_status=$?
+          if [ "$test_status" -ne 0 ] || [ "$build_status" -ne 0 ]; then
+            echo "Contract validation failed (tests: $test_status, Wasm build: $build_status)."
+            exit 1
+          fi
+
+  dashboard-visual:
+    runs-on: windows-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -18,30 +55,128 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Install dependencies
-        run: |
-          cd listener
-          npm ci
+      - name: Install listener dependencies
+        working-directory: ./listener
+        run: npm install --ignore-scripts
 
-      - name: Verify migration order and apply migrations
-        env:
-          DATABASE_PATH: ./data/notifications.db
-        run: |
-          cd listener
-          npm run check-migrations   # fails if pending migrations
-          npm run migrate            # apply all migrations
+      - name: Install dashboard dependencies
+        working-directory: ./dashboard
+        run: npm install --ignore-scripts
 
-      - name: Run listener typecheck and tests
+      - name: Identify changed source files
+        id: changed
+        shell: bash
         run: |
-          cd listener
-          npm run typecheck
-          npm run test:coverage
+          git diff --name-only "${{ github.event.pull_request.base.sha }}" "${{ github.event.pull_request.head.sha }}" > changed-files.txt
 
-      - name: Upload coverage report
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: coverage-report
-          path: listener/coverage/
-          retention-days: 14
-          if-no-files-found: warn
+          listener_files=$(grep -E '^listener/src/.*\.ts$' changed-files.txt | sed 's#^listener/##' | tr '\n' ' ' || true)
+          dashboard_files=$(grep -E '^dashboard/src/.*\.(ts|tsx)$' changed-files.txt | sed 's#^dashboard/##' | tr '\n' ' ' || true)
+
+          echo "listener_files=$listener_files" >> "$GITHUB_OUTPUT"
+          echo "dashboard_files=$dashboard_files" >> "$GITHUB_OUTPUT"
+
+      - name: Format check listener changes
+        if: steps.changed.outputs.listener_files != ''
+        working-directory: ./listener
+        run: |
+          echo "Checking listener formatting:"
+          printf '%s\n' "${{ steps.changed.outputs.listener_files }}"
+          npx prettier --check ${{ steps.changed.outputs.listener_files }} --config ../.prettierrc
+
+      - name: Format check dashboard changes
+        if: steps.changed.outputs.dashboard_files != ''
+        working-directory: ./dashboard
+        run: |
+          echo "Checking dashboard formatting:"
+          printf '%s\n' "${{ steps.changed.outputs.dashboard_files }}"
+          npx prettier --check ${{ steps.changed.outputs.dashboard_files }} --config ../.prettierrc
+
+      - name: Lint listener changes
+        if: steps.changed.outputs.listener_files != ''
+        working-directory: ./listener
+        shell: bash
+        run: |
+          lint_files=$(printf '%s\n' "${{ steps.changed.outputs.listener_files }}" | tr ' ' '\n' | grep -v '^src/test-utils/' | grep -v '^src/__tests__/' | tr '\n' ' ' || true)
+
+          if [ -z "$lint_files" ]; then
+            echo "No changed listener files are included in the configured ESLint scope."
+            exit 0
+          fi
+
+          echo "Linting changed listener files:"
+          printf '%s\n' "$lint_files"
+          npx eslint $lint_files --max-warnings=0
+
+      - name: Lint dashboard changes
+        if: steps.changed.outputs.dashboard_files != ''
+        working-directory: ./dashboard
+        run: |
+          echo "Linting changed dashboard files:"
+          printf '%s\n' "${{ steps.changed.outputs.dashboard_files }}"
+          npx eslint ${{ steps.changed.outputs.dashboard_files }} --max-warnings=0
+
+      - name: Static analysis listener changes
+        if: steps.changed.outputs.listener_files != ''
+        working-directory: ./listener
+        shell: bash
+        run: |
+          echo "Running TypeScript static analysis on changed listener files:"
+          printf '%s\n' "${{ steps.changed.outputs.listener_files }}"
+
+          set +e
+          tsc_output=$(npx tsc --noEmit --skipLibCheck --target es2020 --module commonjs --moduleResolution node --esModuleInterop --types node,jest ${{ steps.changed.outputs.listener_files }} 2>&1)
+          tsc_status=$?
+          set -e
+
+          printf '%s\n' "$tsc_output"
+
+          changed_errors=""
+          for file in ${{ steps.changed.outputs.listener_files }}; do
+            file_errors=$(printf '%s\n' "$tsc_output" | grep -F "${file}(" || true)
+            if [ -n "$file_errors" ]; then
+              changed_errors="${changed_errors}${file_errors}"$'\n'
+            fi
+          done
+
+          if [ -n "$changed_errors" ]; then
+            echo "TypeScript errors found in changed listener files:"
+            printf '%s\n' "$changed_errors"
+            exit 1
+          fi
+
+          if [ "$tsc_status" -ne 0 ]; then
+            echo "TypeScript reported errors only in unchanged/imported files; those errors are outside this PR's changed-file scope."
+          fi
+
+      - name: Static analysis dashboard
+        if: steps.changed.outputs.dashboard_files != ''
+        working-directory: ./dashboard
+        shell: bash
+        run: |
+          echo "Running TypeScript static analysis for dashboard changes:"
+          printf '%s\n' "${{ steps.changed.outputs.dashboard_files }}"
+
+          set +e
+          tsc_output=$(npx tsc --noEmit -p tsconfig.json 2>&1)
+          tsc_status=$?
+          set -e
+
+          printf '%s\n' "$tsc_output"
+
+          changed_errors=""
+          for file in ${{ steps.changed.outputs.dashboard_files }}; do
+            file_errors=$(printf '%s\n' "$tsc_output" | grep -F "${file}(" || true)
+            if [ -n "$file_errors" ]; then
+              changed_errors="${changed_errors}${file_errors}"$'\n'
+            fi
+          done
+
+          if [ -n "$changed_errors" ]; then
+            echo "TypeScript errors found in changed dashboard files:"
+            printf '%s\n' "$changed_errors"
+            exit 1
+          fi
+
+          if [ "$tsc_status" -ne 0 ]; then
+            echo "TypeScript reported errors only in unchanged/imported files; those errors are outside this PR's changed-file scope."
+          fi

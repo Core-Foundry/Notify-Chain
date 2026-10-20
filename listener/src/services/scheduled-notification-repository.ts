@@ -8,6 +8,7 @@ import {
   NotificationStatus,
   NotificationExecutionLog,
   DeadLetterQueueEntry,
+  RecurrenceRule,
 } from '../types/scheduled-notification';
 import { hashPayload } from '../utils/payload-integrity';
 import {
@@ -16,6 +17,8 @@ import {
   NotificationStats,
   QueueOperationalMetrics,
 } from './notification-stats-cache';
+import { calculateNextRun } from './recurrence';
+import { ScheduleAuditTrail } from './schedule-audit-trail';
 
 /**
  * Repository for scheduled notifications database operations
@@ -23,6 +26,7 @@ import {
  */
 export class ScheduledNotificationRepository {
   private statsCache: NotificationStatsCache;
+  private scheduleAudit: ScheduleAuditTrail | null = null;
 
   constructor(
     private db: Database,
@@ -30,6 +34,10 @@ export class ScheduledNotificationRepository {
     private defaultTtlSeconds: number = 0,
   ) {
     this.statsCache = statsCache ?? getStatsCache();
+  }
+
+  setScheduleAuditTrail(audit: ScheduleAuditTrail | null): void {
+    this.scheduleAudit = audit;
   }
 
   /**
@@ -48,8 +56,9 @@ export class ScheduledNotificationRepository {
         payload, payload_hash, notification_type, target_recipient, execute_at, expires_at,
         created_at, updated_at, status, retry_count, max_retries, processing_started_at,
         processing_completed_at, processor_id, lock_expires_at, last_error, error_details,
-        event_id, contract_address, priority, metadata, next_retry_at, deduplication_key
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        event_id, contract_address, priority, metadata, next_retry_at, deduplication_key,
+        recurrence_rule, occurrence_count, last_run_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
 
     const serializedPayload = compressPayload(input.payload);
@@ -84,6 +93,11 @@ export class ScheduledNotificationRepository {
       input.metadata ? JSON.stringify(input.metadata) : null,
       null,
       input.deduplicationKey ?? null,
+      input.recurrence
+        ? JSON.stringify({ ...input.recurrence, interval: input.recurrence.interval ?? 1 })
+        : null,
+      0,
+      null,
     ];
 
     try {
@@ -100,10 +114,7 @@ export class ScheduledNotificationRepository {
 
       return result.lastID;
     } catch (err) {
-      if (
-        input.deduplicationKey &&
-        (err as any)?.message?.includes('UNIQUE constraint failed')
-      ) {
+      if (input.deduplicationKey && (err as any)?.message?.includes('UNIQUE constraint failed')) {
         const existing = await this.db.get<{ id: number }>(
           'SELECT id FROM scheduled_notifications WHERE deduplication_key = ?',
           [input.deduplicationKey],
@@ -140,9 +151,22 @@ export class ScheduledNotificationRepository {
   }
 
   /**
+   * Hard upper bound on scheduler claim batch size (#970).
+   * Prevents a single poll from locking an unbounded due set.
+   */
+  static readonly MAX_SCHEDULER_BATCH_SIZE = 100;
+
+  /**
    * Dequeue pending notifications due for execution with distributed locking.
    * Uses a single atomic UPDATE ... WHERE id IN (SELECT ...) so two workers
    * polling at the same time can never claim the same row.
+   *
+   * ## Fairness selection policy (#970)
+   * Due jobs are grouped by `COALESCE(contract_address, event_id, notification_type, 'default')`.
+   * Within each group, jobs are ordered by priority ASC, execute_at ASC, id ASC.
+   * The batch is filled **round-robin across groups** (rank 1 from every group,
+   * then rank 2, …) so one large due group cannot indefinitely delay other
+   * eligible schedule groups. Batch size is capped at MAX_SCHEDULER_BATCH_SIZE.
    *
    * A job whose `next_retry_at` is still in the future is deliberately skipped:
    * it is waiting out its exponential backoff and is claimed by the retry path
@@ -158,8 +182,12 @@ export class ScheduledNotificationRepository {
   ): Promise<ScheduledNotification[]> {
     const now = new Date();
     const lockExpiresAt = new Date(now.getTime() + lockTimeoutMs);
+    const cappedBatch = Math.min(
+      Math.max(1, Math.floor(batchSize) || 1),
+      ScheduledNotificationRepository.MAX_SCHEDULER_BATCH_SIZE,
+    );
 
-    // First, atomically lock available notifications
+    // Fair round-robin selection across schedule groups, then atomic lock.
     const updateSql = `
       UPDATE scheduled_notifications
       SET 
@@ -168,12 +196,32 @@ export class ScheduledNotificationRepository {
         lock_expires_at = ?,
         processing_started_at = ?
       WHERE id IN (
-        SELECT id FROM scheduled_notifications
-        WHERE status = ?
-          AND execute_at <= ?
-          AND (next_retry_at IS NULL OR next_retry_at <= ?)
-        ORDER BY priority ASC, execute_at ASC
-        LIMIT ?
+        WITH due AS (
+          SELECT
+            id,
+            priority,
+            execute_at,
+            COALESCE(contract_address, event_id, notification_type, 'default') AS schedule_group,
+            ROW_NUMBER() OVER (
+              PARTITION BY COALESCE(contract_address, event_id, notification_type, 'default')
+              ORDER BY priority ASC, execute_at ASC, id ASC
+            ) AS group_rank
+          FROM scheduled_notifications
+          WHERE status = ?
+            AND execute_at <= ?
+            AND (next_retry_at IS NULL OR next_retry_at <= ?)
+        ),
+        fair AS (
+          SELECT
+            id,
+            ROW_NUMBER() OVER (
+              ORDER BY group_rank ASC, priority ASC, execute_at ASC, id ASC
+            ) AS pick_order
+          FROM due
+        )
+        SELECT id FROM fair
+        WHERE pick_order <= ?
+        ORDER BY pick_order
       )
     `;
 
@@ -185,7 +233,7 @@ export class ScheduledNotificationRepository {
       NotificationStatus.PENDING,
       now.toISOString(),
       now.toISOString(),
-      batchSize,
+      cappedBatch,
     ];
 
     const updateResult = await this.db.run(updateSql, updateParams);
@@ -210,6 +258,8 @@ export class ScheduledNotificationRepository {
       requestId,
       count: rows.length,
       processorId,
+      batchSize: cappedBatch,
+      selectionPolicy: 'round-robin-by-schedule-group',
     });
 
     return rows.map(this.rowToModel);
@@ -232,7 +282,7 @@ export class ScheduledNotificationRepository {
     id: number,
     processorId: string,
     lockTimeoutMs: number,
-    requestId?: string
+    requestId?: string,
   ): Promise<boolean> {
     const lockExpiresAt = new Date(Date.now() + lockTimeoutMs).toISOString();
 
@@ -242,7 +292,7 @@ export class ScheduledNotificationRepository {
         SET lock_expires_at = ?
         WHERE id = ? AND processor_id = ? AND status = ?
       `,
-      [lockExpiresAt, id, processorId, NotificationStatus.PROCESSING]
+      [lockExpiresAt, id, processorId, NotificationStatus.PROCESSING],
     );
 
     const renewed = result.changes > 0;
@@ -339,31 +389,86 @@ export class ScheduledNotificationRepository {
   /**
    * Mark notification as completed
    */
-  async markAsCompleted(id: number, requestId?: string): Promise<void> {
-    const sql = `
-      UPDATE scheduled_notifications
-      SET 
-        status = ?,
-        processing_completed_at = ?,
-        updated_at = ?,
-        processor_id = NULL,
-        lock_expires_at = NULL
-      WHERE id = ?
-    `;
+  async markAsCompleted(
+    id: number,
+    requestId?: string,
+    completedAt: Date = new Date(),
+  ): Promise<void> {
+    const now = completedAt.toISOString();
+    let executionStatus = NotificationStatus.COMPLETED;
+    let transitioned = false;
+    await this.db.transaction(async () => {
+      const row = await this.db.get<ScheduledNotificationRow>(
+        'SELECT * FROM scheduled_notifications WHERE id = ?',
+        [id],
+      );
+      if (!row) return;
 
-    const now = new Date().toISOString();
-    await this.db.run(sql, [NotificationStatus.COMPLETED, now, now, id]);
+      const notification = this.rowToModel(row);
+      if (notification.recurrence) {
+        const result = calculateNextRun(
+          notification.recurrence,
+          notification.executeAt,
+          completedAt,
+          (notification.occurrenceCount ?? 0) + 1,
+        );
+        const nextStatus = result.nextRun
+          ? NotificationStatus.PENDING
+          : NotificationStatus.COMPLETED;
+        executionStatus = nextStatus;
+        const update = await this.db.run(
+          `UPDATE scheduled_notifications
+           SET execute_at = ?, occurrence_count = ?, last_run_at = ?, status = ?,
+               retry_count = 0, last_error = NULL, error_details = NULL,
+               processing_started_at = NULL, processing_completed_at = ?, updated_at = ?,
+               processor_id = NULL, lock_expires_at = NULL, next_retry_at = NULL
+           WHERE id = ? AND status = ?`,
+          [
+            result.nextRun?.toISOString() ?? notification.executeAt.toISOString(),
+            result.occurrenceCount,
+            notification.executeAt.toISOString(),
+            nextStatus,
+            nextStatus === NotificationStatus.COMPLETED ? now : null,
+            now,
+            id,
+            NotificationStatus.PROCESSING,
+          ],
+        );
+        if (update.changes === 0) return;
+        transitioned = true;
+      } else {
+        await this.db.run(
+          `UPDATE scheduled_notifications
+           SET status = ?, processing_completed_at = ?, updated_at = ?,
+               processor_id = NULL, lock_expires_at = NULL
+           WHERE id = ?`,
+          [NotificationStatus.COMPLETED, now, now, id],
+        );
+        transitioned = true;
+      }
+    });
 
     // Invalidate stats cache after completion
     this.statsCache.invalidate();
+
+    if (transitioned) {
+      await this.scheduleAudit?.record({
+        scheduledNotificationId: id,
+        action: 'EXECUTED',
+        actor: 'scheduler',
+        fromStatus: NotificationStatus.PROCESSING,
+        toStatus: executionStatus,
+        details: { requestId: requestId ?? null },
+      });
+    }
 
     logger.info('Notification marked as completed', { requestId, id });
   }
 
   /** Mark a notification expired and release its processing lock. */
-  async markAsExpired(id: number): Promise<void> {
+  async markAsExpired(id: number, reason = 'Notification expired before delivery'): Promise<void> {
     const now = new Date().toISOString();
-    const errorMessage = 'Notification expired before delivery';
+    const errorMessage = reason;
     await this.db.run(
       `UPDATE scheduled_notifications
        SET status = ?, last_error = ?, error_details = ?, processing_completed_at = ?,
@@ -380,6 +485,60 @@ export class ScheduledNotificationRepository {
       ],
     );
     this.statsCache.invalidate();
+  }
+
+  /**
+   * Hold an overdue notification until an operator resumes it.
+   * `next_retry_at` is parked far in the future so the poll loop will not
+   * claim the row again. Status stays PENDING so no schema migration is required.
+   */
+  async holdForIntervention(id: number): Promise<void> {
+    const now = new Date().toISOString();
+    const errorMessage = 'Missed schedule requires operator intervention';
+    await this.db.run(
+      `UPDATE scheduled_notifications
+       SET status = ?, last_error = ?, error_details = ?, next_retry_at = ?,
+           updated_at = ?, processor_id = NULL, lock_expires_at = NULL
+       WHERE id = ? AND status = ?`,
+      [
+        NotificationStatus.PENDING,
+        errorMessage,
+        JSON.stringify({ code: 'MISSED_SCHEDULE_INTERVENTION', heldAt: now }),
+        '9999-12-31T00:00:00.000Z',
+        now,
+        id,
+        NotificationStatus.PROCESSING,
+      ],
+    );
+    this.statsCache.invalidate();
+  }
+
+  /**
+   * Let an operator release a notification held by the intervene policy.
+   * The next poll delivers it. Returns false when the row is not held.
+   */
+  async releaseIntervention(id: number): Promise<boolean> {
+    const existing = await this.getById(id);
+    if (!existing || existing.status !== NotificationStatus.PENDING) return false;
+
+    let details: { code?: string; releasedAt?: string; heldAt?: string };
+    try {
+      details = JSON.parse(existing.errorDetails ?? '');
+    } catch {
+      return false;
+    }
+    if (details.code !== 'MISSED_SCHEDULE_INTERVENTION' || details.releasedAt) return false;
+
+    const now = new Date().toISOString();
+    details.releasedAt = now;
+    const result = await this.db.run(
+      `UPDATE scheduled_notifications
+       SET next_retry_at = NULL, error_details = ?, updated_at = ?
+       WHERE id = ? AND status = ?`,
+      [JSON.stringify(details), now, id, NotificationStatus.PENDING],
+    );
+    this.statsCache.invalidate();
+    return result.changes > 0;
   }
 
   /**
@@ -631,6 +790,40 @@ export class ScheduledNotificationRepository {
   }
 
   /**
+   * Update mutable fields on a PENDING scheduled notification.
+   */
+  async updatePending(
+    id: number,
+    updates: { executeAt?: Date; priority?: number },
+  ): Promise<boolean> {
+    const sets: string[] = ['updated_at = ?'];
+    const params: unknown[] = [new Date().toISOString()];
+
+    if (updates.executeAt !== undefined) {
+      sets.push('execute_at = ?');
+      params.push(updates.executeAt.toISOString());
+    }
+    if (updates.priority !== undefined) {
+      sets.push('priority = ?');
+      params.push(updates.priority);
+    }
+
+    if (sets.length === 1) {
+      return false;
+    }
+
+    params.push(id, NotificationStatus.PENDING);
+    const result = await this.db.run(
+      `UPDATE scheduled_notifications SET ${sets.join(', ')} WHERE id = ? AND status = ?`,
+      params,
+    );
+    if (result.changes > 0) {
+      this.statsCache.invalidate();
+    }
+    return result.changes > 0;
+  }
+
+  /**
    * Cancel a scheduled notification
    */
   async cancel(id: number, reason?: string): Promise<boolean> {
@@ -691,6 +884,10 @@ export class ScheduledNotificationRepository {
       DELETE FROM scheduled_notifications
       WHERE status IN (?, ?, ?, ?, ?)
         AND updated_at < ?
+        AND NOT EXISTS (
+          SELECT 1 FROM schedule_audit_log
+          WHERE scheduled_notification_id = scheduled_notifications.id
+        )
     `;
 
     const result = await this.db.run(sql, [
@@ -1031,9 +1228,7 @@ export class ScheduledNotificationRepository {
         if (!row.error_details) return null;
         try {
           const parsed = JSON.parse(row.error_details);
-          return typeof parsed.cancellationReason === 'string'
-            ? parsed.cancellationReason
-            : null;
+          return typeof parsed.cancellationReason === 'string' ? parsed.cancellationReason : null;
         } catch {
           return null;
         }
@@ -1044,6 +1239,9 @@ export class ScheduledNotificationRepository {
       metadata: row.metadata,
       nextRetryAt: row.next_retry_at ? new Date(row.next_retry_at) : null,
       deduplicationKey: row.deduplication_key ?? null,
+      recurrence: row.recurrence_rule ? (JSON.parse(row.recurrence_rule) as RecurrenceRule) : null,
+      occurrenceCount: row.occurrence_count ?? 0,
+      lastRunAt: parseUtc(row.last_run_at) ?? null,
     };
   }
 }

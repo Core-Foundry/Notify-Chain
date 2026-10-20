@@ -17,9 +17,18 @@ export function addSecurityHeaders(
   options: { isProduction?: boolean } = {},
 ): void {
   res.setHeader('X-Content-Type-Options', 'nosniff');
+
+  // X-Frame-Options: prevent clickjacking. SAMEORIGIN allows embedding within
+  // same-origin iframes (dashboard use); DENY would break legitimate
+  // self-embedding.
   res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+
+  // Referrer-Policy: strict-origin-when-cross-origin balances privacy and
+  // functionality.
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
 
+  // Strict-Transport-Security: only in production. Skipped for
+  // localhost/development to avoid breaking HTTP local testing.
   if (options.isProduction) {
     res.setHeader('Strict-Transport-Security', 'max-age=31536000');
   }

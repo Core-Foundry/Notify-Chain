@@ -1,3 +1,4 @@
+import { memo, useCallback, type KeyboardEvent } from 'react';
 import type { BlockchainEvent } from '../types/event';
 import type { ContractStatus } from '../services/eventsApi';
 import { formatTimestamp } from '../utils/formatTime';
@@ -136,4 +137,4 @@ export const EventExplorerCard = memo(function EventExplorerCard({
       </div>
     </article>
   );
-}
+});

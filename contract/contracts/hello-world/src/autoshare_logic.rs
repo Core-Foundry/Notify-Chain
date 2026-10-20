@@ -1,3 +1,4 @@
+use crate::base::clock::current_time;
 use crate::base::errors::Error;
 use crate::base::events::{
     AdminTransferred, AuditAction, AuditRecordAppended, AuthorizationFailure, AutoshareCreated,
@@ -830,7 +831,7 @@ pub fn cancel_subscription(env: Env, id: BytesN<32>, subscriber: Address) -> Res
     details.usage_count = 0;
     env.storage().persistent().set(&key, &details);
 
-    let cancelled_at = env.ledger().timestamp();
+    let cancelled_at = current_time(&env);
 
     SubscriptionCancelled {
         group_id: id,
@@ -855,7 +856,7 @@ fn record_payment(
     usages_purchased: u32,
     amount_paid: i128,
 ) {
-    let timestamp = env.ledger().timestamp();
+    let timestamp = current_time(&env);
 
     let payment = PaymentHistory {
         user: user.clone(),
@@ -1219,7 +1220,7 @@ fn load_notification(env: &Env, id: &BytesN<32>) -> Option<ScheduledNotification
 
 /// Returns true if `notification` has reached or passed its expiry instant.
 fn is_expired(env: &Env, notification: &ScheduledNotification) -> bool {
-    env.ledger().timestamp() >= notification.expires_at
+    current_time(env) >= notification.expires_at
 }
 
 /// Returns true if a notification has been revoked.
@@ -1286,7 +1287,7 @@ pub fn schedule_notification(
         return Err(Error::AlreadyExists);
     }
 
-    let created_at = env.ledger().timestamp();
+    let created_at = current_time(&env);
     let expires_at = created_at
         .checked_add(ttl_seconds)
         .ok_or(Error::InvalidExpirationDuration)?;
@@ -1555,7 +1556,7 @@ pub fn batch_schedule_notifications(
         return Err(Error::BatchTooLarge);
     }
 
-    let created_at = env.ledger().timestamp();
+    let created_at = current_time(&env);
 
     // Validate all entries before persisting any (all-or-nothing semantics).
     // Also track ids seen within this batch to catch intra-batch duplicates.
@@ -1703,7 +1704,7 @@ pub fn confirm_notification_delivery(
         return Err(Error::Unauthorized);
     }
 
-    let delivered_at = env.ledger().timestamp();
+    let delivered_at = current_time(&env);
     notification.delivered = true;
     notification.delivered_at = Some(delivered_at);
 
@@ -1828,7 +1829,7 @@ pub fn recall_notification(
         return Err(Error::Unauthorized);
     }
 
-    let recalled_at = env.ledger().timestamp();
+    let recalled_at = current_time(&env);
     notification.recalled_by = Some(caller.clone());
     notification.recalled_at = Some(recalled_at);
 
@@ -1881,7 +1882,7 @@ pub fn revoke_notification(
     }
 
     // Update notification with revocation data
-    let revoked_at = env.ledger().timestamp();
+    let revoked_at = current_time(&env);
     notification.revoked_by = Some(caller.clone());
     notification.revoked_at = Some(revoked_at);
 
@@ -1936,7 +1937,7 @@ fn append_audit_record(
     let seq: u64 = env.storage().instance().get(&seq_key).unwrap_or(0u64) + 1;
     env.storage().instance().set(&seq_key, &seq);
 
-    let timestamp = env.ledger().timestamp();
+    let timestamp = current_time(&env);
 
     let record = AuditRecord {
         seq,
@@ -1956,10 +1957,15 @@ fn append_audit_record(
     log.push_back(record);
     env.storage().persistent().set(&log_key, &log);
 
+    let priority = load_notification(env, &notification_id)
+        .map(|notification| notification.priority)
+        .unwrap_or(NotificationPriority::Medium);
+
     AuditRecordAppended {
         notification_id,
         action,
         category: NotificationCategory::Notification,
+        priority,
         seq,
         actor,
     }
@@ -2114,7 +2120,7 @@ pub fn acknowledge_notifications(
         return Err(Error::ContractPaused);
     }
 
-    let timestamp = env.ledger().timestamp();
+    let timestamp = current_time(&env);
 
     for id in notification_ids.iter() {
         let notification = load_notification(&env, &id).ok_or(Error::NotFound)?;
@@ -2407,11 +2413,16 @@ pub fn record_notification_access(
         return Err(Error::NotFound);
     }
 
+    let priority = load_notification(&env, &notification_id)
+        .map(|notification| notification.priority)
+        .unwrap_or(NotificationPriority::Medium);
+
     NotificationAccessed {
         notification_id,
         accessor,
         category: NotificationCategory::Notification,
-        accessed_at: env.ledger().timestamp(),
+        priority,
+        accessed_at: current_time(&env),
     }
     .publish(&env);
 
@@ -2487,7 +2498,7 @@ pub fn update_channel_metadata(
     };
     validate_metadata(&meta)?;
 
-    let updated_at = env.ledger().timestamp();
+    let updated_at = current_time(&env);
     let metadata = ChannelMetadata {
         channel_id: channel_id.clone(),
         description,
@@ -2540,7 +2551,7 @@ pub fn get_channel_metadata(env: Env, channel_id: BytesN<32>) -> Result<ChannelM
 /// [`NotificationArchived`]. Active storage must already have been cleared by
 /// the caller.
 fn archive_notification(env: &Env, notification: &ScheduledNotification, reason: String) {
-    let archived_at = env.ledger().timestamp();
+    let archived_at = current_time(env);
     let archived = ArchivedNotification {
         id: notification.id.clone(),
         creator: notification.creator.clone(),

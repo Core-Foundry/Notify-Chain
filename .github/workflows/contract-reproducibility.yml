@@ -1,0 +1,89 @@
+name: Contract Build Reproducibility
+
+on:
+  pull_request:
+    paths:
+      - 'contract/**'
+      - 'scripts/reproducible-contract-build.sh'
+      - '.github/workflows/contract-reproducibility.yml'
+      - 'docs/CONTRACT_BUILD_REPRODUCIBILITY.md'
+  push:
+    branches: [main]
+    paths:
+      - 'contract/**'
+      - 'scripts/reproducible-contract-build.sh'
+      - '.github/workflows/contract-reproducibility.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Clean contract build (${{ matrix.build }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        build: [first, second]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install pinned Rust toolchain and target
+        shell: bash
+        run: |
+          mkdir -p reproducibility-output
+          toolchain=$(sed -n 's/^channel = "\([^"]*\)"$/\1/p' contract/rust-toolchain.toml)
+          test -n "$toolchain"
+          rustup toolchain install "$toolchain" --profile minimal --target wasm32v1-none 2>&1 | tee reproducibility-output/toolchain.log
+      - name: Build committed sources without shared caches
+        run: bash scripts/reproducible-contract-build.sh '${{ matrix.build }}' "$GITHUB_WORKSPACE/reproducibility-output"
+      - name: Upload build outputs and diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: contract-repro-${{ matrix.build }}
+          path: reproducibility-output/
+          if-no-files-found: warn
+          retention-days: 14
+
+  compare:
+    name: Compare contract Wasm bytes
+    needs: build
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Download build diagnostics
+        uses: actions/download-artifact@v4
+        with:
+          pattern: contract-repro-*
+          path: builds
+      - name: Compare and report
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p comparison
+          first=builds/contract-repro-first/hello_world.wasm
+          second=builds/contract-repro-second/hello_world.wasm
+          if [[ ! -f "$first" || ! -f "$second" ]]; then
+            echo 'Reproducibility could not be verified: one or both builds did not produce Wasm. Inspect the build logs.' | tee comparison/result.txt >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          sha256sum "$first" "$second" | tee comparison/SHA256SUMS >> "$GITHUB_STEP_SUMMARY"
+          if cmp -s "$first" "$second"; then
+            echo 'PASS: clean builds produced byte-identical release Wasm.' | tee comparison/result.txt >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo 'FAIL: release Wasm differs. Inspect both environment.txt files, build logs, and byte-differences.txt.' | tee comparison/result.txt >> "$GITHUB_STEP_SUMMARY"
+            # cmp returns 1 for differences; retain only the first 100 offsets.
+            (cmp -l "$first" "$second" | head -n 100) > comparison/byte-differences.txt || true
+            exit 1
+          fi
+      - name: Upload comparison diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: contract-repro-comparison
+          path: comparison/
+          if-no-files-found: warn
+          retention-days: 14

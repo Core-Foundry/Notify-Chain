@@ -29,6 +29,7 @@ import {
   type CreateApiCredentialInput,
   type CreatedApiCredential,
 } from '../types/api-credential';
+import { fingerprintCredential } from '../utils/request-actor';
 
 const scryptAsync = promisify(crypto.scrypt) as (
   password: crypto.BinaryLike,
@@ -70,6 +71,180 @@ export class InMemoryApiCredentialStore implements ApiCredentialStore {
   }
 }
 
+/**
+ * Per-client usage accounting (#989)
+ *
+ * Records API consumption against a non-reversible client identifier so
+ * operators can understand usage without ever persisting credential secrets.
+ *
+ * Identity
+ * --------
+ * - The client identifier is derived from the credential id (a public lookup
+ *   handle) via `fingerprintCredential`, or from an already-fingerprinted
+ *   actor string. Raw API keys / secrets are never accepted or stored.
+ * - `fingerprintClient` is the single choke point that normalises any input
+ *   into a stable, non-reversible identifier.
+ *
+ * Aggregation
+ * -----------
+ * - `record()` appends a usage event (client, route, timestamp).
+ * - `getClientUsage()` / `getRouteUsage()` / `getUsageInWindow()` expose
+ *   aggregations that are deterministic and therefore testable.
+ */
+export interface UsageEvent {
+  /** Non-reversible client identifier (never a raw secret). */
+  clientId: string;
+  /** Route or logical operation the request targeted. */
+  route: string;
+  /** ISO timestamp of the request. */
+  at: string;
+}
+
+export interface ClientUsageSummary {
+  clientId: string;
+  total: number;
+  routes: Record<string, number>;
+  firstUsedAt: string | null;
+  lastUsedAt: string | null;
+}
+
+export interface RouteUsageSummary {
+  route: string;
+  total: number;
+  clients: Record<string, number>;
+}
+
+export interface UsageWindow {
+  from?: Date | string;
+  to?: Date | string;
+}
+
+export interface UsageAccountingOptions {
+  now?: () => Date;
+  /** Optional cap on retained events to bound memory in long-lived processes. */
+  maxEvents?: number;
+}
+
+const DEFAULT_MAX_USAGE_EVENTS = 100_000;
+
+/**
+ * Normalises any client identity into a non-reversible identifier.
+ *
+ * Accepts either an already-fingerprinted actor string (returned unchanged) or
+ * a credential id, which is hashed via `fingerprintCredential`. Raw API keys
+ * are rejected outright so secrets can never reach the store.
+ */
+export function fingerprintClient(identity: string): string {
+  if (!identity) {
+    throw new Error('client identity is required');
+  }
+  if (looksLikeScopedApiKey(identity)) {
+    throw new Error('raw API keys must not be used as client identifiers');
+  }
+  return fingerprintCredential(identity);
+}
+
+function toMs(value: Date | string | undefined): number | null {
+  if (value === undefined) return null;
+  const ms = value instanceof Date ? value.getTime() : Date.parse(value);
+  return Number.isNaN(ms) ? null : ms;
+}
+
+export class UsageAccountingService {
+  private readonly events: UsageEvent[] = [];
+  private readonly now: () => Date;
+  private readonly maxEvents: number;
+
+  constructor(options: UsageAccountingOptions = {}) {
+    this.now = options.now ?? (() => new Date());
+    this.maxEvents = options.maxEvents ?? DEFAULT_MAX_USAGE_EVENTS;
+  }
+
+  /**
+   * Records a request for a client. The `clientIdentity` may be a credential
+   * id or an already-fingerprinted actor; it is normalised via
+   * `fingerprintClient` so no secret material is ever stored.
+   */
+  record(clientIdentity: string, route: string, at?: Date | string): UsageEvent {
+    const clientId = fingerprintClient(clientIdentity);
+    const timestamp = at === undefined ? this.now().toISOString() : new Date(at).toISOString();
+    const event: UsageEvent = { clientId, route, at: timestamp };
+    this.events.push(event);
+    if (this.events.length > this.maxEvents) {
+      this.events.splice(0, this.events.length - this.maxEvents);
+    }
+    return { ...event };
+  }
+
+  /** All recorded events, optionally filtered to a time window. */
+  list(window: UsageWindow = {}): UsageEvent[] {
+    const from = toMs(window.from);
+    const to = toMs(window.to);
+    return this.events
+      .filter((e) => {
+        const ms = Date.parse(e.at);
+        if (from !== null && ms < from) return false;
+        if (to !== null && ms > to) return false;
+        return true;
+      })
+      .map((e) => ({ ...e }));
+  }
+
+  /** Aggregates usage per client, optionally within a time window. */
+  getClientUsage(window: UsageWindow = {}): ClientUsageSummary[] {
+    const byClient = new Map<string, ClientUsageSummary>();
+    for (const event of this.list(window)) {
+      let summary = byClient.get(event.clientId);
+      if (!summary) {
+        summary = {
+          clientId: event.clientId,
+          total: 0,
+          routes: {},
+          firstUsedAt: event.at,
+          lastUsedAt: event.at,
+        };
+        byClient.set(event.clientId, summary);
+      }
+      summary.total += 1;
+      summary.routes[event.route] = (summary.routes[event.route] ?? 0) + 1;
+      if (event.at < (summary.firstUsedAt ?? event.at)) summary.firstUsedAt = event.at;
+      if (event.at > (summary.lastUsedAt ?? event.at)) summary.lastUsedAt = event.at;
+    }
+    return [...byClient.values()].sort((a, b) => a.clientId.localeCompare(b.clientId));
+  }
+
+  /** Aggregates usage per route, optionally within a time window. */
+  getRouteUsage(window: UsageWindow = {}): RouteUsageSummary[] {
+    const byRoute = new Map<string, RouteUsageSummary>();
+    for (const event of this.list(window)) {
+      let summary = byRoute.get(event.route);
+      if (!summary) {
+        summary = { route: event.route, total: 0, clients: {} };
+        byRoute.set(event.route, summary);
+      }
+      summary.total += 1;
+      summary.clients[event.clientId] = (summary.clients[event.clientId] ?? 0) + 1;
+    }
+    return [...byRoute.values()].sort((a, b) => a.route.localeCompare(b.route));
+  }
+
+  /** Convenience: usage for a single client, or null when unseen. */
+  getUsageForClient(clientIdentity: string, window: UsageWindow = {}): ClientUsageSummary | null {
+    const clientId = fingerprintClient(clientIdentity);
+    return this.getClientUsage(window).find((s) => s.clientId === clientId) ?? null;
+  }
+
+  /** Total number of recorded events (optionally within a window). */
+  count(window: UsageWindow = {}): number {
+    return this.list(window).length;
+  }
+
+  /** Clears all recorded events. */
+  reset(): void {
+    this.events.length = 0;
+  }
+}
+
 export class CredentialValidationError extends Error {
   constructor(
     message: string,
@@ -84,6 +259,8 @@ export interface ApiCredentialServiceOptions {
   store?: ApiCredentialStore;
   verifyCacheTtlMs?: number;
   now?: () => Date;
+  /** Optional usage accounting sink; when provided, verifications are attributed. */
+  usage?: UsageAccountingService;
 }
 
 export function parseApiKey(value: string): { id: string; secret: string } | null {
@@ -163,6 +340,7 @@ export class ApiCredentialService {
   private readonly store: ApiCredentialStore;
   private readonly verifyCacheTtlMs: number;
   private readonly now: () => Date;
+  private readonly usage: UsageAccountingService | null;
   /** sha256(presented key) → { credential id, expiry } for recently verified keys. */
   private readonly verifyCache = new Map<string, { id: string; expiresAt: number }>();
   /** Burns equivalent scrypt work for unknown ids so timing does not reveal them. */
@@ -172,6 +350,12 @@ export class ApiCredentialService {
     this.store = options.store ?? new InMemoryApiCredentialStore();
     this.verifyCacheTtlMs = options.verifyCacheTtlMs ?? DEFAULT_VERIFY_CACHE_TTL_MS;
     this.now = options.now ?? (() => new Date());
+    this.usage = options.usage ?? null;
+  }
+
+  /** Exposes the usage sink (if configured) for callers that need to read it. */
+  getUsageAccounting(): UsageAccountingService | null {
+    return this.usage;
   }
 
   /** Issues a new credential. The returned `apiKey` is never retrievable again. */
@@ -227,7 +411,7 @@ export class ApiCredentialService {
    * Resolves a presented API key to its credential. Returns null for
    * malformed, unknown, revoked, or mismatching keys.
    */
-  async verify(apiKey: string): Promise<ApiCredential | null> {
+  async verify(apiKey: string, route?: string): Promise<ApiCredential | null> {
     const parsed = parseApiKey(apiKey);
     if (!parsed) return null;
 
@@ -235,7 +419,7 @@ export class ApiCredentialService {
     const cached = this.verifyCache.get(cacheKey);
     const nowMs = this.now().getTime();
     if (cached && cached.expiresAt > nowMs && cached.id === parsed.id) {
-      return this.touch(parsed.id);
+      return this.touch(parsed.id, route);
     }
     if (cached) this.verifyCache.delete(cacheKey);
 
@@ -250,14 +434,18 @@ export class ApiCredentialService {
     if (!matches || record.revokedAt) return null;
 
     this.verifyCache.set(cacheKey, { id: record.id, expiresAt: nowMs + this.verifyCacheTtlMs });
-    return this.touch(record.id);
+    return this.touch(record.id, route);
   }
 
-  private touch(id: string): ApiCredential | null {
+  private touch(id: string, route?: string): ApiCredential | null {
     const record = this.store.get(id);
     if (!record || record.revokedAt) return null;
     record.lastUsedAt = this.now().toISOString();
     this.store.save(record);
+    if (this.usage && route) {
+      // Attribute to the credential id (a public handle), never the secret.
+      this.usage.record(record.id, route);
+    }
     return toPublic(record);
   }
 }
