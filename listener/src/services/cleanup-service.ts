@@ -65,7 +65,7 @@ export class CleanupService {
     const [notifResult, rateLimitResult, executionLogResult, processedEventResult] = await Promise.all([
       this.db.run(
         `DELETE FROM scheduled_notifications
-         WHERE status IN ('COMPLETED','FAILED','CANCELLED')
+         WHERE status IN ('COMPLETED','FAILED','CANCELLED','EXPIRED')
            AND processing_completed_at < ?`,
         [notificationCutoff],
       ),

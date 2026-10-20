@@ -1,7 +1,38 @@
-import { Config, ContractConfig, DiscordConfig, WebhookSecret, AppCleanupConfig, EventQueueConfig, RetrySchedulerOptions, AnalyticsConfig, ExpirationConfig, ApiKey, BackfillConfig, LoggingConfig, ApiConfig } from './types';
-import { validateCorsOrigin, CorsValidationError } from './utils/cors-validator';
+import {
+  Config,
+  ContractConfig,
+  DiscordConfig,
+  WebhookSecret,
+  AppCleanupConfig,
+  EventQueueConfig,
+  RetrySchedulerOptions,
+  RetryPolicyOptions,
+  AnalyticsConfig,
+  ExpirationConfig,
+  ApiKey,
+  BackfillConfig,
+  LoggingConfig,
+  ApiConfig,
+  RpcRateLimitConfig,
+  RpcFallbackConfig,
+  EventBatchingConfig,
+  DigestConfig,
+  LocalizationConfig,
+} from './types';
+import {
+  validateCorsOrigin,
+  CorsValidationError,
+} from './utils/cors-validator';
+import { validateSecrets } from './config/validate-secrets';
 import { ConfigurationSchemaValidator, APP_CONFIG_SCHEMA } from './config-schema';
-import { validateSecrets, SecretValidationError } from './config/validate-secrets';
+import { DEFAULT_LOCALE, SUPPORTED_LOCALES } from './i18n';
+import {
+  RetryFailureType,
+  RETRY_FAILURE_TYPES,
+  DEFAULT_RETRYABLE_FAILURE_TYPES,
+  parseRetryableFailureTypes,
+} from './services/retry-policy';
+import type { CircuitBreakerConfig } from './services/circuit-breaker';
 import {
   SUPPORTED_LOG_FORMATS,
   SUPPORTED_LOG_LEVELS,
@@ -9,12 +40,25 @@ import {
   parseLogLevel,
 } from './utils/logger';
 import { DEFAULT_MAX_BODY_BYTES } from './middleware/body-limit';
+import {
+  DEFAULT_WEBHOOK_TIMEOUT_MS,
+  MAX_WEBHOOK_TIMEOUT_MS,
+} from './services/webhook-delivery-service';
+import { parseMaxSchedulingHorizon } from './services/schedule-horizon-config';
 
 export class ConfigError extends Error {
   constructor(message: string) {
     super(message);
     this.name = 'ConfigError';
   }
+}
+
+function parseMissedSchedulePolicy(
+  value: string | undefined,
+): 'execute' | 'expire' | 'intervene' {
+  if (value === undefined || value === '' || value === 'execute') return 'execute';
+  if (value === 'expire' || value === 'intervene') return value;
+  return 'execute';
 }
 
 function trimEnv(name: string): string | undefined {
@@ -33,7 +77,7 @@ function validateRequiredEnvVars(): void {
   if (missing.length > 0) {
     throw new ConfigError(
       `Missing required environment variable(s): ${missing.join(', ')}. ` +
-        'Copy .env.example to .env and set them before starting the listener.'
+        'Copy .env.example to .env and set them before starting the listener.',
     );
   }
 }
@@ -48,6 +92,49 @@ function parseIntegerEnv(name: string, defaultValue: string): number {
   return parsed;
 }
 
+function loadNotificationDefaultTtlSeconds(): number {
+  const rawValue = trimEnv('NOTIFICATION_DEFAULT_TTL_SECONDS') ?? '0';
+  if (!/^\d+$/.test(rawValue)) {
+    throw new ConfigError('NOTIFICATION_DEFAULT_TTL_SECONDS must be a non-negative integer');
+  }
+  const seconds = Number(rawValue);
+  if (!Number.isSafeInteger(seconds) || seconds > Math.floor(8.64e15 / 1000)) {
+    throw new ConfigError(
+      'NOTIFICATION_DEFAULT_TTL_SECONDS must be a supported non-negative integer',
+    );
+  }
+  return seconds;
+}
+
+function loadMaxSchedulingHorizonMs(): number | null {
+  try {
+    return parseMaxSchedulingHorizon(trimEnv('MAX_SCHEDULING_HORIZON'));
+  } catch (error) {
+    throw new ConfigError((error as Error).message);
+  }
+}
+
+function parseStrictIntegerEnv(name: string, defaultValue: string): number {
+  const rawValue = trimEnv(name);
+  if (rawValue !== undefined && !/^-?\d+$/.test(rawValue)) {
+    throw new ConfigError(`${name} must be a valid integer, got "${rawValue}"`);
+  }
+  return parseIntegerEnv(name, defaultValue);
+}
+
+function parseBooleanEnv(name: string, defaultValue: boolean): boolean {
+  const rawValue = trimEnv(name);
+  if (rawValue === undefined) return defaultValue;
+  if (rawValue === 'true') return true;
+  if (rawValue === 'false') return false;
+  throw new ConfigError(`${name} must be either "true" or "false", got "${rawValue}"`);
+}
+
+function parseOptionalIntegerEnv(name: string): number | undefined {
+  const rawValue = trimEnv(name);
+  return rawValue ? parseStrictIntegerEnv(name, rawValue) : undefined;
+}
+
 function parseJsonEnv<T>(name: string, defaultValue: string): T {
   const rawValue = trimEnv(name) ?? defaultValue;
   try {
@@ -57,14 +144,42 @@ function parseJsonEnv<T>(name: string, defaultValue: string): T {
   }
 }
 
+function parseStringListEnv(name: string): string[] {
+  const raw = trimEnv(name);
+  if (!raw) return [];
+  if (raw.startsWith('[') && raw.endsWith(']')) {
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        return parsed.map((item) => String(item).trim()).filter(Boolean);
+      }
+    } catch {
+      throw new ConfigError(`${name} must be valid JSON array of URL strings. Received: ${raw}`);
+    }
+  }
+  return raw
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
 function validateContractAddresses(value: unknown): ContractConfig[] {
   if (!Array.isArray(value)) {
     throw new ConfigError('CONTRACT_ADDRESSES must be a JSON array of contract objects.');
   }
 
+  if (value.length === 0) {
+    throw new ConfigError(
+      'CONTRACT_ADDRESSES is empty. The listener requires at least one contract to monitor. ' +
+        'Add contract configurations or the service will not process any events.',
+    );
+  }
+
   return value.map((item, index) => {
     if (typeof item !== 'object' || item === null) {
-      throw new ConfigError(`CONTRACT_ADDRESSES[${index}] must be an object with address and events.`);
+      throw new ConfigError(
+        `CONTRACT_ADDRESSES[${index}] must be an object with address and events.`,
+      );
     }
 
     const address = (item as any).address;
@@ -76,7 +191,7 @@ function validateContractAddresses(value: unknown): ContractConfig[] {
 
     if (!Array.isArray(events) || events.some((event) => typeof event !== 'string')) {
       throw new ConfigError(
-        `CONTRACT_ADDRESSES[${index}].events must be an array of string event names.`
+        `CONTRACT_ADDRESSES[${index}].events must be an array of string event names.`,
       );
     }
 
@@ -118,9 +233,7 @@ function validateWebhookSecrets(value: unknown): WebhookSecret[] {
 
   return value.map((item, index) => {
     if (typeof item !== 'object' || item === null) {
-      throw new ConfigError(
-        `WEBHOOK_SECRETS[${index}] must be an object with id and secret.`
-      );
+      throw new ConfigError(`WEBHOOK_SECRETS[${index}] must be an object with id and secret.`);
     }
 
     const id = (item as any).id;
@@ -145,9 +258,7 @@ function validateApiKeys(value: unknown): ApiKey[] {
 
   return value.map((item, index) => {
     if (typeof item !== 'object' || item === null) {
-      throw new ConfigError(
-        `API_KEYS[${index}] must be an object with key (and optional name).`
-      );
+      throw new ConfigError(`API_KEYS[${index}] must be an object with key (and optional name).`);
     }
 
     const key = (item as any).key;
@@ -162,19 +273,35 @@ function validateApiKeys(value: unknown): ApiKey[] {
 }
 
 function loadCleanupConfig(): AppCleanupConfig {
+  const processedEventRetentionMs = parseIntegerEnv(
+    'PROCESSED_EVENT_RETENTION_MS',
+    String(30 * 24 * 60 * 60 * 1000),
+  );
+  const executionLogRetentionMs = parseIntegerEnv(
+    'EXECUTION_LOG_RETENTION_MS',
+    String(90 * 24 * 60 * 60 * 1000),
+  );
+  const rateLimitEventRetentionMs = parseIntegerEnv(
+    'RATE_LIMIT_EVENT_RETENTION_MS',
+    String(24 * 60 * 60 * 1000),
+  );
   return {
-    intervalMs: parseIntegerEnv('CLEANUP_INTERVAL_MS', String(60 * 60 * 1000)),
-    notificationRetentionMs: parseIntegerEnv('NOTIFICATION_RETENTION_MS', String(7 * 24 * 60 * 60 * 1000)),
-    rateLimitEventRetentionMs: parseIntegerEnv('RATE_LIMIT_EVENT_RETENTION_MS', String(24 * 60 * 60 * 1000)),
+    enabled: parseBooleanEnv('CLEANUP_ENABLED', true),
+    intervalMs: parseStrictIntegerEnv('CLEANUP_INTERVAL_MS', String(60 * 60 * 1000)),
+    retentionDays: parseStrictIntegerEnv('CLEANUP_RETENTION_DAYS', '30'),
+    retentionOverridesMs: {
+      processedEvents: parseOptionalIntegerEnv('PROCESSED_EVENT_RETENTION_MS'),
+      executionLogs: parseOptionalIntegerEnv('EXECUTION_LOG_RETENTION_MS'),
+      rateLimitEvents: parseOptionalIntegerEnv('RATE_LIMIT_EVENT_RETENTION_MS'),
+    },
+    notificationRetentionMs: parseIntegerEnv(
+      'NOTIFICATION_RETENTION_MS',
+      String(7 * 24 * 60 * 60 * 1000),
+    ),
+    rateLimitEventRetentionMs,
     eventRetentionMs: parseIntegerEnv('EVENT_RETENTION_MS', String(24 * 60 * 60 * 1000)),
-    processedEventRetentionMs: parseIntegerEnv(
-      'PROCESSED_EVENT_RETENTION_MS',
-      String(30 * 24 * 60 * 60 * 1000),
-    ),
-    executionLogRetentionMs: parseIntegerEnv(
-      'EXECUTION_LOG_RETENTION_MS',
-      String(90 * 24 * 60 * 60 * 1000),
-    ),
+    processedEventRetentionMs,
+    executionLogRetentionMs,
   };
 }
 
@@ -189,7 +316,7 @@ function loadAnalyticsConfig(): AnalyticsConfig {
   };
 }
 
-function loadRetrySchedulerConfig(): RetrySchedulerOptions {
+function loadRetrySchedulerConfig(policy: RetryPolicyOptions): RetrySchedulerOptions {
   return {
     enabled: trimEnv('RETRY_SCHEDULER_ENABLED') !== 'false',
     pollIntervalMs: parseIntegerEnv('RETRY_SCHEDULER_POLL_INTERVAL_MS', '15000'),
@@ -200,28 +327,73 @@ function loadRetrySchedulerConfig(): RetrySchedulerOptions {
     multiplier: parseIntegerEnv('RETRY_MULTIPLIER', '2'),
     maxDelayMs: parseIntegerEnv('RETRY_MAX_DELAY_MS', String(60 * 60 * 1000)),
     jitter: trimEnv('RETRY_JITTER') !== 'false',
+    // Policy knobs are owned by the retry policy; fold them in so the scheduler
+    // and the in-memory queues agree on the attempt budget and on which failure
+    // types are worth retrying.
+    maxAttempts: policy.maxAttempts,
+    retryableFailureTypes: policy.retryableFailureTypes,
+    webhookTimeoutMs: parseIntegerEnv('WEBHOOK_TIMEOUT_MS', String(DEFAULT_WEBHOOK_TIMEOUT_MS)),
   };
+}
+
+/**
+ * Load the notification retry policy (#842).
+ *
+ * The delay curve deliberately reuses `RETRY_BASE_DELAY_MS` / `RETRY_MULTIPLIER`
+ * / `RETRY_MAX_DELAY_MS` / `RETRY_JITTER`, which the retry scheduler and the
+ * in-memory retry queue already share, so there is a single knob per concern.
+ *
+ *   RETRY_POLICY_MAX_ATTEMPTS               - hard ceiling on attempts (unset = no ceiling)
+ *   RETRY_POLICY_RETRYABLE_FAILURE_TYPES    - comma-separated eligible failure types
+ */
+function loadRetryPolicyConfig(): RetryPolicyOptions {
+  const rawMaxAttempts = trimEnv('RETRY_POLICY_MAX_ATTEMPTS');
+  const maxAttempts =
+    rawMaxAttempts === undefined || rawMaxAttempts === ''
+      ? undefined
+      : parseIntegerEnv('RETRY_POLICY_MAX_ATTEMPTS', '1');
+
+  let retryableFailureTypes: RetryFailureType[];
+  try {
+    retryableFailureTypes = parseRetryableFailureTypes(
+      trimEnv('RETRY_POLICY_RETRYABLE_FAILURE_TYPES'),
+    ) ?? [...DEFAULT_RETRYABLE_FAILURE_TYPES];
+  } catch (err) {
+    throw new ConfigError(
+      `RETRY_POLICY_RETRYABLE_FAILURE_TYPES is invalid: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
+  }
+
+  return { maxAttempts, retryableFailureTypes };
 }
 
 function loadExpirationConfig(): ExpirationConfig {
   const defaultExpirationMs = parseIntegerEnv('EXPIRATION_DEFAULT_MS', String(24 * 60 * 60 * 1000));
   const perEventTypeExpirationJson = trimEnv('EXPIRATION_PER_EVENT_TYPE');
   let perEventTypeExpiration: Record<string, number> | undefined;
-  
+
   if (perEventTypeExpirationJson) {
     try {
       perEventTypeExpiration = JSON.parse(perEventTypeExpirationJson);
-      if (typeof perEventTypeExpiration !== 'object' || perEventTypeExpiration === null || Array.isArray(perEventTypeExpiration)) {
+      if (
+        typeof perEventTypeExpiration !== 'object' ||
+        perEventTypeExpiration === null ||
+        Array.isArray(perEventTypeExpiration)
+      ) {
         throw new ConfigError('EXPIRATION_PER_EVENT_TYPE must be a valid JSON object');
       }
     } catch (e) {
       if (e instanceof ConfigError) {
         throw e;
       }
-      throw new ConfigError(`EXPIRATION_PER_EVENT_TYPE must be valid JSON. Received: ${perEventTypeExpirationJson}`);
+      throw new ConfigError(
+        `EXPIRATION_PER_EVENT_TYPE must be valid JSON. Received: ${perEventTypeExpirationJson}`,
+      );
     }
   }
-  
+
   return {
     defaultExpirationMs,
     perEventTypeExpiration,
@@ -244,23 +416,102 @@ function loadBackfillConfig(): BackfillConfig {
   };
 }
 
+/**
+ * Load RPC rate limiting configuration for event ingestion.
+ *
+ * RPC_RATE_LIMIT_ENABLED controls whether rate limiting is applied to RPC
+ * requests during event ingestion. This prevents excessive RPC requests and
+ * resource consumption.
+ *
+ * Default: enabled, 10 requests per second, burst of 20, 1s throttle delay.
+ */
+function loadRpcRateLimitConfig(): RpcRateLimitConfig {
+  return {
+    enabled: trimEnv('RPC_RATE_LIMIT_ENABLED') !== 'false',
+    maxRequestsPerSecond: parseIntegerEnv('RPC_RATE_LIMIT_MAX_REQUESTS_PER_SECOND', '10'),
+    burstSize: parseIntegerEnv('RPC_RATE_LIMIT_BURST_SIZE', '20'),
+    throttleDelayMs: parseIntegerEnv('RPC_RATE_LIMIT_THROTTLE_DELAY_MS', '1000'),
+  };
+}
+
+function loadRpcFallbackConfig(fallbackUrls: string[]): RpcFallbackConfig {
+  return {
+    fallbackUrls,
+    failureThreshold: parseIntegerEnv('RPC_FAILURE_THRESHOLD', '3'),
+    cooldownMs: parseIntegerEnv('RPC_COOLDOWN_MS', '60000'),
+    requestTimeoutMs: parseIntegerEnv('RPC_REQUEST_TIMEOUT_MS', '10000'),
+    maxRetries: parseOptionalIntegerEnv('RPC_MAX_RETRIES'),
+  };
+}
+
+function loadCircuitBreakerConfig(): CircuitBreakerConfig {
+  return {
+    failureThreshold: parseIntegerEnv('CIRCUIT_BREAKER_FAILURE_THRESHOLD', '5'),
+    recoveryTimeoutMs: parseIntegerEnv('CIRCUIT_BREAKER_RECOVERY_TIMEOUT_MS', '60000'),
+    successThreshold: parseIntegerEnv('CIRCUIT_BREAKER_SUCCESS_THRESHOLD', '2'),
+  };
+}
+
+function loadEventBatchingConfig(): EventBatchingConfig {
+  return {
+    enabled: parseBooleanEnv('EVENT_BATCHING_ENABLED', false),
+    maxBatchSize: parseIntegerEnv('EVENT_BATCHING_MAX_SIZE', '50'),
+    windowMs: parseStrictIntegerEnv('EVENT_BATCHING_WINDOW_MS', '5000'),
+  };
+}
+
+function loadDigestConfig(): DigestConfig {
+  return {
+    enabled: parseBooleanEnv('DIGEST_ENABLED', false),
+    intervalMs: parseStrictIntegerEnv('DIGEST_INTERVAL_MS', String(60 * 60 * 1000)),
+    maxEventsPerDigest: parseIntegerEnv('DIGEST_MAX_EVENTS', '100'),
+  };
+}
+
+function loadLocalizationConfig(): LocalizationConfig {
+  return {
+    defaultLocale: (trimEnv('DEFAULT_LOCALE') || DEFAULT_LOCALE).toLowerCase(),
+  };
+}
+
 export function loadConfig(): Config {
   validateRequiredEnvVars();
 
   const discord = loadDiscordConfig();
+  const retryPolicy = loadRetryPolicyConfig();
   const rawContractAddresses = parseJsonEnv<unknown>('CONTRACT_ADDRESSES', '[]');
   const rawWebhookSecrets = parseJsonEnv<unknown>('WEBHOOK_SECRETS', '[]');
   const rawApiKeys = parseJsonEnv<unknown>('API_KEYS', '[]');
   const clientOverrides = parseJsonEnv<Record<string, { maxRequests: number; windowMs?: number }>>(
     'RATE_LIMIT_CLIENT_OVERRIDES',
-    '{}'
+    '{}',
   );
+
+  const explicitRpcUrl = trimEnv('STELLAR_RPC_URL');
+  const allRpcUrlsFromEnv = parseStringListEnv('STELLAR_RPC_URLS');
+  const explicitFallbacks = parseStringListEnv('STELLAR_RPC_FALLBACK_URLS');
+
+  const primaryRpcUrl =
+    explicitRpcUrl || allRpcUrlsFromEnv[0] || 'https://soroban-testnet.stellar.org:443';
+
+  const combinedFallbacks = Array.from(
+    new Set([
+      ...explicitFallbacks,
+      ...(allRpcUrlsFromEnv.length > 1 ? allRpcUrlsFromEnv.slice(1) : []),
+    ]),
+  ).filter((url) => url !== primaryRpcUrl);
+
+  const rpcFallback = loadRpcFallbackConfig(combinedFallbacks);
+  const stellarRpcUrls = [primaryRpcUrl, ...combinedFallbacks];
 
   return {
     stellarNetwork: trimEnv('STELLAR_NETWORK') || 'testnet',
-    stellarRpcUrl:
-      trimEnv('STELLAR_RPC_URL') || 'https://soroban-testnet.stellar.org:443',
-    stellarNetworkPassphrase: trimEnv('STELLAR_NETWORK_PASSPHRASE') || 'Test SDF Network ; September 2015',
+    stellarRpcUrl: primaryRpcUrl,
+    stellarRpcFallbackUrls: combinedFallbacks,
+    stellarRpcUrls,
+    rpcFallback,
+    stellarNetworkPassphrase:
+      trimEnv('STELLAR_NETWORK_PASSPHRASE') || 'Test SDF Network ; September 2015',
     contractAddresses: validateContractAddresses(rawContractAddresses),
     pollIntervalMs: parseIntegerEnv('POLL_INTERVAL_MS', '30000'),
     eventBatchSize: parseIntegerEnv('EVENT_BATCH_SIZE', '100'),
@@ -271,10 +522,13 @@ export function loadConfig(): Config {
     databasePath: trimEnv('DATABASE_PATH') || './data/notifications.db',
     discord,
     retryQueue: {
-      baseDelayMs: parseIntegerEnv('RETRY_BASE_DELAY_MS', '5000'),
-      maxRetries: parseIntegerEnv('RETRY_MAX_RETRIES', '5'),
-      multiplier: parseIntegerEnv('RETRY_MULTIPLIER', '2'),
-      jitter: trimEnv('RETRY_JITTER') !== 'false',
+      backoff: {
+        initialDelayMs: parseIntegerEnv('RETRY_BASE_DELAY_MS', '5000'),
+        maxRetries: parseIntegerEnv('RETRY_MAX_RETRIES', '5'),
+        multiplier: parseIntegerEnv('RETRY_MULTIPLIER', '2'),
+        jitter: trimEnv('RETRY_JITTER') !== 'false',
+        maxDelayMs: parseIntegerEnv('RETRY_MAX_DELAY_MS', String(60 * 60 * 1000)),
+      },
       processIntervalMs: parseIntegerEnv('RETRY_QUEUE_PROCESS_INTERVAL_MS', '5000'),
     },
     eventQueue: {
@@ -291,9 +545,12 @@ export function loadConfig(): Config {
       lockTimeoutMs: parseIntegerEnv('SCHEDULER_LOCK_TIMEOUT_MS', '60000'),
       processorId: trimEnv('SCHEDULER_PROCESSOR_ID'),
       batchSize: parseIntegerEnv('SCHEDULER_BATCH_SIZE', '10'),
+      concurrency: parseIntegerEnv('WORKER_CONCURRENCY', '1'),
       timingBufferMs: parseIntegerEnv('SCHEDULER_TIMING_BUFFER_MS', '60000'),
+      missedSchedulePolicy: parseMissedSchedulePolicy(trimEnv('SCHEDULER_MISSED_POLICY')),
     },
-    retryScheduler: loadRetrySchedulerConfig(),
+    retryScheduler: loadRetrySchedulerConfig(retryPolicy),
+    retryPolicy,
     rateLimit: {
       enabled: trimEnv('RATE_LIMIT_ENABLED') !== 'false',
       windowMs: parseIntegerEnv('RATE_LIMIT_WINDOW_MS', '60000'),
@@ -303,9 +560,15 @@ export function loadConfig(): Config {
     cleanup: loadCleanupConfig(),
     analytics: loadAnalyticsConfig(),
     expiration: loadExpirationConfig(),
+    notificationDefaultTtlSeconds: loadNotificationDefaultTtlSeconds(),
     backfill: loadBackfillConfig(),
+    rpcRateLimit: loadRpcRateLimitConfig(),
     logging: loadLoggingConfig(),
     api: loadApiConfig(),
+    circuitBreaker: loadCircuitBreakerConfig(),
+    eventBatching: loadEventBatchingConfig(),
+    digest: loadDigestConfig(),
+    localization: loadLocalizationConfig(),
   };
 }
 
@@ -321,9 +584,7 @@ function loadLoggingConfig(): LoggingConfig {
     level: trimEnv('LOG_LEVEL') || 'info',
     // Preserves the previous implicit behaviour when LOG_FORMAT is unset:
     // JSON in production, human-readable elsewhere.
-    format:
-      trimEnv('LOG_FORMAT') ||
-      (process.env.NODE_ENV === 'production' ? 'json' : 'pretty'),
+    format: trimEnv('LOG_FORMAT') || (process.env.NODE_ENV === 'production' ? 'json' : 'pretty'),
   };
 }
 
@@ -358,8 +619,42 @@ export function validateConfig(config: Config): void {
         );
       }
     } catch {
+      errors.push(`STELLAR_RPC_URL is not a valid URL (received: "${config.stellarRpcUrl}").`);
+    }
+  }
+
+  // Validate Fallback RPC URLs
+  if (config.stellarRpcFallbackUrls && Array.isArray(config.stellarRpcFallbackUrls)) {
+    for (const [idx, fbUrl] of config.stellarRpcFallbackUrls.entries()) {
+      if (!fbUrl || typeof fbUrl !== 'string' || fbUrl.trim() === '') {
+        errors.push(`Fallback RPC URL at index ${idx} must be a non-empty string.`);
+        continue;
+      }
+      try {
+        const url = new URL(fbUrl);
+        if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+          errors.push(
+            `Fallback RPC URL at index ${idx} must use HTTP or HTTPS protocol (received: "${url.protocol}").`,
+          );
+        }
+      } catch {
+        errors.push(`Fallback RPC URL at index ${idx} is not a valid URL (received: "${fbUrl}").`);
+      }
+    }
+  }
+
+  if (config.rpcFallback) {
+    if (config.rpcFallback.failureThreshold < 1) {
       errors.push(
-        `STELLAR_RPC_URL is not a valid URL (received: "${config.stellarRpcUrl}").`,
+        `RPC_FAILURE_THRESHOLD must be >= 1 (received: ${config.rpcFallback.failureThreshold}).`,
+      );
+    }
+    if (config.rpcFallback.cooldownMs < 0) {
+      errors.push(`RPC_COOLDOWN_MS must be >= 0 (received: ${config.rpcFallback.cooldownMs}).`);
+    }
+    if (config.rpcFallback.requestTimeoutMs < 500) {
+      errors.push(
+        `RPC_REQUEST_TIMEOUT_MS must be at least 500 ms (received: ${config.rpcFallback.requestTimeoutMs}).`,
       );
     }
   }
@@ -404,22 +699,16 @@ export function validateConfig(config: Config): void {
   }
 
   if (config.maxReconnectAttempts < 1) {
-    errors.push(
-      `MAX_RECONNECT_ATTEMPTS must be >= 1 (received: ${config.maxReconnectAttempts}).`,
-    );
+    errors.push(`MAX_RECONNECT_ATTEMPTS must be >= 1 (received: ${config.maxReconnectAttempts}).`);
   }
 
   if (config.reconnectDelayMs < 0) {
-    errors.push(
-      `RECONNECT_DELAY_MS must be >= 0 (received: ${config.reconnectDelayMs}).`,
-    );
+    errors.push(`RECONNECT_DELAY_MS must be >= 0 (received: ${config.reconnectDelayMs}).`);
   }
 
   // ── API server ─────────────────────────────────────────────────────────────
   if (config.eventsApiPort < 1 || config.eventsApiPort > 65535) {
-    errors.push(
-      `EVENTS_API_PORT must be between 1 and 65535 (received: ${config.eventsApiPort}).`,
-    );
+    errors.push(`EVENTS_API_PORT must be between 1 and 65535 (received: ${config.eventsApiPort}).`);
   }
 
   // Validate CORS configuration during startup (#689)
@@ -448,7 +737,7 @@ export function validateConfig(config: Config): void {
           'Add contract configurations or the service will not process any events.',
       );
     }
-    
+
     config.contractAddresses.forEach((contract, index) => {
       if (!contract.address || typeof contract.address !== 'string') {
         errors.push(`CONTRACT_ADDRESSES[${index}].address must be a non-empty string.`);
@@ -468,7 +757,7 @@ export function validateConfig(config: Config): void {
           );
         }
       }
-      
+
       if (!Array.isArray(contract.events) || contract.events.length === 0) {
         errors.push(
           `CONTRACT_ADDRESSES[${index}].events must be a non-empty array of event names.`,
@@ -523,8 +812,26 @@ export function validateConfig(config: Config): void {
           'SCHEDULER_POLL_INTERVAL_MS.',
       );
     }
+    if (config.scheduler.concurrency < 1) {
+      errors.push(
+        `WORKER_CONCURRENCY must be >= 1 (received: ${config.scheduler.concurrency}). ` +
+          'Set the number of notifications processed concurrently per poll cycle.',
+      );
+    }
     if (config.scheduler.batchSize < 1) {
       errors.push(`SCHEDULER_BATCH_SIZE must be >= 1 (received: ${config.scheduler.batchSize}).`);
+    }
+    const missedPolicy = trimEnv('SCHEDULER_MISSED_POLICY');
+    if (
+      missedPolicy !== undefined &&
+      missedPolicy !== '' &&
+      missedPolicy !== 'execute' &&
+      missedPolicy !== 'expire' &&
+      missedPolicy !== 'intervene'
+    ) {
+      errors.push(
+        `SCHEDULER_MISSED_POLICY must be execute, expire, or intervene (received: ${missedPolicy}).`,
+      );
     }
   }
 
@@ -558,6 +865,44 @@ export function validateConfig(config: Config): void {
         `RETRY_SCHEDULER_BATCH_SIZE must be >= 1 (received: ${config.retryScheduler.batchSize}).`,
       );
     }
+    if (config.retryScheduler.webhookTimeoutMs < 1) {
+      errors.push(
+        `WEBHOOK_TIMEOUT_MS must be >= 1 ms (received: ${config.retryScheduler.webhookTimeoutMs}).`,
+      );
+    } else if (config.retryScheduler.webhookTimeoutMs > MAX_WEBHOOK_TIMEOUT_MS) {
+      errors.push(
+        `WEBHOOK_TIMEOUT_MS must be <= ${MAX_WEBHOOK_TIMEOUT_MS} ms ` +
+          `(received: ${config.retryScheduler.webhookTimeoutMs}).`,
+      );
+    }
+  }
+
+  // ── Retry policy (#842) ───────────────────────────────────────────────────
+  if (config.retryPolicy) {
+    if (config.retryPolicy.maxAttempts !== undefined && config.retryPolicy.maxAttempts < 1) {
+      errors.push(
+        `RETRY_POLICY_MAX_ATTEMPTS must be >= 1 (received: ${config.retryPolicy.maxAttempts}). ` +
+          'A value of 1 disables retries entirely.',
+      );
+    }
+    if (!Array.isArray(config.retryPolicy.retryableFailureTypes)) {
+      errors.push('RETRY_POLICY_RETRYABLE_FAILURE_TYPES must be a list of failure types.');
+    } else if (config.retryPolicy.retryableFailureTypes.length === 0) {
+      errors.push(
+        'RETRY_POLICY_RETRYABLE_FAILURE_TYPES must list at least one failure type. ' +
+          'Omit the variable entirely to use the default transient set.',
+      );
+    } else {
+      const unknownTypes = config.retryPolicy.retryableFailureTypes.filter(
+        (type) => !RETRY_FAILURE_TYPES.includes(type),
+      );
+      if (unknownTypes.length > 0) {
+        errors.push(
+          `RETRY_POLICY_RETRYABLE_FAILURE_TYPES contains unknown failure type(s): ` +
+            `${unknownTypes.join(', ')}. Supported values: ${RETRY_FAILURE_TYPES.join(', ')}.`,
+        );
+      }
+    }
   }
 
   // ── Rate limiting ──────────────────────────────────────────────────────────
@@ -577,9 +922,7 @@ export function validateConfig(config: Config): void {
   // ── Analytics ─────────────────────────────────────────────────────────────
   if (config.analytics) {
     if (config.analytics.maxRecords < 1) {
-      errors.push(
-        `ANALYTICS_MAX_RECORDS must be >= 1 (received: ${config.analytics.maxRecords}).`,
-      );
+      errors.push(`ANALYTICS_MAX_RECORDS must be >= 1 (received: ${config.analytics.maxRecords}).`);
     }
     if (config.analytics.bucketSizeMs < 60_000) {
       errors.push(
@@ -615,6 +958,11 @@ export function validateConfig(config: Config): void {
           `(received: ${config.cleanup.processedEventRetentionMs}).`,
       );
     }
+    if (config.cleanup.retentionDays < 1) {
+      errors.push(
+        `CLEANUP_RETENTION_DAYS must be >= 1 (received: ${config.cleanup.retentionDays}).`,
+      );
+    }
   }
 
   // ── Event queue ────────────────────────────────────────────────────────────
@@ -626,12 +974,64 @@ export function validateConfig(config: Config): void {
 
   // ── Backfill ───────────────────────────────────────────────────────────────
   if (config.backfill) {
-    if (config.backfill.maxLedgers < 0) {
+    if (config.backfill.maxLedgers !== undefined && config.backfill.maxLedgers < 0) {
       errors.push(
         `BACKFILL_MAX_LEDGERS must be >= 0 (0 = unlimited). ` +
           `(received: ${config.backfill.maxLedgers}).`,
       );
     }
+  }
+
+  // ── RPC Rate Limiting ───────────────────────────────────────────────────────
+  if (config.rpcRateLimit) {
+    if (config.rpcRateLimit.maxRequestsPerSecond < 1) {
+      errors.push(
+        `RPC_RATE_LIMIT_MAX_REQUESTS_PER_SECOND must be >= 1 ` +
+          `(received: ${config.rpcRateLimit.maxRequestsPerSecond}).`,
+      );
+    }
+    if (config.rpcRateLimit.burstSize < 1) {
+      errors.push(
+        `RPC_RATE_LIMIT_BURST_SIZE must be >= 1 ` + `(received: ${config.rpcRateLimit.burstSize}).`,
+      );
+    }
+    if (config.rpcRateLimit.throttleDelayMs < 0) {
+      errors.push(
+        `RPC_RATE_LIMIT_THROTTLE_DELAY_MS must be >= 0 ` +
+          `(received: ${config.rpcRateLimit.throttleDelayMs}).`,
+      );
+    }
+  }
+
+  if (config.eventBatching) {
+    if (config.eventBatching.maxBatchSize < 1) {
+      errors.push(
+        `EVENT_BATCHING_MAX_SIZE must be >= 1 (received: ${config.eventBatching.maxBatchSize}).`,
+      );
+    }
+    if (config.eventBatching.windowMs < 0) {
+      errors.push(
+        `EVENT_BATCHING_WINDOW_MS must be >= 0 (received: ${config.eventBatching.windowMs}).`,
+      );
+    }
+  }
+
+  if (config.digest) {
+    if (config.digest.intervalMs < 1000) {
+      errors.push(`DIGEST_INTERVAL_MS must be >= 1000 ms (received: ${config.digest.intervalMs}).`);
+    }
+    if (config.digest.maxEventsPerDigest < 1) {
+      errors.push(
+        `DIGEST_MAX_EVENTS must be >= 1 (received: ${config.digest.maxEventsPerDigest}).`,
+      );
+    }
+  }
+
+  if (config.localization && !SUPPORTED_LOCALES.includes(config.localization.defaultLocale)) {
+    errors.push(
+      `DEFAULT_LOCALE must be one of: ${SUPPORTED_LOCALES.join(', ')} ` +
+        `(received: "${config.localization.defaultLocale}").`,
+    );
   }
 
   // ── Logging ────────────────────────────────────────────────────────────────
@@ -695,17 +1095,16 @@ export function validateConfig(config: Config): void {
       required: false,
     },
     // Webhook signing secrets
-    ...((config.webhookSecrets ?? []).map((ws, i) => ({
+    ...(config.webhookSecrets ?? []).map((ws, i) => ({
       fieldName: `WEBHOOK_SECRETS[${i}].secret`,
       value: ws.secret,
       required: true,
-    }))),
+    })),
     // API keys
-    ...((config.apiKeys ?? []).map((ak, i) => ({
+    ...(config.apiKeys ?? []).map((ak, i) => ({
       fieldName: `API_KEYS[${i}].key`,
       value: ak.key,
       required: true,
-    }))),
+    })),
   ]);
 }
-

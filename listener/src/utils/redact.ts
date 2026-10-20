@@ -72,14 +72,44 @@ export const SENSITIVE_KEYS: ReadonlyArray<string> = [
   'session_id',
   'discordwebhookurl',
   'discord_webhook_url',
+  // The Discord webhook id + token pair together form the credential.
+  'discordwebhook',
   'whsec',
+  // Webhook HMAC signatures (e.g. X-Webhook-Signature) authenticate requests.
+  'signature',
+  // Stellar secret seeds / wallet recovery material.
+  'seed',
+  'mnemonic',
 ];
 
 // Regex for HTTP(S) URLs with embedded credentials: https://user:pass@host
 const URL_CREDENTIALS_RE = /(https?:\/\/)[^:/?#\s]+:[^@\s]+@/gi;
 
-// Regex for Authorization / Bearer / Token header values
-const BEARER_HEADER_RE = /\b(bearer|token)\s+\S+/gi;
+// Regex for Authorization / Bearer / Token / Basic header values
+const BEARER_HEADER_RE = /\b(bearer|token|basic)\s+\S+/gi;
+
+// Discord webhook URLs carry the credential in the path:
+//   https://discord.com/api/webhooks/<id>/<token>
+const DISCORD_WEBHOOK_RE =
+  /(https?:\/\/(?:[\w-]+\.)?discord(?:app)?\.com\/api(?:\/v\d+)?\/webhooks\/)[^\s?#"']+/gi;
+
+// Slack incoming-webhook URLs: https://hooks.slack.com/services/T../B../<token>
+const SLACK_WEBHOOK_RE = /(https?:\/\/hooks\.slack\.com\/(?:services|workflows|triggers)\/)[^\s?#"']+/gi;
+
+// Sensitive query-string parameters inside any URL-ish string:
+//   ...?token=abc  ...&api_key=abc  ...&signature=abc
+const SENSITIVE_QUERY_PARAM_RE =
+  /([?&][\w-]*(?:token|secret|password|passwd|api[_-]?key|apikey|signature|sig|auth|credential|key)=)[^&\s#"']+/gi;
+
+// Stellar secret seeds: 'S' + 55 base32 characters.
+const STELLAR_SECRET_SEED_RE = /\bS[A-Z2-7]{55}\b/g;
+
+// Prefixed webhook secrets (whsec_...) and hex HMAC signatures (sha256=...).
+const WHSEC_RE = /\bwhsec_[A-Za-z0-9+/=_-]+/g;
+const HMAC_SIGNATURE_RE = /\bsha(?:1|256|512)=[0-9a-f]{16,}/gi;
+
+/** Guard against deeply nested or cyclic structures in the logging path. */
+const MAX_REDACTION_DEPTH = 10;
 
 /**
  * Return `true` when the given object key name should be redacted.
@@ -99,14 +129,23 @@ export function isSensitiveKey(key: string): boolean {
 /**
  * Redact credential patterns from a plain string value:
  *   - URL-embedded credentials (`user:pass@host`)
- *   - Bearer / Token auth header values
+ *   - Discord / Slack webhook URL tokens (the credential lives in the path)
+ *   - Sensitive query-string parameters (`?token=`, `&api_key=`, …)
+ *   - Bearer / Token / Basic auth header values
+ *   - Stellar secret seeds, `whsec_` secrets and `sha256=` HMAC signatures
  *
  * Returns the sanitized string or the original if no patterns match.
  */
 export function redactString(value: string): string {
   let result = value;
   result = result.replace(URL_CREDENTIALS_RE, `$1${REDACTED_PLACEHOLDER}@`);
+  result = result.replace(DISCORD_WEBHOOK_RE, `$1${REDACTED_PLACEHOLDER}`);
+  result = result.replace(SLACK_WEBHOOK_RE, `$1${REDACTED_PLACEHOLDER}`);
+  result = result.replace(SENSITIVE_QUERY_PARAM_RE, `$1${REDACTED_PLACEHOLDER}`);
   result = result.replace(BEARER_HEADER_RE, `$1 ${REDACTED_PLACEHOLDER}`);
+  result = result.replace(STELLAR_SECRET_SEED_RE, REDACTED_PLACEHOLDER);
+  result = result.replace(WHSEC_RE, REDACTED_PLACEHOLDER);
+  result = result.replace(HMAC_SIGNATURE_RE, REDACTED_PLACEHOLDER);
   return result;
 }
 
@@ -123,27 +162,86 @@ export function redactString(value: string): string {
  * The input is never mutated.
  */
 export function redactValue(value: unknown): unknown {
+  return redactInner(value, 0, new WeakSet<object>(), false);
+}
+
+/**
+ * Inside a sensitive container (e.g. `apiKeys: [{ name, key }]`) every string
+ * leaf is treated as a secret except these identifier-like fields, which are
+ * kept so logs stay useful (`webhookSecrets[0].id`, `auth.clientId`).
+ */
+const IDENTIFIER_KEYS = new Set([
+  'id', 'name', 'label', 'type', 'kind', 'keyid', 'kid', 'clientid',
+  'username', 'user', 'description', 'provider', 'enabled', 'createdat',
+]);
+
+function isIdentifierKey(key: string): boolean {
+  return IDENTIFIER_KEYS.has(key.toLowerCase().replace(/[-_\s]/g, ''));
+}
+
+function redactInner(
+  value: unknown,
+  depth: number,
+  seen: WeakSet<object>,
+  inSensitiveContainer: boolean,
+): unknown {
   if (value === null || value === undefined) {
     return value;
-  }
-
-  if (Array.isArray(value)) {
-    return value.map((item) => redactValue(item));
-  }
-
-  if (typeof value === 'object') {
-    const redacted: Record<string, unknown> = {};
-    for (const [key, val] of Object.entries(value as Record<string, unknown>)) {
-      redacted[key] = isSensitiveKey(key) ? REDACTED_PLACEHOLDER : redactValue(val);
-    }
-    return redacted;
   }
 
   if (typeof value === 'string') {
     return redactString(value);
   }
 
-  return value;
+  if (typeof value !== 'object') {
+    return value;
+  }
+
+  // Logging must never take the service down: bound depth and break cycles.
+  if (depth >= MAX_REDACTION_DEPTH) return '[Truncated]';
+  if (seen.has(value)) return '[Circular]';
+  seen.add(value);
+
+  try {
+    if (Array.isArray(value)) {
+      return value.map((item) =>
+        inSensitiveContainer && typeof item === 'string'
+          ? REDACTED_PLACEHOLDER
+          : redactInner(item, depth + 1, seen, inSensitiveContainer),
+      );
+    }
+
+    // Errors have non-enumerable fields; keep the useful ones, redacted.
+    if (value instanceof Error) {
+      return {
+        name: value.name,
+        message: redactString(value.message),
+        ...(value.stack ? { stack: redactString(value.stack) } : {}),
+      };
+    }
+
+    const redacted: Record<string, unknown> = {};
+    for (const [key, val] of Object.entries(value as Record<string, unknown>)) {
+      const sensitive = isSensitiveKey(key);
+      const isContainer = val !== null && typeof val === 'object' && !(val instanceof Error);
+
+      if (isContainer) {
+        // A sensitive *container* (e.g. `auth: { clientId, clientSecret }`):
+        // recurse so secret leaves are masked but public ids stay useful.
+        redacted[key] = redactInner(val, depth + 1, seen, inSensitiveContainer || sensitive);
+      } else if (sensitive) {
+        redacted[key] = REDACTED_PLACEHOLDER;
+      } else if (inSensitiveContainer && typeof val === 'string' && !isIdentifierKey(key)) {
+        // e.g. the `key` in `apiKeys: [{ name, key }]`
+        redacted[key] = REDACTED_PLACEHOLDER;
+      } else {
+        redacted[key] = redactInner(val, depth + 1, seen, inSensitiveContainer);
+      }
+    }
+    return redacted;
+  } finally {
+    seen.delete(value);
+  }
 }
 
 /**

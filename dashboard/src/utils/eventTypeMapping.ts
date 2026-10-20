@@ -267,14 +267,10 @@ export const EVENT_TYPE_PRESENTATIONS: Record<string, EventTypePresentation> = {
 };
 
 /**
- * Returns centralized presentation metadata for any given event type or event name.
- * Uses a safe fallback if the event type is unsupported or missing.
+ * Looks up a catalogued presentation, matching the key case-insensitively.
+ * Returns `undefined` when the event type is not part of the known catalog.
  */
-export function getEventTypePresentation(eventType?: string | null): EventTypePresentation {
-  if (!eventType) {
-    return UNKNOWN_EVENT_TYPE_PRESENTATION;
-  }
-
+function findKnownPresentation(eventType: string): EventTypePresentation | undefined {
   // Exact match first
   if (EVENT_TYPE_PRESENTATIONS[eventType]) {
     return EVENT_TYPE_PRESENTATIONS[eventType];
@@ -288,7 +284,40 @@ export function getEventTypePresentation(eventType?: string | null): EventTypePr
     }
   }
 
-  // Safe fallback
+  return undefined;
+}
+
+/**
+ * Returns true only when the event type has a dedicated presentation mapping.
+ *
+ * Unknown event types (new contracts, or a listener that is ahead of the
+ * dashboard build) resolve to `false` so callers can render an explicit
+ * fallback that keeps the raw payload inspectable (issue #612).
+ */
+export function isKnownEventType(eventType?: string | null): boolean {
+  if (!eventType) {
+    return false;
+  }
+
+  return findKnownPresentation(eventType) !== undefined;
+}
+
+/**
+ * Returns centralized presentation metadata for any given event type or event name.
+ * Uses a safe fallback if the event type is unsupported or missing.
+ */
+export function getEventTypePresentation(eventType?: string | null): EventTypePresentation {
+  if (!eventType) {
+    return UNKNOWN_EVENT_TYPE_PRESENTATION;
+  }
+
+  const known = findKnownPresentation(eventType);
+  if (known) {
+    return known;
+  }
+
+  // Safe fallback: keep the raw event type as the label so an unknown event
+  // remains identifiable while the badge falls back to neutral styling.
   return {
     ...UNKNOWN_EVENT_TYPE_PRESENTATION,
     label: eventType,

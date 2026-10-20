@@ -1,0 +1,63 @@
+name: Listener Node.js compatibility
+
+on:
+  pull_request:
+    paths: ['listener/**', '.github/workflows/listener-node-compatibility.yml']
+  push:
+    branches: [main]
+    paths: ['listener/**', '.github/workflows/listener-node-compatibility.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  compatibility:
+    name: Listener / Node ${{ matrix.node }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['22', '24']
+    defaults:
+      run:
+        working-directory: listener
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+          cache-dependency-path: listener/package-lock.json
+      - name: Record runtime and dependency installation
+        id: install
+        run: |
+          set -o pipefail
+          mkdir -p reports/node-compatibility
+          node --version | tee reports/node-compatibility/node.txt
+          npm --version | tee reports/node-compatibility/npm.txt
+          npm ci 2>&1 | tee reports/node-compatibility/install.log
+      - name: Build listener
+        id: build
+        run: |
+          set -o pipefail
+          npm run build 2>&1 | tee reports/node-compatibility/build.log
+      - name: Run notification processing tests
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: |
+          set -o pipefail
+          npm test -- --ci --runInBand src/__tests__/smoke/notification-pipeline.smoke.test.ts src/services/event-normalization.test.ts src/services/notification-claim-lease.test.ts 2>&1 | tee reports/node-compatibility/tests.log
+      - name: Exercise emitted JavaScript and real runtime dependencies
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: |
+          set -o pipefail
+          npm run test:runtime 2>&1 | tee reports/node-compatibility/runtime.log
+      - name: Upload runtime-specific diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: listener-node-${{ matrix.node }}
+          path: listener/reports/node-compatibility/
+          if-no-files-found: warn

@@ -59,7 +59,6 @@ const testConfig: Config = {
   reconnectDelayMs: 100,
   eventsApiPort: 8787,
   eventsApiCorsOrigin: 'http://localhost:5173',
-  maxPayloadSizeBytes: 64 * 1024,
 };
 
 function createMockEvent(
@@ -728,7 +727,6 @@ describe('EventSubscriber', () => {
       expect(preferenceStore.isCategoryEnabled).toHaveBeenCalledWith('global', 'discord');
     });
   });
-});
 
   describe('notification expiration (Task 3: Requirements 2.1, 2.2, 2.3)', () => {
     const DEFAULT_EXPIRATION_MS = 24 * 60 * 60 * 1000; // 24 hours
@@ -926,8 +924,9 @@ describe('EventSubscriber', () => {
         receivedAt: fastEventExpiredTime,
       });
       const slowEvent = createMockEvent({
-        id: 'slow-expired',
-        receivedAt: slowEventExpiredTime,
+        id: 'slow-not-expired',
+        receivedAt: NOW - 60 * 60 * 1000, // 1 hour ago (within default 24h)
+        topic: [xdr.ScVal.scvSymbol('OtherEvent')],
       });
 
       // First call returns fast event, second returns slow event
@@ -965,8 +964,9 @@ describe('EventSubscriber', () => {
         })
       );
 
-      // Reset mock counters
-      jest.clearAllMocks();
+      // Reset mock counters without clearing mockGetEvents implementation
+      mockLogger.info.mockClear();
+      mockLogger.warn.mockClear();
 
       // Second check - slow event should NOT be expired (uses default 24h)
       await (subscriber as any).checkForEvents();

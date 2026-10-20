@@ -2,7 +2,7 @@ import { jest, describe, it, expect, beforeEach } from '@jest/globals';
 import { xdr } from '@stellar/stellar-sdk';
 import * as StellarSDK from '@stellar/stellar-sdk';
 import { DiscordNotificationService, sanitizeForDiscord } from './discord-notification';
-import { NotificationDeduplicator } from './notification-deduplicator';
+import { NotificationDeduplicator, generateFingerprint } from './notification-deduplicator';
 
 const mockFetch = jest.fn() as any;
 global.fetch = mockFetch;
@@ -13,21 +13,24 @@ jest.mock('../utils/logger', () => ({
     info: jest.fn(),
     error: jest.fn(),
     warn: jest.fn(),
+    debug: jest.fn(),
   },
 }));
+
+beforeEach(() => {
+  jest.clearAllMocks();
+});
 
 describe('DiscordNotificationService', () => {
   const mockConfig = {
     webhookUrl: 'https://discord.com/api/webhooks/123/abc',
     webhookId: '123',
+    retryCount: 0,
+    backoffBaseSeconds: 0,
   };
 
-  beforeEach(() => {
-    jest.clearAllMocks();
-  });
-
   function createMockEvent(
-    overrides: Partial<StellarSDK.rpc.Api.EventResponse> = {}
+    overrides: Partial<StellarSDK.rpc.Api.EventResponse> = {},
   ): StellarSDK.rpc.Api.EventResponse {
     return {
       id: 'event-123',
@@ -112,7 +115,7 @@ describe('DiscordNotificationService', () => {
         expect.objectContaining({
           webhookId: mockConfig.webhookId,
           timeoutMs: 100,
-        })
+        }),
       );
       expect(service.getMetrics().timeoutCount).toBe(1);
     });
@@ -132,7 +135,7 @@ describe('DiscordNotificationService', () => {
       expect(mockFetch).toHaveBeenCalledTimes(1);
       expect(secondResult).toBe(true);
       expect(service.getDeduplicationMetrics()).toEqual(
-        expect.objectContaining({ skippedDuplicates: 1, cacheSize: 1 })
+        expect.objectContaining({ skippedDuplicates: 1, cacheSize: 1 }),
       );
     });
 
@@ -152,10 +155,9 @@ describe('DiscordNotificationService', () => {
         expect.objectContaining({
           eventId: 'event-dup-log',
           contractAddress: 'CA123',
-        })
+        }),
       );
     });
-
 
     it('allows the same notification request after the configured window expires', async () => {
       mockFetch.mockResolvedValue({ ok: true });
@@ -173,7 +175,7 @@ describe('DiscordNotificationService', () => {
       expect(result).toBe(true);
       expect(mockFetch).toHaveBeenCalledTimes(2);
       expect(service.getDeduplicationMetrics()).toEqual(
-        expect.objectContaining({ acceptedRequests: 2, skippedDuplicates: 1 })
+        expect.objectContaining({ acceptedRequests: 2, skippedDuplicates: 1 }),
       );
     });
 
@@ -194,7 +196,12 @@ describe('DiscordNotificationService', () => {
 
     it('does not mark an event as sent when the webhook call fails', async () => {
       mockFetch
-        .mockResolvedValueOnce({ ok: false, status: 500, statusText: 'Error', text: () => Promise.resolve('') })
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 500,
+          statusText: 'Error',
+          text: () => Promise.resolve(''),
+        })
         .mockResolvedValueOnce({ ok: true });
 
       const service = new DiscordNotificationService(mockConfig);
@@ -220,7 +227,7 @@ describe('DiscordNotificationService', () => {
       await service.sendEventNotification(mockEvent, mockContractConfig);
 
       expect(deduplicator.size()).toBe(1);
-      expect(deduplicator.isDuplicate('CA123:event-injected')).toBe(true);
+      expect(deduplicator.isDuplicate(generateFingerprint('event-injected', 'CA123'))).toBe(true);
     });
   });
 
@@ -404,7 +411,7 @@ describe('sanitizeForDiscord', () => {
 
   it('removes multiple mentions in one string', () => {
     expect(sanitizeForDiscord('@everyone and @here')).toBe(
-      '[mention removed] and [mention removed]'
+      '[mention removed] and [mention removed]',
     );
   });
 

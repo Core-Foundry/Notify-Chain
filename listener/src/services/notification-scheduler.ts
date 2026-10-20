@@ -10,6 +10,10 @@ import { getWorkerManager } from './worker-manager';
 import { getJobMonitor } from './job-monitor';
 import { ProviderRegistry, getProviderRegistry } from './provider-registry';
 import { verifyPayloadIntegrity } from '../utils/payload-integrity';
+import { DeliveryReceiptRepository } from './delivery-receipt-repository';
+import { DeliveryResult } from '../types/provider-capabilities';
+import { NotificationClaimLease, startClaimLease } from './notification-claim-lease';
+import { nextLocalOccurrence, readLocalSchedule } from './local-schedule';
 
 /**
  * Background scheduler that processes scheduled notifications
@@ -32,13 +36,16 @@ export class NotificationScheduler {
    * When not supplied the module-level singleton is used.
    */
   private providerRegistry: ProviderRegistry;
+  private deliveryReceiptRepository?: DeliveryReceiptRepository;
 
   constructor(
     repository: ScheduledNotificationRepository,
     config: SchedulerConfig,
     discordService?: DiscordNotificationService | null,
     batchValidator?: BatchValidationService,
-    providerRegistry?: ProviderRegistry
+    providerRegistry?: ProviderRegistry,
+    deliveryReceiptRepository?: DeliveryReceiptRepository,
+    private clock: () => Date = () => new Date(),
   ) {
     this.repository = repository;
     this.config = { retryDelayMs: 5_000, ...config };
@@ -46,6 +53,7 @@ export class NotificationScheduler {
     this.processorId = config.processorId || uuidv4();
     this.batchValidator = batchValidator ?? new BatchValidationService();
     this.providerRegistry = providerRegistry ?? getProviderRegistry();
+    this.analytics = getNotificationAnalyticsAggregator();
   }
 
   /**
@@ -126,7 +134,7 @@ export class NotificationScheduler {
         this.processorId,
         this.config.lockTimeoutMs,
         this.config.batchSize,
-        requestId
+        requestId,
       );
 
       if (notifications.length === 0) {
@@ -139,8 +147,16 @@ export class NotificationScheduler {
         return;
       }
 
+      const activeNotifications: ScheduledNotification[] = [];
+      for (const notification of notifications) {
+        if (await this.expireIfPastDeadline(notification, requestId)) continue;
+        activeNotifications.push(notification);
+      }
+      if (activeNotifications.length === 0) return;
+
       const batchRejection = this.batchValidator.rejectIfInvalid(
-        this.toValidationBatch(notifications)
+        this.toValidationBatch(notifications),
+        this.toValidationBatch(activeNotifications),
       );
 
       if (batchRejection) {
@@ -150,12 +166,14 @@ export class NotificationScheduler {
           errors: batchRejection.errors,
         });
 
-        for (const notification of notifications) {
+        for (const notification of activeNotifications) {
           await this.repository.markAsFailedOrRetry(
             notification.id!,
-            new Error(`Batch validation failed: ${batchRejection.errors.map((e) => e.message).join('; ')}`),
+            new Error(
+              `Batch validation failed: ${batchRejection.errors.map((e) => e.message).join('; ')}`,
+            ),
             notification.retryCount,
-            notification.maxRetries
+            notification.maxRetries,
           );
         }
         return;
@@ -163,7 +181,7 @@ export class NotificationScheduler {
 
       logger.info('Processing batch of scheduled notifications', {
         requestId,
-        count: notifications.length,
+        count: activeNotifications.length,
         processorId: this.processorId,
       });
 
@@ -172,23 +190,28 @@ export class NotificationScheduler {
       if (workerManager.isShutdownInProgress()) {
         logger.info('Shutdown in progress - releasing unprocessed notifications', {
           requestId,
-          count: notifications.length,
+          count: activeNotifications.length,
         });
         // Release locks on unprocessed notifications
-        for (const notification of notifications) {
+        for (const notification of activeNotifications) {
           await this.repository.markAsFailedOrRetry(
             notification.id!,
             new Error('Scheduler shutting down'),
             notification.retryCount,
-            notification.maxRetries
+            notification.maxRetries,
           );
         }
         return;
       }
 
-      // Process each notification with job tracking + monitoring
+      // Process each notification with job tracking + monitoring.
+      // WORKER_CONCURRENCY (config.concurrency, default 1) bounds how many
+      // notifications are processed in parallel per poll cycle; 1 preserves
+      // the original serial behavior exactly.
       const jobMonitor = getJobMonitor();
-      for (const notification of notifications) {
+      const concurrency = Math.max(1, Math.floor(this.config.concurrency ?? 1));
+      const queue = [...activeNotifications];
+      const processOne = async (notification: ScheduledNotification): Promise<void> => {
         const jobId = `notification-${notification.id}`;
         if (!workerManager.startJob(jobId)) {
           // Shutdown is in progress, don't process new jobs
@@ -197,9 +220,9 @@ export class NotificationScheduler {
             notification.id!,
             new Error('Scheduler shutting down'),
             notification.retryCount,
-            notification.maxRetries
+            notification.maxRetries,
           );
-          continue;
+          return;
         }
 
         jobMonitor.startJob(jobId, 'scheduled-notification', {
@@ -208,17 +231,29 @@ export class NotificationScheduler {
           requestId,
         });
 
+        const lease = this.startClaimLease(notification, requestId);
+
         try {
           await this.processNotification(notification, requestId, jobId);
         } finally {
+          await lease?.stop();
           workerManager.completeJob(jobId);
         }
-      }
+      };
+      const workers = Array.from({ length: Math.min(concurrency, queue.length) }, async () => {
+        // Array.shift() is atomic in the single-threaded event loop, so each
+        // notification is claimed by exactly one worker.
+        let next: ScheduledNotification | undefined;
+        while ((next = queue.shift()) !== undefined) {
+          await processOne(next);
+        }
+      });
+      await Promise.all(workers);
 
       logger.info('Scheduler batch complete', {
         requestId,
         processorId: this.processorId,
-        count: notifications.length,
+        count: activeNotifications.length,
         durationMs: Date.now() - batchStart,
       });
     } catch (error) {
@@ -232,18 +267,53 @@ export class NotificationScheduler {
   }
 
   /**
+   * Keep the claim on `notification` alive for as long as this worker is
+   * actually delivering it.
+   *
+   * The lease is renewed at a third of the lock window, so a delivery that
+   * outlives `lockTimeoutMs` is no longer handed back to the queue by the
+   * `recoverStaleLocks()` call that opens every poll cycle. Renewal is
+   * owner-checked, so a worker that did lose its claim stops renewing rather
+   * than taking the job back from its new owner.
+   */
+  private startClaimLease(
+    notification: ScheduledNotification,
+    requestId: string,
+  ): NotificationClaimLease | null {
+    return startClaimLease({
+      repository: this.repository,
+      notificationId: notification.id!,
+      processorId: this.processorId,
+      lockTimeoutMs: this.config.lockTimeoutMs,
+      onLeaseLost: (id) => {
+        logger.warn('Notification claim lease was lost before delivery finished', {
+          requestId,
+          id,
+          processorId: this.processorId,
+        });
+      },
+      onRenewalError: (id, error) => {
+        logger.warn('Failed to renew notification claim lease', { requestId, id, error });
+      },
+    });
+  }
+
+  /**
    * Process a single notification
    */
   private async processNotification(
     notification: ScheduledNotification,
     requestId: string,
-    jobId?: string
+    jobId?: string,
   ): Promise<void> {
     const startTime = Date.now();
     const executionAttempt = notification.retryCount + 1;
     const jobMonitor = getJobMonitor();
+    let receiptRecorded = false;
 
     try {
+      if (await this.expireIfPastDeadline(notification, requestId, jobId)) return;
+
       logger.info('Processing scheduled notification', {
         requestId,
         id: notification.id,
@@ -268,7 +338,7 @@ export class NotificationScheduler {
           notification.id!,
           new Error('Not yet due for execution'),
           notification.retryCount,
-          notification.maxRetries
+          notification.maxRetries,
         );
         if (jobId) {
           jobMonitor.failJob(jobId, 'Not yet due for execution', {
@@ -278,7 +348,50 @@ export class NotificationScheduler {
         return;
       }
 
-      if (timeDiff > this.config.timingBufferMs) {
+      if (timeDiff > this.config.timingBufferMs && !this.isInterventionReleased(notification)) {
+        const policy = this.config.missedSchedulePolicy ?? 'execute';
+        if (policy === 'expire') {
+          const errorMessage = 'Missed schedule expired by recovery policy';
+          await this.repository.markAsExpired(notification.id!, errorMessage);
+          await this.repository.logExecution({
+            scheduledNotificationId: notification.id!,
+            executionAttempt,
+            executionTime: new Date(),
+            status: 'FAILED',
+            errorMessage,
+            durationMs: Date.now() - startTime,
+          });
+          if (jobId) {
+            jobMonitor.failJob(jobId, errorMessage, { notificationId: notification.id });
+          }
+          logger.info('Overdue notification expired by missed-schedule policy', {
+            requestId,
+            id: notification.id,
+            missedByMs: timeDiff,
+          });
+          return;
+        }
+        if (policy === 'intervene') {
+          const errorMessage = 'Missed schedule requires operator intervention';
+          await this.repository.holdForIntervention(notification.id!);
+          await this.repository.logExecution({
+            scheduledNotificationId: notification.id!,
+            executionAttempt,
+            executionTime: new Date(),
+            status: 'FAILED',
+            errorMessage,
+            durationMs: Date.now() - startTime,
+          });
+          if (jobId) {
+            jobMonitor.failJob(jobId, errorMessage, { notificationId: notification.id });
+          }
+          logger.warn('Overdue notification held for operator intervention', {
+            requestId,
+            id: notification.id,
+            missedByMs: timeDiff,
+          });
+          return;
+        }
         logger.warn('Missed scheduled notification detected; dispatching catch-up delivery', {
           requestId,
           id: notification.id,
@@ -296,7 +409,9 @@ export class NotificationScheduler {
             requestId,
             id: notification.id,
           });
-        } else if (!verifyPayloadIntegrity(notification.payload, notification.payloadHash, secret)) {
+        } else if (
+          !verifyPayloadIntegrity(notification.payload, notification.payloadHash, secret)
+        ) {
           logger.error('Payload integrity verification failed — rejecting notification', {
             requestId,
             id: notification.id,
@@ -306,7 +421,7 @@ export class NotificationScheduler {
             notification.id!,
             new Error('Payload integrity check failed: hash mismatch'),
             notification.maxRetries, // exhaust retries — don't retry a tampered payload
-            notification.maxRetries
+            notification.maxRetries,
           );
           if (jobId) {
             jobMonitor.failJob(jobId, 'Payload integrity check failed: hash mismatch', {
@@ -318,12 +433,15 @@ export class NotificationScheduler {
       }
 
       // Execute notification based on type
-      const success = await this.executeNotification(notification, requestId);
+      const deliveryResult = await this.executeNotification(notification, requestId);
+      await this.recordDeliveryReceipt(notification, executionAttempt, deliveryResult);
+      receiptRecorded = true;
+      const success = deliveryResult.success;
 
       const durationMs = Date.now() - startTime;
 
       if (success) {
-        await this.repository.markAsCompleted(notification.id!, requestId);
+        await this.repository.markAsCompleted(notification.id!, requestId, this.clock());
         await this.repository.logExecution({
           scheduledNotificationId: notification.id!,
           executionAttempt,
@@ -339,14 +457,28 @@ export class NotificationScheduler {
           });
         }
 
+        const deliveryLatencyMs = notification.createdAt
+          ? Date.now() - new Date(notification.createdAt).getTime()
+          : undefined;
+
+        this.analytics.record({
+          notificationType: notification.notificationType,
+          contractAddress: notification.contractAddress ?? undefined,
+          outcome: 'success',
+          durationMs,
+          deliveryLatencyMs,
+          timestamp: Date.now(),
+        });
+
         logger.info('Notification delivered successfully', {
           requestId,
           id: notification.id,
           type: notification.notificationType,
           durationMs,
+          deliveryLatencyMs,
         });
       } else {
-        throw new Error('Notification delivery returned false');
+        throw new Error(deliveryResult.errorMessage ?? 'Notification delivery returned false');
       }
     } catch (error) {
       const durationMs = Date.now() - startTime;
@@ -358,12 +490,42 @@ export class NotificationScheduler {
         durationMs,
       });
 
+      if (!receiptRecorded) {
+        const providerCode = (error as NodeJS.ErrnoException)?.code;
+        const isTimeout = (error as Error)?.name === 'AbortError';
+        await this.recordDeliveryReceipt(notification, executionAttempt, {
+          success: false,
+          degradedCapabilities: [],
+          errorCode: isTimeout
+            ? 'TIMEOUT'
+            : typeof providerCode === 'string'
+              ? providerCode
+              : 'DELIVERY_FAILED',
+          errorMessage: isTimeout ? 'Provider request timed out' : 'Provider delivery failed',
+        }).catch((receiptError) => {
+          logger.error('Failed to persist delivery receipt', {
+            requestId,
+            notificationId: notification.id,
+            error: receiptError,
+          });
+        });
+      }
+
       if (jobId) {
         jobMonitor.failJob(jobId, (error as Error).message, {
           notificationId: notification.id,
           attempt: executionAttempt,
         });
       }
+
+      this.analytics.record({
+        notificationType: notification.notificationType,
+        contractAddress: notification.contractAddress ?? undefined,
+        outcome: 'failure',
+        durationMs,
+        errorReason: (error as Error).message,
+        timestamp: Date.now(),
+      });
 
       const willRetry = notification.retryCount + 1 < notification.maxRetries;
       const nextRetryAt = willRetry
@@ -375,7 +537,7 @@ export class NotificationScheduler {
         error as Error,
         notification.retryCount,
         notification.maxRetries,
-        nextRetryAt
+        nextRetryAt,
       );
 
       await this.repository.logExecution({
@@ -387,6 +549,88 @@ export class NotificationScheduler {
         durationMs,
       });
     }
+  }
+
+  private isInterventionReleased(notification: ScheduledNotification): boolean {
+    if (!notification.errorDetails) return false;
+    try {
+      const parsed = JSON.parse(notification.errorDetails) as { code?: string; releasedAt?: string };
+      return parsed.code === 'MISSED_SCHEDULE_INTERVENTION' && typeof parsed.releasedAt === 'string';
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * When a timezone schedule repeats daily or weekly, queue the next local
+   * occurrence with the daylight-saving policy in local-schedule.ts.
+   */
+  private async enqueueNextLocalOccurrence(
+    notification: ScheduledNotification,
+    requestId: string,
+  ): Promise<void> {
+    const intent = readLocalSchedule(notification.metadata);
+    if (!intent?.recurrence) return;
+
+    try {
+      const next = nextLocalOccurrence(intent);
+      const metadata = notification.metadata ? JSON.parse(notification.metadata) : {};
+      metadata.localSchedule = {
+        ...(metadata.localSchedule ?? {}),
+        timeZone: intent.timeZone,
+        localDateTime: next.requestedLocal,
+        recurrence: intent.recurrence,
+        kind: next.kind,
+        resolvedLocal: next.resolvedLocal,
+      };
+      await this.repository.create(
+        {
+          payload: JSON.parse(notification.payload),
+          notificationType: notification.notificationType,
+          targetRecipient: notification.targetRecipient,
+          executeAt: next.executeAt,
+          maxRetries: notification.maxRetries,
+          priority: notification.priority,
+          eventId: notification.eventId ?? undefined,
+          contractAddress: notification.contractAddress ?? undefined,
+          metadata,
+        },
+        requestId,
+      );
+    } catch (error) {
+      logger.error('Failed to enqueue the next local occurrence', {
+        requestId,
+        id: notification.id,
+        error,
+      });
+    }
+  }
+
+  private async expireIfPastDeadline(
+    notification: ScheduledNotification,
+    requestId: string,
+    jobId?: string,
+  ): Promise<boolean> {
+    if (!notification.expiresAt || notification.expiresAt.getTime() > Date.now()) return false;
+
+    const errorMessage = 'Notification expired before delivery';
+    await this.repository.markAsExpired(notification.id!);
+    await this.repository.logExecution({
+      scheduledNotificationId: notification.id!,
+      executionAttempt: notification.retryCount + 1,
+      executionTime: new Date(),
+      status: 'FAILED',
+      errorMessage,
+      durationMs: 0,
+    });
+    if (jobId) {
+      getJobMonitor().failJob(jobId, errorMessage, { notificationId: notification.id });
+    }
+    logger.info('Expired notification skipped before delivery', {
+      requestId,
+      id: notification.id,
+    });
+    return true;
   }
 
   /**
@@ -403,8 +647,8 @@ export class NotificationScheduler {
    */
   private async executeNotification(
     notification: ScheduledNotification,
-    requestId: string
-  ): Promise<boolean> {
+    requestId: string,
+  ): Promise<DeliveryResult> {
     const payload = JSON.parse(notification.payload);
     const type = notification.notificationType;
 
@@ -428,11 +672,7 @@ export class NotificationScheduler {
         });
       }
 
-      if (!result.success) {
-        throw new Error(result.errorMessage ?? 'Provider delivery returned failure');
-      }
-
-      return true;
+      return result;
     }
 
     // ------------------------------------------------------------------
@@ -442,33 +682,36 @@ export class NotificationScheduler {
       case 'discord':
         if (!this.discordService) {
           throw new Error(
-            'Discord service not configured and no Discord provider registered in the registry'
+            'Discord service not configured and no Discord provider registered in the registry',
           );
         }
-        return await this.discordService.sendEventNotification(
-          payload.event,
-          payload.contractConfig,
-          `scheduler-${notification.id}-${requestId}`
-        );
+        return {
+          success: await this.discordService.sendEventNotification(
+            payload.event,
+            payload.contractConfig,
+            `scheduler-${notification.id}-${requestId}`,
+          ),
+          degradedCapabilities: [],
+        };
 
       case 'webhook':
         throw new Error(
-          'Webhook delivery not yet implemented. Register a WebhookNotificationProvider in the ProviderRegistry.'
+          'Webhook delivery not yet implemented. Register a WebhookNotificationProvider in the ProviderRegistry.',
         );
 
       case 'email':
         throw new Error(
-          'Email delivery not yet implemented. Register an email NotificationProvider in the ProviderRegistry.'
+          'Email delivery not yet implemented. Register an email NotificationProvider in the ProviderRegistry.',
         );
 
       case 'sms':
         throw new Error(
-          'SMS delivery not yet implemented. Register an SMS NotificationProvider in the ProviderRegistry.'
+          'SMS delivery not yet implemented. Register an SMS NotificationProvider in the ProviderRegistry.',
         );
 
       default:
         throw new Error(
-          `Unsupported notification type: "${type}". Register a provider for this type in the ProviderRegistry.`
+          `Unsupported notification type: "${type}". Register a provider for this type in the ProviderRegistry.`,
         );
     }
   }
@@ -502,5 +745,27 @@ export class NotificationScheduler {
     } catch {
       return payloadJson.slice(0, 200) || 'scheduled-notification';
     }
+  }
+
+  private async recordDeliveryReceipt(
+    notification: ScheduledNotification,
+    attemptCount: number,
+    result: DeliveryResult,
+  ): Promise<void> {
+    if (!this.deliveryReceiptRepository || notification.id == null) return;
+    await this.deliveryReceiptRepository.create({
+      notificationId: notification.id,
+      channel: notification.notificationType,
+      status: result.success
+        ? 'delivered'
+        : result.statusCode && result.statusCode >= 400 && result.statusCode < 500
+          ? 'rejected'
+          : 'failed',
+      attemptCount,
+      providerMessageId: result.providerMessageId ?? null,
+      providerResponse: result.providerResponse ?? null,
+      errorCode: result.errorCode ?? null,
+      errorMessage: result.success ? null : (result.errorMessage ?? 'Provider delivery failed'),
+    });
   }
 }

@@ -25,8 +25,12 @@ const SENSITIVE_KEY_PATTERNS = [
 
 /**
  * Recursively redacts sensitive configuration values from an object or array payload.
+ *
+ * Circular references are replaced with the string `"[Circular]"` so that
+ * arbitrary/unknown event payloads remain stringifiable instead of throwing or
+ * recursing forever (issue #612).
  */
-export function sanitizePayload(data: unknown): unknown {
+export function sanitizePayload(data: unknown, seen: WeakSet<object> = new WeakSet()): unknown {
   if (data === null || data === undefined) {
     return data;
   }
@@ -35,25 +39,36 @@ export function sanitizePayload(data: unknown): unknown {
     return data;
   }
 
-  if (Array.isArray(data)) {
-    return data.map(sanitizePayload);
+  if (seen.has(data as object)) {
+    return '[Circular]';
   }
+  seen.add(data as object);
 
-  const sanitized: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(data as Record<string, unknown>)) {
-    const isSensitive = SENSITIVE_KEY_PATTERNS.some((pattern) => pattern.test(key));
-    if (isSensitive && typeof value === 'string') {
-      sanitized[key] = '[REDACTED]';
-    } else if (isSensitive && typeof value === 'number') {
-      sanitized[key] = 0;
-    } else if (isSensitive) {
-      sanitized[key] = '[REDACTED]';
-    } else {
-      sanitized[key] = sanitizePayload(value);
+  try {
+    if (Array.isArray(data)) {
+      return data.map((item) => sanitizePayload(item, seen));
     }
-  }
 
-  return sanitized;
+    const sanitized: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(data as Record<string, unknown>)) {
+      const isSensitive = SENSITIVE_KEY_PATTERNS.some((pattern) => pattern.test(key));
+      if (isSensitive && typeof value === 'string') {
+        sanitized[key] = '[REDACTED]';
+      } else if (isSensitive && typeof value === 'number') {
+        sanitized[key] = 0;
+      } else if (isSensitive) {
+        sanitized[key] = '[REDACTED]';
+      } else {
+        sanitized[key] = sanitizePayload(value, seen);
+      }
+    }
+
+    return sanitized;
+  } finally {
+    // Track the current path only, so repeated (non-circular) references in
+    // sibling fields are still fully rendered.
+    seen.delete(data as object);
+  }
 }
 
 export interface FormattedPayloadResult {
@@ -100,13 +115,22 @@ export function formatRawPayload(value: string | unknown): FormattedPayloadResul
   }
 
   if (isValidJson && parsed !== null) {
-    const sanitized = sanitizePayload(parsed);
-    const originalStr = JSON.stringify(parsed);
-    const sanitizedStr = JSON.stringify(sanitized);
-    const hasRedactions = originalStr !== sanitizedStr;
-
     try {
+      const sanitized = sanitizePayload(parsed);
       const formatted = JSON.stringify(sanitized, null, 2);
+      if (typeof formatted !== 'string') {
+        return { formatted: String(value), isValidJson: false, hasRedactions: false };
+      }
+
+      let hasRedactions = false;
+      try {
+        hasRedactions = JSON.stringify(parsed) !== JSON.stringify(sanitized);
+      } catch {
+        // Non-serialisable original (e.g. circular reference or BigInt):
+        // fall back to detecting the redaction marker in the formatted output.
+        hasRedactions = formatted.includes('[REDACTED]');
+      }
+
       return { formatted, isValidJson: true, hasRedactions };
     } catch {
       return { formatted: String(value), isValidJson: false, hasRedactions: false };
@@ -115,6 +139,40 @@ export function formatRawPayload(value: string | unknown): FormattedPayloadResul
 
   // Fallback for non-JSON string or invalid payloads
   return { formatted: String(value), isValidJson: false, hasRedactions: false };
+}
+
+export interface PayloadPreviewResult {
+  /** Single-line, inspectable representation that is always safe to render. */
+  preview: string;
+  /** The full formatted payload (pretty-printed JSON where possible). */
+  full: string;
+  /** True when `preview` was shortened because the payload was long. */
+  truncated: boolean;
+}
+
+/**
+ * Produces a compact, single-line preview of an arbitrary payload for inline
+ * rendering, together with the full inspectable representation.
+ *
+ * Unknown event types can carry payload shapes the dashboard has never seen
+ * (objects, arrays, primitives), so this helper never throws and always
+ * returns a string — preventing "Objects are not valid as a React child"
+ * rendering exceptions (issue #612).
+ */
+export function formatPayloadPreview(value: unknown, maxLength = 160): PayloadPreviewResult {
+  const { formatted } = formatRawPayload(value);
+  const singleLine = formatted.replace(/\s+/g, ' ').trim();
+  const safe = singleLine.length > 0 ? singleLine : 'No payload';
+
+  if (maxLength <= 0 || safe.length <= maxLength) {
+    return { preview: safe, full: formatted, truncated: false };
+  }
+
+  return {
+    preview: `${safe.slice(0, Math.max(0, maxLength - 1))}…`,
+    full: formatted,
+    truncated: true,
+  };
 }
 
 export interface CopyPayloadResult {

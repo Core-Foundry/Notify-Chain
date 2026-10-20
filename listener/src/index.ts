@@ -7,9 +7,10 @@ import { ScheduledNotificationRepository } from './services/scheduled-notificati
 import { NotificationTemplateRepository } from './services/notification-template-repository';
 import { NotificationTemplateService } from './services/notification-template-service';
 import { TemplateAuditTrail } from './services/template-audit-trail';
+import { ScheduleAuditTrail } from './services/schedule-audit-trail';
 import { getTemplateCache } from './services/notification-template-cache';
 import { NotificationAPI } from './services/notification-api';
-import { CleanupService } from './services/cleanup-service';
+import { DatabaseCleanupJob } from './services/database-cleanup-job';
 import { ArchiveService } from './services/archive-service';
 import { ArchiveStore } from './services/archive-store';
 import { loadArchiveConfig } from './services/archive-config';
@@ -21,6 +22,8 @@ import {
   IndexingReconciliationEngine,
   createDefaultAlertSink,
 } from './services/indexing-reconciliation-engine';
+import { HistoricalBackfillService } from './services/historical-backfill-service';
+import { EventDeduplicationService } from './services/event-deduplication-service';
 import { initNotificationAnalyticsAggregator } from './services/notification-analytics-aggregator';
 import { NotificationMetricsStore } from './services/notification-metrics-store';
 import { NotificationMetricsRunner } from './services/notification-metrics-runner';
@@ -30,7 +33,8 @@ import { loadConfig, validateConfig, ConfigError } from './config';
 import { SecretValidationError } from './config/validate-secrets';
 import { NotificationHealthMonitor } from './services/notification-health-monitor';
 import { getWorkerManager } from './services/worker-manager';
-import { EventDeduplicationService } from './services/event-deduplication-service';
+import { DeliveryReceiptRepository } from './services/delivery-receipt-repository';
+import { ApiCredentialService } from './services/api-credential-service';
 
 dotenv.config();
 
@@ -47,7 +51,7 @@ async function main() {
   let subscriber: EventSubscriber | null = null;
   let templateService: NotificationTemplateService | null = null;
   let legacyTemplateService: TemplateService | null = null;
-  let cleanupService: CleanupService | null = null;
+  let databaseCleanupJob: DatabaseCleanupJob | null = null;
   let repository: ScheduledNotificationRepository | null = null;
   let reconciliationEngine: IndexingReconciliationEngine | null = null;
   let archiveService: ArchiveService | null = null;
@@ -55,6 +59,7 @@ async function main() {
   let metricsRunner: NotificationMetricsRunner | null = null;
   let metricsStore: NotificationMetricsStore | null = null;
   let deduplicationService: EventDeduplicationService | null = null;
+  let deliveryReceiptRepository: DeliveryReceiptRepository | null = null;
 
   if (config.analytics?.enabled) {
     initNotificationAnalyticsAggregator(config.analytics);
@@ -64,7 +69,12 @@ async function main() {
     logger.info('Initializing database');
     const db = await initializeDatabase(config.databasePath);
 
-    repository = new ScheduledNotificationRepository(db);
+    repository = new ScheduledNotificationRepository(
+      db,
+      undefined,
+      config.notificationDefaultTtlSeconds ?? 0,
+    );
+    deliveryReceiptRepository = new DeliveryReceiptRepository(db);
 
     healthMonitor = new NotificationHealthMonitor(null, getWorkerManager(), {
       repository,
@@ -72,12 +82,15 @@ async function main() {
       getUptimeMs: () => Date.now() - PROCESS_START_TIME,
     });
 
+    // Rebuild registry with configured event TTL
     if (config.cleanup) {
       eventRegistry.setTtlMs(config.cleanup.eventRetentionMs);
     }
 
-    cleanupService = new CleanupService(db, eventRegistry, config.cleanup);
-    cleanupService.start();
+    if (config.cleanup) {
+      databaseCleanupJob = new DatabaseCleanupJob(db, config.cleanup, eventRegistry);
+      databaseCleanupJob.start();
+    }
 
     reconciliationEngine = new IndexingReconciliationEngine({
       db,
@@ -111,7 +124,15 @@ async function main() {
     templateService = new NotificationTemplateService(templateRepository);
 
     if (config.scheduler?.enabled) {
-      notificationAPI = new NotificationAPI(repository);
+      const scheduleAudit = new ScheduleAuditTrail(db);
+      repository.setScheduleAuditTrail(scheduleAudit);
+      notificationAPI = new NotificationAPI(
+        repository,
+        undefined,
+        undefined,
+        config.scheduler.maxSchedulingHorizonMs,
+      );
+      notificationAPI.setScheduleAuditTrail(scheduleAudit);
 
       const legacyTemplateRepo = new TemplateRepository(db);
       legacyTemplateService = new TemplateService(legacyTemplateRepo);
@@ -123,12 +144,26 @@ async function main() {
         discordService = new DiscordNotificationService(config.discord);
       }
 
-      scheduler = new NotificationScheduler(repository, config.scheduler, discordService);
+      scheduler = new NotificationScheduler(
+        repository,
+        config.scheduler,
+        discordService,
+        undefined,
+        undefined,
+        deliveryReceiptRepository,
+      );
       await scheduler.start();
       logger.info('Notification scheduler started successfully');
 
       if (config.retryScheduler?.enabled) {
-        retryScheduler = new RetryScheduler(repository, config.retryScheduler, discordService);
+        retryScheduler = new RetryScheduler(
+          repository,
+          config.retryScheduler,
+          discordService,
+          undefined,
+          deliveryReceiptRepository,
+          () => new Date(),
+        );
         await retryScheduler.start();
         logger.info('Retry scheduler started successfully');
       }
@@ -142,6 +177,7 @@ async function main() {
     port: config.eventsApiPort,
     corsOrigin: config.eventsApiCorsOrigin,
     stellarRpcUrl: config.stellarRpcUrl,
+    stellarNetwork: config.stellarNetwork,
     stellarNetworkPassphrase: config.stellarNetworkPassphrase,
     contractAddresses: config.contractAddresses,
     discordWebhookUrl: config.discord?.webhookUrl,
@@ -150,11 +186,17 @@ async function main() {
     schedulerTemplateService: legacyTemplateService,
     webhookSecrets: config.webhookSecrets,
     apiKeys: config.apiKeys,
+    credentialService: new ApiCredentialService(),
     rateLimit: config.rateLimit,
     archiveStore,
     archiveService,
     metricsStore,
     healthMonitor,
+    deliveryReceiptRepository,
+    eventStream: {
+      enabled: process.env.EVENT_STREAM_ENABLED === 'true',
+      heartbeatMs: Number(process.env.EVENT_STREAM_HEARTBEAT_MS || 15_000),
+    },
   });
 
   if (healthMonitor) {
@@ -189,8 +231,8 @@ async function main() {
         healthMonitor.stop();
       }
 
-      if (scheduler) {
-        await scheduler.stop();
+      if (databaseCleanupJob) {
+        await databaseCleanupJob.stop();
       }
 
       if (retryScheduler) {
@@ -214,6 +256,10 @@ async function main() {
       }
 
       // Close the HTTP server last so health checks stay reachable during drain
+      if (subscriber) {
+        await subscriber.stop();
+      }
+
       eventsServer.close();
 
       logger.info('Graceful shutdown completed successfully', { signal });

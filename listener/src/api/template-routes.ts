@@ -17,12 +17,50 @@ import {
   validationErrorBody,
 } from '../utils/validation';
 import { sendOk, sendErr, ErrorCode } from '../utils/response';
+import { validateContentType } from '../middleware/content-type';
+import { principalHasScopes, type AuthPrincipal } from './api-key-auth';
+import type { ApiScope } from '../types/api-credential';
+
+const PermissionScope = {
+  ADMIN: 'notifications:write',
+  READ: 'notifications:read',
+} as const satisfies Record<'ADMIN' | 'READ', ApiScope>;
+type PermissionScope = (typeof PermissionScope)[keyof typeof PermissionScope];
+
+type AuthenticatedRequest = http.IncomingMessage & { authPrincipal?: AuthPrincipal };
+
+function hasPermission(req: http.IncomingMessage, scope: PermissionScope): boolean {
+  const principal = (req as AuthenticatedRequest).authPrincipal;
+  return principal !== undefined && principalHasScopes(principal, [scope]);
+}
 
 interface TemplateRouteContext {
   req: http.IncomingMessage;
   res: http.ServerResponse;
   requestId: string;
   templateService: any;
+}
+
+/**
+ * Enforce that the caller holds the given permission scope. Responds with
+ * 403 INVALID_PERMISSIONS and returns false when the scope is missing.
+ */
+function requirePermission(
+  ctx: TemplateRouteContext,
+  scope: PermissionScope,
+  operation: string,
+): boolean {
+  const { req, res, requestId } = ctx;
+  if (hasPermission(req, scope)) {
+    return true;
+  }
+  logger.warn('Template operation rejected: insufficient permissions', {
+    requestId,
+    operation,
+    requiredScope: scope,
+  });
+  sendErr(res, 403, 'Insufficient permissions', ErrorCode.INVALID_PERMISSIONS);
+  return false;
 }
 
 /**
@@ -96,19 +134,36 @@ function respondWithError(
 export async function handleCreateTemplate(ctx: TemplateRouteContext): Promise<void> {
   const { req, res, requestId, templateService } = ctx;
 
+  // Requires admin scope: creates a new template.
+  if (!requirePermission(ctx, PermissionScope.ADMIN, 'createTemplate')) {
+    return;
+  }
+
+  if (!validateContentType(req, res, ['application/json'])) {
+    return;
+  }
+
   try {
     const body = await parseBody(req);
 
     // Validate required fields are present and are strings before handing off to the service
     const v = new InputValidator();
-    v.check(isNonEmptyString(body.uniqueKey), 'uniqueKey', 'is required and must be a non-empty string');
+    v.check(
+      isNonEmptyString(body.uniqueKey),
+      'uniqueKey',
+      'is required and must be a non-empty string',
+    );
     v.check(isNonEmptyString(body.name), 'name', 'is required and must be a non-empty string');
     v.check(
       isOneOf(body.channelType, Object.values(TemplateChannelType)),
       'channelType',
       `must be one of: ${Object.values(TemplateChannelType).join(', ')}`,
     );
-    v.check(isNonEmptyString(body.bodyTemplate), 'bodyTemplate', 'is required and must be a non-empty string');
+    v.check(
+      isNonEmptyString(body.bodyTemplate),
+      'bodyTemplate',
+      'is required and must be a non-empty string',
+    );
     v.throwIfInvalid();
 
     const result = await templateService.createTemplate({
@@ -125,11 +180,19 @@ export async function handleCreateTemplate(ctx: TemplateRouteContext): Promise<v
 
     if (!result.success) {
       sendJson(res, 400, { error: result.error, validation: result.validation });
-      logger.warn('Template creation rejected', { requestId, uniqueKey: body.uniqueKey, error: result.error });
+      logger.warn('Template creation rejected', {
+        requestId,
+        uniqueKey: body.uniqueKey,
+        error: result.error,
+      });
       return;
     }
 
-    sendJson(res, 201, { id: result.templateId, uniqueKey: body.uniqueKey, validation: result.validation });
+    sendJson(res, 201, {
+      id: result.templateId,
+      uniqueKey: body.uniqueKey,
+      validation: result.validation,
+    });
 
     logger.info('Template created via API', {
       requestId,
@@ -148,10 +211,18 @@ export async function handleCreateTemplate(ctx: TemplateRouteContext): Promise<v
 export async function handleListTemplates(ctx: TemplateRouteContext): Promise<void> {
   const { req, res, requestId, templateService } = ctx;
 
+  // Read-only access: accepts read scope.
+  if (!requirePermission(ctx, PermissionScope.READ, 'listTemplates')) {
+    return;
+  }
+
   try {
     const url = new URL(req.url!, 'http://localhost');
     const channelTypeParam = url.searchParams.get('channelType') || undefined;
-    if (channelTypeParam !== undefined && !isOneOf(channelTypeParam, Object.values(TemplateChannelType))) {
+    if (
+      channelTypeParam !== undefined &&
+      !isOneOf(channelTypeParam, Object.values(TemplateChannelType))
+    ) {
       throw new ValidationError({
         field: 'channelType',
         message: `must be one of: ${Object.values(TemplateChannelType).join(', ')}`,
@@ -160,10 +231,18 @@ export async function handleListTemplates(ctx: TemplateRouteContext): Promise<vo
     const channelType = channelTypeParam as TemplateChannelType | undefined;
     const activeOnly = url.searchParams.get('activeOnly') === 'true';
 
-    const templates = await templateService.listTemplates({ channelType, isActive: activeOnly || undefined });
+    const templates = await templateService.listTemplates({
+      channelType,
+      isActive: activeOnly || undefined,
+    });
 
     sendOk(res, 200, { count: templates.length, templates });
-    logger.info('Listed templates via API', { requestId, count: templates.length, channelType, activeOnly });
+    logger.info('Listed templates via API', {
+      requestId,
+      count: templates.length,
+      channelType,
+      activeOnly,
+    });
   } catch (error) {
     logger.error('Failed to list templates', { error, requestId });
     respondWithError(res, error);
@@ -175,6 +254,11 @@ export async function handleListTemplates(ctx: TemplateRouteContext): Promise<vo
  */
 export async function handleGetTemplate(ctx: TemplateRouteContext): Promise<void> {
   const { req, res, requestId, templateService } = ctx;
+
+  // Read-only access: accepts read scope.
+  if (!requirePermission(ctx, PermissionScope.READ, 'getTemplate')) {
+    return;
+  }
 
   try {
     const id = parseInt(req.url!.split('/').pop() || '', 10);
@@ -203,6 +287,11 @@ export async function handleGetTemplate(ctx: TemplateRouteContext): Promise<void
 export async function handleGetTemplateByKey(ctx: TemplateRouteContext): Promise<void> {
   const { req, res, requestId, templateService } = ctx;
 
+  // Read-only access: accepts read scope.
+  if (!requirePermission(ctx, PermissionScope.READ, 'getTemplateByKey')) {
+    return;
+  }
+
   try {
     const uniqueKey = req.url!.split('/').pop();
     if (!uniqueKey) {
@@ -230,6 +319,15 @@ export async function handleGetTemplateByKey(ctx: TemplateRouteContext): Promise
 export async function handleUpdateTemplate(ctx: TemplateRouteContext): Promise<void> {
   const { req, res, requestId, templateService } = ctx;
 
+  // Requires admin scope: modifies an existing template.
+  if (!requirePermission(ctx, PermissionScope.ADMIN, 'updateTemplate')) {
+    return;
+  }
+
+  if (!validateContentType(req, res, ['application/json'])) {
+    return;
+  }
+
   try {
     const id = parseInt(req.url!.split('/').pop() || '', 10);
     if (isNaN(id)) {
@@ -248,7 +346,11 @@ export async function handleUpdateTemplate(ctx: TemplateRouteContext): Promise<v
       return;
     }
 
-    sendJson(res, 200, { id, message: 'Template updated successfully', validation: result.validation });
+    sendJson(res, 200, {
+      id,
+      message: 'Template updated successfully',
+      validation: result.validation,
+    });
     logger.info('Updated template via API', { requestId, templateId: id });
   } catch (error) {
     logger.error('Failed to update template', { error, requestId });
@@ -261,6 +363,11 @@ export async function handleUpdateTemplate(ctx: TemplateRouteContext): Promise<v
  */
 export async function handleDeleteTemplate(ctx: TemplateRouteContext): Promise<void> {
   const { req, res, requestId, templateService } = ctx;
+
+  // Requires admin scope: deletes or deactivates a template.
+  if (!requirePermission(ctx, PermissionScope.ADMIN, 'deleteTemplate')) {
+    return;
+  }
 
   try {
     const url = new URL(req.url!, 'http://localhost');
@@ -294,6 +401,15 @@ export async function handleDeleteTemplate(ctx: TemplateRouteContext): Promise<v
  */
 export async function handleRenderTemplate(ctx: TemplateRouteContext): Promise<void> {
   const { req, res, requestId, templateService } = ctx;
+
+  // Read-only access: rendering does not mutate stored templates.
+  if (!requirePermission(ctx, PermissionScope.READ, 'renderTemplate')) {
+    return;
+  }
+
+  if (!validateContentType(req, res, ['application/json'])) {
+    return;
+  }
 
   try {
     const body = await parseBody(req);
@@ -341,6 +457,11 @@ export async function handleRenderTemplate(ctx: TemplateRouteContext): Promise<v
 export async function handleGetTemplateStats(ctx: TemplateRouteContext): Promise<void> {
   const { req, res, requestId, templateService } = ctx;
 
+  // Read-only access: accepts read scope.
+  if (!requirePermission(ctx, PermissionScope.READ, 'getTemplateStats')) {
+    return;
+  }
+
   try {
     const url = new URL(req.url!, 'http://localhost');
     const idParam = url.searchParams.get('templateId');
@@ -354,9 +475,10 @@ export async function handleGetTemplateStats(ctx: TemplateRouteContext): Promise
       templateId = parsed;
     }
 
-    const stats = templateId !== undefined
-      ? await templateService.getTemplateStats(templateId)
-      : await templateService.getOverviewStats();
+    const stats =
+      templateId !== undefined
+        ? await templateService.getTemplateStats(templateId)
+        : await templateService.getOverviewStats();
 
     sendJson(res, 200, stats);
 
@@ -374,7 +496,7 @@ export async function handleTemplateRoutes(
   req: http.IncomingMessage,
   res: http.ServerResponse,
   requestId: string,
-  templateService: TemplateService
+  templateService: TemplateService,
 ): Promise<boolean> {
   const url = req.url || '';
   const method = req.method || 'GET';
