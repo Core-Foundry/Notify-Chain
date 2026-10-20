@@ -47,7 +47,7 @@ function run(db: sqlite3.Database, sql: string): Promise<void> {
 }
 
 const migration = {
-  id: '003',
+  id: '004',
   name: 'event-notification-query-indexes',
   indexNames: INDEXES.map((i) => i.name),
   up: async (db: sqlite3.Database) => {

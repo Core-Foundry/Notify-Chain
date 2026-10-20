@@ -105,8 +105,11 @@ async function auditLegacyRows(db: sqlite3.Database): Promise<void> {
 }
 
 const migration = {
-  id: '005',
+  id: '007',
   name: 'notification-expiration',
+  // Rebuilds core tables to add expires_at and tighten CHECKs. The original
+  // schema cannot be reconstructed, so `down` aborts; recovery is restore-from-backup.
+  destructive: true,
   up: async (db: sqlite3.Database) => {
     await auditLegacyRows(db);
 

@@ -1,7 +1,7 @@
 import * as sqlite3 from 'sqlite3';
 import { Database } from '../database/database';
 import { MigrationRunner } from '../database/migration-system';
-import migration from './004-database-data-integrity';
+import migration from './006-database-data-integrity';
 
 function openDatabase(): Promise<sqlite3.Database> {
   return new Promise((resolve, reject) => {

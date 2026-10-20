@@ -2,7 +2,7 @@ import * as sqlite3 from 'sqlite3';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import { MigrationRunner } from '../database/migration-system';
-import migration from './005-notification-expiration';
+import migration from './007-notification-expiration';
 
 function openDatabase(): Promise<sqlite3.Database> {
   return new Promise((resolve, reject) => {

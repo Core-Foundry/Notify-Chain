@@ -20,7 +20,9 @@
     "stress-test": "ts-node src/scripts/run-stress-tests.ts",
     "migrate": "ts-node src/scripts/migrate-db.ts",
     "migrate:templates": "ts-node src/scripts/migrate-templates.ts",
+    "rollback": "ts-node src/scripts/rollback-migration.ts",
     "check-migrations": "ts-node src/scripts/check-migrations.ts",
+    "check:migrations-integrity": "ts-node src/scripts/check-migration-integrity.ts",
     "validate:batch": "ts-node src/utils/batch-validator.ts",
     "replay-event": "ts-node src/scripts/replay-event.ts"
   },
