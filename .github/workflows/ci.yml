@@ -1,21 +1,56 @@
 name: CI
 
 on:
+  push:
+    branches: [main, staging]
   pull_request:
-    branches: [ main ]
+    branches: [main]
 
 jobs:
-  format-lint-typecheck:
-    name: Code Quality Checks
+  contracts:
+    name: Soroban contract validation (Rust 1.86.0)
     runs-on: ubuntu-latest
-
+    timeout-minutes: 45
     steps:
-      - name: Checkout code
+      - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
-      - name: Setup Node.js
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.86.0
+          targets: wasm32v1-none
+          components: rustfmt
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: contract
+
+      - name: Report resolved Soroban SDK
+        working-directory: contract
+        run: cargo tree --locked --workspace --all-features -i soroban-sdk
+
+      - name: Test and build contract workspace
+        working-directory: contract
+        run: |
+          set +e
+          cargo test --workspace --all-features --locked
+          test_status=$?
+          cargo build --workspace --release --locked --target wasm32v1-none
+          build_status=$?
+          if [ "$test_status" -ne 0 ] || [ "$build_status" -ne 0 ]; then
+            echo "Contract validation failed (tests: $test_status, Wasm build: $build_status)."
+            exit 1
+          fi
+
+  dashboard-visual:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '22'

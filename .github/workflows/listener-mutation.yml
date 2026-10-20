@@ -1,0 +1,47 @@
+name: Listener mutation testing
+
+on:
+  pull_request:
+    paths:
+      - 'listener/**'
+      - '.github/workflows/listener-mutation.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'listener/**'
+      - '.github/workflows/listener-mutation.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  critical-events:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: listener
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.22.0'
+          cache: npm
+          cache-dependency-path: listener/package-lock.json
+      - run: npm ci
+      - name: Mutate critical event processing
+        run: node scripts/mutation/run.cjs
+      - name: Publish mutation summary
+        if: always()
+        run: |
+          if [ -f reports/mutation/summary.md ]; then
+            cat reports/mutation/summary.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: critical-event-mutations
+          path: listener/reports/mutation/
+          if-no-files-found: warn
+          retention-days: 14

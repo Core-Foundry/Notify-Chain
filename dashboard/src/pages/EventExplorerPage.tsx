@@ -8,6 +8,7 @@ import { PaginationControls } from '../components/PaginationControls';
 import { NotificationDetailsDrawer } from '../components/NotificationDetailsDrawer';
 import { IndexingHealthPanel } from '../components/IndexingHealthPanel';
 import { NotificationHealthPanel } from '../components/NotificationHealthPanel';
+import { NotificationSummaryPanel } from '../components/NotificationSummaryPanel';
 import { EmptyState } from '../components/EmptyState';
 import {
   useEventFilters,
@@ -15,23 +16,39 @@ import {
   useFilteredEvents,
 } from '../hooks/useEventSelectors';
 import { useEventStore } from '../store/eventStore';
-import { fetchEvents, fetchStatus, type ContractStatus } from '../services/eventsApi';
+import {
+  fetchEvents,
+  fetchStatus,
+  isListenerApiTimeoutError,
+  type ContractStatus,
+} from '../services/eventsApi';
+import { openEventStream, toEventStreamUrl } from '../services/eventStream';
 import { resolveIndexingHealthUrl } from '../services/indexingHealthApi';
 import { resolveNotificationHealthUrl } from '../services/notificationHealthApi';
 import { generateMockEvents } from '../utils/eventData';
 import { restoreWalletSession } from '../services/wallet';
 import type { BlockchainEvent } from '../types/event';
 import { useWalletAccountSync } from '../hooks/useWalletAccountSync';
+import { parseSelectedEventId } from '../utils/eventUrlState';
 
 const DEFAULT_EVENT_COUNT = 5000;
 const DEFAULT_LIMIT = 12;
+const EVENT_ID_PARAM = 'eventId';
 const API_URL = import.meta.env.VITE_EVENTS_API_URL ?? 'http://localhost:8787/api/events';
+const STREAM_URL = toEventStreamUrl(API_URL);
 const POLL_INTERVAL_MS = 15_000;
 const LISTENER_BASE_URL = API_URL.replace('/api/events', '');
 const INDEXING_HEALTH_URL =
   import.meta.env.VITE_INDEXING_HEALTH_URL ?? resolveIndexingHealthUrl(API_URL);
 const NOTIFICATION_HEALTH_URL =
   import.meta.env.VITE_NOTIFICATION_HEALTH_URL ?? resolveNotificationHealthUrl(API_URL);
+
+const ACTIVITY_RANGE_LABELS: Record<EventActivityRange, string> = {
+  '1h': 'the last hour',
+  '6h': 'the last 6 hours',
+  '24h': 'the last 24 hours',
+  '7d': 'the last 7 days',
+};
 
 function parsePageParam(search: string) {
   const params = new URLSearchParams(search);
@@ -45,16 +62,28 @@ function parseLimitParam(search: string) {
   return Number.isInteger(value) && value > 0 ? value : DEFAULT_LIMIT;
 }
 
+function replaceSelectedEventInUrl(eventId: string | null) {
+  const url = new URL(window.location.href);
+  if (eventId) {
+    url.searchParams.set(EVENT_ID_PARAM, eventId);
+  } else {
+    url.searchParams.delete(EVENT_ID_PARAM);
+  }
+  window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`);
+}
+
 export function EventExplorerPage() {
   const initialSearch = typeof window !== 'undefined' ? window.location.search : '';
   const [page, setPage] = useState(() => parsePageParam(initialSearch));
   const [limit, setLimit] = useState(() => parseLimitParam(initialSearch));
   const [selectedNotification, setSelectedNotification] = useState<BlockchainEvent | null>(null);
   const [contractStatuses, setContractStatuses] = useState<ContractStatus[]>([]);
-  const [isRefreshing, setIsRefreshing] = useState(false);
-  const [refreshError, setRefreshError] = useState<string | null>(null);
+  const [activityRange, setActivityRange] =
+    useState<EventActivityRange>(DEFAULT_EVENT_ACTIVITY_RANGE);
 
+  const events = useEventStore((state) => state.events);
   const setEvents = useEventStore((state) => state.setEvents);
+  const appendEvents = useEventStore((state) => state.appendEvents);
   const setLoading = useEventStore((state) => state.setLoading);
   const setError = useEventStore((state) => state.setError);
   const markSyncSuccess = useEventStore((state) => state.markSyncSuccess);
@@ -97,7 +126,7 @@ export function EventExplorerPage() {
           setEvents(remoteEvents);
           markSyncSuccess();
         }
-      } catch {
+      } catch (error) {
         if (!cancelled) {
           setEvents(generateMockEvents(DEFAULT_EVENT_COUNT));
           setError('Listener API unavailable — showing mock events for demo.');
@@ -149,9 +178,10 @@ export function EventExplorerPage() {
 
     return () => {
       cancelled = true;
-      clearInterval(intervalId);
+      if (intervalId) clearInterval(intervalId);
+      closeStream?.();
     };
-  }, [lastFetchedAt, setEvents, setError, setLoading]);
+  }, [appendEvents, setEvents, markSyncSuccess, markSyncFailure]);
 
   // Clear stale events and re-fetch whenever the connected wallet address
   // changes (switch or disconnect). This is the fix for issue #175.
@@ -166,7 +196,7 @@ export function EventExplorerPage() {
         setEvents(remoteEvents);
         markSyncSuccess();
       })
-      .catch(() => {
+      .catch((error) => {
         setEvents(generateMockEvents(DEFAULT_EVENT_COUNT));
         setError('Listener API unavailable — showing mock events for demo.');
         markSyncFailure('Wallet refresh failed');
@@ -210,10 +240,47 @@ export function EventExplorerPage() {
     window.history.replaceState({}, '', `${window.location.pathname}?${params.toString()}`);
   }, [page, limit]);
 
+  useEffect(() => {
+    if (lastFetchedAt === 0) {
+      return;
+    }
+
+    const eventId = parseSelectedEventId(window.location.search);
+    if (!eventId) {
+      setSelectedNotification(null);
+      return;
+    }
+
+    const event = events.find((candidate) => candidate.eventId === eventId) ?? null;
+    setSelectedNotification(event);
+    if (!event) {
+      replaceSelectedEventInUrl(null);
+    }
+  }, [events, lastFetchedAt]);
+
+  useEffect(() => {
+    const handlePopState = () => {
+      const eventId = parseSelectedEventId(window.location.search);
+      setSelectedNotification(
+        eventId ? (events.find((event) => event.eventId === eventId) ?? null) : null,
+      );
+    };
+
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, [events]);
+
   const currentPageEvents = useMemo(() => {
     const startIndex = (page - 1) * limit;
     return filteredEvents.slice(startIndex, startIndex + limit);
   }, [filteredEvents, page, limit]);
+
+  // Event activity buckets (#982). Computed from the same filtered dataset the
+  // table renders so chart values reconcile with the underlying events.
+  const eventActivity = useMemo(
+    () => computeEventActivity(filteredEvents, activityRange),
+    [filteredEvents, activityRange],
+  );
 
   const fromIndex = filteredEvents.length === 0 ? 0 : (page - 1) * limit + 1;
   const toIndex = Math.min(filteredEvents.length, page * limit);
@@ -247,10 +314,16 @@ export function EventExplorerPage() {
 
   const handleSelectEvent = useCallback((event: BlockchainEvent) => {
     setSelectedNotification(event);
+    replaceSelectedEventInUrl(event.eventId);
+  }, []);
+
+  const handleContractClick = useCallback((contractAddress: string) => {
+    window.location.hash = `contract-detail?address=${contractAddress}`;
   }, []);
 
   const handleCloseDrawer = useCallback(() => {
     setSelectedNotification(null);
+    replaceSelectedEventInUrl(null);
   }, []);
 
   return (
@@ -289,11 +362,40 @@ export function EventExplorerPage() {
       )}
       <IndexingHealthPanel healthUrl={INDEXING_HEALTH_URL} />
       <NotificationHealthPanel healthUrl={NOTIFICATION_HEALTH_URL} />
+      <NotificationSummaryPanel apiUrl={NOTIFICATION_HEALTH_URL} />
 
       <EventFiltersBar />
       <NotificationSearchBar />
 
       {error && !filteredEvents.length && (
+      <section className="event-activity" aria-labelledby="event-activity-heading">
+        <div className="event-activity__header">
+          <h2 id="event-activity-heading">Event Activity</h2>
+          <div className="event-activity__range" role="group" aria-label="Activity time range">
+            {EVENT_ACTIVITY_RANGES.map((range) => (
+              <button
+                key={range}
+                type="button"
+                className={`event-activity__range-button${
+                  range === activityRange ? ' event-activity__range-button--active' : ''
+                }`}
+                aria-pressed={range === activityRange}
+                onClick={() => setActivityRange(range)}
+              >
+                {range}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <EventActivityChart
+          buckets={eventActivity.buckets}
+          isLoading={isLoading}
+          rangeLabel={ACTIVITY_RANGE_LABELS[activityRange]}
+        />
+      </section>
+
+      {error && (
         <section className="event-explorer__error-banner" role="alert">
           <div>
             <strong>Error:</strong> {error}
@@ -337,12 +439,14 @@ export function EventExplorerPage() {
           events={currentPageEvents}
           onSelectEvent={handleSelectEvent}
           contractStatuses={contractStatuses}
+          onContractClick={handleContractClick}
         />
       ) : (
         <EmptyState
+          size="compact"
           icon="🔍"
           title="No events found"
-          description="Update the search, event type, or contract filter to uncover matching Soroban contract events."
+          message="Update the search, event type, or contract filter to uncover matching Soroban contract events."
           action={{ label: 'Clear filters', onClick: handleClearFilters }}
         />
       )}

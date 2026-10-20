@@ -1,0 +1,146 @@
+name: Software Bill of Materials (SBOM)
+
+# Issue #1002: Generate a Software Bill of Materials
+# Acceptance criteria:
+#   - CI generates a supported SBOM format (SPDX and CycloneDX JSON)
+#   - The artifact is versioned with the build (version + commit in the name)
+#   - Generation failures are visible (job fails when an SBOM is missing/invalid)
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+    paths:
+      - "**/package.json"
+      - "**/package-lock.json"
+      - "contract/Cargo.toml"
+      - "contract/Cargo.lock"
+      - ".github/workflows/sbom.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "**/package.json"
+      - "**/package-lock.json"
+      - "contract/Cargo.toml"
+      - "contract/Cargo.lock"
+      - ".github/workflows/sbom.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: sbom-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  generate-sbom:
+    name: Generate and validate SBOMs
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Syft (via anchore/sbom-action) produces SPDX and CycloneDX documents
+      # from the checked-in dependency manifests/lockfiles.
+      - name: Install Syft
+        uses: anchore/sbom-action/download-syft@v0
+
+      - name: Resolve build version
+        id: version
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            VERSION="${GITHUB_REF_NAME}"
+          else
+            VERSION="0.0.0-${GITHUB_SHA::7}"
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Resolved SBOM version: ${VERSION}"
+
+      - name: Generate component SBOMs (SPDX + CycloneDX)
+        env:
+          SBOM_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p sbom
+          for dir in listener dashboard frontend contract; do
+            syft dir:"$dir" -q -o "spdx-json=sbom/${dir}-${SBOM_VERSION}.spdx.json"
+            syft dir:"$dir" -q -o "cyclonedx-json=sbom/${dir}-${SBOM_VERSION}.cdx.json"
+          done
+          ls -l sbom
+
+      - name: Validate SBOMs
+        run: |
+          set -euo pipefail
+          node - <<'NODE'
+          const fs = require('fs');
+          const path = require('path');
+          const dir = 'sbom';
+          const components = ['listener', 'dashboard', 'frontend', 'contract'];
+          const files = fs.readdirSync(dir);
+          let failures = 0;
+
+          for (const base of components) {
+            const variants = [
+              ['SPDX', files.find((f) => f.startsWith(`${base}-`) && f.endsWith('.spdx.json'))],
+              ['CycloneDX', files.find((f) => f.startsWith(`${base}-`) && f.endsWith('.cdx.json'))],
+            ];
+            for (const [kind, file] of variants) {
+              if (!file) {
+                console.error(`::error::Missing ${kind} SBOM for ${base}`);
+                failures++;
+                continue;
+              }
+              const abs = path.join(dir, file);
+              let doc;
+              try {
+                doc = JSON.parse(fs.readFileSync(abs, 'utf8'));
+              } catch (err) {
+                console.error(`::error::${file} is not valid JSON: ${err.message}`);
+                failures++;
+                continue;
+              }
+              const entries = doc.packages || doc.components || [];
+              if (!Array.isArray(entries) || entries.length === 0) {
+                console.error(`::error::${file} contains no ${kind} entries`);
+                failures++;
+                continue;
+              }
+              console.log(`${file}: ${entries.length} ${kind} entries`);
+            }
+          }
+
+          if (failures > 0) {
+            console.error(`::error::SBOM validation failed with ${failures} problem(s)`);
+            process.exit(1);
+          }
+          console.log('All SBOMs generated and validated.');
+          NODE
+
+      - name: Write job summary
+        if: always()
+        run: |
+          {
+            echo "## SBOM summary"
+            echo ""
+            echo "- Version: \`${{ steps.version.outputs.version }}\`"
+            echo "- Commit: \`${{ github.sha }}\`"
+            echo ""
+            echo "| File | Size (bytes) |"
+            echo "|------|--------------|"
+            for f in sbom/*; do
+              [ -e "$f" ] || continue
+              echo "| \`$(basename "$f")\` | $(wc -c < "$f") |"
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload SBOMs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-${{ steps.version.outputs.version }}-${{ github.sha }}
+          path: sbom/
+          retention-days: 90
+          if-no-files-found: error

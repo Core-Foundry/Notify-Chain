@@ -84,13 +84,6 @@ function handleActivationKey(onClick: (e: BlockchainEvent) => void, event: Block
   };
 }
 
-function CompactCard({
-  event,
-  onClick,
-}: {
-  event: BlockchainEvent;
-  onClick?: (e: BlockchainEvent) => void;
-}) {
 function IdValue({ value, label }: { value: string; label: string }) {
   return (
     <dd className="event-card__id-value" title={value}>
@@ -128,6 +121,8 @@ function CompactCard({ event, onClick }: { event: BlockchainEvent; onClick?: (e:
         </span>
       </div>
       <div className="event-card__details">
+        <span>Value: {event.value}</span>
+        {event.txHash && <span title={event.txHash}>Tx: {shortenAddress(event.txHash)}</span>}
         <span className="event-card__value-preview" title={event.value}>
           Value: {event.value}
         </span>

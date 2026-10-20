@@ -15,7 +15,10 @@ import {
   NotificationAnalyticsAggregator,
   NotificationAnalyticsSnapshot,
 } from '../services/notification-analytics-aggregator';
-import { NotificationMetricsStore, StoredMetricsSnapshot } from '../services/notification-metrics-store';
+import {
+  NotificationMetricsStore,
+  StoredMetricsSnapshot,
+} from '../services/notification-metrics-store';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -36,7 +39,9 @@ function request(
       },
       (res) => {
         let data = '';
-        res.on('data', (chunk) => { data += chunk; });
+        res.on('data', (chunk) => {
+          data += chunk;
+        });
         res.on('end', () => {
           try {
             resolve({ status: res.statusCode!, body: JSON.parse(data) });
@@ -70,7 +75,9 @@ function closeServer(s: http.Server): Promise<void> {
 
 // ── Stub aggregator ───────────────────────────────────────────────────────────
 
-function makeStubAggregator(overrides: Partial<NotificationAnalyticsSnapshot> = {}): NotificationAnalyticsAggregator {
+function makeStubAggregator(
+  overrides: Partial<NotificationAnalyticsSnapshot> = {},
+): NotificationAnalyticsAggregator {
   const base: NotificationAnalyticsSnapshot = {
     totalRecorded: 100,
     windowStart: 1_700_000_000_000,
@@ -96,8 +103,12 @@ function makeStubAggregator(overrides: Partial<NotificationAnalyticsSnapshot> = 
     snapshot: () => base,
     reset: resetSpy,
     record: jest.fn(),
-    get lifetimeCount() { return base.totalRecorded; },
-    get size() { return base.totalRecorded; },
+    get lifetimeCount() {
+      return base.totalRecorded;
+    },
+    get size() {
+      return base.totalRecorded;
+    },
   } as unknown as NotificationAnalyticsAggregator;
 }
 
@@ -141,8 +152,9 @@ describe('GET /api/notifications/delivery-metrics', () => {
     const res = await request(server, 'GET', '/api/notifications/delivery-metrics');
 
     expect(res.status).toBe(503);
-    const body = res.body as { error: string };
-    expect(body.error).toMatch(/unavailable/i);
+    const body = res.body as { error: string | { code: string; message: string } };
+    const errorMessage = typeof body.error === 'string' ? body.error : body.error?.message;
+    expect(errorMessage).toMatch(/unavailable/i);
   });
 
   it('includes byType, byContract, hourlyBuckets and errorBreakdown fields', async () => {
@@ -206,7 +218,15 @@ describe('GET /api/notifications/delivery-metrics/history', () => {
           totalRecorded: 50,
           windowStart: 0,
           windowEnd: 3600000,
-          overall: { total: 50, success: 45, failure: 5, retry: 0, skipped: 0, successRate: 0.9, averageDurationMs: 200 },
+          overall: {
+            total: 50,
+            success: 45,
+            failure: 5,
+            retry: 0,
+            skipped: 0,
+            successRate: 0.9,
+            averageDurationMs: 200,
+          },
           byType: [],
           byContract: [],
           hourlyBuckets: [],
@@ -247,19 +267,24 @@ describe('GET /api/notifications/delivery-metrics/history', () => {
     const store = makeStubStore([]);
     server = await startServer({ metricsStore: store });
 
-    await request(server, 'GET', '/api/notifications/delivery-metrics/history?since=2024-01-01T00:00:00.000Z');
-
-    expect(store.getHistory).toHaveBeenCalledWith(
-      50,
-      expect.any(Date),
+    await request(
+      server,
+      'GET',
+      '/api/notifications/delivery-metrics/history?since=2024-01-01T00:00:00.000Z',
     );
+
+    expect(store.getHistory).toHaveBeenCalledWith(50, expect.any(Date));
   });
 
   it('returns 400 when since is not a valid ISO date', async () => {
     const store = makeStubStore([]);
     server = await startServer({ metricsStore: store });
 
-    const res = await request(server, 'GET', '/api/notifications/delivery-metrics/history?since=not-a-date');
+    const res = await request(
+      server,
+      'GET',
+      '/api/notifications/delivery-metrics/history?since=not-a-date',
+    );
 
     expect(res.status).toBe(400);
   });

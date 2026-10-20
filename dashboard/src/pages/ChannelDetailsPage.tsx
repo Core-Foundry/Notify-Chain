@@ -1,4 +1,5 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
+import { EmptyState } from '../components/EmptyState';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -115,7 +116,9 @@ function ChannelCard({ ch }: { ch: ChannelDetail }) {
     <article className="cd-channel-card" aria-label={`${ch.label} channel details`}>
       {/* Header */}
       <div className="cd-channel-card__header" style={{ borderColor: ch.color }}>
-        <span className="cd-channel-card__icon" aria-hidden="true">{ch.icon}</span>
+        <span className="cd-channel-card__icon" aria-hidden="true">
+          {ch.icon}
+        </span>
         <div className="cd-channel-card__header-text">
           <h2 className="cd-channel-card__title">{ch.label}</h2>
           <p className="cd-channel-card__protocol">{ch.protocol}</p>
@@ -153,7 +156,11 @@ function ChannelCard({ ch }: { ch: ChannelDetail }) {
         <StatCard
           label="Failed"
           value={formatNumber(ch.stats.failed)}
-          sub={ch.stats.failed > 0 ? `${((ch.stats.failed / ch.stats.sent) * 100).toFixed(1)}%` : undefined}
+          sub={
+            ch.stats.failed > 0
+              ? `${((ch.stats.failed / ch.stats.sent) * 100).toFixed(1)}%`
+              : undefined
+          }
         />
         <StatCard label="Pending" value={String(ch.stats.pending)} />
       </div>
@@ -163,7 +170,11 @@ function ChannelCard({ ch }: { ch: ChannelDetail }) {
 
 function ChannelCardSkeleton() {
   return (
-    <div className="cd-channel-card cd-channel-card--skeleton" aria-busy="true" aria-label="Loading channel">
+    <div
+      className="cd-channel-card cd-channel-card--skeleton"
+      aria-busy="true"
+      aria-label="Loading channel"
+    >
       <div className="cd-skeleton-line cd-skeleton-line--title" />
       <div className="cd-skeleton-line cd-skeleton-line--body" />
       <div className="cd-skeleton-line cd-skeleton-line--body cd-skeleton-line--short" />
@@ -219,6 +230,7 @@ export function ChannelDetailsPage() {
   const [channels, setChannels] = useState<ChannelDetail[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
 
   useEffect(() => {
     let cancelled = false;
@@ -253,6 +265,18 @@ export function ChannelDetailsPage() {
     }, 600);
   }
 
+  const filteredChannels = useMemo(() => {
+    const trimmed = searchQuery.trim().toLowerCase();
+    if (!trimmed) return channels;
+
+    const tokens = trimmed.split(/\s+/).filter(Boolean);
+    return channels.filter((ch) => {
+      const target =
+        `${ch.label} ${ch.key} ${ch.protocol} ${ch.description} ${ch.status}`.toLowerCase();
+      return tokens.every((token) => target.includes(token));
+    });
+  }, [channels, searchQuery]);
+
   return (
     <main className="cd-page">
       {/* Page header */}
@@ -279,12 +303,72 @@ export function ChannelDetailsPage() {
       {/* Summary strip */}
       {!loading && !error && <SummaryStrip channels={channels} />}
 
-      {/* Channel grid */}
-      <section className="cd-channel-grid" aria-label="Channel cards" aria-busy={loading}>
-        {loading
-          ? [1, 2, 3, 4].map((i) => <ChannelCardSkeleton key={i} />)
-          : channels.map((ch) => <ChannelCard key={ch.key} ch={ch} />)}
-      </section>
+      {/* Channel Search Bar */}
+      {!loading && !error && channels.length > 0 && (
+        <div className="cd-search" role="search" aria-label="Search channels">
+          <div className="cd-search__input-wrapper">
+            <span className="cd-search__icon" aria-hidden="true">
+              🔍
+            </span>
+            <input
+              type="search"
+              id="channel-search-input"
+              className="cd-search__input"
+              placeholder="Search channels by name, protocol, description, or status..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Escape') {
+                  setSearchQuery('');
+                }
+              }}
+              aria-label="Search channels by keywords"
+            />
+            {searchQuery && (
+              <button
+                type="button"
+                className="cd-search__clear"
+                onClick={() => setSearchQuery('')}
+                aria-label="Clear channel search"
+                title="Clear search"
+              >
+                ✕
+              </button>
+            )}
+          </div>
+          <div className="cd-search__meta" aria-live="polite">
+            {searchQuery.trim() ? (
+              <span>
+                Showing {filteredChannels.length} of {channels.length}{' '}
+                {channels.length === 1 ? 'channel' : 'channels'}
+              </span>
+            ) : (
+              <span>
+                {channels.length} {channels.length === 1 ? 'channel' : 'channels'} available
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Channel grid or Empty State */}
+      {!loading && !error && filteredChannels.length === 0 && searchQuery.trim() ? (
+        <EmptyState
+          icon="🔍"
+          title="No channels found"
+          message={`No channels match "${searchQuery.trim()}". Try searching with different keywords.`}
+          action={{
+            label: 'Clear search',
+            onClick: () => setSearchQuery(''),
+          }}
+        />
+      ) : (
+        <section className="cd-channel-grid" aria-label="Channel cards" aria-busy={loading}>
+          {loading
+            ? [1, 2, 3, 4].map((i) => <ChannelCardSkeleton key={i} />)
+            : filteredChannels.map((ch) => <ChannelCard key={ch.key} ch={ch} />)}
+        </section>
+      )}
     </main>
   );
 }

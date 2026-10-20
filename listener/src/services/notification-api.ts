@@ -1,6 +1,11 @@
 import { ScheduledNotificationRepository } from './scheduled-notification-repository';
+import { QueueOperationalMetrics, NotificationStats } from './notification-stats-cache';
 import { IdempotencyKeyService } from './idempotency-key-service';
-import { CreateScheduledNotificationInput, NotificationType } from '../types/scheduled-notification';
+import {
+  CreateScheduledNotificationInput,
+  NotificationStatus,
+  NotificationType,
+} from '../types/scheduled-notification';
 import {
   validatePayloadSize,
   DEFAULT_MAX_PAYLOAD_SIZE_BYTES,
@@ -17,10 +22,52 @@ import {
   isInRange,
   isInteger,
 } from '../utils/validation';
+import { ScheduleAuditTrail } from './schedule-audit-trail';
+import { assertValidTimezone, InvalidTimezoneError } from '../utils/timezone';
 
 const PRIORITY_MIN = 1;
 const PRIORITY_MAX = 10;
 import { buildRetryStatisticsPayload } from './retry-statistics';
+import { DEFAULT_MAX_SCHEDULING_HORIZON_MS, validateScheduleInput } from './schedule-validator';
+
+export { InvalidTimezoneError };
+
+export type CancelScheduleState =
+  | 'cancelled'
+  | 'already_cancelled'
+  | 'already_final'
+  | 'not_found';
+
+export interface CancelScheduleResult {
+  cancelled: boolean;
+  state: CancelScheduleState;
+  status: string | null;
+  message: string;
+  notification?: Awaited<ReturnType<ScheduledNotificationRepository['getById']>>;
+}
+
+function parseExpiresAt(value: Date | string | number): Date | null {
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : value;
+  }
+
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) return null;
+    const milliseconds = Math.abs(value) < 100_000_000_000 ? value * 1000 : value;
+    const date = new Date(milliseconds);
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+
+  if (
+    !/^\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,9})?)?(?:Z|[+-]\d{2}:\d{2})?)?$/.test(
+      value,
+    )
+  ) {
+    return null;
+  }
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
 
 /**
  * High-level API for scheduling notifications
@@ -35,6 +82,9 @@ export class NotificationAPI {
     private repository: ScheduledNotificationRepository,
     maxPayloadSizeBytesOrIdempotency?: number | IdempotencyKeyService,
     private idempotencyService?: IdempotencyKeyService,
+    private maxSchedulingHorizonMs: number | null = DEFAULT_MAX_SCHEDULING_HORIZON_MS,
+    private clock: () => Date = () => new Date(),
+    private scheduleAudit?: ScheduleAuditTrail | null,
   ) {
     if (typeof maxPayloadSizeBytesOrIdempotency === 'number') {
       this.maxPayloadSizeBytes = maxPayloadSizeBytesOrIdempotency;
@@ -47,6 +97,11 @@ export class NotificationAPI {
     }
   }
 
+  /** Attach or replace the schedule audit trail used for lifecycle recording. */
+  setScheduleAuditTrail(audit: ScheduleAuditTrail | null): void {
+    this.scheduleAudit = audit;
+  }
+
   /**
    * Schedule a notification for future delivery
    * Supports idempotent request handling via idempotency keys
@@ -54,16 +109,18 @@ export class NotificationAPI {
   async scheduleNotification(
     input: CreateScheduledNotificationInput,
     requestId?: string,
-    idempotencyKey?: string
+    idempotencyKey?: string,
   ): Promise<number> {
     // Validate input
-    if (!input.executeAt || !(input.executeAt instanceof Date) || isNaN(input.executeAt.getTime())) {
-      throw new Error('executeAt must be a valid date');
-    }
-
-    if (input.executeAt <= new Date()) {
-      throw new Error('executeAt must be a future timestamp — the provided date has already expired');
-    }
+    input = {
+      ...input,
+      recurrence: validateScheduleInput(
+        input.executeAt,
+        input.recurrence,
+        this.clock(),
+        this.maxSchedulingHorizonMs,
+      ),
+    };
 
     if (!isPlainObject(input.payload)) {
       throw new Error('payload must be a valid object');
@@ -80,7 +137,11 @@ export class NotificationAPI {
       `must be one of: ${Object.values(NotificationType).join(', ')}`,
     );
     if (input.maxRetries !== undefined) {
-      v.check(isNonNegativeInteger(input.maxRetries), 'maxRetries', 'must be a non-negative integer');
+      v.check(
+        isNonNegativeInteger(input.maxRetries),
+        'maxRetries',
+        'must be a non-negative integer',
+      );
     }
     if (input.priority !== undefined) {
       v.check(
@@ -93,16 +154,41 @@ export class NotificationAPI {
       v.check(isNonEmptyString(input.eventId), 'eventId', 'must be a non-empty string');
     }
     if (input.contractAddress !== undefined) {
-      v.check(isNonEmptyString(input.contractAddress), 'contractAddress', 'must be a non-empty string');
+      v.check(
+        isNonEmptyString(input.contractAddress),
+        'contractAddress',
+        'must be a non-empty string',
+      );
+    }
+    if (input.expiresAt !== undefined && input.expiresAt !== null) {
+      const expiresAt = parseExpiresAt(input.expiresAt);
+      v.check(expiresAt !== null, 'expiresAt', 'must be a valid ISO-8601 timestamp or epoch');
+      if (expiresAt) input = { ...input, expiresAt };
     }
     if (input.metadata !== undefined) {
       v.check(isPlainObject(input.metadata), 'metadata', 'must be an object');
     }
+    if (input.timezone !== undefined && input.timezone !== null) {
+      try {
+        input = { ...input, timezone: assertValidTimezone(String(input.timezone)) };
+      } catch (err) {
+        if (err instanceof InvalidTimezoneError) throw err;
+        throw new InvalidTimezoneError(String(input.timezone));
+      }
+    }
     v.throwIfInvalid();
     // Stamp / verify protocol version on the payload.
+    // Persist timezone in metadata for display without a schema migration.
+    const metadataWithTz: Record<string, any> = {
+      ...(input.metadata ?? {}),
+    };
+    if (input.timezone) {
+      metadataWithTz.timezone = input.timezone;
+    }
     input = {
       ...input,
       payload: ensureNotificationVersion(input.payload as Record<string, unknown>),
+      metadata: Object.keys(metadataWithTz).length > 0 ? metadataWithTz : input.metadata,
     };
 
     // Validate metadata before any storage write.
@@ -120,16 +206,29 @@ export class NotificationAPI {
       version: (input.payload as Record<string, unknown>).version,
     });
 
+    const createAndAudit = async (): Promise<number> => {
+      const id = await this.repository.create(input, requestId);
+      await this.scheduleAudit?.record({
+        scheduledNotificationId: id,
+        action: 'CREATED',
+        actor: 'api',
+        toStatus: NotificationStatus.PENDING,
+        details: {
+          notificationType: input.notificationType,
+          eventId: input.eventId ?? null,
+          contractAddress: input.contractAddress ?? null,
+          executeAt: input.executeAt.toISOString(),
+        },
+      });
+      return id;
+    };
+
     // If idempotency service is available, use it for deduplication
     if (this.idempotencyService && idempotencyKey) {
       const { result, isDuplicate, notificationId } =
-        await this.idempotencyService.processWithIdempotency(
-          idempotencyKey,
-          input,
-          async () => {
-            return await this.repository.create(input, requestId);
-          }
-        );
+        await this.idempotencyService.processWithIdempotency(idempotencyKey, input, async () => {
+          return await createAndAudit();
+        });
 
       if (isDuplicate) {
         logger.info('Returned duplicate notification response', {
@@ -142,7 +241,52 @@ export class NotificationAPI {
       return typeof result === 'number' ? result : (result as { id: number }).id;
     }
 
-    return await this.repository.create(input, requestId);
+    return await createAndAudit();
+  }
+
+  /**
+   * Update mutable fields on a pending scheduled notification and audit the change.
+   */
+  async updateScheduledNotification(
+    id: number,
+    updates: { executeAt?: Date; priority?: number },
+    requestId?: string,
+  ): Promise<boolean> {
+    const existing = await this.repository.getById(id);
+    if (!existing || existing.status !== NotificationStatus.PENDING) {
+      return false;
+    }
+
+    if (updates.executeAt !== undefined) {
+      if (!(updates.executeAt instanceof Date) || isNaN(updates.executeAt.getTime())) {
+        throw new Error('executeAt must be a valid date');
+      }
+      if (updates.executeAt <= new Date()) {
+        throw new Error('executeAt must be a future timestamp');
+      }
+    }
+    if (updates.priority !== undefined) {
+      if (!isInteger(updates.priority) || !isInRange(updates.priority, PRIORITY_MIN, PRIORITY_MAX)) {
+        throw new Error(`priority must be an integer between ${PRIORITY_MIN} and ${PRIORITY_MAX}`);
+      }
+    }
+
+    const ok = await this.repository.updatePending(id, updates);
+    if (ok) {
+      await this.scheduleAudit?.record({
+        scheduledNotificationId: id,
+        action: 'MODIFIED',
+        actor: 'api',
+        fromStatus: existing.status,
+        toStatus: existing.status,
+        details: {
+          executeAt: updates.executeAt?.toISOString(),
+          priority: updates.priority,
+          requestId: requestId ?? null,
+        },
+      });
+    }
+    return ok;
   }
 
   /**
@@ -156,7 +300,7 @@ export class NotificationAPI {
       maxRetries?: number;
       priority?: number;
       metadata?: Record<string, any>;
-    }
+    },
   ): Promise<number> {
     return await this.scheduleNotification({
       payload: { message, webhookUrl },
@@ -189,7 +333,7 @@ export class NotificationAPI {
       maxRetries?: number;
       priority?: number;
       metadata?: Record<string, any>;
-    }
+    },
   ): Promise<number> {
     return await this.scheduleNotification({
       payload,
@@ -204,10 +348,129 @@ export class NotificationAPI {
 
   /**
    * Cancel a scheduled notification.
+   * @param id - The ID of the notification
+   * @param reason - An optional reason for cancellation
+   * @param requestId - Optional request ID for logging
    */
-  async cancelNotification(id: number, requestId?: string): Promise<boolean> {
-    logger.info('Cancelling scheduled notification', { requestId, id });
-    return await this.repository.cancel(id);
+  /**
+   * Cancel a scheduled notification.
+   * Returns a structured outcome so callers can distinguish freshly cancelled,
+   * already-cancelled (idempotent), and already-final states.
+   */
+  async cancelNotification(
+    id: number,
+    reason?: string,
+    requestId?: string,
+  ): Promise<boolean | CancelScheduleResult> {
+    return this.cancelSchedule(id, reason, requestId).then((r) => r.cancelled || r.state === 'already_cancelled');
+  }
+
+  async cancelSchedule(
+    id: number,
+    reason?: string,
+    requestId?: string,
+  ): Promise<CancelScheduleResult> {
+    logger.info('Cancelling scheduled notification', { requestId, id, reason });
+    const existing = await this.repository.getById(id);
+
+    if (!existing) {
+      return {
+        cancelled: false,
+        state: 'not_found',
+        status: null,
+        message: 'Notification not found',
+      };
+    }
+
+    if (existing.status === NotificationStatus.CANCELLED) {
+      // Idempotent: already cancelled is a successful no-op.
+      return {
+        cancelled: false,
+        state: 'already_cancelled',
+        status: existing.status,
+        message: 'Schedule was already cancelled',
+        notification: existing,
+      };
+    }
+
+    const terminal: NotificationStatus[] = [
+      NotificationStatus.COMPLETED,
+      NotificationStatus.FAILED,
+      NotificationStatus.DEAD_LETTERED,
+      NotificationStatus.EXPIRED,
+    ];
+    if (terminal.includes(existing.status) || existing.status === NotificationStatus.PROCESSING) {
+      return {
+        cancelled: false,
+        state: 'already_final',
+        status: existing.status,
+        message: `Cannot cancel schedule in status ${existing.status}`,
+        notification: existing,
+      };
+    }
+
+    const ok = await this.repository.cancel(id, reason);
+    if (!ok) {
+      // Race: status changed between get and cancel.
+      const latest = await this.repository.getById(id);
+      if (latest?.status === NotificationStatus.CANCELLED) {
+        return {
+          cancelled: false,
+          state: 'already_cancelled',
+          status: NotificationStatus.CANCELLED,
+          message: 'Schedule was already cancelled',
+          notification: latest,
+        };
+      }
+      return {
+        cancelled: false,
+        state: 'already_final',
+        status: latest?.status ?? existing.status,
+        message: `Cannot cancel schedule in status ${latest?.status ?? existing.status}`,
+        notification: latest ?? existing,
+      };
+    }
+
+    await this.scheduleAudit?.record({
+      scheduledNotificationId: id,
+      action: 'CANCELLED',
+      actor: 'api',
+      fromStatus: existing.status,
+      toStatus: NotificationStatus.CANCELLED,
+      details: { reason: reason ?? null, requestId: requestId ?? null },
+    });
+
+    const notification = await this.repository.getById(id);
+    return {
+      cancelled: true,
+      state: 'cancelled',
+      status: NotificationStatus.CANCELLED,
+      message: 'Schedule cancelled',
+      notification: notification ?? undefined,
+    };
+  }
+
+  async getScheduleAuditHistory(id: number) {
+    if (!this.scheduleAudit) {
+      return [];
+    }
+    return this.scheduleAudit.getByNotificationId(id);
+  }
+
+  /** Record an EXECUTED audit entry after successful delivery. */
+  async recordExecutionAudit(
+    id: number,
+    fromStatus: string,
+    details?: Record<string, unknown>,
+  ): Promise<void> {
+    await this.scheduleAudit?.record({
+      scheduledNotificationId: id,
+      action: 'EXECUTED',
+      actor: 'scheduler',
+      fromStatus,
+      toStatus: NotificationStatus.COMPLETED,
+      details: details ?? null,
+    });
   }
 
   /**
@@ -218,10 +481,25 @@ export class NotificationAPI {
   }
 
   /**
+   * Release a notification held because it missed its schedule under the
+   * `intervene` recovery policy. The next scheduler poll delivers it.
+   */
+  async releaseMissedSchedule(id: number): Promise<boolean> {
+    return await this.repository.releaseIntervention(id);
+  }
+
+  /**
    * Get scheduler statistics.
    */
-  async getStatistics() {
+  async getStatistics(): Promise<NotificationStats> {
     return await this.repository.getStats();
+  }
+
+  /**
+   * Get operational metrics for notification queue activity (#797).
+   */
+  async getQueueOperationalMetrics(): Promise<QueueOperationalMetrics> {
+    return await this.repository.getQueueOperationalMetrics();
   }
 
   /**
