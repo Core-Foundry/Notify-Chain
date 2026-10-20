@@ -38,7 +38,6 @@ import { ApiCredentialService } from './services/api-credential-service';
 
 dotenv.config();
 
-// Track process startup time for uptime calculation
 const PROCESS_START_TIME = Date.now();
 
 async function main() {
@@ -50,7 +49,6 @@ async function main() {
   let notificationAPI: NotificationAPI | null = null;
   let healthMonitor: NotificationHealthMonitor | null = null;
   let subscriber: EventSubscriber | null = null;
-
   let templateService: NotificationTemplateService | null = null;
   let legacyTemplateService: TemplateService | null = null;
   let databaseCleanupJob: DatabaseCleanupJob | null = null;
@@ -155,7 +153,6 @@ async function main() {
         deliveryReceiptRepository,
       );
       await scheduler.start();
-
       logger.info('Notification scheduler started successfully');
 
       if (config.retryScheduler?.enabled) {
@@ -212,7 +209,6 @@ async function main() {
   let isShuttingDown = false;
 
   const shutdown = async (signal: string) => {
-    // Idempotency: prevent duplicate shutdown if multiple signals arrive
     if (isShuttingDown) {
       logger.warn('Shutdown already in progress, ignoring signal', { signal });
       return;
@@ -222,6 +218,15 @@ async function main() {
     logger.info('Graceful shutdown initiated', { signal });
 
     try {
+      // Stop accepting new events first so no new jobs are claimed
+      if (subscriber) {
+        await subscriber.stop();
+      }
+
+      // Wait for in-flight notification jobs to finish before closing anything
+      await getWorkerManager().initiateGracefulShutdown();
+
+      // Tear down schedulers and background services
       if (healthMonitor) {
         healthMonitor.stop();
       }
@@ -230,26 +235,27 @@ async function main() {
         await databaseCleanupJob.stop();
       }
 
-      if (reconciliationEngine) {
-        reconciliationEngine.stop();
+      if (retryScheduler) {
+        await retryScheduler.stop();
       }
 
       if (metricsRunner) {
         await metricsRunner.stop();
       }
 
+      if (reconciliationEngine) {
+        reconciliationEngine.stop();
+      }
+
       if (archiveService) {
         await archiveService.stop();
       }
 
-      if (scheduler) {
-        await scheduler.stop();
+      if (cleanupService) {
+        await cleanupService.stop();
       }
 
-      if (retryScheduler) {
-        await retryScheduler.stop();
-      }
-
+      // Close the HTTP server last so health checks stay reachable during drain
       if (subscriber) {
         await subscriber.stop();
       }
@@ -264,19 +270,12 @@ async function main() {
     }
   };
 
-  process.on('SIGINT', async () => {
-    await shutdown('SIGINT');
-  });
-
-  process.on('SIGTERM', async () => {
-    await shutdown('SIGTERM');
-  });
+  process.on('SIGINT', () => shutdown('SIGINT'));
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
 }
 
 main().catch((err) => {
   if (err instanceof SecretValidationError) {
-    // Secret validation failures are reported field-by-field without echoing
-    // actual secret values (#692).
     logger.error('Startup secret validation failed — service will not start', {
       error: err.message,
     });

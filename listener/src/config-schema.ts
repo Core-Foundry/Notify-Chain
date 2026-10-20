@@ -273,6 +273,12 @@ export const APP_CONFIG_SCHEMA: ConfigSchema = {
     persistIntervalMs: { type: 'number', min: 1000 },
     snapshotRetentionDays: { type: 'number', min: 1 },
   },
+  eventQueue: {
+    maxConcurrency: { type: 'number', min: 1 },
+    maxRetries: { type: 'number', min: 0 },
+    baseDelayMs: { type: 'number', min: 0 },
+    pollIntervalMs: { type: 'number', min: 100 },
+  },
   cleanup: {
     enabled: { type: 'boolean' },
     intervalMs: { type: 'number', min: 60000 },

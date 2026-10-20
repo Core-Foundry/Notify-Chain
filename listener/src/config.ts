@@ -965,6 +965,13 @@ export function validateConfig(config: Config): void {
     }
   }
 
+  // ── Event queue ────────────────────────────────────────────────────────────
+  if (config.eventQueue?.maxConcurrency !== undefined && config.eventQueue.maxConcurrency < 1) {
+    errors.push(
+      `EVENT_QUEUE_MAX_CONCURRENCY must be >= 1 (received: ${config.eventQueue.maxConcurrency}).`,
+    );
+  }
+
   // ── Backfill ───────────────────────────────────────────────────────────────
   if (config.backfill) {
     if (config.backfill.maxLedgers !== undefined && config.backfill.maxLedgers < 0) {
