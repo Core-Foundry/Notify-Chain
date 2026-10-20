@@ -121,6 +121,16 @@ export interface NotificationExecutionLog {
   durationMs?: number | null;
 }
 
+/**
+ * What to do when a notification is still pending after its executeAt and the
+ * scheduler was not available to run it inside the timing buffer.
+ *
+ * - `execute` — deliver it late (default, previous catch-up behavior)
+ * - `expire` — mark it EXPIRED and do not deliver
+ * - `intervene` — hold it until an operator resumes it
+ */
+export type MissedSchedulePolicy = 'execute' | 'expire' | 'intervene';
+
 export interface SchedulerConfig {
   enabled: boolean;
   pollIntervalMs: number;
@@ -131,6 +141,8 @@ export interface SchedulerConfig {
   retryDelayMs?: number;
   /** Max notifications processed concurrently per poll cycle (WORKER_CONCURRENCY). Default 1 = serial. */
   concurrency?: number;
+  /** Overdue notifications outside the timing buffer. Default `execute`. */
+  missedSchedulePolicy?: MissedSchedulePolicy;
 }
 
 export interface DeadLetterQueueEntry {

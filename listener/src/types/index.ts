@@ -164,8 +164,8 @@ export interface SchedulerConfig {
   batchSize: number;
   concurrency: number;
   timingBufferMs: number;
-  /** Maximum future schedule time in milliseconds; null disables the horizon. */
-  maxSchedulingHorizonMs?: number | null;
+  /** `execute` (default), `expire`, or `intervene`. See SCHEDULER_MISSED_POLICY. */
+  missedSchedulePolicy?: 'execute' | 'expire' | 'intervene';
 }
 
 export interface EventQueueConfig {

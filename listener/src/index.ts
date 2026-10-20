@@ -196,6 +196,10 @@ async function main() {
     metricsStore,
     healthMonitor,
     deliveryReceiptRepository,
+    eventStream: {
+      enabled: process.env.EVENT_STREAM_ENABLED === 'true',
+      heartbeatMs: Number(process.env.EVENT_STREAM_HEARTBEAT_MS || 15_000),
+    },
   });
 
   if (healthMonitor) {

@@ -53,6 +53,14 @@ export class ConfigError extends Error {
   }
 }
 
+function parseMissedSchedulePolicy(
+  value: string | undefined,
+): 'execute' | 'expire' | 'intervene' {
+  if (value === undefined || value === '' || value === 'execute') return 'execute';
+  if (value === 'expire' || value === 'intervene') return value;
+  return 'execute';
+}
+
 function trimEnv(name: string): string | undefined {
   const value = process.env[name];
   return value === undefined ? undefined : value.trim();
@@ -539,7 +547,7 @@ export function loadConfig(): Config {
       batchSize: parseIntegerEnv('SCHEDULER_BATCH_SIZE', '10'),
       concurrency: parseIntegerEnv('WORKER_CONCURRENCY', '1'),
       timingBufferMs: parseIntegerEnv('SCHEDULER_TIMING_BUFFER_MS', '60000'),
-      maxSchedulingHorizonMs: loadMaxSchedulingHorizonMs(),
+      missedSchedulePolicy: parseMissedSchedulePolicy(trimEnv('SCHEDULER_MISSED_POLICY')),
     },
     retryScheduler: loadRetrySchedulerConfig(retryPolicy),
     retryPolicy,
@@ -812,6 +820,18 @@ export function validateConfig(config: Config): void {
     }
     if (config.scheduler.batchSize < 1) {
       errors.push(`SCHEDULER_BATCH_SIZE must be >= 1 (received: ${config.scheduler.batchSize}).`);
+    }
+    const missedPolicy = trimEnv('SCHEDULER_MISSED_POLICY');
+    if (
+      missedPolicy !== undefined &&
+      missedPolicy !== '' &&
+      missedPolicy !== 'execute' &&
+      missedPolicy !== 'expire' &&
+      missedPolicy !== 'intervene'
+    ) {
+      errors.push(
+        `SCHEDULER_MISSED_POLICY must be execute, expire, or intervene (received: ${missedPolicy}).`,
+      );
     }
   }
 

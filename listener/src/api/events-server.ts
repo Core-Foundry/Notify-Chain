@@ -89,6 +89,8 @@ import { sanitizeCredentials } from '../utils/credential-sanitizer';
 import { DiscordNotificationProvider } from '../services/providers/discord-provider';
 import { WebhookNotificationProvider } from '../services/providers/webhook-provider';
 import { ProviderHealthResult } from '../types/provider-capabilities';
+import { EVENT_STREAM_PATH, handleEventStream } from './event-stream';
+import { resolveLocalDateTime } from '../services/local-schedule';
 
 export interface EventsServerOptions {
   port: number;
@@ -159,6 +161,11 @@ export interface EventsServerOptions {
   maxDecompressedBytes?: number;
   /** Optional DataExportService override for administrative exports (#850). */
   dataExportService?: DataExportService | null;
+  /**
+   * Optional SSE feed at GET /api/events/stream. Omitted or disabled leaves
+   * that path as 404 so existing poll clients are unchanged.
+   */
+  eventStream?: { enabled: boolean; heartbeatMs?: number } | null;
 }
 
 type ServiceStatus = 'ok' | 'error' | 'not_configured';
@@ -545,7 +552,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
     res.setHeader(
       'Access-Control-Allow-Headers',
-      'Content-Type, X-API-Key, Authorization, X-Correlation-Id, X-Request-Id',
+      'Content-Type, X-API-Key, Authorization, X-Correlation-Id, X-Request-Id, Last-Event-ID',
     );
     res.setHeader(
       'Access-Control-Expose-Headers',
@@ -1218,11 +1225,12 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
         }
 
         try {
-          if (!data.executeAt || !data.payload || !data.targetRecipient) {
+          const hasLocalSchedule = data.timeZone != null || data.localDateTime != null;
+          if ((!data.executeAt && !hasLocalSchedule) || !data.payload || !data.targetRecipient) {
             res.writeHead(400, { 'Content-Type': 'application/json' });
             res.end(
               JSON.stringify({
-                error: 'Missing required fields: executeAt, payload, targetRecipient',
+                error: 'Missing required fields: executeAt (or timeZone + localDateTime), payload, targetRecipient',
                 code: 'MISSING_FIELDS',
               }),
             );
@@ -1230,24 +1238,66 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
           }
 
           let executeAt: Date;
-          let timezone = 'UTC';
-          try {
-            const parsed = parseExecuteAtWithTimezone(data.executeAt, data.timezone);
-            executeAt = parsed.utcDate;
-            timezone = parsed.timezone;
-          } catch (tzErr) {
-            if (tzErr instanceof InvalidTimezoneError) {
+          let metadata = data.metadata;
+          if (data.timeZone != null || data.localDateTime != null) {
+            if (typeof data.timeZone !== 'string' || typeof data.localDateTime !== 'string') {
               res.writeHead(400, { 'Content-Type': 'application/json' });
               res.end(
-                JSON.stringify({ error: tzErr.message, code: 'INVALID_TIMEZONE' }),
+                JSON.stringify({
+                  error: 'timeZone and localDateTime are both required for a local schedule',
+                  code: 'INVALID_LOCAL_SCHEDULE',
+                }),
               );
               return;
             }
-            res.writeHead(400, { 'Content-Type': 'application/json' });
-            res.end(
-              JSON.stringify({ error: 'executeAt is not a valid date', code: 'INVALID_DATE' }),
-            );
-            return;
+            if (
+              data.recurrence != null &&
+              data.recurrence !== 'daily' &&
+              data.recurrence !== 'weekly'
+            ) {
+              res.writeHead(400, { 'Content-Type': 'application/json' });
+              res.end(
+                JSON.stringify({
+                  error: 'recurrence must be daily or weekly',
+                  code: 'INVALID_LOCAL_SCHEDULE',
+                }),
+              );
+              return;
+            }
+            try {
+              const resolved = resolveLocalDateTime(data.localDateTime, data.timeZone);
+              executeAt = resolved.executeAt;
+              const base =
+                metadata && typeof metadata === 'object' && !Array.isArray(metadata) ? metadata : {};
+              metadata = {
+                ...base,
+                localSchedule: {
+                  timeZone: data.timeZone,
+                  localDateTime: resolved.requestedLocal,
+                  recurrence: data.recurrence,
+                  kind: resolved.kind,
+                  resolvedLocal: resolved.resolvedLocal,
+                },
+              };
+            } catch (scheduleError) {
+              res.writeHead(400, { 'Content-Type': 'application/json' });
+              res.end(
+                JSON.stringify({
+                  error: (scheduleError as Error).message,
+                  code: 'INVALID_LOCAL_SCHEDULE',
+                }),
+              );
+              return;
+            }
+          } else {
+            executeAt = new Date(data.executeAt);
+            if (isNaN(executeAt.getTime())) {
+              res.writeHead(400, { 'Content-Type': 'application/json' });
+              res.end(
+                JSON.stringify({ error: 'executeAt is not a valid date', code: 'INVALID_DATE' }),
+              );
+              return;
+            }
           }
 
           const schedule = async (): Promise<{
@@ -1532,9 +1582,10 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
       return;
     }
 
-    // GET /api/schedule/:id/audit — schedule change audit trail (#966)
-    const scheduleAuditMatch = url.pathname.match(/^\/api\/schedule\/(\d+)\/audit$/);
-    if (req.method === 'GET' && scheduleAuditMatch) {
+    // POST /api/schedule/:id/resume — release a notification held by the
+    // intervene missed-schedule policy so the next poll delivers it.
+    const resumeMatch = url.pathname.match(/^\/api\/schedule\/(\d+)\/resume$/);
+    if (req.method === 'POST' && resumeMatch) {
       if (!options.notificationAPI) {
         sendErr(res, 503, 'Scheduler not enabled', ErrorCode.SERVICE_UNAVAILABLE);
         return;
