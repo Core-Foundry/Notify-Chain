@@ -53,7 +53,7 @@ export class NotificationScheduler {
     this.processorId = config.processorId || uuidv4();
     this.batchValidator = batchValidator ?? new BatchValidationService();
     this.providerRegistry = providerRegistry ?? getProviderRegistry();
-    this.deliveryReceiptRepository = deliveryReceiptRepository;
+    this.analytics = getNotificationAnalyticsAggregator();
   }
 
   /**
@@ -155,6 +155,7 @@ export class NotificationScheduler {
       if (activeNotifications.length === 0) return;
 
       const batchRejection = this.batchValidator.rejectIfInvalid(
+        this.toValidationBatch(notifications),
         this.toValidationBatch(activeNotifications),
       );
 
@@ -456,11 +457,25 @@ export class NotificationScheduler {
           });
         }
 
+        const deliveryLatencyMs = notification.createdAt
+          ? Date.now() - new Date(notification.createdAt).getTime()
+          : undefined;
+
+        this.analytics.record({
+          notificationType: notification.notificationType,
+          contractAddress: notification.contractAddress ?? undefined,
+          outcome: 'success',
+          durationMs,
+          deliveryLatencyMs,
+          timestamp: Date.now(),
+        });
+
         logger.info('Notification delivered successfully', {
           requestId,
           id: notification.id,
           type: notification.notificationType,
           durationMs,
+          deliveryLatencyMs,
         });
       } else {
         throw new Error(deliveryResult.errorMessage ?? 'Notification delivery returned false');
@@ -502,6 +517,15 @@ export class NotificationScheduler {
           attempt: executionAttempt,
         });
       }
+
+      this.analytics.record({
+        notificationType: notification.notificationType,
+        contractAddress: notification.contractAddress ?? undefined,
+        outcome: 'failure',
+        durationMs,
+        errorReason: (error as Error).message,
+        timestamp: Date.now(),
+      });
 
       const willRetry = notification.retryCount + 1 < notification.maxRetries;
       const nextRetryAt = willRetry

@@ -10,13 +10,6 @@ import { IndexingHealthPanel } from '../components/IndexingHealthPanel';
 import { NotificationHealthPanel } from '../components/NotificationHealthPanel';
 import { NotificationSummaryPanel } from '../components/NotificationSummaryPanel';
 import { EmptyState } from '../components/EmptyState';
-import { EventActivityChart } from '../components/EventActivityChart';
-import {
-  computeEventActivity,
-  DEFAULT_EVENT_ACTIVITY_RANGE,
-  EVENT_ACTIVITY_RANGES,
-  type EventActivityRange,
-} from '../utils/eventActivityData';
 import {
   useEventFilters,
   useEventLoadingState,
@@ -160,49 +153,28 @@ export function EventExplorerPage() {
     loadEvents();
     loadStatus();
 
-    return () => {
-      cancelled = true;
-    };
-  }, [lastFetchedAt, setEvents, setError, setLoading]);
-
-  // Live updates stay outside the fetch effect. That effect stores events and
-  // changes lastFetchedAt, and its cleanup would otherwise close the stream
-  // (and the poll timer) as soon as the first response arrives.
-  useEffect(() => {
-    let cancelled = false;
-    let intervalId: ReturnType<typeof setInterval> | undefined;
-
-    const startPolling = () => {
-      if (intervalId || cancelled) return;
-      intervalId = setInterval(async () => {
-        try {
-          const remoteEvents = await fetchEvents(API_URL);
-          if (!cancelled) {
-            setEvents(remoteEvents);
-            markSyncSuccess();
-          }
-        } catch {
-          if (!cancelled) {
-            markSyncFailure('Background refresh failed');
-          }
+    // Poll for status updates so delivered/failed notifications are reflected
+    // without requiring a manual page refresh.
+    const intervalId = setInterval(async () => {
+      setIsRefreshing(true);
+      setRefreshError(null);
+      try {
+        const remoteEvents = await fetchEvents(API_URL);
+        if (!cancelled) {
+          setEvents(remoteEvents);
+          markSyncSuccess();
         }
-      }, POLL_INTERVAL_MS);
-    };
-
-    const sseDisabled = import.meta.env.VITE_EVENTS_SSE === 'false';
-    const closeStream =
-      !sseDisabled && STREAM_URL
-        ? openEventStream(STREAM_URL, {
-            onEvent: (event) => {
-              if (cancelled) return;
-              appendEvents([event]);
-              markSyncSuccess();
-            },
-            onFallback: startPolling,
-          })
-        : undefined;
-
-    if (!closeStream) startPolling();
+      } catch {
+        if (!cancelled) {
+          setRefreshError('Background refresh failed');
+          markSyncFailure('Background refresh failed');
+        }
+      } finally {
+        if (!cancelled) {
+          setIsRefreshing(false);
+        }
+      }
+    }, POLL_INTERVAL_MS);
 
     return () => {
       cancelled = true;
@@ -324,21 +296,21 @@ export function EventExplorerPage() {
   }, [setSearch, setContractFilter, setEventTypeFilter, setStatusFilter, setDateFrom, setDateTo]);
 
   const handleRetry = useCallback(async () => {
-    setLoading(true);
-    setError(null);
+    setIsRefreshing(true);
+    setRefreshError(null);
 
     try {
       const remoteEvents = await fetchEvents(API_URL);
       setEvents(remoteEvents);
       markSyncSuccess();
+      setError(null);
     } catch {
-      setEvents(generateMockEvents(DEFAULT_EVENT_COUNT));
-      setError('Retry failed — still using demo event data.');
+      setRefreshError('Manual refresh failed');
       markSyncFailure('Manual refresh failed');
     } finally {
-      setLoading(false);
+      setIsRefreshing(false);
     }
-  }, [markSyncFailure, markSyncSuccess, setError, setEvents, setLoading]);
+  }, [markSyncFailure, markSyncSuccess, setError, setEvents]);
 
   const handleSelectEvent = useCallback((event: BlockchainEvent) => {
     setSelectedNotification(event);
@@ -395,6 +367,7 @@ export function EventExplorerPage() {
       <EventFiltersBar />
       <NotificationSearchBar />
 
+      {error && !filteredEvents.length && (
       <section className="event-activity" aria-labelledby="event-activity-heading">
         <div className="event-activity__header">
           <h2 id="event-activity-heading">Event Activity</h2>
@@ -433,15 +406,33 @@ export function EventExplorerPage() {
         </section>
       )}
 
+      {refreshError && filteredEvents.length > 0 && (
+        <section
+          className="event-explorer__error-banner event-explorer__error-banner--refresh"
+          role="alert"
+        >
+          <div>
+            <strong>Refresh Error:</strong> {refreshError} — existing events are still displayed.
+          </div>
+          <button type="button" className="event-explorer__retry-button" onClick={handleRetry}>
+            Retry Refresh
+          </button>
+        </section>
+      )}
+
       <div className="event-explorer__status-row">
         <p className="event-explorer__summary">
           Showing {fromIndex.toLocaleString()}–{toIndex.toLocaleString()} of{' '}
           {filteredEvents.length.toLocaleString()} events
         </p>
-        {isLoading && <p className="event-explorer__loading-note">Loading events…</p>}
+        {(isLoading || isRefreshing) && (
+          <p className="event-explorer__loading-note">
+            {isRefreshing ? 'Refreshing events…' : 'Loading events…'}
+          </p>
+        )}
       </div>
 
-      {isLoading ? (
+      {isLoading && filteredEvents.length === 0 ? (
         <EventExplorerSkeleton rows={Math.min(limit, 8)} />
       ) : currentPageEvents.length > 0 ? (
         <EventExplorerTable
