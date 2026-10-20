@@ -72,6 +72,7 @@ import { getJobMonitor } from '../services/job-monitor';
 import { NotificationImportService } from '../services/notification-import-service';
 import { DeliveryReceiptRepository } from '../services/delivery-receipt-repository';
 import { DataExportService } from '../services/data-export-service';
+import { SecurityAuditService } from '../services/security-audit';
 import { validatePayload, Schemas } from '../middleware/request-validator';
 import { parseLedgerRangeParams } from '../utils/ledger-range-validator';
 import { ValidationError, validationErrorBody } from '../utils/validation';
@@ -477,6 +478,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
   const webhookReplayCache = new WebhookReplayCache({
     maxEntries: options.webhookReplayCacheMaxEntries ?? 10_000,
   });
+  const webhookAuditService = new SecurityAuditService(getDatabase());
   // Response-time tracking (#491)
   const responseTime =
     options.responseTimeMiddleware !== undefined && options.responseTimeMiddleware !== null
@@ -904,6 +906,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
             maxAgeSeconds,
             requireTimestamp: options.requireWebhookTimestamp !== false,
             replayCache: idempotencyKey ? undefined : webhookReplayCache,
+            auditService: webhookAuditService,
           });
 
           if (!auth.authenticated) {
