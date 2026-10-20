@@ -18,8 +18,13 @@ describe('recurring notification persistence and lifecycle', () => {
   });
 
   beforeEach(async () => {
+    repository.setScheduleAuditTrail(null);
     await db.run('DELETE FROM notification_execution_log');
     await db.run('DELETE FROM scheduled_notifications');
+  });
+
+  afterEach(() => {
+    repository.setScheduleAuditTrail(null);
   });
 
   async function createRecurring(count: number, executeAt = startAt): Promise<number> {
@@ -57,6 +62,24 @@ describe('recurring notification persistence and lifecycle', () => {
       occurrenceCount: 1,
       lastRunAt: startAt,
     });
+  });
+
+  it('audits a continuing occurrence with its actual pending status', async () => {
+    const record = jest.fn().mockResolvedValue(1);
+    repository.setScheduleAuditTrail({ record } as any);
+    const id = await createRecurring(3);
+
+    await markProcessing(id);
+    await repository.markAsCompleted(id, 'request-1', new Date('2026-01-01T12:01:00.000Z'));
+
+    expect(record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        scheduledNotificationId: id,
+        action: 'EXECUTED',
+        fromStatus: NotificationStatus.PROCESSING,
+        toStatus: NotificationStatus.PENDING,
+      }),
+    );
   });
 
   it('completes a series by count and ignores duplicate completion after advancement', async () => {

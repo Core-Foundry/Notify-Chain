@@ -2,6 +2,7 @@ import {
   ProviderCapability,
   ProviderMetadata,
   NotificationProvider,
+  NotificationFormat,
   DeliveryPayload,
   DeliveryResult,
   ProviderHealthResult,
@@ -22,12 +23,19 @@ const WEBHOOK_CAPABILITIES = new Set<ProviderCapability>([
   ProviderCapability.ATTACHMENTS,
 ]);
 
+const WEBHOOK_SUPPORTED_FORMATS = new Set<NotificationFormat>([
+  NotificationFormat.JSON,
+  NotificationFormat.PLAIN_TEXT,
+]);
+
 export class WebhookNotificationProvider implements NotificationProvider {
   readonly metadata: ProviderMetadata = {
     id: 'webhook',
     name: 'HTTP Webhook',
     version: '1.0.0',
     capabilities: WEBHOOK_CAPABILITIES,
+    supportedFormats: WEBHOOK_SUPPORTED_FORMATS,
+    defaultFormat: NotificationFormat.JSON,
   };
 
   private readonly config: Required<Omit<WebhookProviderConfig, 'healthCheckUrl'>> & {
@@ -44,6 +52,10 @@ export class WebhookNotificationProvider implements NotificationProvider {
 
   hasCapability(capability: ProviderCapability): boolean {
     return this.metadata.capabilities.has(capability);
+  }
+
+  supportsFormat(format: NotificationFormat): boolean {
+    return this.metadata.supportedFormats.has(format);
   }
 
   async deliver(payload: DeliveryPayload): Promise<DeliveryResult> {

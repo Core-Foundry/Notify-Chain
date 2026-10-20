@@ -68,6 +68,8 @@ export interface CreateScheduledNotificationInput {
   notificationType: NotificationType;
   targetRecipient: string;
   executeAt: Date;
+  /** IANA timezone used to interpret/display executeAt; storage remains UTC. */
+  timezone?: string;
   expiresAt?: Date | string | number | null;
   maxRetries?: number;
   deduplicationKey?: string;

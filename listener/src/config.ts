@@ -19,7 +19,10 @@ import {
   DigestConfig,
   LocalizationConfig,
 } from './types';
-import { validateCorsOrigin, CorsValidationError } from './utils/cors-validator';
+import {
+  validateCorsOrigin,
+  CorsValidationError,
+} from './utils/cors-validator';
 import { validateSecrets } from './config/validate-secrets';
 import { ConfigurationSchemaValidator, APP_CONFIG_SCHEMA } from './config-schema';
 import { DEFAULT_LOCALE, SUPPORTED_LOCALES } from './i18n';
