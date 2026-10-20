@@ -67,6 +67,11 @@ import { NotificationImportService } from '../services/notification-import-servi
 import { ResponseTimeMiddleware } from '../middleware/response-time';
 import { addSecurityHeaders } from '../middleware/security-headers';
 import { DEFAULT_MAX_BODY_BYTES, enforceBodyLimit } from '../middleware/body-limit';
+import {
+  DEFAULT_MAX_COMPRESSED_BYTES,
+  DEFAULT_MAX_DECOMPRESSED_BYTES,
+  applyDecompressionLimit,
+} from '../middleware/decompression-limit';
 import { sanitizeUrl } from '../utils/logger';
 import { sanitizeCredentials } from '../utils/credential-sanitizer';
 import { DiscordNotificationProvider } from '../services/providers/discord-provider';
@@ -135,6 +140,10 @@ export interface EventsServerOptions {
    * are never parsed. Defaults to {@link DEFAULT_MAX_BODY_BYTES}.
    */
   maxBodyBytes?: number;
+  /** Maximum compressed request body size, in bytes. */
+  maxCompressedBytes?: number;
+  /** Maximum decompressed request body size, in bytes. */
+  maxDecompressedBytes?: number;
   /** Optional DataExportService override for administrative exports (#850). */
   dataExportService?: DataExportService | null;
 }
@@ -497,6 +506,24 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
       },
     });
     if (!bodyLimit.allowed) {
+      return;
+    }
+
+    const decompression = await applyDecompressionLimit(req, res, {
+      maxCompressedBytes: options.maxCompressedBytes ?? DEFAULT_MAX_COMPRESSED_BYTES,
+      maxDecompressedBytes: options.maxDecompressedBytes ?? DEFAULT_MAX_DECOMPRESSED_BYTES,
+      onRejected: (reason, detail) => {
+        logger.warn('Compressed request body rejected', {
+          requestId,
+          correlationId,
+          method: req.method,
+          url: sanitizeUrl(req.url ?? '/'),
+          reason,
+          ...detail,
+        });
+      },
+    });
+    if (decompression.rejected) {
       return;
     }
 

@@ -6,16 +6,30 @@ import {
   AppCleanupConfig,
   EventQueueConfig,
   RetrySchedulerOptions,
+  RetryPolicyOptions,
   AnalyticsConfig,
   ExpirationConfig,
   ApiKey,
   BackfillConfig,
   LoggingConfig,
   ApiConfig,
+  RpcRateLimitConfig,
+  RpcFallbackConfig,
+  EventBatchingConfig,
+  DigestConfig,
+  LocalizationConfig,
 } from './types';
 import { validateCorsOrigin, CorsValidationError } from './utils/cors-validator';
 import { validateSecrets } from './config/validate-secrets';
 import { ConfigurationSchemaValidator, APP_CONFIG_SCHEMA } from './config-schema';
+import { DEFAULT_LOCALE, SUPPORTED_LOCALES } from './i18n';
+import {
+  RetryFailureType,
+  RETRY_FAILURE_TYPES,
+  DEFAULT_RETRYABLE_FAILURE_TYPES,
+  parseRetryableFailureTypes,
+} from './services/retry-policy';
+import type { CircuitBreakerConfig } from './services/circuit-breaker';
 import {
   SUPPORTED_LOG_FORMATS,
   SUPPORTED_LOG_LEVELS,
@@ -294,7 +308,6 @@ function loadAnalyticsConfig(): AnalyticsConfig {
 function loadRetrySchedulerConfig(policy: RetryPolicyOptions): RetrySchedulerOptions {
   return {
     enabled: trimEnv('RETRY_SCHEDULER_ENABLED') !== 'false',
-    webhookTimeoutMs: parseIntegerEnv('WEBHOOK_DELIVERY_TIMEOUT_MS', '10000'),
     pollIntervalMs: parseIntegerEnv('RETRY_SCHEDULER_POLL_INTERVAL_MS', '15000'),
     lockTimeoutMs: parseIntegerEnv('RETRY_SCHEDULER_LOCK_TIMEOUT_MS', '60000'),
     processorId: trimEnv('RETRY_SCHEDULER_PROCESSOR_ID'),
@@ -428,6 +441,28 @@ function loadCircuitBreakerConfig(): CircuitBreakerConfig {
   };
 }
 
+function loadEventBatchingConfig(): EventBatchingConfig {
+  return {
+    enabled: parseBooleanEnv('EVENT_BATCHING_ENABLED', false),
+    maxBatchSize: parseIntegerEnv('EVENT_BATCHING_MAX_SIZE', '50'),
+    windowMs: parseStrictIntegerEnv('EVENT_BATCHING_WINDOW_MS', '5000'),
+  };
+}
+
+function loadDigestConfig(): DigestConfig {
+  return {
+    enabled: parseBooleanEnv('DIGEST_ENABLED', false),
+    intervalMs: parseStrictIntegerEnv('DIGEST_INTERVAL_MS', String(60 * 60 * 1000)),
+    maxEventsPerDigest: parseIntegerEnv('DIGEST_MAX_EVENTS', '100'),
+  };
+}
+
+function loadLocalizationConfig(): LocalizationConfig {
+  return {
+    defaultLocale: (trimEnv('DEFAULT_LOCALE') || DEFAULT_LOCALE).toLowerCase(),
+  };
+}
+
 export function loadConfig(): Config {
   validateRequiredEnvVars();
 
@@ -520,6 +555,9 @@ export function loadConfig(): Config {
     logging: loadLoggingConfig(),
     api: loadApiConfig(),
     circuitBreaker: loadCircuitBreakerConfig(),
+    eventBatching: loadEventBatchingConfig(),
+    digest: loadDigestConfig(),
+    localization: loadLocalizationConfig(),
   };
 }
 
@@ -906,7 +944,7 @@ export function validateConfig(config: Config): void {
 
   // ── Backfill ───────────────────────────────────────────────────────────────
   if (config.backfill) {
-    if (config.backfill.maxLedgers < 0) {
+    if (config.backfill.maxLedgers !== undefined && config.backfill.maxLedgers < 0) {
       errors.push(
         `BACKFILL_MAX_LEDGERS must be >= 0 (0 = unlimited). ` +
           `(received: ${config.backfill.maxLedgers}).`,
@@ -933,6 +971,37 @@ export function validateConfig(config: Config): void {
           `(received: ${config.rpcRateLimit.throttleDelayMs}).`,
       );
     }
+  }
+
+  if (config.eventBatching) {
+    if (config.eventBatching.maxBatchSize < 1) {
+      errors.push(
+        `EVENT_BATCHING_MAX_SIZE must be >= 1 (received: ${config.eventBatching.maxBatchSize}).`,
+      );
+    }
+    if (config.eventBatching.windowMs < 0) {
+      errors.push(
+        `EVENT_BATCHING_WINDOW_MS must be >= 0 (received: ${config.eventBatching.windowMs}).`,
+      );
+    }
+  }
+
+  if (config.digest) {
+    if (config.digest.intervalMs < 1000) {
+      errors.push(`DIGEST_INTERVAL_MS must be >= 1000 ms (received: ${config.digest.intervalMs}).`);
+    }
+    if (config.digest.maxEventsPerDigest < 1) {
+      errors.push(
+        `DIGEST_MAX_EVENTS must be >= 1 (received: ${config.digest.maxEventsPerDigest}).`,
+      );
+    }
+  }
+
+  if (config.localization && !SUPPORTED_LOCALES.includes(config.localization.defaultLocale)) {
+    errors.push(
+      `DEFAULT_LOCALE must be one of: ${SUPPORTED_LOCALES.join(', ')} ` +
+        `(received: "${config.localization.defaultLocale}").`,
+    );
   }
 
   // ── Logging ────────────────────────────────────────────────────────────────

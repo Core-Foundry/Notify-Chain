@@ -84,13 +84,6 @@ function handleActivationKey(onClick: (e: BlockchainEvent) => void, event: Block
   };
 }
 
-function CompactCard({
-  event,
-  onClick,
-}: {
-  event: BlockchainEvent;
-  onClick?: (e: BlockchainEvent) => void;
-}) {
 function IdValue({ value, label }: { value: string; label: string }) {
   return (
     <dd className="event-card__id-value" title={value}>

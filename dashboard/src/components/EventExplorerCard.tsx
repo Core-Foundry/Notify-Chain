@@ -1,3 +1,4 @@
+import { memo, useCallback, type KeyboardEvent } from 'react';
 import type { BlockchainEvent } from '../types/event';
 import type { ContractStatus } from '../services/eventsApi';
 import { formatTimestamp } from '../utils/formatTime';
@@ -18,6 +19,7 @@ export interface EventExplorerCardProps {
   isCopied?: boolean;
   onSelect?: (event: BlockchainEvent) => void;
   contractStatuses?: ContractStatus[];
+  onContractClick?: (contractAddress: string) => void;
 }
 
 export const EventExplorerCard = memo(function EventExplorerCard({
@@ -26,6 +28,7 @@ export const EventExplorerCard = memo(function EventExplorerCard({
   isCopied = false,
   onSelect,
   contractStatuses = [],
+  onContractClick,
 }: EventExplorerCardProps) {
   const contractStatus = contractStatuses.find(
     (status) => status.address === event.contractAddress,
@@ -66,16 +69,24 @@ export const EventExplorerCard = memo(function EventExplorerCard({
     >
       <div className="event-explorer__cell" data-label="Contract" role="cell">
         <div className="event-explorer__contract-block">
-          <p className="event-explorer__contract" title={event.contractAddress}>
+          <button
+            type="button"
+            className="event-explorer__contract-link"
+            onClick={(e) => {
+              e.stopPropagation();
+              onContractClick?.(event.contractAddress);
+            }}
+            title={event.contractAddress}
+          >
             {shortenAddress(event.contractAddress)}
-          </p>
+          </button>
           <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
             <button
               type="button"
               className="event-explorer__copy-button"
               onClick={(e) => {
                 e.stopPropagation();
-                onCopyContract(event.contractAddress);
+                onCopyContract?.(event.contractAddress);
               }}
               aria-label={`Copy contract address ${event.contractAddress}`}
             >
@@ -126,4 +137,4 @@ export const EventExplorerCard = memo(function EventExplorerCard({
       </div>
     </article>
   );
-}
+});
