@@ -80,10 +80,22 @@ export const SENSITIVE_KEYS: ReadonlyArray<string> = [
   // Stellar secret seeds / wallet recovery material.
   'seed',
   'mnemonic',
+  // Database connection material: a DSN carries the password in its userinfo
+  // (postgres://user:pass@host) and is often logged as a plain string field.
+  'databaseurl',
+  'database_url',
+  'connectionstring',
+  'connection_string',
+  'dsn',
 ];
 
-// Regex for HTTP(S) URLs with embedded credentials: https://user:pass@host
-const URL_CREDENTIALS_RE = /(https?:\/\/)[^:/?#\s]+:[^@\s]+@/gi;
+// Regex for URLs with embedded credentials across any scheme that carries a
+// userinfo component: https://user:pass@host, postgres://user:pass@host,
+// redis://:pass@host, amqp://user:pass@host, mongodb+srv://user:pass@host, etc.
+// The scheme is restricted to RFC 3986 scheme characters so prose like
+// "host:8080" is not treated as a credential.
+const URL_CREDENTIALS_RE =
+  /([a-z][a-z0-9+.\-]*:\/\/)[^:/?#@\s]*:[^@\s]+@/gi;
 
 // Regex for Authorization / Bearer / Token / Basic header values
 const BEARER_HEADER_RE = /\b(bearer|token|basic)\s+\S+/gi;
