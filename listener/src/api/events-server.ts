@@ -79,11 +79,6 @@ import { ValidationError, validationErrorBody } from '../utils/validation';
 import { ResponseTimeMiddleware } from '../middleware/response-time';
 import { addSecurityHeaders } from '../middleware/security-headers';
 import { DEFAULT_MAX_BODY_BYTES, enforceBodyLimit } from '../middleware/body-limit';
-import {
-  DEFAULT_MAX_COMPRESSED_BYTES,
-  DEFAULT_MAX_DECOMPRESSED_BYTES,
-  applyDecompressionLimit,
-} from '../middleware/decompression-limit';
 import { sanitizeUrl } from '../utils/logger';
 import { sanitizeCredentials } from '../utils/credential-sanitizer';
 import { DiscordNotificationProvider } from '../services/providers/discord-provider';
@@ -530,24 +525,6 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
       return;
     }
 
-    const decompression = await applyDecompressionLimit(req, res, {
-      maxCompressedBytes: options.maxCompressedBytes ?? DEFAULT_MAX_COMPRESSED_BYTES,
-      maxDecompressedBytes: options.maxDecompressedBytes ?? DEFAULT_MAX_DECOMPRESSED_BYTES,
-      onRejected: (reason, detail) => {
-        logger.warn('Compressed request body rejected', {
-          requestId,
-          correlationId,
-          method: req.method,
-          url: sanitizeUrl(req.url ?? '/'),
-          reason,
-          ...detail,
-        });
-      },
-    });
-    if (decompression.rejected) {
-      return;
-    }
-
     res.setHeader('Access-Control-Allow-Origin', corsOrigin);
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
     res.setHeader(
@@ -903,7 +880,29 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
 
           const secrets = options.webhookSecrets ?? [];
           const maxAgeSeconds = options.signatureExpirationSeconds ?? 300;
-          const auth = await verifyWebhookRequest({
+        const secrets = options.webhookSecrets ?? [];
+        const maxAgeSeconds = options.signatureExpirationSeconds ?? 300;
+        
+        // Use default database for audit log or mock one if not available.
+        // Actually since SecurityAuditService requires Database, let's pass a real one.
+        const db = getDatabase();
+        const { SecurityAuditService } = require('../services/security-audit');
+        const auditService = new SecurityAuditService(db);
+
+        const auth = await verifyWebhookRequest({
+          headers: req.headers as Record<string, string | string[] | undefined>,
+          rawBody,
+          secrets,
+          sourceIp,
+          requestId,
+          correlationId,
+          maxAgeSeconds,
+          requireTimestamp: options.requireWebhookTimestamp !== false,
+          replayCache: webhookReplayCache,
+          auditService,
+        });
+
+          const auth = verifyWebhookRequest({
             headers: req.headers as Record<string, string | string[] | undefined>,
             rawBody,
             secrets,
@@ -1582,6 +1581,10 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
       return;
     }
 
+    // PATCH /api/schedule/:id — modify an eligible pending schedule.
+    const patchScheduleMatch = url.pathname.match(/^\/api\/schedule\/(\d+)$/);
+    if (req.method === 'PATCH' && patchScheduleMatch) {
+      if (!requireApiKey()) return;
     // POST /api/schedule/:id/resume — release a notification held by the
     // intervene missed-schedule policy so the next poll delivers it.
     const resumeMatch = url.pathname.match(/^\/api\/schedule\/(\d+)\/resume$/);
@@ -1718,6 +1721,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
       return;
     }
 
+    function isValidApiKey(apiKey: string | undefined, allowedKeys: Array<{ key: string; name?: string }> | undefined): boolean {
     function isValidApiKey(
       apiKey: string | undefined,
       allowedKeys: Array<{ key: string; name?: string }> | undefined,
@@ -1763,6 +1767,21 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
       return;
     }
 
+    // Get notification delivery history endpoint
+    if (req.method === 'GET' && req.url?.startsWith('/api/notifications/history')) {
+      const apiKey = req.headers['x-api-key'] as string | undefined;
+      if (!isValidApiKey(apiKey, options.apiKeys)) {
+        sendErr(res, 401, 'Unauthorized: Invalid or missing API key', ErrorCode.UNAUTHORIZED);
+        return;
+      }
+
+      const url = new URL(req.url, 'http://localhost');
+      const limit = url.searchParams.get('limit')
+        ? parseInt(url.searchParams.get('limit')!, 10)
+        : undefined;
+      const offset = url.searchParams.get('offset')
+        ? parseInt(url.searchParams.get('offset')!, 10)
+        : undefined;
     // Get notification delivery history endpoint.
     // Matched on the rewritten pathname so /api/v1/notifications/history is
     // routed (and authenticated) the same as the unversioned path.

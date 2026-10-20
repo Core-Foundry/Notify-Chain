@@ -77,8 +77,9 @@ export class NotificationScheduler {
       batchSize: this.config.batchSize,
     });
 
-    // Recover stale locks on startup
+    // Recover stale locks, then apply the operator's missed-schedule policy.
     await this.repository.recoverStaleLocks();
+    await this.repository.recoverOverdueSchedules(this.config.recoveryPolicy ?? 'EXECUTE');
 
     // Start processing loop
     this.scheduleNextPoll();

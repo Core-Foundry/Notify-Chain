@@ -14,6 +14,21 @@ describe('Config validation', () => {
     process.env = originalEnv;
   });
 
+  it('defaults missed-schedule recovery to EXECUTE', () => {
+    delete process.env.SCHEDULE_RECOVERY_POLICY;
+    expect(loadConfig().scheduler?.recoveryPolicy).toBe('EXECUTE');
+  });
+
+  it.each(['execute-later', 'IGNORE', ''])('rejects an invalid missed-schedule recovery policy: %s', (value) => {
+    process.env.SCHEDULE_RECOVERY_POLICY = value;
+    expect(() => loadConfig()).toThrow('SCHEDULE_RECOVERY_POLICY must be one of EXECUTE, EXPIRE, REQUIRE_INTERVENTION.');
+  });
+
+  it('loads the configured missed-schedule recovery policy', () => {
+    process.env.SCHEDULE_RECOVERY_POLICY = 'expire';
+    expect(loadConfig().scheduler?.recoveryPolicy).toBe('EXPIRE');
+  });
+
   it('throws a descriptive error when DISCORD_WEBHOOK_ID is set without DISCORD_WEBHOOK_URL', () => {
     process.env.DISCORD_WEBHOOK_ID = '123';
 

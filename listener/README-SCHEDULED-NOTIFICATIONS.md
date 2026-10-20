@@ -690,3 +690,10 @@ For issues or questions:
 1. Check troubleshooting section
 2. Review logs and database
 3. Open issue on GitHub
+
+
+## Modifying schedules and recovering overdue notifications
+
+Use `PATCH /api/schedule/:id` to update a pending schedule in place. Send `X-API-Key` and the current schedule version via `If-Match` (or `X-Schedule-Version`). Only the fields supplied in the JSON body are changed; supported fields are `executeAt`, `payload`, `notificationType`, `targetRecipient`, `expiresAt`, `maxRetries`, `priority`, `eventId`, `contractAddress`, and `metadata`. The API returns the updated version and an `ETag`. Non-pending schedules and stale versions return a conflict.
+
+Overdue recovery is configured with `SCHEDULE_RECOVERY_POLICY=EXECUTE|EXPIRE|REQUIRE_INTERVENTION` (default `EXECUTE`). For intervention holds, use `POST /api/schedule/:id/recovery` with `{"action":"EXECUTE"}` or `{"action":"EXPIRE"}` and an API key.

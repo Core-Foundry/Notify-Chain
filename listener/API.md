@@ -445,6 +445,90 @@ Returns a single scheduled notification by its numeric ID.
 
 ---
 
+### PATCH /api/schedule/:id
+
+Modify an eligible pending schedule in place without deleting and recreating it. Protected by API-key authentication and an optimistic version check.
+
+**Authentication**: `X-API-Key` header required.
+
+**Path Parameters**
+
+| Name | Description               |
+|------|---------------------------|
+| id   | Notification ID (integer) |
+
+**Required Headers**
+
+| Header               | Description                                                                                         |
+|----------------------|-----------------------------------------------------------------------------------------------------|
+| `If-Match`           | Current schedule version, e.g. `"1"` or `W/"1"`. Alternatively use `X-Schedule-Version`.          |
+| `X-Schedule-Version` | Alternative to `If-Match`. Integer version number of the schedule as returned by `GET /api/schedule/:id`. |
+
+**Request Body** — a JSON object containing only the fields to change. At least one field is required. Supported fields:
+
+| Field            | Type   | Description                                         |
+|------------------|--------|-----------------------------------------------------|
+| executeAt        | string | New ISO 8601 delivery time (must be in the future)  |
+| payload          | object | New notification payload                            |
+| notificationType | string | One of `discord`, `email`, `webhook`, `sms`         |
+| targetRecipient  | string | New delivery target                                 |
+| expiresAt        | string | New expiry deadline (ISO 8601 or epoch)             |
+| maxRetries       | number | New retry limit                                     |
+| priority         | number | New priority (1–10)                                 |
+| eventId          | string | New correlation ID                                  |
+| contractAddress  | string | New contract address                                |
+| metadata         | object | New metadata                                        |
+
+**Response `200`** — schedule updated; new `ETag` header contains the bumped version
+
+```json
+{
+  "id": 42,
+  "status": "PENDING",
+  "version": 2,
+  "executeAt": "2024-12-31T14:00:00.000Z"
+}
+```
+
+**Response `400`** — empty body, unknown field, or invalid field value  
+**Response `401`** — missing or invalid API key  
+**Response `404`** — no notification with that ID  
+**Response `409`** — schedule is not `PENDING`, is awaiting operator intervention, or the version is stale  
+**Response `428`** — `If-Match` / `X-Schedule-Version` header absent or not a valid integer  
+**Response `503`** — scheduler feature is disabled
+
+---
+
+### POST /api/schedule/:id/recovery
+
+Resolve an operator intervention hold set by `SCHEDULE_RECOVERY_POLICY=REQUIRE_INTERVENTION`.
+
+**Authentication**: `X-API-Key` header required.
+
+**Path Parameters**
+
+| Name | Description               |
+|------|---------------------------|
+| id   | Notification ID (integer) |
+
+**Request Body**
+
+```json
+{ "action": "EXECUTE" }
+```
+
+| Field  | Type   | Required | Values                | Description                                                  |
+|--------|--------|----------|-----------------------|--------------------------------------------------------------|
+| action | string | Yes      | `EXECUTE` or `EXPIRE` | `EXECUTE` — clear the hold and allow delivery. `EXPIRE` — permanently expire the schedule. |
+
+**Response `200`** — hold resolved; returns the updated schedule object  
+**Response `400`** — `action` is missing or not `EXECUTE`/`EXPIRE`  
+**Response `401`** — missing or invalid API key  
+**Response `409`** — schedule is not currently `AWAITING_INTERVENTION` or does not exist  
+**Response `503`** — scheduler feature is disabled
+
+---
+
 ### GET /api/schedule/stats
 
 Returns aggregate statistics about the scheduled-notification queue.

@@ -10,6 +10,7 @@ export enum NotificationStatus {
   DEAD_LETTERED = 'DEAD_LETTERED',
   CANCELLED = 'CANCELLED',
   EXPIRED = 'EXPIRED',
+  AWAITING_INTERVENTION = 'AWAITING_INTERVENTION',
 }
 
 export enum NotificationType {
@@ -82,6 +83,8 @@ export interface CreateScheduledNotificationInput {
 
 export interface ScheduledNotificationRow {
   id: number;
+  version: number;
+  recovery_state: 'AWAITING_INTERVENTION' | null;
   payload: string;
   payload_hash: string | null;
   notification_type: string;
@@ -121,6 +124,7 @@ export interface NotificationExecutionLog {
   durationMs?: number | null;
 }
 
+export type ScheduleRecoveryPolicy = 'EXECUTE' | 'EXPIRE' | 'REQUIRE_INTERVENTION';
 /**
  * What to do when a notification is still pending after its executeAt and the
  * scheduler was not available to run it inside the timing buffer.
@@ -141,6 +145,7 @@ export interface SchedulerConfig {
   retryDelayMs?: number;
   /** Max notifications processed concurrently per poll cycle (WORKER_CONCURRENCY). Default 1 = serial. */
   concurrency?: number;
+  recoveryPolicy?: ScheduleRecoveryPolicy;
   /** Overdue notifications outside the timing buffer. Default `execute`. */
   missedSchedulePolicy?: MissedSchedulePolicy;
 }

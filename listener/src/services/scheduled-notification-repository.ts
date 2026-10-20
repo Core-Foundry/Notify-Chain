@@ -8,8 +8,10 @@ import {
   NotificationStatus,
   NotificationExecutionLog,
   DeadLetterQueueEntry,
+  ScheduleRecoveryPolicy,
   RecurrenceRule,
 } from '../types/scheduled-notification';
+import { assertScheduleTransition } from './schedule-state-machine';
 import { hashPayload } from '../utils/payload-integrity';
 import {
   NotificationStatsCache,
@@ -180,6 +182,7 @@ export class ScheduledNotificationRepository {
     batchSize: number = 10,
     requestId?: string,
   ): Promise<ScheduledNotification[]> {
+    assertScheduleTransition(NotificationStatus.PENDING, NotificationStatus.PROCESSING);
     const now = new Date();
     const lockExpiresAt = new Date(now.getTime() + lockTimeoutMs);
     const cappedBatch = Math.min(
@@ -196,6 +199,13 @@ export class ScheduledNotificationRepository {
         lock_expires_at = ?,
         processing_started_at = ?
       WHERE id IN (
+        SELECT id FROM scheduled_notifications
+        WHERE status = ?
+          AND recovery_state IS NULL
+          AND execute_at <= ?
+          AND (next_retry_at IS NULL OR next_retry_at <= ?)
+        ORDER BY priority ASC, execute_at ASC
+        LIMIT ?
         WITH due AS (
           SELECT
             id,
@@ -337,6 +347,7 @@ export class ScheduledNotificationRepository {
         const newRetryCount = model.retryCount + 1;
         const isFailed = newRetryCount >= model.maxRetries;
         const newStatus = isFailed ? NotificationStatus.DEAD_LETTERED : NotificationStatus.PENDING;
+        assertScheduleTransition(NotificationStatus.PROCESSING, newStatus);
 
         const updateSql = `
           UPDATE scheduled_notifications
@@ -389,6 +400,21 @@ export class ScheduledNotificationRepository {
   /**
    * Mark notification as completed
    */
+  async markAsCompleted(id: number, requestId?: string): Promise<void> {
+    assertScheduleTransition(NotificationStatus.PROCESSING, NotificationStatus.COMPLETED);
+    const sql = `
+      UPDATE scheduled_notifications
+      SET 
+        status = ?,
+        processing_completed_at = ?,
+        updated_at = ?,
+        processor_id = NULL,
+        lock_expires_at = NULL
+      WHERE id = ?
+    `;
+
+    const now = new Date().toISOString();
+    await this.db.run(sql, [NotificationStatus.COMPLETED, now, now, id]);
   async markAsCompleted(
     id: number,
     requestId?: string,
@@ -466,6 +492,8 @@ export class ScheduledNotificationRepository {
   }
 
   /** Mark a notification expired and release its processing lock. */
+  async markAsExpired(id: number): Promise<void> {
+    assertScheduleTransition(NotificationStatus.PROCESSING, NotificationStatus.EXPIRED);
   async markAsExpired(id: number, reason = 'Notification expired before delivery'): Promise<void> {
     const now = new Date().toISOString();
     const errorMessage = reason;
@@ -554,6 +582,7 @@ export class ScheduledNotificationRepository {
     const nextRetryCount = currentRetryCount + 1;
     const isFailed = nextRetryCount >= maxRetries;
     const newStatus = isFailed ? NotificationStatus.DEAD_LETTERED : NotificationStatus.PENDING;
+    assertScheduleTransition(NotificationStatus.PROCESSING, newStatus);
     // When permanently failing, preserve currentRetryCount so the distribution
     // reflects actual retries performed (not an incremented-past-max value).
     const storedRetryCount = isFailed ? currentRetryCount : nextRetryCount;
@@ -731,6 +760,7 @@ export class ScheduledNotificationRepository {
     batchSize: number = 10,
     requestId?: string,
   ): Promise<ScheduledNotification[]> {
+    assertScheduleTransition(NotificationStatus.PENDING, NotificationStatus.PROCESSING);
     const now = new Date();
     const lockExpiresAt = new Date(now.getTime() + lockTimeoutMs);
 
@@ -744,6 +774,7 @@ export class ScheduledNotificationRepository {
       WHERE id IN (
         SELECT id FROM scheduled_notifications
         WHERE status = ?
+          AND recovery_state IS NULL
           AND retry_count > 0
           AND (next_retry_at IS NULL OR next_retry_at <= ?)
         ORDER BY priority ASC, next_retry_at ASC
@@ -778,6 +809,122 @@ export class ScheduledNotificationRepository {
     logger.info('Fetched due retries', { requestId, count: rows.length, processorId });
 
     return rows.map(this.rowToModel.bind(this));
+  }
+
+  /**
+   * Atomically modify a pending schedule with optimistic locking. The status,
+   * recovery marker, and version predicates prevent races with competing writes
+   * and scheduler claims.
+   */
+  async updatePending(
+    id: number,
+    expectedVersion: number,
+    input: CreateScheduledNotificationInput,
+  ): Promise<boolean> {
+    const payloadJson = JSON.stringify(input.payload);
+    const secret = process.env.PAYLOAD_INTEGRITY_SECRET;
+    const payloadHash = secret ? hashPayload(payloadJson, secret) : null;
+    const expiresAt =
+      input.expiresAt === undefined || input.expiresAt === null
+        ? null
+        : this.normalizeExpiration(input.expiresAt);
+    const now = new Date().toISOString();
+
+    const result = await this.db.run(
+      `UPDATE scheduled_notifications
+       SET payload = ?, payload_hash = ?, notification_type = ?, target_recipient = ?,
+           execute_at = ?, expires_at = ?, max_retries = ?, priority = ?, metadata = ?,
+           updated_at = ?, version = version + 1
+       WHERE id = ? AND status = ? AND recovery_state IS NULL AND version = ?`,
+      [
+        compressPayload(input.payload),
+        payloadHash,
+        input.notificationType,
+        input.targetRecipient,
+        input.executeAt.toISOString(),
+        expiresAt,
+        input.maxRetries ?? 3,
+        input.priority ?? 5,
+        input.metadata ? JSON.stringify(input.metadata) : null,
+        now,
+        id,
+        NotificationStatus.PENDING,
+        expectedVersion,
+      ],
+    );
+    if (result.changes > 0) {
+      this.statsCache.invalidate();
+      logger.info('Pending notification modified', { id, expectedVersion, newVersion: expectedVersion + 1 });
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * Apply the missed-schedule policy. Conditional writes make EXPIRE and
+   * REQUIRE_INTERVENTION idempotent when recovery runs more than once.
+   */
+  async recoverOverdueSchedules(policy: ScheduleRecoveryPolicy, now: Date = new Date()): Promise<number> {
+    const timestamp = now.toISOString();
+    if (policy === 'EXECUTE') {
+      const result = await this.db.get<{ count: number }>(
+        `SELECT COUNT(*) AS count FROM scheduled_notifications
+         WHERE status = ? AND recovery_state IS NULL AND execute_at <= ?`,
+        [NotificationStatus.PENDING, timestamp],
+      );
+      const count = result?.count ?? 0;
+      logger.info('Overdue schedules retained for catch-up execution', { policy, count, at: timestamp });
+      return count;
+    }
+
+    if (policy === 'EXPIRE') {
+      assertScheduleTransition(NotificationStatus.PENDING, NotificationStatus.EXPIRED);
+      const result = await this.db.run(
+        `UPDATE scheduled_notifications
+         SET status = ?, updated_at = ?, version = version + 1
+         WHERE status = ? AND recovery_state IS NULL AND execute_at <= ?`,
+        [NotificationStatus.EXPIRED, timestamp, NotificationStatus.PENDING, timestamp],
+      );
+      if (result.changes > 0) this.statsCache.invalidate();
+      logger.info('Overdue schedule recovery applied', { policy, count: result.changes, at: timestamp });
+      return result.changes;
+    }
+
+    assertScheduleTransition(NotificationStatus.PENDING, NotificationStatus.AWAITING_INTERVENTION);
+    const result = await this.db.run(
+      `UPDATE scheduled_notifications
+       SET recovery_state = 'AWAITING_INTERVENTION', updated_at = ?, version = version + 1
+       WHERE status = ? AND recovery_state IS NULL AND execute_at <= ?`,
+      [timestamp, NotificationStatus.PENDING, timestamp],
+    );
+    if (result.changes > 0) this.statsCache.invalidate();
+    logger.info('Overdue schedule recovery applied', { policy, count: result.changes, at: timestamp });
+    return result.changes;
+  }
+
+  /** Resolve a recovery hold, returning the schedule to normal processing or expiring it. */
+  async resolveAwaitingIntervention(id: number, action: 'EXECUTE' | 'EXPIRE'): Promise<boolean> {
+    const target =
+      action === 'EXECUTE' ? NotificationStatus.PENDING : NotificationStatus.EXPIRED;
+    assertScheduleTransition(NotificationStatus.AWAITING_INTERVENTION, target);
+    const now = new Date().toISOString();
+    const result = await this.db.run(
+      action === 'EXECUTE'
+        ? `UPDATE scheduled_notifications
+           SET recovery_state = NULL, updated_at = ?, version = version + 1
+           WHERE id = ? AND status = ? AND recovery_state = 'AWAITING_INTERVENTION'`
+        : `UPDATE scheduled_notifications
+           SET status = ?, recovery_state = NULL, updated_at = ?, version = version + 1
+           WHERE id = ? AND status = ? AND recovery_state = 'AWAITING_INTERVENTION'`,
+      action === 'EXECUTE'
+        ? [now, id, NotificationStatus.PENDING]
+        : [target, now, id, NotificationStatus.PENDING],
+    );
+    if (result.changes > 0) {
+      this.statsCache.invalidate();
+      logger.info('Intervention schedule resolved', { id, action });
+    }
+    return result.changes > 0;
   }
 
   /**
@@ -827,13 +974,14 @@ export class ScheduledNotificationRepository {
    * Cancel a scheduled notification
    */
   async cancel(id: number, reason?: string): Promise<boolean> {
+    assertScheduleTransition(NotificationStatus.PENDING, NotificationStatus.CANCELLED);
     // Store cancellation reason inside error_details as JSON.
     const errorDetails = reason ? JSON.stringify({ cancellationReason: reason }) : null;
 
     const sql = `
       UPDATE scheduled_notifications
       SET status = ?, updated_at = ?, error_details = ?
-      WHERE id = ? AND status = ?
+      WHERE id = ? AND status = ? AND recovery_state IS NULL
     `;
 
     const result = await this.db.run(sql, [
@@ -951,7 +1099,7 @@ export class ScheduledNotificationRepository {
     const sql = `
       SELECT id, notification_type, created_at, execute_at, priority, retry_count
       FROM scheduled_notifications
-      WHERE status = ?
+      WHERE status = ? AND recovery_state IS NULL
       ORDER BY priority ASC, execute_at ASC
       LIMIT ?
     `;
@@ -1214,7 +1362,11 @@ export class ScheduledNotificationRepository {
       expiresAt: parseUtc(row.expires_at) ?? null,
       createdAt: parseUtc(row.created_at),
       updatedAt: parseUtc(row.updated_at),
-      status: row.status as NotificationStatus,
+      status: row.recovery_state === 'AWAITING_INTERVENTION'
+        ? NotificationStatus.AWAITING_INTERVENTION
+        : row.status as NotificationStatus,
+      recoveryState: row.recovery_state ?? null,
+      version: row.version ?? 1,
       retryCount: row.retry_count,
       maxRetries: row.max_retries,
       processingStartedAt: parseUtc(row.processing_started_at) ?? null,

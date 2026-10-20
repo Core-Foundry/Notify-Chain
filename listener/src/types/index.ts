@@ -164,8 +164,7 @@ export interface SchedulerConfig {
   batchSize: number;
   concurrency: number;
   timingBufferMs: number;
-  /** `execute` (default), `expire`, or `intervene`. See SCHEDULER_MISSED_POLICY. */
-  missedSchedulePolicy?: 'execute' | 'expire' | 'intervene';
+  recoveryPolicy: 'EXECUTE' | 'EXPIRE' | 'REQUIRE_INTERVENTION';
 }
 
 export interface EventQueueConfig {

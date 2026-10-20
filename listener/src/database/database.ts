@@ -257,6 +257,8 @@ export class Database {
    */
 
   private async applyIncrementalMigrations(): Promise<void> {
+    // Guard: skip migrations entirely if the scheduled_notifications table does
+    // not exist yet (fresh or older schema where it hasn't been created).
     const table = await this.get<{ name: string }>(
       "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'scheduled_notifications'",
     );
@@ -264,12 +266,21 @@ export class Database {
       return;
     }
 
-    const columns = await this.all<{ name: string }>('PRAGMA table_info(scheduled_notifications)');
-    if (columns.some(({ name }) => name === 'next_retry_at')) {
-      return;
+    // Each additive migration is independent so a pre-existing column does not
+    // prevent newer columns from being applied to an existing database.
+    const migrations = [
+      'ALTER TABLE scheduled_notifications ADD COLUMN next_retry_at DATETIME',
+      'ALTER TABLE scheduled_notifications ADD COLUMN version INTEGER NOT NULL DEFAULT 1 CHECK (version >= 1)',
+      "ALTER TABLE scheduled_notifications ADD COLUMN recovery_state TEXT CHECK (recovery_state IS NULL OR recovery_state = 'AWAITING_INTERVENTION')",
+    ];
+    for (const sql of migrations) {
+      try {
+        await this.run(sql);
+      } catch (error: any) {
+        if (/duplicate column name/i.test(String(error?.message ?? error))) continue;
+        throw error;
+      }
     }
-
-    await this.run('ALTER TABLE scheduled_notifications ADD COLUMN next_retry_at DATETIME');
   }
 
   /**
