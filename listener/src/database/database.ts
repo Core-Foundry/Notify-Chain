@@ -199,10 +199,12 @@ export class Database {
 
     const schema = fs.readFileSync(schemaPath, 'utf-8');
 
-    // Execute the schema as one script so trigger bodies with semicolons work.
-    await this.exec(schema);
-
-    await this.applyIncrementalMigrations();
+    // Keep bootstrap DDL atomic so a failed schema update does not leave a
+    // partially upgraded database behind.
+    await this.transaction(async () => {
+      await this.applyIncrementalMigrations();
+      await this.exec(schema);
+    });
 
     logger.info('Database migrations completed');
   }
@@ -255,6 +257,15 @@ export class Database {
    */
 
   private async applyIncrementalMigrations(): Promise<void> {
+    // Guard: skip migrations entirely if the scheduled_notifications table does
+    // not exist yet (fresh or older schema where it hasn't been created).
+    const table = await this.get<{ name: string }>(
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'scheduled_notifications'",
+    );
+    if (!table) {
+      return;
+    }
+
     // Each additive migration is independent so a pre-existing column does not
     // prevent newer columns from being applied to an existing database.
     const migrations = [
