@@ -94,13 +94,39 @@ jobs:
           cd listener
           npm ci
 
-      - name: Verify migration order and apply migrations
-        env:
-          DATABASE_PATH: ./data/notifications.db
+      - name: Migration integrity check
         run: |
           cd listener
-          npm run check-migrations   # fails if pending migrations
+          # ids unique, up/down present, full set applies, reversible set rolls back,
+          # destructive set is guarded (see docs/migration-rollback.md).
+          npm run check:migrations-integrity
+
+      - name: Apply migrations against a scratch database
+        env:
+          DATABASE_PATH: ./data/notifications.db
+          # Scratch DB with no production data: it is safe to run the destructive
+          # rebuild migrations here. Real environments must back up first.
+          ALLOW_DESTRUCTIVE_MIGRATIONS: 'true'
+        run: |
+          cd listener
+          npm run check-migrations   # fails if pending migrations are uncommitted
           npm run migrate            # apply all migrations
+          npm run migrate            # second run must be a clean no-op (idempotent)
+
+      - name: Verify rollback behavior
+        env:
+          DATABASE_PATH: ./data/rollback.db
+        run: |
+          cd listener
+          # Full apply on scratch DB (safe because CI opt-in).
+          ALLOW_DESTRUCTIVE_MIGRATIONS=true npm run migrate
+          # Destructive migrations cannot be rolled back; rollback CLI/dry-run behave safely.
+          npm run rollback -- --dry-run
+          # Simulate post-restore state by deleting ledger entries for destructive migrations,
+          # then verify the newest reversible migration can be rolled back cleanly.
+          node -e "const sqlite3=require('sqlite3');const db=new sqlite3.Database('./data/rollback.db',()=>{db.run(\"DELETE FROM migrations WHERE id IN ('006','007')\",()=>db.close());});"
+          npm run rollback -- --dry-run
+          npm run rollback
 
       - name: Run listener typecheck and tests
         run: |

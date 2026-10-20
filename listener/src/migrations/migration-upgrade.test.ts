@@ -2,8 +2,8 @@ import * as sqlite3 from 'sqlite3';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import { MigrationRunner } from '../database/migration-system';
-import migration004 from './004-database-data-integrity';
-import migration005 from './005-notification-expiration';
+import migration006 from './006-database-data-integrity';
+import migration007 from './007-notification-expiration';
 
 function openDatabase(): Promise<sqlite3.Database> {
   return new Promise((resolve, reject) => {
@@ -110,8 +110,8 @@ describe('supported database upgrade paths', () => {
     const runner = new MigrationRunner(db, '');
     await runner.initializeMigrationTable();
 
-    await runner.applyMigration(migration004);
-    await runner.applyMigration(migration005);
+    await runner.applyMigration(migration006);
+    await runner.applyMigration(migration007);
 
     const data = await notificationData(db);
     expect(data.scheduled).toEqual([
@@ -170,7 +170,7 @@ describe('supported database upgrade paths', () => {
     const runner = new MigrationRunner(db, '');
     await runner.initializeMigrationTable();
 
-    await runner.applyMigration(migration005);
+    await runner.applyMigration(migration007);
 
     const data = await notificationData(db);
     expect(data.scheduled).toEqual([
@@ -207,10 +207,10 @@ describe('supported database upgrade paths', () => {
 
     await expect(
       runner.applyMigration({
-        ...migration005,
+        ...migration007,
         id: '005-failed-upgrade',
         up: async (migrationDb) => {
-          await migration005.up(migrationDb);
+          await migration007.up(migrationDb);
           throw failure;
         },
       }),

@@ -376,9 +376,20 @@ async function assertLegacyDataIsValid(db: sqlite3.Database): Promise<void> {
 }
 
 const migration = {
-  id: '004',
+  id: '006',
   name: 'database-data-integrity',
+  // Rebuilds core tables (DROP + recreate with CHECK constraints). The original
+  // column set cannot be recovered, so `down` aborts; recovery is restore-from-backup.
+  destructive: true,
   up: async (db: sqlite3.Database) => {
+    // If the schema already has the expected final shape, this rebuild is a no-op.
+    // This avoids breaking fresh-DB bootstrap paths that already applied schema.sql.
+    const columns = await new Promise<any[]>((resolve, reject) => {
+      db.all("PRAGMA table_info(scheduled_notifications)", (error, rows) => (error ? reject(error) : resolve(rows)));
+    });
+    if (columns.some((col: any) => col.name === 'expires_at')) {
+      return;
+    }
     await assertLegacyDataIsValid(db);
 
     for (const table of tables) {
