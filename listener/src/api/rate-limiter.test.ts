@@ -13,7 +13,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { Database, initializeDatabase, getDatabase } from '../database/database';
 import { RateLimiter } from './rate-limiter';
-import { createEventsServer } from './events-server';
+import { createEventsServer, isRateLimitExempt } from './events-server';
 import logger from '../utils/logger';
 
 // Mock logger
@@ -546,6 +546,46 @@ describe('Events Server Rate Limiting Integration', () => {
     expect(metrics.startTime).toBeDefined();
   });
 
+  describe('isRateLimitExempt helper', () => {
+    it('exempts canonical /health and /api/rate-limit/metrics', () => {
+      expect(isRateLimitExempt('/health')).toBe(true);
+      expect(isRateLimitExempt('/api/rate-limit/metrics')).toBe(true);
+    });
+
+    it('exempts endpoints with trailing slashes', () => {
+      expect(isRateLimitExempt('/health/')).toBe(true);
+      expect(isRateLimitExempt('/api/rate-limit/metrics/')).toBe(true);
+      expect(isRateLimitExempt('/api/v1/rate-limit/metrics/')).toBe(true);
+    });
+
+    it('exempts versioned API endpoints', () => {
+      expect(isRateLimitExempt('/api/v1/rate-limit/metrics')).toBe(true);
+    });
+
+    it('exempts endpoints with query parameters or hash fragments', () => {
+      expect(isRateLimitExempt('/health?verbose=true')).toBe(true);
+      expect(isRateLimitExempt('/api/rate-limit/metrics?refresh=1')).toBe(true);
+      expect(isRateLimitExempt('/api/v1/rate-limit/metrics?format=json#stats')).toBe(true);
+    });
+
+    it('does not exempt regular API routes or unknown paths', () => {
+      expect(isRateLimitExempt('/api/events')).toBe(false);
+      expect(isRateLimitExempt('/api/v1/events')).toBe(false);
+      expect(isRateLimitExempt('/api/health')).toBe(false);
+      expect(isRateLimitExempt('/health/ready')).toBe(false);
+      expect(isRateLimitExempt('/api/rate-limit/metrics/detailed')).toBe(false);
+      expect(isRateLimitExempt('/')).toBe(false);
+    });
+
+    it('handles empty or malformed inputs safely', () => {
+      expect(isRateLimitExempt('')).toBe(false);
+      expect(isRateLimitExempt('   ')).toBe(false);
+      expect(isRateLimitExempt('///')).toBe(false);
+      expect(isRateLimitExempt(null as any)).toBe(false);
+      expect(isRateLimitExempt(undefined as any)).toBe(false);
+    });
+  });
+
   it('exempts versioned /api/v1/rate-limit/metrics and /health from rate limiting', async () => {
     server = createEventsServer({
       port,
@@ -568,6 +608,9 @@ describe('Events Server Rate Limiting Integration', () => {
 
     const res2 = await makeRequest('/api/events');
     expect(res2.status).toBe(429);
+    expect(res2.headers['x-ratelimit-limit']).toBe('1');
+    expect(res2.headers['x-ratelimit-remaining']).toBe('0');
+    expect(res2.headers['retry-after']).toBeDefined();
 
     // /api/v1/rate-limit/metrics must still succeed with 200
     const v1Metrics = await new Promise<{ status: number; body: string }>((resolve, reject) => {
@@ -598,6 +641,22 @@ describe('Events Server Rate Limiting Integration', () => {
       req.end();
     });
     expect(health.status).toBe(200);
+
+    // Trailing slash /health/ must also be exempt
+    const healthSlash = await makeRequest('/health/');
+    expect(healthSlash.status).toBe(200);
+
+    // Query parameter /health?verbose=1 must also be exempt
+    const healthQuery = await makeRequest('/health?verbose=1');
+    expect(healthQuery.status).toBe(200);
+
+    // Trailing slash /api/rate-limit/metrics/ must also be exempt
+    const metricsSlash = await makeRequest('/api/rate-limit/metrics/');
+    expect(metricsSlash.status).toBe(200);
+
+    // Non-exempt endpoint remains blocked with 429
+    const blockedEvents = await makeRequest('/api/events');
+    expect(blockedEvents.status).toBe(429);
   });
 });
 

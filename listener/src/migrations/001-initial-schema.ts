@@ -257,17 +257,22 @@ const migration = {
     });
   },
   down: async (db: sqlite3.Database) => {
-    await db.run('DROP TABLE IF EXISTS notification_metrics_snapshots');
-    await db.run('DROP TABLE IF EXISTS backpressure_events');
-    await db.run('DROP TABLE IF EXISTS idempotency_keys');
-    await db.run('DROP TABLE IF EXISTS polling_cursors');
-    await db.run('DROP TABLE IF EXISTS processed_events');
-    await db.run('DROP TABLE IF EXISTS notification_template_audit_log');
-    await db.run('DROP TABLE IF EXISTS notification_templates');
-    await db.run('DROP TABLE IF EXISTS rate_limit_events');
-    await db.run('DROP TRIGGER IF EXISTS update_scheduled_notifications_timestamp');
-    await db.run('DROP TABLE IF EXISTS notification_execution_log');
-    await db.run('DROP TABLE IF EXISTS scheduled_notifications');
+    const dropSql = `
+      DROP TABLE IF EXISTS notification_metrics_snapshots;
+      DROP TABLE IF EXISTS backpressure_events;
+      DROP TABLE IF EXISTS idempotency_keys;
+      DROP TABLE IF EXISTS polling_cursors;
+      DROP TABLE IF EXISTS processed_events;
+      DROP TABLE IF EXISTS notification_template_audit_log;
+      DROP TABLE IF EXISTS notification_templates;
+      DROP TABLE IF EXISTS rate_limit_events;
+      DROP TRIGGER IF EXISTS update_scheduled_notifications_timestamp;
+      DROP TABLE IF EXISTS notification_execution_log;
+      DROP TABLE IF EXISTS scheduled_notifications;
+    `;
+    await new Promise<void>((resolve, reject) => {
+      db.exec(dropSql, (err) => (err ? reject(err) : resolve()));
+    });
   }
 };
 

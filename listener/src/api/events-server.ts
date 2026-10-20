@@ -441,9 +441,15 @@ async function buildHealthResponse(options: EventsServerOptions): Promise<Health
   };
 }
 
-function isRateLimitExempt(pathname: string): boolean {
-  return pathname === '/health' || pathname === '/api/rate-limit/metrics';
+export function isRateLimitExempt(pathname: string): boolean {
+  if (!pathname || typeof pathname !== 'string') return false;
+  const rawPath = pathname.split('?')[0].split('#')[0];
+  const clean = rawPath.replace(/\/+$/, '') || '/';
+  const { normalisedPath } = normaliseApiPath(clean);
+  const canonical = normalisedPath.replace(/\/+$/, '') || '/';
+  return canonical === '/health' || canonical === '/api/rate-limit/metrics';
 }
+
 
 export function createEventsServer(options: EventsServerOptions): http.Server {
   const corsOrigin = options.corsOrigin ?? 'http://localhost:5173';
@@ -514,7 +520,6 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
     );
 
     const url = new URL(req.url ?? '/', 'http://localhost');
-    const pathname = url.pathname;
 
     // ── API Route Versioning (#386, #984) ──────────────────────────────────
     // Normalise /api/vN/* → /api/* using the central version registry so that
@@ -585,7 +590,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
     }
 
     // GET /health
-    if (req.method === 'GET' && url.pathname === '/health') {
+    if (req.method === 'GET' && (url.pathname === '/health' || url.pathname === '/health/')) {
       buildHealthResponse(options)
         .then((health) => {
           const httpStatus = health.status === 'error' ? 503 : 200;
@@ -865,7 +870,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
     }
 
     // GET /api/rate-limit/metrics
-    if (req.method === 'GET' && url.pathname === '/api/rate-limit/metrics') {
+    if (req.method === 'GET' && (url.pathname === '/api/rate-limit/metrics' || url.pathname === '/api/rate-limit/metrics/')) {
       if (!rateLimiter) {
         sendJson(res, 200, {
           totalRequests: 0,
