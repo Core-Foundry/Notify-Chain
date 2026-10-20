@@ -31,9 +31,8 @@ import logger from './utils/logger';
 import { loadConfig, validateConfig, ConfigError } from './config';
 import { SecretValidationError } from './config/validate-secrets';
 import { NotificationHealthMonitor } from './services/notification-health-monitor';
-import { getWorkerManager } from './services/worker-manager';
-import { EventDeduplicationService } from './services/event-deduplication-service';
 import { DeliveryReceiptRepository } from './services/delivery-receipt-repository';
+import { getWorkerManager } from './services/worker-manager';
 
 dotenv.config();
 

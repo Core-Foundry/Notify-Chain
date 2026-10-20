@@ -21,8 +21,7 @@ describe('Template API Integration Tests', () => {
   let server: http.Server;
 
   const testDbPath = './data/test-template-api.db';
-  const PORT = 3001;
-  const BASE_URL = `http://localhost:${PORT}`;
+  let BASE_URL: string;
 
   beforeAll(async () => {
     // Setup database
@@ -38,13 +37,12 @@ describe('Template API Integration Tests', () => {
     await db.initialize();
 
     // Run template schema
-    const schemaPath = path.join(__dirname, '../database/schema.sql');
+    await db.run('DROP TABLE IF EXISTS template_usage_log');
+    await db.run('DROP TABLE IF EXISTS notification_templates');
+    const schemaPath = path.join(__dirname, '../database/template-schema.sql');
     if (fs.existsSync(schemaPath)) {
       const schema = fs.readFileSync(schemaPath, 'utf-8');
-      const statements = schema
-        .split(';')
-        .map((s) => s.trim())
-        .filter((s) => s.length > 0 && !s.startsWith('--'));
+      const statements = (db as any).splitSqlStatements(schema);
 
       for (const statement of statements) {
         try {
@@ -67,17 +65,27 @@ describe('Template API Integration Tests', () => {
     });
 
     await new Promise<void>((resolve) => {
-      server.listen(PORT, resolve);
+      server.listen(0, '127.0.0.1', () => {
+        const address = server.address() as any;
+        BASE_URL = `http://127.0.0.1:${address.port}`;
+        resolve();
+      });
     });
-  });
+  }, 30000);
 
   afterAll(async () => {
-    await new Promise<void>((resolve, reject) => {
-      server.close((err) => (err ? reject(err) : resolve()));
-    });
-    await db.close();
+    if (server) {
+      await new Promise<void>((resolve, reject) => {
+        server.close((err) => (err ? reject(err) : resolve()));
+      });
+    }
+    if (db) {
+      await db.close();
+    }
     if (fs.existsSync(testDbPath)) {
-      fs.unlinkSync(testDbPath);
+      try {
+        fs.unlinkSync(testDbPath);
+      } catch (e) {}
     }
   });
 

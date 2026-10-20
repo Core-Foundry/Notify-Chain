@@ -131,7 +131,11 @@ export class HistoricalBackfillService {
       };
     }
 
-    const { startLedger } = this.backfillConfig;
+    const startLedger =
+      this.backfillConfig.startLedger ??
+      (this.backfillConfig.maxLedgers && this.backfillConfig.maxLedgers > 0
+        ? Math.max(1, endLedger - this.backfillConfig.maxLedgers)
+        : 1);
 
     logger.info('Historical backfill starting', {
       requestId,
@@ -255,7 +259,7 @@ export class HistoricalBackfillService {
       progress.pagesProcessed++;
 
       // Filter out events beyond the requested end ledger before processing.
-      const inWindow = batch.filter((ev) => ev.ledger <= endLedger);
+      const inWindow = batch.filter((ev: any) => ev.ledger <= endLedger);
 
       for (const event of inWindow) {
         progress.eventsScanned++;

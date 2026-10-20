@@ -21,11 +21,15 @@ describe('Database connection recovery', () => {
   beforeEach(() => {
     const dbDir = path.dirname(testDbPath);
     if (!fs.existsSync(dbDir)) fs.mkdirSync(dbDir, { recursive: true });
-    if (fs.existsSync(testDbPath)) fs.unlinkSync(testDbPath);
+    if (fs.existsSync(testDbPath)) {
+      try { fs.unlinkSync(testDbPath); } catch (_) {}
+    }
   });
 
   afterEach(() => {
-    if (fs.existsSync(testDbPath)) fs.unlinkSync(testDbPath);
+    if (fs.existsSync(testDbPath)) {
+      try { fs.unlinkSync(testDbPath); } catch (_) {}
+    }
   });
 
   test('recovers transparently when the handle is closed mid-flight', async () => {

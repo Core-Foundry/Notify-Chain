@@ -148,7 +148,6 @@ failureReason: 'http_permanent',
       };
     } catch (err) {
       const durationMs = Date.now() - startMs;
-      const isTimeout = err instanceof Error && err.name === 'AbortError';
       const isDnsBlocked = err instanceof Error && err.name === 'DnsRebindingError';
       const isTimeout = isWebhookTimeoutError(err);
       const errorReason = isTimeout

@@ -3,6 +3,7 @@ import * as StellarSDK from '@stellar/stellar-sdk';
 export { getAppVersion } from '../utils/app-version';
 import { APP_VERSION } from '../utils/app-version';
 import { eventRegistry } from '../store/event-registry';
+import { isRawEventData, captureRawEvent } from '../services/event-raw-retention';
 import { preferenceStore } from '../store/preference-store';
 import { PreferencesUpdateInput } from '../types/preferences';
 import { NotificationAPI } from '../services/notification-api';
@@ -15,9 +16,6 @@ import { sendOk, sendErr, sendJson, ErrorCode } from '../utils/response';
 import { normalizePaginationParams } from '../utils/pagination';
 import { handleApiError, ApiError } from './error-handler';
 import { applyRequestIdMiddleware } from '../middleware/request-id';
-import { TemplateService } from '../services/template-service';
-import { handleTemplateRoutes } from './template-routes';
-import { sendOk, sendErr, sendJson, ErrorCode } from '../utils/response';
 import { validateContentType, getMimeType } from '../middleware/content-type';
 import { NotificationHistoryService } from '../services/notification-history';
 import { SearchSuggestionService } from '../services/search-suggestion';
@@ -28,7 +26,12 @@ import {
   IdempotencyKeyReuseError,
 } from '../services/idempotency-key-service';
 import { WebhookReplayCache } from '../services/webhook-replay-cache';
-import { IdempotencyKeyService, IdempotencyKeyReuseError } from '../services/idempotency-key-service';
+import { DeliveryReceiptRepository } from '../services/delivery-receipt-repository';
+import { DeliveryReceipt, DeliveryReceiptStatus } from '../types/delivery-receipt';
+import { DataExportService } from '../services/data-export-service';
+import { validatePayload, Schemas } from '../middleware/request-validator';
+import { authenticateApiKey, API_KEY_AUTH_MESSAGES } from './api-key-auth';
+import { parseLedgerRangeParams, ValidationError, validationErrorBody } from '../utils/ledger-range-validator';
 import { WebhookSecret, RateLimitConfig, ContractConfig } from '../types';
 import { RateLimiter } from './rate-limiter';
 import {
@@ -550,10 +553,9 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
     // The rate-limit metrics endpoint is an observability route and must stay
     // reachable even after a client exhausts its quota — otherwise callers
     // can't read the very metrics that explain why they are being throttled.
-    const isRateLimitExempt =
-      req.method === 'GET' && (pathname === '/api/rate-limit/metrics' || pathname === '/health');
+    const exemptFromRateLimit = req.method === 'GET' && isRateLimitExempt(url.pathname);
 
-    if (rateLimiter && !isRateLimitExempt) {
+    if (rateLimiter && !exemptFromRateLimit) {
       const allowed = await rateLimiter.handle(req, res as any);
       if (!allowed) return;
     }
@@ -673,8 +675,66 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
       return;
     }
 
+    // GET /api/events/:contractAddress/:eventId/raw or GET /api/events/:eventId/raw (Issue #945)
+    const rawEventMatch =
+      url.pathname.match(/^\/api\/events\/([^/]+)\/([^/]+)\/raw\/?$/) ||
+      url.pathname.match(/^\/api\/events\/([^/]+)\/raw\/?$/);
+
+    if (req.method === 'GET' && rawEventMatch) {
+      const hasContract = rawEventMatch.length === 3;
+      const contractAddress = hasContract ? decodeURIComponent(rawEventMatch[1]) : undefined;
+      const eventId = decodeURIComponent(hasContract ? rawEventMatch[2] : rawEventMatch[1]);
+
+      let rawData = eventRegistry.getRawEvent(eventId, contractAddress);
+
+      if (!rawData) {
+        try {
+          const db = getDatabase();
+          if (db && db.isConnected()) {
+            const query = contractAddress
+              ? 'SELECT raw_data FROM processed_events WHERE event_id = ? AND contract_address = ? LIMIT 1'
+              : 'SELECT raw_data FROM processed_events WHERE event_id = ? LIMIT 1';
+            const params = contractAddress ? [eventId, contractAddress] : [eventId];
+            const row = await db.get<{ raw_data: string | null }>(query, params);
+            if (row?.raw_data) {
+              try {
+                const parsed = JSON.parse(row.raw_data);
+                rawData = isRawEventData(parsed) ? parsed : captureRawEvent(parsed);
+              } catch {
+                rawData = captureRawEvent(row.raw_data);
+              }
+            }
+          }
+        } catch (dbErr) {
+          logger.warn('Failed querying raw event from database', { eventId, contractAddress, error: dbErr });
+        }
+      }
+
+      if (!rawData) {
+        sendErr(res, 404, ErrorCode.NotFound, `Raw event data not found for event ${eventId}`);
+        return;
+      }
+
+      sendOk(res, 200, rawData);
+      return;
+    }
+
+    // GET /api/events/:contractAddress/:eventId (single event lookup)
+    const singleEventMatch = url.pathname.match(/^\/api\/events\/([^/]+)\/([^/]+)\/?$/);
+    if (req.method === 'GET' && singleEventMatch && singleEventMatch[1] !== 'history') {
+      const contractAddress = decodeURIComponent(singleEventMatch[1]);
+      const eventId = decodeURIComponent(singleEventMatch[2]);
+      const event = eventRegistry.getEvent(eventId, contractAddress);
+      if (!event) {
+        sendErr(res, 404, ErrorCode.NotFound, `Event not found: ${eventId}`);
+        return;
+      }
+      sendOk(res, 200, event);
+      return;
+    }
+
     // GET /api/events
-    if (req.method === 'GET' && url.pathname.startsWith('/api/events')) {
+    if (req.method === 'GET' && (url.pathname === '/api/events' || url.pathname === '/api/events/')) {
       const limitParam = url.searchParams.get('limit');
       const parsedLimit = limitParam ? parseInt(limitParam, 10) : undefined;
       const paginationParams = normalizePaginationParams(
@@ -682,14 +742,22 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
       );
       const events = eventRegistry.getEvents(paginationParams.limit);
 
+      const includeRaw =
+        url.searchParams.get('includeRaw') !== 'false' &&
+        url.searchParams.get('raw') !== 'false';
+
+      const returnedEvents = includeRaw
+        ? events
+        : events.map(({ raw: _raw, ...rest }) => rest);
+
       logger.info('Handling GET /api/events', { requestId, correlationId, limit: paginationParams.limit });
 
-      sendOk(res, 200, { count: eventRegistry.count(), events });
+      sendOk(res, 200, { count: eventRegistry.count(), events: returnedEvents });
 
       logger.info('GET /api/events complete', {
         requestId,
         correlationId,
-        returned: events.length,
+        returned: returnedEvents.length,
         durationMs: Date.now() - startTime,
       });
       return;
@@ -834,29 +902,19 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
 
           const secrets = options.webhookSecrets ?? [];
           const maxAgeSeconds = options.signatureExpirationSeconds ?? 300;
-        const secrets = options.webhookSecrets ?? [];
-        const maxAgeSeconds = options.signatureExpirationSeconds ?? 300;
-        
-        // Use default database for audit log or mock one if not available.
-        // Actually since SecurityAuditService requires Database, let's pass a real one.
-        const db = getDatabase();
-        const { SecurityAuditService } = require('../services/security-audit');
-        const auditService = new SecurityAuditService(db);
 
-        const auth = await verifyWebhookRequest({
-          headers: req.headers as Record<string, string | string[] | undefined>,
-          rawBody,
-          secrets,
-          sourceIp,
-          requestId,
-          correlationId,
-          maxAgeSeconds,
-          requireTimestamp: options.requireWebhookTimestamp !== false,
-          replayCache: webhookReplayCache,
-          auditService,
-        });
+          let auditService: any = undefined;
+          try {
+            const db = (options as any).database ?? getDatabase();
+            if (db && (db as any).isInitialized) {
+              const { SecurityAuditService } = require('../services/security-audit');
+              auditService = new SecurityAuditService(db);
+            }
+          } catch {
+            // DB not available or not initialized
+          }
 
-          const auth = verifyWebhookRequest({
+          const auth = await verifyWebhookRequest({
             headers: req.headers as Record<string, string | string[] | undefined>,
             rawBody,
             secrets,
@@ -864,6 +922,9 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
             requestId,
             correlationId,
             maxAgeSeconds,
+            requireTimestamp: options.requireWebhookTimestamp !== false,
+            replayCache: webhookReplayCache,
+            auditService,
           });
 
           if (!auth.authenticated) {
@@ -1515,7 +1576,6 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
       return;
     }
 
-    function isValidApiKey(apiKey: string | undefined, allowedKeys: Array<{ key: string; name?: string }> | undefined): boolean {
     function isValidApiKey(
       apiKey: string | undefined,
       allowedKeys: Array<{ key: string; name?: string }> | undefined,
@@ -1553,29 +1613,14 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
 
       options.deliveryReceiptRepository
         .findByNotificationId(Number(receiptPath[1]), rawStatus as DeliveryReceiptStatus | undefined)
-        .then((receipts) => sendOk(res, 200, { receipts }))
-        .catch((error) => {
+        .then((receipts: DeliveryReceipt[]) => sendOk(res, 200, { receipts }))
+        .catch((error: unknown) => {
           logger.error('Failed to retrieve delivery receipts', { error, requestId, correlationId });
           sendErr(res, 500, 'Failed to retrieve delivery receipts', ErrorCode.INTERNAL_ERROR);
         });
       return;
     }
 
-    // Get notification delivery history endpoint
-    if (req.method === 'GET' && req.url?.startsWith('/api/notifications/history')) {
-      const apiKey = req.headers['x-api-key'] as string | undefined;
-      if (!isValidApiKey(apiKey, options.apiKeys)) {
-        sendErr(res, 401, 'Unauthorized: Invalid or missing API key', ErrorCode.UNAUTHORIZED);
-        return;
-      }
-
-      const url = new URL(req.url, 'http://localhost');
-      const limit = url.searchParams.get('limit')
-        ? parseInt(url.searchParams.get('limit')!, 10)
-        : undefined;
-      const offset = url.searchParams.get('offset')
-        ? parseInt(url.searchParams.get('offset')!, 10)
-        : undefined;
     // Get notification delivery history endpoint.
     // Matched on the rewritten pathname so /api/v1/notifications/history is
     // routed (and authenticated) the same as the unversioned path.

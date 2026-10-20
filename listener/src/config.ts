@@ -1,4 +1,5 @@
-import { Config, ContractConfig, DiscordConfig, WebhookSecret, AppCleanupConfig, EventQueueConfig, RetrySchedulerOptions, AnalyticsConfig, ExpirationConfig, ApiKey, BackfillConfig, LoggingConfig, ApiConfig } from './types';
+import { Config, ContractConfig, DiscordConfig, WebhookSecret, AppCleanupConfig, EventQueueConfig, RetrySchedulerOptions, AnalyticsConfig, ExpirationConfig, ApiKey, BackfillConfig, LoggingConfig, ApiConfig, RetryPolicyOptions, RpcRateLimitConfig, RpcFallbackConfig, CircuitBreakerConfig } from './types';
+import { RetryFailureType, RETRY_FAILURE_TYPES, DEFAULT_RETRYABLE_FAILURE_TYPES, parseRetryableFailureTypes } from './services/retry-policy';
 import { validateCorsOrigin, CorsValidationError } from './utils/cors-validator';
 import { validateSecrets } from './config/validate-secrets';
 import { ConfigurationSchemaValidator, APP_CONFIG_SCHEMA } from './config-schema';
@@ -116,10 +117,7 @@ function validateContractAddresses(value: unknown): ContractConfig[] {
   }
 
   if (value.length === 0) {
-    throw new ConfigError(
-      'CONTRACT_ADDRESSES is empty. The listener requires at least one contract to monitor. ' +
-        'Add contract configurations or the service will not process any events.'
-    );
+    return [];
   }
 
   return value.map((item, index) => {
@@ -263,7 +261,6 @@ function loadAnalyticsConfig(): AnalyticsConfig {
 function loadRetrySchedulerConfig(policy: RetryPolicyOptions): RetrySchedulerOptions {
   return {
     enabled: trimEnv('RETRY_SCHEDULER_ENABLED') !== 'false',
-    webhookTimeoutMs: parseIntegerEnv('WEBHOOK_DELIVERY_TIMEOUT_MS', '10000'),
     pollIntervalMs: parseIntegerEnv('RETRY_SCHEDULER_POLL_INTERVAL_MS', '15000'),
     lockTimeoutMs: parseIntegerEnv('RETRY_SCHEDULER_LOCK_TIMEOUT_MS', '60000'),
     processorId: trimEnv('RETRY_SCHEDULER_PROCESSOR_ID'),
@@ -272,14 +269,14 @@ function loadRetrySchedulerConfig(policy: RetryPolicyOptions): RetrySchedulerOpt
     multiplier: parseIntegerEnv('RETRY_MULTIPLIER', '2'),
     maxDelayMs: parseIntegerEnv('RETRY_MAX_DELAY_MS', String(60 * 60 * 1000)),
     jitter: trimEnv('RETRY_JITTER') !== 'false',
-// Policy knobs are owned by the retry policy; fold them in so the scheduler
+    // Policy knobs are owned by the retry policy; fold them in so the scheduler
     // and the in-memory queues agree on the attempt budget and on which failure
     // types are worth retrying.
     maxAttempts: policy.maxAttempts,
     retryableFailureTypes: policy.retryableFailureTypes,
     webhookTimeoutMs: parseIntegerEnv(
       'WEBHOOK_TIMEOUT_MS',
-      String(DEFAULT_WEBHOOK_TIMEOUT_MS)
+      trimEnv('WEBHOOK_DELIVERY_TIMEOUT_MS') ?? String(DEFAULT_WEBHOOK_TIMEOUT_MS)
     ),
   };
 }
@@ -882,7 +879,7 @@ export function validateConfig(config: Config): void {
   }
 
   // ── Backfill ───────────────────────────────────────────────────────────────
-  if (config.backfill) {
+  if (config.backfill && config.backfill.maxLedgers !== undefined) {
     if (config.backfill.maxLedgers < 0) {
       errors.push(
         `BACKFILL_MAX_LEDGERS must be >= 0 (0 = unlimited). ` +

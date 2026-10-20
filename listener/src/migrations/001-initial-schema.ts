@@ -252,10 +252,9 @@ const migration = {
         ON notification_metrics_snapshots(captured_at);
     `;
 
-    const statements = schemaSql.split(';').map(s => s.trim()).filter(s => s);
-    for (const statement of statements) {
-      await db.run(statement);
-    }
+    await new Promise<void>((resolve, reject) => {
+      db.exec(schemaSql, (err) => (err ? reject(err) : resolve()));
+    });
   },
   down: async (db: sqlite3.Database) => {
     await db.run('DROP TABLE IF EXISTS notification_metrics_snapshots');

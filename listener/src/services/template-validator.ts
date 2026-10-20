@@ -126,22 +126,23 @@ export class TemplateValidator {
     }
 
     // Extract and validate variable names
-    const variablePattern = /\{\{([^}]+)\}\}/g;
+    const variablePattern = /\{\{([^}]*)\}\}/g;
     let match;
 
     while ((match = variablePattern.exec(template)) !== null) {
       const variableName = match[1].trim();
+
+      // Check for empty variable
+      if (variableName === '') {
+        errors.push('Empty variable placeholder found: {{}}');
+        continue;
+      }
 
       // Check variable name length
       if (variableName.length > this.MAX_VARIABLE_NAME_LENGTH) {
         errors.push(
           `Variable name too long: '${variableName.substring(0, 50)}...' (max ${this.MAX_VARIABLE_NAME_LENGTH} characters)`
         );
-      }
-
-      // Check for empty variable
-      if (variableName === '') {
-        errors.push('Empty variable placeholder found: {{}}');
       }
 
       // Check for invalid characters in variable name

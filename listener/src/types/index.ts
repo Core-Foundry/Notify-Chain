@@ -1,6 +1,9 @@
 import type { RetryFailureType } from '../services/retry-policy';
 import type { CircuitBreakerConfig } from '../services/circuit-breaker';
+import type { PartialRetryBackoffConfig, RetryBackoffConfig } from '../utils/retry-backoff-config';
 import * as StellarSDK from '@stellar/stellar-sdk';
+
+export type { RetryFailureType, CircuitBreakerConfig, PartialRetryBackoffConfig, RetryBackoffConfig };
 
 export interface NotificationProvider {
   sendEventNotification(
@@ -64,6 +67,7 @@ export interface Config {
   stellarRpcFallbackUrls?: string[];
   stellarRpcUrls?: string[];
   rpcFallback?: RpcFallbackConfig;
+  circuitBreaker?: CircuitBreakerConfig;
   stellarNetworkPassphrase: string;
   contractAddresses: ContractConfig[];
   pollIntervalMs: number;
@@ -228,6 +232,27 @@ export interface ExpirationConfig {
   enabled: boolean;
 }
 
+export interface RpcFallbackConfig {
+  fallbackUrls: string[];
+  failureThreshold: number;
+  cooldownMs: number;
+  requestTimeoutMs: number;
+  maxRetries?: number;
+}
+
+export interface RpcEndpointStatus {
+  url: string;
+  isPrimary: boolean;
+  status: 'healthy' | 'degraded' | 'unhealthy';
+  consecutiveFailures: number;
+  totalRequests: number;
+  totalSuccesses: number;
+  totalFailures: number;
+  lastFailureTime: number | null;
+  lastSuccessTime: number | null;
+  lastError: string | null;
+}
+
 /**
  * Safety limits for the historical backfill that runs when the listener
  * starts without a stored cursor (first boot or after downtime).
@@ -244,7 +269,11 @@ export interface BackfillConfig {
    * Set to `0` to disable the limit and allow full historical replay
    * (the previous default behaviour).  Default: 10 000.
    */
-  maxLedgers: number;
+  maxLedgers?: number;
+  startLedger?: number;
+  endLedger?: number;
+  maxPages?: number;
+  maxEventsPerContract?: number;
 }
 
 /**
@@ -261,3 +290,14 @@ export interface RpcRateLimitConfig {
   /** Delay in ms to apply when throttled (default: 1000). */
   throttleDelayMs: number;
 }
+
+export type {
+  NotificationStatus,
+  NotificationType,
+  ScheduledNotification,
+  CreateScheduledNotificationInput,
+  ScheduledNotificationRow,
+  NotificationExecutionLog,
+  DeadLetterQueueEntry,
+} from './scheduled-notification';
+

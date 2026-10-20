@@ -48,7 +48,6 @@ jest.mock('../store/preference-store', () => ({
 jest.mock('../utils/event-utils', () => ({
   validateRpcResponse: jest.fn().mockReturnValue({ valid: true }),
   validateEventPayload: jest.fn().mockReturnValue({ valid: true }),
-  validateRpcResponse: jest.fn().mockReturnValue({ valid: true }),
   getEventName: jest.fn().mockReturnValue('TaskCreated'),
   matchesEventFilter: jest.fn().mockReturnValue(true),
 }));
@@ -86,6 +85,7 @@ function makeConfig(backfill?: Partial<BackfillConfig>): Config {
     stellarRpcUrl: 'https://soroban-testnet.stellar.org:443',
     contractAddresses: [contractConfig],
     pollIntervalMs: 30000,
+    eventBatchSize: 100,
     maxReconnectAttempts: 5,
     reconnectDelayMs: 100,
     eventsApiPort: 8787,
@@ -247,7 +247,7 @@ describe('EventSubscriber — backfill safety limit (#628)', () => {
       expect(mockLogger.warn).toHaveBeenCalledWith(
         'Failed to fetch network tip for backfill limit; falling back to ledger 1',
         expect.objectContaining({
-          error: 'RPC timeout',
+          error: expect.stringContaining('RPC timeout'),
           backfillMaxLedgers: 5_000,
         })
       );

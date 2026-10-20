@@ -79,8 +79,8 @@ describe('API Route Versioning (#386)', () => {
     const { status, body } = await makeRequest('/api/v1/events');
     expect(status).toBe(200);
     const json = JSON.parse(body);
-    expect(json).toHaveProperty('events');
-    expect(Array.isArray(json.events)).toBe(true);
+    const events = json.data ? json.data.events : json.events;
+    expect(Array.isArray(events)).toBe(true);
   });
 
   test('/api/v1/events and /api/events return the same body', async () => {
@@ -104,8 +104,9 @@ describe('API Route Versioning (#386)', () => {
     const { status, body } = await makeRequest('/api/v1/events?limit=5');
     expect(status).toBe(200);
     const json = JSON.parse(body);
-    expect(json).toHaveProperty('events');
-    expect(json.events.length).toBeLessThanOrEqual(5);
+    const events = json.data ? json.data.events : json.events;
+    expect(Array.isArray(events)).toBe(true);
+    expect(events.length).toBeLessThanOrEqual(5);
   });
 
   // ── Unknown versioned path ────────────────────────────────────────────────

@@ -89,6 +89,7 @@ export class MigrationRunner {
   }
 
   async getAppliedMigrations(): Promise<string[]> {
+    await this.initializeMigrationTable();
     const rows = await this.all<{ id: string }>('SELECT id FROM migrations ORDER BY applied_at');
     return rows.map((row) => row.id);
   }
@@ -117,7 +118,9 @@ export class MigrationRunner {
     const migrations: Migration[] = [];
 
     for (const file of files) {
-      if (file.endsWith('.ts') || file.endsWith('.js')) {
+      const isCodeFile = file.endsWith('.ts') || file.endsWith('.js');
+      const isTestFile = file.endsWith('.test.ts') || file.endsWith('.test.js') || file.endsWith('.spec.ts') || file.endsWith('.spec.js') || file.endsWith('.d.ts');
+      if (isCodeFile && !isTestFile) {
         const migrationPath = path.join(this.migrationsDir, file);
         const module = await import(migrationPath);
         if (module.default && typeof module.default.up === 'function') {

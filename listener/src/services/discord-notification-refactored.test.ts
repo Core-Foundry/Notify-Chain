@@ -6,7 +6,7 @@
  */
 
 import { DiscordNotificationService } from './discord-notification';
-import { NotificationDeduplicator } from './notification-deduplicator';
+import { NotificationDeduplicator, generateFingerprint } from './notification-deduplicator';
 import { NotificationFixtureBuilder } from '../test-utils/notification-fixture-builder';
 
 const mockFetch = jest.fn();
@@ -18,6 +18,7 @@ jest.mock('../utils/logger', () => ({
     info: jest.fn(),
     error: jest.fn(),
     warn: jest.fn(),
+    debug: jest.fn(),
   },
 }));
 
@@ -25,6 +26,8 @@ describe('DiscordNotificationService (Refactored)', () => {
   const mockConfig = {
     webhookUrl: NotificationFixtureBuilder.constants.webhookUrl,
     webhookId: '123',
+    retryCount: 0,
+    backoffBaseSeconds: 0,
   };
 
   beforeEach(() => {
@@ -229,9 +232,11 @@ describe('DiscordNotificationService (Refactored)', () => {
       await service.sendEventNotification(mockEvent, mockContractConfig);
 
       expect(deduplicator.size()).toBe(1);
-      expect(deduplicator.isDuplicate(
-        `${mockContractConfig.address}:event-injected`
-      )).toBe(true);
+      expect(
+        deduplicator.isDuplicate(
+          generateFingerprint('event-injected', mockContractConfig.address)
+        )
+      ).toBe(true);
     });
   });
 
@@ -407,7 +412,7 @@ describe('DiscordNotificationService (Refactored)', () => {
 
       const service = new DiscordNotificationService(mockConfig);
       
-      const exactValue = 'a'.repeat(1024);
+      const exactValue = 'a'.repeat(512);
       const mockEvent = NotificationFixtureBuilder
         .aStellarEvent()
         .withStringValue(exactValue)

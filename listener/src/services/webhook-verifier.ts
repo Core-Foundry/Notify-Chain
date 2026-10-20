@@ -306,9 +306,8 @@ export function verifyWebhookRequest(ctx: WebhookVerificationContext): WebhookVe
     maxAgeSeconds,
     requireTimestamp = true,
     replayCache,
+    auditService,
   } = ctx;
-export async function verifyWebhookRequest(ctx: WebhookVerificationContext): Promise<WebhookVerificationOutcome> {
-  const { headers, rawBody, secrets, sourceIp, requestId, correlationId, maxAgeSeconds, auditService } = ctx;
 
   const signatureHeader = extractSignature(headers);
   const keyId = extractKeyId(headers);
@@ -326,7 +325,7 @@ export async function verifyWebhookRequest(ctx: WebhookVerificationContext): Pro
     logger.warn('Webhook authentication rejected: missing signature header', auditContext);
     const e = AUTH_ERRORS.missing_signature_header;
     if (auditService) {
-      await auditService.record({
+      void auditService.record({
         action: 'auth_failure',
         actor: 'unknown',
         sourceIp,
@@ -349,7 +348,7 @@ export async function verifyWebhookRequest(ctx: WebhookVerificationContext): Pro
     logger.warn('Webhook authentication rejected: missing key-id header', auditContext);
     const e = AUTH_ERRORS.missing_key_id;
     if (auditService) {
-      await auditService.record({
+      void auditService.record({
         action: 'auth_failure',
         actor: 'unknown',
         sourceIp,
@@ -373,7 +372,7 @@ export async function verifyWebhookRequest(ctx: WebhookVerificationContext): Pro
     logger.warn('Webhook authentication rejected: unknown key-id', { ...auditContext, keyId });
     const e = AUTH_ERRORS.unknown_key_id;
     if (auditService) {
-      await auditService.record({
+      void auditService.record({
         action: 'auth_failure',
         actor: keyId,
         sourceIp,
@@ -407,15 +406,21 @@ export async function verifyWebhookRequest(ctx: WebhookVerificationContext): Pro
   if (!verification.valid) {
     const err = AUTH_ERRORS[verification.reason ?? 'hmac_mismatch'] ?? AUTH_ERRORS.hmac_mismatch;
     if (auditService) {
-      await auditService.record({
-        action: 'auth_failure',
-        actor: keyId,
-        sourceIp,
-        requestId,
-        correlationId,
-        outcome: err.code,
-        details: { reason: err.message },
-      });
+      try {
+        void Promise.resolve(
+          auditService.record({
+            action: 'auth_failure',
+            actor: keyId,
+            sourceIp,
+            requestId,
+            correlationId,
+            outcome: err.code,
+            details: { reason: err.message },
+          }),
+        ).catch(() => {});
+      } catch {
+        // Ignore audit service synchronous errors
+      }
     }
     return {
       authenticated: false,

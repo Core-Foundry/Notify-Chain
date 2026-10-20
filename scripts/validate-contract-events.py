@@ -12,6 +12,9 @@ import sys
 import argparse
 from pathlib import Path
 
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+
 def extract_code_events(events_rs_path):
     events = {}
     if not events_rs_path.exists():

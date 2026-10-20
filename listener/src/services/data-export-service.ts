@@ -12,7 +12,7 @@
 
 import { Database, getDatabase } from '../database/database';
 import logger from '../utils/logger';
-import { redactValue, REDACTED_PLACEHOLDER } from '../utils/redact';
+import { redactValue, redactString, REDACTED_PLACEHOLDER } from '../utils/redact';
 
 export interface NotificationExportFilter {
   status?: string;
@@ -151,7 +151,18 @@ export function sanitizeEventRecord(
     return { ...record };
   }
 
-  return redactValue(record) as Record<string, unknown>;
+  const sanitized = redactValue(record) as Record<string, unknown>;
+  if (typeof sanitized.raw_data === 'string') {
+    try {
+      const parsed = JSON.parse(sanitized.raw_data);
+      sanitized.raw_data = JSON.stringify(redactValue(parsed));
+    } catch {
+      sanitized.raw_data = redactString(sanitized.raw_data);
+    }
+  } else if (sanitized.raw_data && typeof sanitized.raw_data === 'object') {
+    sanitized.raw_data = redactValue(sanitized.raw_data);
+  }
+  return sanitized;
 }
 
 export class DataExportService {
@@ -327,7 +338,8 @@ export class DataExportService {
         last_redetected_at,
         status,
         notification_sent,
-        error_reason
+        error_reason,
+        raw_data
       FROM processed_events
       ${whereClause}
       ORDER BY processed_at DESC

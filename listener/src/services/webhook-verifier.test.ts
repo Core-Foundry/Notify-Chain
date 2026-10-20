@@ -534,9 +534,6 @@ describe('verifyWebhookRequest — end-to-end request authentication', () => {
     // this test keeps exercising the key-swap path specifically.
     const ts = Math.floor(Date.now() / 1000).toString();
     const sig = computeWebhookSignature(payload, SECRETS[1].secret, ts);
-    const outcome = verifyWebhookRequest({
-    // Signed with key-beta's secret but presented as key-alpha
-    const sig = computeWebhookSignature(payload, SECRETS[1].secret);
     const outcome = await verifyWebhookRequest({
       headers: {
         'x-webhook-signature': sig,

@@ -17,6 +17,7 @@ export interface RequestDurationLogData {
   requestId?: string;
   ip?: string;
   contentLength?: number;
+  [key: string]: unknown;
 }
 
 /**
@@ -43,7 +44,7 @@ export function createRequestDurationLogger(
         statusCode: res.statusCode,
         durationMs,
         requestId: (req.headers['x-request-id'] as string) || (req as unknown as { id?: string }).id,
-        ip: req.ip || req.socket.remoteAddress,
+        ip: req.ip || req.socket?.remoteAddress,
         contentLength: res.getHeader('content-length')
           ? parseInt(String(res.getHeader('content-length')), 10)
           : undefined,

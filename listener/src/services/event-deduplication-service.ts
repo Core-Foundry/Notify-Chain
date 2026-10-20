@@ -1,6 +1,7 @@
 import { Database } from '../database/database';
 import logger from '../utils/logger';
 import { generateFingerprint } from './notification-deduplicator';
+import { captureRawEvent, isRawEventData, RawEventData } from './event-raw-retention';
 
 export interface ProcessedEventRecord {
   eventId: string;
@@ -14,6 +15,18 @@ export interface ProcessedEventRecord {
   notificationSent: boolean;
   status: 'PROCESSED' | 'SKIPPED' | 'ERROR';
   errorReason?: string;
+  rawData?: string;
+}
+
+function formatRawDataForStorage(raw: unknown): string | null {
+  if (raw === undefined || raw === null) {
+    return null;
+  }
+  if (isRawEventData(raw)) {
+    return JSON.stringify(raw);
+  }
+  const captured = captureRawEvent(raw);
+  return captured ? JSON.stringify(captured) : null;
 }
 
 export interface PollingCursorRecord {
@@ -87,19 +100,22 @@ export class EventDeduplicationService {
     ledgerNumber: number,
     txHash: string | undefined,
     eventType: string,
+    rawData?: unknown,
   ): Promise<EventClaimResult> {
     const fingerprint = generateFingerprint(eventId, contractAddress);
+    const rawDataStr = formatRawDataForStorage(rawData);
     try {
       const result = await this.db.run(
         `
         INSERT INTO processed_events (
           event_id, contract_address, fingerprint, ledger_number, tx_hash,
-          event_type, notification_sent, status, is_reorg_duplicate, processed_at
+          event_type, notification_sent, status, is_reorg_duplicate, processed_at, raw_data
         )
-        VALUES (?, ?, ?, ?, ?, ?, 0, 'PROCESSING', 0, CURRENT_TIMESTAMP)
+        VALUES (?, ?, ?, ?, ?, ?, 0, 'PROCESSING', 0, CURRENT_TIMESTAMP, ?)
         ON CONFLICT(fingerprint) DO UPDATE SET
           processed_at = CURRENT_TIMESTAMP,
-          ledger_number = excluded.ledger_number
+          ledger_number = excluded.ledger_number,
+          raw_data = COALESCE(excluded.raw_data, processed_events.raw_data)
         WHERE processed_events.status = 'PROCESSING'
           AND processed_events.processed_at < datetime('now', ?)
         `,
@@ -110,6 +126,7 @@ export class EventDeduplicationService {
           ledgerNumber,
           txHash ?? null,
           eventType,
+          rawDataStr,
           `-${this.claimLeaseSeconds} seconds`,
         ],
       );
@@ -142,16 +159,19 @@ export class EventDeduplicationService {
     notificationSent: boolean,
     status: 'PROCESSED' | 'ERROR',
     errorReason?: string,
+    rawData?: unknown,
   ): Promise<void> {
     const fingerprint = generateFingerprint(eventId, contractAddress);
+    const rawDataStr = formatRawDataForStorage(rawData);
     try {
       const result = await this.db.run(
         `
         UPDATE processed_events
-        SET status = ?, notification_sent = ?, error_reason = ?, processed_at = CURRENT_TIMESTAMP
+        SET status = ?, notification_sent = ?, error_reason = ?, processed_at = CURRENT_TIMESTAMP,
+            raw_data = COALESCE(?, raw_data)
         WHERE fingerprint = ?
         `,
-        [status, notificationSent ? 1 : 0, errorReason ?? null, fingerprint],
+        [status, notificationSent ? 1 : 0, errorReason ?? null, rawDataStr, fingerprint],
       );
 
       if (result.changes === 0) {
@@ -159,13 +179,14 @@ export class EventDeduplicationService {
           `
           INSERT INTO processed_events (
             event_id, contract_address, fingerprint, ledger_number, tx_hash,
-            event_type, notification_sent, status, error_reason, is_reorg_duplicate
+            event_type, notification_sent, status, error_reason, is_reorg_duplicate, raw_data
           )
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
-          ON CONFLICT(fingerprint) DO NOTHING
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
+          ON CONFLICT(fingerprint) DO UPDATE SET
+            raw_data = COALESCE(excluded.raw_data, processed_events.raw_data)
           `,
           [eventId, contractAddress, fingerprint, ledgerNumber, txHash ?? null, eventType,
-            notificationSent ? 1 : 0, status, errorReason ?? null],
+            notificationSent ? 1 : 0, status, errorReason ?? null, rawDataStr],
         );
       }
 
@@ -263,10 +284,12 @@ export class EventDeduplicationService {
     eventType: string,
     notificationSent: boolean = true,
     status: 'PROCESSED' | 'SKIPPED' | 'ERROR' = 'PROCESSED',
-    errorReason?: string
+    errorReason?: string,
+    rawData?: unknown,
   ): Promise<void> {
     try {
       const fingerprint = generateFingerprint(eventId, contractAddress);
+      const rawDataStr = formatRawDataForStorage(rawData);
 
       // Single atomic upsert: insert a new record, or — if the fingerprint
       // already exists (reorg duplicate) — bump the counter in SQL. The old
@@ -276,18 +299,19 @@ export class EventDeduplicationService {
         `
         INSERT INTO processed_events (
           event_id, contract_address, fingerprint, ledger_number, tx_hash,
-          event_type, notification_sent, status, error_reason, is_reorg_duplicate
+          event_type, notification_sent, status, error_reason, is_reorg_duplicate, raw_data
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
         ON CONFLICT(fingerprint) DO UPDATE SET
           is_reorg_duplicate = 1,
           reorg_detection_count = processed_events.reorg_detection_count + 1,
           last_redetected_at = CURRENT_TIMESTAMP,
           status = excluded.status,
-          ledger_number = excluded.ledger_number
+          ledger_number = excluded.ledger_number,
+          raw_data = COALESCE(excluded.raw_data, processed_events.raw_data)
         RETURNING reorg_detection_count
         `,
-        [eventId, contractAddress, fingerprint, ledgerNumber, txHash, eventType, notificationSent ? 1 : 0, status, errorReason]
+        [eventId, contractAddress, fingerprint, ledgerNumber, txHash, eventType, notificationSent ? 1 : 0, status, errorReason, rawDataStr]
       );
 
       const reorgDetectionCount = rows[0]?.reorg_detection_count ?? 0;
@@ -513,6 +537,99 @@ export class EventDeduplicationService {
         error,
       });
       return 0;
+    }
+  }
+
+  /**
+   * Retrieve a processed event record by eventId and contractAddress
+   */
+  async getProcessedEvent(
+    eventId: string,
+    contractAddress: string,
+  ): Promise<ProcessedEventRecord | null> {
+    try {
+      const fingerprint = generateFingerprint(eventId, contractAddress);
+      const rows = await this.db.all<any>(
+        `
+        SELECT 
+          event_id as eventId,
+          contract_address as contractAddress,
+          fingerprint,
+          ledger_number as ledgerNumber,
+          tx_hash as txHash,
+          event_type as eventType,
+          is_reorg_duplicate as isReorgDuplicate,
+          reorg_detection_count as reorgDetectionCount,
+          notification_sent as notificationSent,
+          status,
+          error_reason as errorReason,
+          raw_data as rawData
+        FROM processed_events
+        WHERE fingerprint = ?
+        LIMIT 1
+        `,
+        [fingerprint],
+      );
+
+      if (rows.length === 0) {
+        return null;
+      }
+
+      const row = rows[0];
+      return {
+        eventId: row.eventId,
+        contractAddress: row.contractAddress,
+        fingerprint: row.fingerprint,
+        ledgerNumber: row.ledgerNumber,
+        txHash: row.txHash ?? undefined,
+        eventType: row.eventType,
+        isReorgDuplicate: row.isReorgDuplicate === 1,
+        reorgDetectionCount: row.reorgDetectionCount || 0,
+        notificationSent: row.notificationSent === 1,
+        status: row.status,
+        errorReason: row.errorReason ?? undefined,
+        rawData: row.rawData ?? undefined,
+      };
+    } catch (error) {
+      logger.error('Error retrieving processed event', { eventId, contractAddress, error });
+      return null;
+    }
+  }
+
+  /**
+   * Retrieve raw event data for an event, if retained
+   */
+  async getRawEventData(
+    eventId: string,
+    contractAddress?: string,
+  ): Promise<RawEventData | null> {
+    let rawDataStr: string | null = null;
+    if (contractAddress) {
+      const record = await this.getProcessedEvent(eventId, contractAddress);
+      rawDataStr = record?.rawData ?? null;
+    } else {
+      try {
+        const row = await this.db.get<{ raw_data: string | null }>(
+          'SELECT raw_data FROM processed_events WHERE event_id = ? LIMIT 1',
+          [eventId],
+        );
+        rawDataStr = row?.raw_data ?? null;
+      } catch {
+        rawDataStr = null;
+      }
+    }
+
+    if (!rawDataStr) {
+      return null;
+    }
+    try {
+      const parsed = JSON.parse(rawDataStr);
+      if (isRawEventData(parsed)) {
+        return parsed;
+      }
+      return captureRawEvent(parsed);
+    } catch {
+      return captureRawEvent(rawDataStr);
     }
   }
 }

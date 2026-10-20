@@ -545,4 +545,59 @@ describe('Events Server Rate Limiting Integration', () => {
     expect(metrics.uniqueClients).toBeGreaterThanOrEqual(1);
     expect(metrics.startTime).toBeDefined();
   });
+
+  it('exempts versioned /api/v1/rate-limit/metrics and /health from rate limiting', async () => {
+    server = createEventsServer({
+      port,
+      stellarRpcUrl: 'https://soroban-testnet.stellar.org:443',
+      stellarNetworkPassphrase: 'Test SDF Network ; September 2015',
+      contractAddresses: [],
+      rateLimit: {
+        enabled: true,
+        windowMs: 60000,
+        maxRequests: 1,
+        clientOverrides: {},
+      },
+    });
+
+    await new Promise<void>((resolve) => server.listen(port, '127.0.0.1', () => resolve()));
+
+    // Exhaust client quota
+    const res1 = await makeRequest('/api/events');
+    expect(res1.status).toBe(200);
+
+    const res2 = await makeRequest('/api/events');
+    expect(res2.status).toBe(429);
+
+    // /api/v1/rate-limit/metrics must still succeed with 200
+    const v1Metrics = await new Promise<{ status: number; body: string }>((resolve, reject) => {
+      const req = http.request(
+        { host: '127.0.0.1', port, path: '/api/v1/rate-limit/metrics', method: 'GET' },
+        (res) => {
+          let body = '';
+          res.on('data', (c) => (body += c));
+          res.on('end', () => resolve({ status: res.statusCode!, body }));
+        },
+      );
+      req.on('error', reject);
+      req.end();
+    });
+    expect(v1Metrics.status).toBe(200);
+
+    // /health must also be exempt
+    const health = await new Promise<{ status: number; body: string }>((resolve, reject) => {
+      const req = http.request(
+        { host: '127.0.0.1', port, path: '/health', method: 'GET' },
+        (res) => {
+          let body = '';
+          res.on('data', (c) => (body += c));
+          res.on('end', () => resolve({ status: res.statusCode!, body }));
+        },
+      );
+      req.on('error', reject);
+      req.end();
+    });
+    expect(health.status).toBe(200);
+  });
 });
+

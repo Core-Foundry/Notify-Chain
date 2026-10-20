@@ -48,7 +48,7 @@ describe('API Request Duration Logging (Issue #687)', () => {
       info: jest.fn((msg: string, meta?: Record<string, unknown>) => {
         expect(msg).not.toContain(secret);
         expect(meta?.path).not.toContain(secret);
-        expect(meta?.path).toContain('S[REDACTED_STELLAR_SECRET_KEY]');
+        expect(meta?.path).toContain('[REDACTED]');
         done();
       }),
     };

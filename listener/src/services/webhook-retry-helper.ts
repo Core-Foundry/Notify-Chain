@@ -25,6 +25,12 @@ const MAX_RETRY_ATTEMPTS = 2;
 /** Delay in milliseconds before the first retry. */
 const RETRY_DELAY_MS = 1000;
 
+/** HTTP status codes that are permanent client errors (not retryable). */
+const PERMANENT_CLIENT_ERRORS = new Set([400, 401, 403, 404, 410, 422]);
+
+/** HTTP status codes that are considered retryable (transient failures). */
+const RETRYABLE_STATUS_CODES = new Set([429, 500, 502, 503, 504]);
+
 export interface WebhookRetryOptions extends WebhookSendOptions {
   /**
    * Retry policy overrides. Defaults to
@@ -88,11 +94,26 @@ export function classifyWebhookFailure(
  *
  * @param response - The HTTP response, if available
  * @param error - The error thrown, if any
+ * @param policy - Policy deciding which failure types are retryable
  * @returns true if the failure is retryable
  */
-function isRetryable(response?: Response, error?: unknown): boolean {
-  const reason = classifyWebhookFailure(response, error);
-  return reason === 'timeout' || reason === 'network' || reason === 'http_retryable';
+export function isRetryable(
+  response?: Response,
+  error?: unknown,
+  policy: RetryPolicy = DEFAULT_RETRY_POLICY
+): boolean {
+  if (response) {
+    if (response.ok) {
+      return false;
+    }
+    return policy.isRetryable(classifyHttpStatus(response.status));
+  }
+
+  if (error !== undefined && error !== null) {
+    return policy.isRetryable(classifyError(error));
+  }
+
+  return false;
 }
 
 /**

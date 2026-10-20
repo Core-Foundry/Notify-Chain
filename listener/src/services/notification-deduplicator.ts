@@ -98,7 +98,7 @@ export class NotificationDeduplicator {
         isDuplicate: true,
         reason: 'Duplicate within deduplication window',
       });
-      logger.debug('Duplicate notification detected', {
+      logger.debug?.('Duplicate notification detected', {
         fingerprint,
         windowMs: this.windowMs,
         metricsSkipped: this.skippedDuplicates,
@@ -134,7 +134,7 @@ export class NotificationDeduplicator {
       metadata,
     });
 
-    logger.debug('Notification marked as sent', {
+    logger.debug?.('Notification marked as sent', {
       fingerprint,
       cacheSize: this.seen.size,
       acceptedTotal: this.acceptedRequests,

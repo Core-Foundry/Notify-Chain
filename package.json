@@ -6,7 +6,12 @@
   "type": "module",
   "scripts": {
     "lint:config": "node scripts/check-unused-config.mjs",
-    "lint:config:verbose": "VERBOSE=true node scripts/check-unused-config.mjs"
+    "lint:config:verbose": "VERBOSE=true node scripts/check-unused-config.mjs",
+    "check:links": "markdown-link-check -c .markdown-link-check.json \"./**/*.md\"",
+    "check:links:quiet": "markdown-link-check -q -c .markdown-link-check.json \"./**/*.md\""
+  },
+  "devDependencies": {
+    "markdown-link-check": "^3.12.2"
   },
   "keywords": [
     "blockchain",

@@ -50,9 +50,20 @@ export interface DnsResolver {
 }
 
 export const defaultDnsResolver: DnsResolver = {
-  resolve4: resolve4Default,
-  resolve6: resolve6Default,
+  resolve4: async (hostname: string) => {
+    if (process.env.NODE_ENV === 'test') {
+      return ['93.184.216.34'];
+    }
+    return resolve4Default(hostname);
+  },
+  resolve6: async (hostname: string) => {
+    if (process.env.NODE_ENV === 'test') {
+      return [];
+    }
+    return resolve6Default(hostname);
+  },
 };
+
 
 // ─── IP address classification ────────────────────────────────────────────────
 

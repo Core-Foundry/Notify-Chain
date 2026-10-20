@@ -4,8 +4,8 @@
 - [x] Add `const rawApiKeys = parseJsonEnv<unknown>('API_KEYS', '[]');` before its usage in `loadConfig()`
 - File: `listener/src/config.ts`
 
-## Bug 2: Health endpoint not rate-limit exempt in `events-server.ts`
-- [x] Use the standalone `isRateLimitExempt()` function instead of the incomplete inline check
+## Bug 2: Health and metrics endpoints not rate-limit exempt in `events-server.ts`
+- [x] Use the standalone `isRateLimitExempt()` function with canonical `url.pathname` instead of shadowed inline check
 - File: `listener/src/api/events-server.ts`
 
 ## Bug 3: Duplicate `contractStatuses` declaration in `events-server.ts`
@@ -13,6 +13,7 @@
 - File: `listener/src/api/events-server.ts`
 
 ## Verification
-- [ ] Run `npm run typecheck` to verify TypeScript compilation
-- [ ] Run `npm test -- rate-limiter` to verify tests pass
+- [x] TypeScript compilation and contract compatibility verified
+- [x] Rate limiting metrics and health endpoint exemption verified
+
 

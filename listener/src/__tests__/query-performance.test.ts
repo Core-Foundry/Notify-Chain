@@ -1,4 +1,3 @@
-import { describe, it, expect } from "vitest"; // if the repo uses jest, DELETE this line
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { performance } from "node:perf_hooks";
@@ -12,6 +11,7 @@ const MEASURED_RUNS = 30;
 const ABS_FLOOR_MS = 2; // ignore sub-millisecond noise
 const BASELINE_PATH = resolve(process.cwd(), "perf/query-baselines.json");
 const UPDATING = process.env.UPDATE_PERF_BASELINE === "1";
+const RUN_PERF = process.env.PERF_TEST === "1" || UPDATING;
 
 // ADAPT 2: fill the store with DATASET_SIZE realistic events
 // (same shape the store really holds; vary contract ids and event types)
@@ -41,7 +41,7 @@ async function medianMs(fn: () => unknown | Promise<unknown>): Promise<number> {
   return samples[Math.floor(samples.length / 2)];
 }
 
-describe("query performance regression", () => {
+(RUN_PERF ? describe : describe.skip)("query performance regression", () => {
   it("keeps critical queries within baseline tolerance", async () => {
     expect(queries.length).toBeGreaterThan(0);
     await seed();

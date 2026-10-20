@@ -1,3 +1,5 @@
+import { RawEventData } from '../services/event-raw-retention';
+
 export interface DisplayEvent {
   eventId: string;
   contractAddress: string;
@@ -8,4 +10,6 @@ export interface DisplayEvent {
   value: string;
   txHash?: string;
   receivedAt: number;
+  /** Retained original event representation (issue #945). */
+  raw?: RawEventData | null;
 }

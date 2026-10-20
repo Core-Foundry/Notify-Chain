@@ -113,8 +113,10 @@ describe('Config validation', () => {
       eventsApiPort: 8787,
       eventsApiCorsOrigin: 'http://localhost:5173',
       retryQueue: {
-        baseDelayMs: 5000,
-        maxRetries: 5,
+        backoff: {
+          initialDelayMs: 5000,
+          maxRetries: 5,
+        },
       },
       analytics: {
         enabled: true,
@@ -348,11 +350,13 @@ describe('Config validation', () => {
       expect(() => validateConfig(config)).not.toThrow();
     });
 
-    it('detects empty CONTRACT_ADDRESSES array during loadConfig', () => {
+    it('detects empty CONTRACT_ADDRESSES array during validateConfig', () => {
       process.env.CONTRACT_ADDRESSES = '[]';
 
-      expect(() => loadConfig()).toThrow(ConfigError);
-      expect(() => loadConfig()).toThrow(
+      const config = loadConfig();
+      expect(config.contractAddresses).toEqual([]);
+      expect(() => validateConfig(config)).toThrow(ConfigError);
+      expect(() => validateConfig(config)).toThrow(
         'CONTRACT_ADDRESSES is empty. The listener requires at least one contract to monitor'
       );
     });

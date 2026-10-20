@@ -8,7 +8,7 @@ CREATE TABLE IF NOT EXISTS scheduled_notifications (
   -- Notification content and metadata
   payload TEXT NOT NULL,                    -- JSON payload of the notification (compressed when large)
   payload_hash TEXT,                        -- HMAC hash of the raw JSON payload for integrity checks
-  notification_type VARCHAR(50) NOT NULL CHECK (notification_type IN ('discord', 'email', 'webhook', 'sms')),
+  notification_type VARCHAR(50) NOT NULL CHECK (LOWER(notification_type) IN ('discord', 'email', 'webhook', 'sms')),
   target_recipient TEXT NOT NULL,           -- User ID, webhook URL, or recipient identifier
   
   -- Scheduling information
@@ -77,7 +77,7 @@ CREATE INDEX IF NOT EXISTS idx_scheduled_notifications_target
 CREATE TABLE IF NOT EXISTS dead_letter_queue (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   scheduled_notification_id INTEGER NOT NULL UNIQUE,
-  notification_type VARCHAR(50) NOT NULL CHECK (notification_type IN ('discord', 'email', 'webhook', 'sms')),
+  notification_type VARCHAR(50) NOT NULL CHECK (LOWER(notification_type) IN ('discord', 'email', 'webhook', 'sms')),
   target_recipient TEXT NOT NULL,
   payload TEXT NOT NULL,
   failure_reason TEXT NOT NULL,
@@ -246,9 +246,10 @@ CREATE TABLE IF NOT EXISTS processed_events (
   last_redetected_at DATETIME,              -- When the event was last detected again (for reorg monitoring)
   
   -- Status and metadata
-  status VARCHAR(20) NOT NULL DEFAULT 'PROCESSED' CHECK (status IN ('PROCESSED', 'SKIPPED', 'ERROR')),
+  status VARCHAR(20) NOT NULL DEFAULT 'PROCESSED' CHECK (status IN ('PROCESSED', 'SKIPPED', 'ERROR', 'PROCESSING')),
   notification_sent BOOLEAN NOT NULL DEFAULT 0 CHECK (notification_sent IN (0, 1)),
-  error_reason TEXT                         -- If status is ERROR, what went wrong
+  error_reason TEXT,                        -- If status is ERROR, what went wrong
+  raw_data TEXT                             -- Original event representation retained for debugging (Issue #945)
 );
 
 -- Indexes for efficient lookups
@@ -366,7 +367,7 @@ CREATE TABLE IF NOT EXISTS notification_archive (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   original_id INTEGER NOT NULL,
   payload TEXT NOT NULL,
-  notification_type VARCHAR(50) NOT NULL CHECK (notification_type IN ('discord', 'email', 'webhook', 'sms')),
+  notification_type VARCHAR(50) NOT NULL CHECK (LOWER(notification_type) IN ('discord', 'email', 'webhook', 'sms')),
   target_recipient TEXT NOT NULL,
   execute_at DATETIME NOT NULL,
   expires_at DATETIME,

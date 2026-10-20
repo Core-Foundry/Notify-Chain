@@ -329,6 +329,7 @@ export class EventSubscriber {
         contractAddress: contractConfig.address,
         eventId: event.id,
         eventName,
+        receivedAt: (event as any).receivedAt ?? (event.ledgerClosedAt ? new Date(event.ledgerClosedAt).getTime() : undefined),
         currentTime: Date.now(),
         reason: 'expired',
       });
@@ -514,14 +515,22 @@ export class EventSubscriber {
     }
     const isDryRun = this.config.dryRun === true;
 
-    // Check persistent deduplication first (to catch reorg duplicates)
+    // Atomically claim the event before doing any work. Only one concurrent
+    // processor (poll cycle, backfill, queue worker or another listener
+    // instance sharing the database) wins the claim; everyone else skips.
+    // A separate isDuplicate() check followed by a later write would leave a
+    // window in which two processors both send the notification.
     if (this.deduplicationService && !isDryRun) {
-      const duplicate = await this.deduplicationService.isDuplicate(
+      const claim = await this.deduplicationService.claimEvent(
         event.id,
         contractConfig.address,
+        event.ledger,
+        event.txHash,
+        event.type,
+        normalized.event.raw ?? event,
       );
-      if (duplicate.isDuplicate) {
-        logger.warn('Skipping event: already processed (persistent deduplication)', {
+      if (!claim.claimed) {
+        logger.warn('Skipping event: already processed or in progress (persistent deduplication)', {
           requestId: correlationId,
           correlationId,
           eventId: event.id,
@@ -548,6 +557,7 @@ export class EventSubscriber {
       topic: event.topic,
       value: event.value,
       txHash: event.txHash,
+      raw: normalized.event.raw ?? event,
     });
 
     logger.info('Processing event', {
@@ -615,6 +625,7 @@ export class EventSubscriber {
         notificationSent,
         processingError ? 'ERROR' : 'PROCESSED',
         processingError,
+        displayEvent.raw ?? event,
       );
     }
 

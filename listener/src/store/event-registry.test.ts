@@ -144,4 +144,106 @@ describe('EventRegistry', () => {
 
     expect(registry.getEventsByLedgerRange(20, 30).map((event) => event.ledger)).toEqual([20, 30]);
   });
+
+  describe('raw event data retention (issue #945)', () => {
+    it('retains raw event representation accessible via getRawEvent and on DisplayEvent', () => {
+      const registry = new EventRegistry(10);
+      const rawPayload = { custom: 'raw-representation', count: 1 };
+
+      const event = registry.addFromInput({
+        eventId: 'evt-raw-1',
+        contractAddress: 'CABC',
+        eventName: 'TaskCreated',
+        ledger: 100,
+        type: 'contract',
+        topic: [xdr.ScVal.scvSymbol('TaskCreated')],
+        value: xdr.ScVal.scvU32(42),
+        raw: rawPayload,
+      });
+
+      expect(event.raw).toBeDefined();
+      expect(event.raw?.format).toBe('raw');
+      expect(event.raw?.payload).toEqual(rawPayload);
+
+      const retrievedRaw = registry.getRawEvent('evt-raw-1', 'CABC');
+      expect(retrievedRaw).toEqual(event.raw);
+
+      // Distinguishable: normalized fields vs raw representation
+      expect(event.eventName).toBe('TaskCreated');
+      expect(event.topic).toEqual(['TaskCreated']);
+      expect(event.value).toBe('42');
+    });
+
+    it('redacts sensitive values in retained raw event stored in EventRegistry', () => {
+      const registry = new EventRegistry(10);
+      const secret = 'SCZANGBA5YHTNYVVV4C3U252E2B6P6IRKD45DCAHSKV2U2B6P6IRKD45';
+
+      registry.addFromInput({
+        eventId: 'evt-sensitive',
+        contractAddress: 'CABC',
+        eventName: null,
+        ledger: 101,
+        type: 'contract',
+        topic: [],
+        value: xdr.ScVal.scvU32(1),
+        raw: {
+          apiKey: 'secret_key_12345',
+          seed: secret,
+        },
+      });
+
+      const raw = registry.getRawEvent('evt-sensitive', 'CABC');
+      expect(raw).not.toBeNull();
+      const serialized = JSON.stringify(raw?.payload);
+      expect(serialized).not.toContain(secret);
+      expect(serialized).not.toContain('secret_key_12345');
+      expect(serialized).toContain('[REDACTED]');
+    });
+
+    it('returns null for getRawEvent on nonexistent events', () => {
+      const registry = new EventRegistry(10);
+      expect(registry.getRawEvent('nonexistent', 'CABC')).toBeNull();
+      expect(registry.getRawEvent('nonexistent')).toBeNull();
+    });
+
+    it('retrieves raw event by eventId alone without contractAddress', () => {
+      const registry = new EventRegistry(10);
+      registry.addFromInput({
+        eventId: 'evt-find-1',
+        contractAddress: 'CCONTRACT1',
+        eventName: 'Mint',
+        ledger: 50,
+        type: 'contract',
+        topic: [],
+        value: xdr.ScVal.scvU32(10),
+        raw: { original: true },
+      });
+
+      const retrieved = registry.getRawEvent('evt-find-1');
+      expect(retrieved).not.toBeNull();
+      expect(retrieved?.format).toBe('raw');
+      expect((retrieved?.payload as any).original).toBe(true);
+
+      const singleEvent = registry.getEvent('evt-find-1');
+      expect(singleEvent?.eventId).toBe('evt-find-1');
+      expect(singleEvent?.contractAddress).toBe('CCONTRACT1');
+    });
+
+    it('preserves explicit raw: null when provided in input', () => {
+      const registry = new EventRegistry(10);
+      const event = registry.addFromInput({
+        eventId: 'evt-no-raw',
+        contractAddress: 'CABC',
+        eventName: 'Burn',
+        ledger: 51,
+        type: 'contract',
+        topic: [],
+        value: xdr.ScVal.scvU32(5),
+        raw: null,
+      });
+
+      expect(event.raw).toBeNull();
+      expect(registry.getRawEvent('evt-no-raw', 'CABC')).toBeNull();
+    });
+  });
 });

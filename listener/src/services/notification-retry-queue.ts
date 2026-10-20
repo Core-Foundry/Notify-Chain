@@ -6,6 +6,7 @@ import { getEventName } from '../utils/event-utils';
 import { getNotificationAnalyticsAggregator, NotificationAnalyticsAggregator } from './notification-analytics-aggregator';
 import { NotificationType } from '../types/scheduled-notification';
 import { RetryFailureType, RetryPolicy, RetryPolicyConfig, classifyError } from './retry-policy';
+import { resolveRetryBackoffConfig, PartialRetryBackoffConfig, RetryBackoffConfig, calculateBackoffDelay } from '../utils/retry-backoff-config';
 
 export enum Priority {
   Low = 0,
@@ -14,6 +15,10 @@ export enum Priority {
 }
 
 export interface RetryQueueOptions {
+  baseDelayMs?: number;
+  maxDelayMs?: number;
+  maxRetries?: number;
+  jitter?: boolean;
   /**
    * Provider-independent retry backoff parameters.
    * All fields are optional; defaults from `RETRY_BACKOFF_DEFAULTS` are used
@@ -44,6 +49,9 @@ interface RetryItem {
 }
 
 const DEFAULTS = {
+  baseDelayMs: 1_000,
+  maxDelayMs: 60_000,
+  maxRetries: 5,
   processIntervalMs: 5_000,
   priorityWeights: { high: 5, medium: 2, low: 1 },
 };
@@ -57,6 +65,9 @@ export type NotificationFn = (
 export class NotificationRetryQueue {
   private queue: RetryItem[] = [];
   private readonly queuedFingerprints: Set<string> = new Set();
+  readonly baseDelayMs: number;
+  readonly maxDelayMs: number;
+  readonly maxRetries: number;
   /** Provider-independent, fully-validated backoff configuration. */
   private readonly backoff: Readonly<RetryBackoffConfig>;
   private readonly processIntervalMs: number;
@@ -80,11 +91,24 @@ export class NotificationRetryQueue {
 
   constructor(notificationFn: NotificationFn, options?: RetryQueueOptions) {
     this.notificationFn = notificationFn;
-    this.backoff = resolveRetryBackoffConfig(options.backoff);
-    this.processIntervalMs = options.processIntervalMs ?? DEFAULTS.processIntervalMs;
-    this.priorityWeights = options.priorityWeights ?? DEFAULTS.priorityWeights;
+    this.baseDelayMs = options?.baseDelayMs ?? options?.backoff?.initialDelayMs ?? DEFAULTS.baseDelayMs;
+    this.maxDelayMs = options?.maxDelayMs ?? options?.backoff?.maxDelayMs ?? DEFAULTS.maxDelayMs;
+    this.maxRetries = options?.maxRetries ?? options?.backoff?.maxRetries ?? DEFAULTS.maxRetries;
+    this.backoff = resolveRetryBackoffConfig({
+      initialDelayMs: this.baseDelayMs,
+      maxDelayMs: this.maxDelayMs,
+      maxRetries: this.maxRetries,
+      jitter: options?.backoff?.jitter ?? false,
+      ...(options?.backoff ?? {}),
+    });
+    this.processIntervalMs = options?.processIntervalMs ?? DEFAULTS.processIntervalMs;
+    this.priorityWeights = options?.priorityWeights ?? DEFAULTS.priorityWeights;
     this.analytics = getNotificationAnalyticsAggregator();
     this.policy = new RetryPolicy(options?.retryPolicy);
+  }
+
+  private calculateDelay(attempt: number): number {
+    return Math.min(this.baseDelayMs * Math.pow(2, attempt), this.maxDelayMs);
   }
 
   /** The policy governing every retry decision made by this queue. */
@@ -112,7 +136,7 @@ export class NotificationRetryQueue {
       return;
     }
 
-    const delayMs = calculateBackoffDelay(0, this.backoff);
+    const delayMs = this.baseDelayMs;
     const nextRetryAt = Date.now() + delayMs;
 
     logger.info('Notification queued for retry', {
@@ -236,7 +260,7 @@ export class NotificationRetryQueue {
     }
 
     const failureType = classifyError(outcome.error);
-    const decision = this.policy.evaluate(failureType, attempt, this.maxRetries);
+    const decision = this.policy.evaluate(failureType, attempt, this.backoff.maxRetries);
 
     if (!decision.shouldRetry) {
       this.queuedFingerprints.delete(fingerprint);
@@ -281,7 +305,7 @@ export class NotificationRetryQueue {
       return;
     }
 
-    const delayMs = calculateBackoffDelay(attempt, this.backoff);
+    const delayMs = this.calculateDelay(attempt);
     const nextRetryAt = Date.now() + delayMs;
 
     logger.warn('Retry failed, scheduling next attempt', {

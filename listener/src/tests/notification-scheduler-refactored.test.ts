@@ -331,7 +331,6 @@ describe('NotificationScheduler (Refactored)', () => {
         "UPDATE scheduled_notifications SET status = 'PENDING', processor_id = NULL, lock_expires_at = NULL WHERE id = ?",
         [overdueId],
       );
-      const pastLock = NotificationFixtureBuilder.dates.past(1000);
       await db.run('UPDATE scheduled_notifications SET lock_expires_at = ? WHERE id = ?', [
         pastLock.toISOString(),
         staleId,

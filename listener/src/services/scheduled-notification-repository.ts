@@ -905,7 +905,8 @@ export class ScheduledNotificationRepository {
           sn.status,
           sn.retry_count,
           log.status as final_execution_status,
-          log.duration_ms
+          log.duration_ms,
+          MAX(sn.retry_count, COALESCE(log.execution_attempt - 1, 0)) as effective_retries
         FROM scheduled_notifications sn
         LEFT JOIN notification_execution_log log 
           ON log.scheduled_notification_id = sn.id 
@@ -914,16 +915,16 @@ export class ScheduledNotificationRepository {
             FROM notification_execution_log 
             WHERE scheduled_notification_id = sn.id
           )
-        WHERE sn.status IN (?, ?)
+        WHERE sn.status IN (?, ?, ?)
       )
       SELECT
         COUNT(*) as total_notifications,
-        SUM(CASE WHEN final_execution_status = 'SUCCESS' AND retry_count = 0 THEN 1 ELSE 0 END) as success_first_attempt,
-        SUM(CASE WHEN final_execution_status = 'SUCCESS' AND retry_count > 0 THEN 1 ELSE 0 END) as success_after_retry,
-        SUM(CASE WHEN status = 'FAILED' OR final_execution_status = 'FAILED' THEN 1 ELSE 0 END) as permanent_failures,
-        SUM(retry_count) as total_retry_attempts,
-        AVG(CASE WHEN final_execution_status = 'SUCCESS' THEN duration_ms ELSE NULL END) as avg_success_duration,
-        AVG(CASE WHEN status = 'FAILED' OR final_execution_status = 'FAILED' THEN duration_ms ELSE NULL END) as avg_failure_duration
+        SUM(CASE WHEN (status = 'COMPLETED' OR final_execution_status = 'SUCCESS') AND effective_retries = 0 THEN 1 ELSE 0 END) as success_first_attempt,
+        SUM(CASE WHEN (status = 'COMPLETED' OR final_execution_status = 'SUCCESS') AND effective_retries > 0 THEN 1 ELSE 0 END) as success_after_retry,
+        SUM(CASE WHEN status IN ('FAILED', 'DEAD_LETTERED') OR final_execution_status IN ('FAILED', 'DEAD_LETTERED') THEN 1 ELSE 0 END) as permanent_failures,
+        SUM(effective_retries) as total_retry_attempts,
+        AVG(CASE WHEN status = 'COMPLETED' OR final_execution_status = 'SUCCESS' THEN duration_ms ELSE NULL END) as avg_success_duration,
+        AVG(CASE WHEN status IN ('FAILED', 'DEAD_LETTERED') OR final_execution_status IN ('FAILED', 'DEAD_LETTERED') THEN duration_ms ELSE NULL END) as avg_failure_duration
       FROM final_outcomes
     `;
 
@@ -935,7 +936,7 @@ export class ScheduledNotificationRepository {
       total_retry_attempts: number;
       avg_success_duration: number | null;
       avg_failure_duration: number | null;
-    }>(finalOutcomeSql, [NotificationStatus.COMPLETED, NotificationStatus.FAILED]);
+    }>(finalOutcomeSql, [NotificationStatus.COMPLETED, NotificationStatus.FAILED, NotificationStatus.DEAD_LETTERED]);
 
     const totalNotifications = result?.total_notifications ?? 0;
     const totalRetryAttempts = result?.total_retry_attempts ?? 0;
@@ -965,14 +966,28 @@ export class ScheduledNotificationRepository {
     }>
   > {
     const sql = `
+      WITH final_outcomes AS (
+        SELECT 
+          sn.id,
+          sn.status,
+          MAX(sn.retry_count, COALESCE(log.execution_attempt - 1, 0)) as effective_retries
+        FROM scheduled_notifications sn
+        LEFT JOIN notification_execution_log log 
+          ON log.scheduled_notification_id = sn.id 
+          AND log.execution_attempt = (
+            SELECT MAX(execution_attempt) 
+            FROM notification_execution_log 
+            WHERE scheduled_notification_id = sn.id
+          )
+        WHERE sn.status IN (?, ?, ?)
+      )
       SELECT 
-        retry_count,
+        effective_retries as retry_count,
         SUM(CASE WHEN status = ? THEN 1 ELSE 0 END) as success_count,
-        SUM(CASE WHEN status = ? THEN 1 ELSE 0 END) as failure_count
-      FROM scheduled_notifications
-      WHERE status IN (?, ?)
-      GROUP BY retry_count
-      ORDER BY retry_count ASC
+        SUM(CASE WHEN status IN (?, ?) THEN 1 ELSE 0 END) as failure_count
+      FROM final_outcomes
+      GROUP BY effective_retries
+      ORDER BY effective_retries ASC
     `;
 
     const rows = await this.db.all<{
@@ -982,8 +997,10 @@ export class ScheduledNotificationRepository {
     }>(sql, [
       NotificationStatus.COMPLETED,
       NotificationStatus.FAILED,
+      NotificationStatus.DEAD_LETTERED,
       NotificationStatus.COMPLETED,
       NotificationStatus.FAILED,
+      NotificationStatus.DEAD_LETTERED,
     ]);
 
     return rows.map((row) => ({

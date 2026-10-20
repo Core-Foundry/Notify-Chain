@@ -18,5 +18,6 @@ coverage/
 # Tooling / data
 data/
 test-data/
+reports/
 *.db
 *.db-journal

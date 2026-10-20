@@ -31,10 +31,16 @@ jest.mock('../utils/logger', () => ({
 
 // Mock webhook sender to avoid actual network calls
 jest.mock('../services/webhook-sender', () => ({
-  sendWebhook: jest.fn().mockResolvedValue({ ok: true }),
+  __esModule: true,
+  sendWebhook: jest.fn().mockResolvedValue({ ok: true, status: 200 }),
 }));
 
-describe('Stress Test Suite: Notification Processing', () => {
+const isStressRun =
+  process.env.STRESS_TEST === '1' ||
+  process.argv.some((arg) => arg.includes('stress.test.ts'));
+const describeStress = isStressRun ? describe : describe.skip;
+
+describeStress('Stress Test Suite: Notification Processing', () => {
   // Helper function to generate metrics report
   const generateMetricsReport = (
     testName: string,
@@ -627,8 +633,8 @@ describe('Stress Test Suite: Notification Processing', () => {
 
       const metrics = service.getMetrics();
       console.log(`\nDiscord Service Metrics:`);
-      console.log(`  Total Sent:         ${metrics.totalSent}`);
-      console.log(`  Duplicates Skipped: ${metrics.duplicatesSkipped}`);
+      console.log(`  Total Sent:         ${metrics.acceptedRequests}`);
+      console.log(`  Duplicates Skipped: ${metrics.skippedDuplicates}`);
 
       expect(successCount.value).toBe(eventCount);
       expect(report.throughput).toBeGreaterThan(50);

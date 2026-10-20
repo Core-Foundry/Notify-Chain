@@ -353,4 +353,132 @@ describe('EventDeduplicationService', () => {
       expect(allEvents[0]).toHaveProperty('notification_sent', 1); // Still 1, not 2
     });
   });
+
+  describe('Raw Event Data Retention (Issue #945)', () => {
+    it('stores raw event data alongside normalized fields when recording processed event', async () => {
+      const rawPayload = {
+        contractId: 'contract-1',
+        topic: ['transfer', 'alice', 'bob'],
+        amount: '1000',
+        secret_seed: 'SDFKASDJFKLASJDKLFJASLDKFJLAKSDJFKLASJDFKLASJDKLF',
+      };
+
+      await service.recordProcessedEvent(
+        'event-raw-1',
+        'contract-1',
+        150,
+        'tx-raw-1',
+        'contract',
+        true,
+        'PROCESSED',
+        undefined,
+        rawPayload,
+      );
+
+      const record = await service.getProcessedEvent('event-raw-1', 'contract-1');
+      expect(record).not.toBeNull();
+      expect(record?.eventId).toBe('event-raw-1');
+      expect(record?.contractAddress).toBe('contract-1');
+      expect(record?.ledgerNumber).toBe(150);
+      expect(record?.rawData).toBeDefined();
+
+      const rawData = await service.getRawEventData('event-raw-1', 'contract-1');
+      expect(rawData).not.toBeNull();
+      expect(rawData?.format).toBe('raw');
+      expect(typeof rawData?.capturedAt).toBe('string');
+      expect(typeof rawData?.sizeBytes).toBe('number');
+
+      // Sensitive fields should be redacted
+      const payload = rawData?.payload as Record<string, unknown>;
+      expect(payload.secret_seed).toBe('[REDACTED]');
+      expect(payload.amount).toBe('1000');
+    });
+
+    it('retains raw event across claimEvent and completeEvent lifecycle', async () => {
+      const rawInput = {
+        id: 'event-lifecycle-1',
+        type: 'contract',
+        topic: ['mint'],
+        value: '500',
+      };
+
+      // Claim without rawData initially
+      const claim = await service.claimEvent(
+        'event-lifecycle-1',
+        'contract-1',
+        200,
+        'tx-200',
+        'contract',
+      );
+      expect(claim.claimed).toBe(true);
+
+      // Complete with raw data
+      await service.completeEvent(
+        'event-lifecycle-1',
+        'contract-1',
+        200,
+        'tx-200',
+        'contract',
+        true,
+        'PROCESSED',
+        undefined,
+        rawInput,
+      );
+
+      const rawData = await service.getRawEventData('event-lifecycle-1', 'contract-1');
+      expect(rawData).not.toBeNull();
+      expect(rawData?.format).toBe('raw');
+      expect((rawData?.payload as any).value).toBe('500');
+    });
+
+    it('enforces storage byte limit and truncates oversized raw payloads', async () => {
+      const largePayload = {
+        data: 'x'.repeat(40 * 1024), // 40KB exceeds 32KB default limit
+      };
+
+      await service.recordProcessedEvent(
+        'event-large-1',
+        'contract-1',
+        250,
+        'tx-large-1',
+        'contract',
+        true,
+        'PROCESSED',
+        undefined,
+        largePayload,
+      );
+
+      const rawData = await service.getRawEventData('event-large-1', 'contract-1');
+      expect(rawData).not.toBeNull();
+      expect(rawData?.truncated).toBe(true);
+      expect(rawData?.originalSizeBytes).toBeGreaterThan(32 * 1024);
+      expect(rawData?.sizeBytes).toBeLessThanOrEqual(32 * 1024);
+    });
+
+    it('retrieves raw event by eventId alone when contractAddress is omitted', async () => {
+      const rawInput = {
+        id: 'event-no-contract-1',
+        type: 'contract',
+        topic: ['burn'],
+        value: '250',
+      };
+
+      await service.recordProcessedEvent(
+        'event-no-contract-1',
+        'contract-xyz',
+        300,
+        'tx-300',
+        'contract',
+        true,
+        'PROCESSED',
+        undefined,
+        rawInput,
+      );
+
+      const rawData = await service.getRawEventData('event-no-contract-1');
+      expect(rawData).not.toBeNull();
+      expect(rawData?.format).toBe('raw');
+      expect((rawData?.payload as any).value).toBe('250');
+    });
+  });
 });

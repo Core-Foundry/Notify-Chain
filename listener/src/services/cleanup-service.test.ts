@@ -162,6 +162,6 @@ describe('CleanupService', () => {
 
     jest.advanceTimersByTime(400);
     // Should only fire once despite two start() calls
-    expect(db.run).toHaveBeenCalledTimes(3); // one interval tick × 3 SQL statements
+    expect(db.run).toHaveBeenCalledTimes(4); // one interval tick × 4 SQL statements
   });
 });

@@ -5,9 +5,10 @@ import { TemplateService } from '../services/template-service';
 import { TemplateChannelType } from '../types/notification-template';
 
 function makeRequest(method: string, url: string, body?: unknown): http.IncomingMessage {
-  const req = new EventEmitter() as http.IncomingMessage;
+  const req = new EventEmitter() as any;
   req.method = method;
   req.url = url;
+  req.headers = { 'content-type': 'application/json' };
   process.nextTick(() => {
     if (body !== undefined) {
       req.emit('data', Buffer.from(JSON.stringify(body)));
@@ -18,9 +19,10 @@ function makeRequest(method: string, url: string, body?: unknown): http.Incoming
 }
 
 function makeRawRequest(method: string, url: string, rawBody: string): http.IncomingMessage {
-  const req = new EventEmitter() as http.IncomingMessage;
+  const req = new EventEmitter() as any;
   req.method = method;
   req.url = url;
+  req.headers = { 'content-type': 'application/json' };
   process.nextTick(() => {
     req.emit('data', Buffer.from(rawBody));
     req.emit('end');
@@ -32,6 +34,7 @@ function makeResponse(): http.ServerResponse & { statusCode: number; body: any }
   const res = new EventEmitter() as any;
   res.statusCode = 0;
   res.body = undefined;
+  res.setHeader = jest.fn();
   res.writeHead = jest.fn((status: number) => {
     res.statusCode = status;
     return res;

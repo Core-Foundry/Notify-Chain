@@ -115,6 +115,14 @@ export function createTemplateAPIHandler(options: TemplateAPIOptions) {
         return;
       }
 
+      // GET /api/templates/:id/stats - Get template usage stats
+      if (req.method === 'GET' && pathname.match(/^\/api\/templates\/\d+\/stats$/)) {
+        const id = parseInt(pathname.split('/')[3], 10);
+        const stats = await templateService.getTemplateStats(id);
+        sendOk(res, 200, stats);
+        return;
+      }
+
       // GET /api/templates/:id - Get template by ID
       if (req.method === 'GET' && pathname.startsWith('/api/templates/')) {
         const id = parseInt(pathname.split('/').pop() || '', 10);
@@ -202,13 +210,6 @@ export function createTemplateAPIHandler(options: TemplateAPIOptions) {
         return;
       }
 
-      // GET /api/templates/:id/stats - Get template usage stats
-      if (req.method === 'GET' && pathname.match(/^\/api\/templates\/\d+\/stats$/)) {
-        const id = parseInt(pathname.split('/')[3], 10);
-        const stats = await templateService.getTemplateStats(id);
-        sendOk(res, 200, stats);
-        return;
-      }
 
       // Not found
       sendErr(res, 404, 'Endpoint not found', ErrorCode.NOT_FOUND);

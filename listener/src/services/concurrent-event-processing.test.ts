@@ -51,12 +51,16 @@ jest.mock('../store/preference-store', () => ({
   preferenceStore: { isCategoryEnabled: jest.fn().mockReturnValue(true) },
 }));
 
-jest.mock('../utils/event-utils', () => ({
-  validateEventPayload: jest.fn().mockReturnValue({ valid: true }),
-  validateRpcResponse: jest.fn().mockReturnValue({ valid: true }),
-  getEventName: jest.fn().mockReturnValue('TaskCreated'),
-  matchesEventFilter: jest.fn().mockReturnValue(true),
-}));
+jest.mock('../utils/event-utils', () => {
+  const actual = jest.requireActual('../utils/event-utils');
+  return {
+    ...actual,
+    validateEventPayload: jest.fn().mockReturnValue({ valid: true }),
+    validateRpcResponse: jest.fn().mockReturnValue({ valid: true }),
+    getEventName: jest.fn().mockReturnValue('TaskCreated'),
+    matchesEventFilter: jest.fn().mockReturnValue(true),
+  };
+});
 
 jest.mock('../store/event-registry', () => ({
   eventRegistry: {
@@ -71,7 +75,10 @@ jest.mock('../store/event-registry', () => ({
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
 const CONTRACT = 'CCONCURRENCYTESTCONTRACT';
-const contractConfig: ContractConfig = { address: CONTRACT, name: 'Concurrency' } as ContractConfig;
+const contractConfig: ContractConfig = {
+  address: CONTRACT,
+  events: ['*'],
+};
 
 function makeConfig(): Config {
   return {
@@ -99,8 +106,8 @@ function makeEvent(i: number): StellarSDK.rpc.Api.EventResponse {
     operationIndex: 0,
     inSuccessfulContractCall: true,
     txHash: `tx-${i}`,
-    topic: [] as any,
-    value: {} as any,
+    topic: [StellarSDK.xdr.ScVal.scvSymbol('TaskCreated')],
+    value: StellarSDK.xdr.ScVal.scvU32(1),
   } as StellarSDK.rpc.Api.EventResponse;
 }
 

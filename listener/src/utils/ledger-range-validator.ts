@@ -12,6 +12,7 @@
  */
 
 import { InputValidator, ValidationError } from './validation';
+export { ValidationError, validationErrorBody } from './validation';
 
 /** Maximum number of ledgers a single historical query may span. */
 export const MAX_LEDGER_RANGE = 10_000;

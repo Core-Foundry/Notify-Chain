@@ -165,4 +165,62 @@ describe('normalizeSorobanEvent', () => {
     expect(result.errors[0].field).toBe('topic');
     expect(JSON.stringify(result.errors)).not.toContain('secret-topic-bytes');
   });
+
+  describe('raw event data retention (issue #945)', () => {
+    it('retains the original event representation alongside normalized fields', () => {
+      const topic = [xdr.ScVal.scvSymbol('NotificationScheduled')];
+      const value = xdr.ScVal.scvU32(1);
+      const input = rawEvent({ topic, value });
+
+      const result = normalizeSorobanEvent(input, { contractAddress: CONTRACT });
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+
+      // Normalized fields are decoded strings
+      expect(result.event.eventName).toBe('NotificationScheduled');
+      expect(result.event.topic).toEqual(['NotificationScheduled']);
+      expect(result.event.value).toBe('1');
+
+      // Raw representation is distinguishable and holds the original data
+      expect(result.event.raw).toBeDefined();
+      expect(result.event.raw?.format).toBe('raw');
+      expect(result.event.raw?.sizeBytes).toBeGreaterThan(0);
+      expect(result.event.raw?.payload).toBeDefined();
+    });
+
+    it('redacts sensitive values in retained raw event data', () => {
+      const secret = 'SCZANGBA5YHTNYVVV4C3U252E2B6P6IRKD45DCAHSKV2U2B6P6IRKD45';
+      const input = rawEvent({
+        token: secret,
+        webhookUrl: 'https://user:pass123@api.com',
+      });
+
+      const result = normalizeSorobanEvent(input, { contractAddress: CONTRACT });
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+
+      const rawSerialized = JSON.stringify(result.event.raw?.payload);
+      expect(rawSerialized).not.toContain(secret);
+      expect(rawSerialized).not.toContain('pass123');
+      expect(rawSerialized).toContain('[REDACTED]');
+    });
+
+    it('respects custom maxPayloadBytes limit when retaining raw event', () => {
+      const largeField = 'Z'.repeat(500);
+      const input = rawEvent({ extra: largeField });
+
+      const result = normalizeSorobanEvent(input, { contractAddress: CONTRACT }, {
+        maxPayloadBytes: 150,
+      });
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+
+      expect(result.event.raw?.truncated).toBe(true);
+      expect(result.event.raw?.sizeBytes).toBeLessThanOrEqual(150);
+    });
+  });
 });
+

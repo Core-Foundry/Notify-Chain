@@ -260,3 +260,7 @@ export function redactObject<T extends Record<string, unknown>>(
   }
   return redactValue(meta) as T;
 }
+
+/** Backward-compatible alias for redactValue */
+export const redactSensitiveData = redactValue;
+

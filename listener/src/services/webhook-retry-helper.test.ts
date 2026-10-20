@@ -21,9 +21,13 @@ import { sendWebhookWithRetry, classifyWebhookFailure } from './webhook-retry-he
 // Mock sendWebhook to prevent real HTTP requests
 // ---------------------------------------------------------------------------
 
-jest.mock('./webhook-sender', () => ({
-  sendWebhook: jest.fn(),
-}));
+jest.mock('./webhook-sender', () => {
+  const actual = jest.requireActual('./webhook-sender') as any;
+  return {
+    ...actual,
+    sendWebhook: jest.fn(),
+  };
+});
 
 import { sendWebhook } from './webhook-sender';
 const mockSendWebhook = sendWebhook as jest.MockedFunction<typeof sendWebhook>;

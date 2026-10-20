@@ -1,6 +1,7 @@
 import { DisplayEvent } from '../types/display-event';
 import { RegistryEventInput } from '../types/registry-event-input';
 import { formatScValArray, formatScValValue } from '../utils/scval-format';
+import { RawEventData, captureRawEvent } from '../services/event-raw-retention';
 import logger from '../utils/logger';
 
 const DEFAULT_MAX_EVENTS = 10000;
@@ -60,6 +61,10 @@ export class EventRegistry {
     return removed;
   }
 
+  addEvent(input: RegistryEventInput): DisplayEvent {
+    return this.addFromInput(input);
+  }
+
   addFromInput(input: RegistryEventInput): DisplayEvent {
     const eventKey = this.getEventKey(input.eventId, input.contractAddress);
     const existing = this.events.get(eventKey);
@@ -68,6 +73,8 @@ export class EventRegistry {
     }
 
     const topic = formatScValArray(input.topic);
+    const rawInput = input.raw !== undefined ? input.raw : input;
+    const raw = captureRawEvent(rawInput);
     const displayEvent: DisplayEvent = {
       eventId: input.eventId,
       contractAddress: input.contractAddress,
@@ -78,6 +85,7 @@ export class EventRegistry {
       value: formatScValValue(input.value),
       txHash: input.txHash,
       receivedAt: Date.now(),
+      raw,
     };
 
     this.events.set(eventKey, displayEvent);
@@ -125,6 +133,30 @@ export class EventRegistry {
 
   has(eventId: string, contractAddress: string): boolean {
     return this.events.has(this.getEventKey(eventId, contractAddress));
+  }
+
+  getEvent(eventId: string, contractAddress?: string): DisplayEvent | undefined {
+    if (contractAddress) {
+      return this.events.get(this.getEventKey(eventId, contractAddress));
+    }
+    for (const event of this.events.values()) {
+      if (event.eventId === eventId) {
+        return event;
+      }
+    }
+    return undefined;
+  }
+
+  getRawEvent(eventId: string, contractAddress?: string): RawEventData | null {
+    if (contractAddress) {
+      return this.events.get(this.getEventKey(eventId, contractAddress))?.raw ?? null;
+    }
+    for (const event of this.events.values()) {
+      if (event.eventId === eventId) {
+        return event.raw ?? null;
+      }
+    }
+    return null;
   }
 
   /**

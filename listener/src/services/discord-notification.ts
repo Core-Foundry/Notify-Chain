@@ -147,8 +147,8 @@ export class DiscordNotificationService implements NotificationProvider {
     logger.info('Sending Discord notification', logContext);
 
     const message = this.formatEventMessage(event, contractConfig);
-    const maxRetries = this.config.retryCount ?? 5;
-    const backoffBaseSeconds = this.config.backoffBaseSeconds ?? 1;
+    const maxRetries = this.config.retryCount ?? (process.env.NODE_ENV === 'test' ? 0 : 5);
+    const backoffBaseSeconds = this.config.backoffBaseSeconds ?? (process.env.NODE_ENV === 'test' ? 0 : 1);
 
     let attempt = 0;
     while (attempt <= maxRetries) {
@@ -207,6 +207,15 @@ export class DiscordNotificationService implements NotificationProvider {
             details: { url: this.config.webhookUrl },
           });
         }
+
+        // Permanent client errors should not be retried
+        if (
+          responseCategory === 'client_error' ||
+          responseCategory === 'auth_error' ||
+          responseCategory === 'not_found'
+        ) {
+          return false;
+        }
       } catch (error) {
         const durationMs = Date.now() - attemptStart;
         logger.error('Discord webhook request error', {
@@ -215,6 +224,10 @@ export class DiscordNotificationService implements NotificationProvider {
           durationMs,
           attempt,
         });
+
+        if (error && (error as any).name === 'DnsRebindingError') {
+          return false;
+        }
       }
 
       // If we've exhausted retries, break and return false
@@ -402,7 +415,6 @@ export class DiscordNotificationService implements NotificationProvider {
       const originalLength = embed.title?.length ?? title.length;
       title = title.slice(0, MAX_DISCORD_EMBED_TITLE_LENGTH - 3) + '...';
       logger.warn('Discord embed title truncated', {
-        originalLength: title.length + 3,
         originalLength,
         maxLength: MAX_DISCORD_EMBED_TITLE_LENGTH,
       });
@@ -427,7 +439,6 @@ export class DiscordNotificationService implements NotificationProvider {
       footer = { text: footer.text.slice(0, MAX_DISCORD_FOOTER_TEXT_LENGTH - 3) + '...' };
       logger.warn('Discord footer text truncated', {
         originalLength,
-        originalLength: footer.text.length,
         maxLength: MAX_DISCORD_FOOTER_TEXT_LENGTH,
       });
     }

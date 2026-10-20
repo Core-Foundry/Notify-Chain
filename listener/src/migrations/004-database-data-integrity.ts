@@ -7,7 +7,7 @@ const tables = [
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       payload TEXT NOT NULL,
       payload_hash TEXT,
-      notification_type VARCHAR(50) NOT NULL CHECK (notification_type IN ('discord', 'email', 'webhook', 'sms')),
+      notification_type VARCHAR(50) NOT NULL CHECK (LOWER(notification_type) IN ('discord', 'email', 'webhook', 'sms')),
       target_recipient TEXT NOT NULL,
       execute_at DATETIME NOT NULL,
       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -48,7 +48,7 @@ const tables = [
     create: `CREATE TABLE dead_letter_queue_v004 (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       scheduled_notification_id INTEGER NOT NULL UNIQUE,
-      notification_type VARCHAR(50) NOT NULL CHECK (notification_type IN ('discord', 'email', 'webhook', 'sms')),
+      notification_type VARCHAR(50) NOT NULL CHECK (LOWER(notification_type) IN ('discord', 'email', 'webhook', 'sms')),
       target_recipient TEXT NOT NULL,
       payload TEXT NOT NULL,
       failure_reason TEXT NOT NULL,
@@ -73,7 +73,7 @@ const tables = [
       is_reorg_duplicate BOOLEAN NOT NULL DEFAULT 0 CHECK (is_reorg_duplicate IN (0, 1)),
       reorg_detection_count INTEGER NOT NULL DEFAULT 0 CHECK (reorg_detection_count >= 0),
       last_redetected_at DATETIME,
-      status VARCHAR(20) NOT NULL DEFAULT 'PROCESSED' CHECK (status IN ('PROCESSED', 'SKIPPED', 'ERROR')),
+      status VARCHAR(20) NOT NULL DEFAULT 'PROCESSED' CHECK (status IN ('PROCESSED', 'SKIPPED', 'ERROR', 'PROCESSING')),
       notification_sent BOOLEAN NOT NULL DEFAULT 0 CHECK (notification_sent IN (0, 1)),
       error_reason TEXT
     )`,
@@ -160,7 +160,7 @@ const tables = [
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       original_id INTEGER NOT NULL,
       payload TEXT NOT NULL,
-      notification_type VARCHAR(50) NOT NULL CHECK (notification_type IN ('discord', 'email', 'webhook', 'sms')),
+      notification_type VARCHAR(50) NOT NULL CHECK (LOWER(notification_type) IN ('discord', 'email', 'webhook', 'sms')),
       target_recipient TEXT NOT NULL,
       execute_at DATETIME NOT NULL,
       created_at DATETIME NOT NULL,
@@ -180,7 +180,7 @@ const audits: Array<{ table: string; sql: string }> = [
   {
     table: 'scheduled_notifications',
     sql: `SELECT COUNT(*) AS count FROM scheduled_notifications
-      WHERE payload IS NULL OR notification_type IS NULL OR notification_type NOT IN ('discord', 'email', 'webhook', 'sms')
+      WHERE payload IS NULL OR notification_type IS NULL OR LOWER(notification_type) NOT IN ('discord', 'email', 'webhook', 'sms')
         OR target_recipient IS NULL OR execute_at IS NULL
         OR status IS NULL OR status NOT IN ('PENDING', 'PROCESSING', 'COMPLETED', 'FAILED', 'DEAD_LETTERED', 'CANCELLED')
         OR retry_count IS NULL OR retry_count < 0 OR max_retries IS NULL OR max_retries < 0
@@ -198,7 +198,7 @@ const audits: Array<{ table: string; sql: string }> = [
     table: 'dead_letter_queue',
     sql: `SELECT COUNT(*) AS count FROM dead_letter_queue d
       WHERE d.scheduled_notification_id IS NULL OR d.notification_type IS NULL
-        OR d.notification_type NOT IN ('discord', 'email', 'webhook', 'sms')
+        OR LOWER(d.notification_type) NOT IN ('discord', 'email', 'webhook', 'sms')
         OR d.target_recipient IS NULL OR d.payload IS NULL OR d.failure_reason IS NULL
         OR d.retry_count IS NULL OR d.retry_count < 0
         OR NOT EXISTS (SELECT 1 FROM scheduled_notifications n WHERE n.id = d.scheduled_notification_id)`,
@@ -217,7 +217,7 @@ const audits: Array<{ table: string; sql: string }> = [
         OR ledger_number IS NULL OR ledger_number < 0 OR event_type IS NULL
         OR is_reorg_duplicate IS NULL OR is_reorg_duplicate NOT IN (0, 1)
         OR reorg_detection_count IS NULL OR reorg_detection_count < 0
-        OR status IS NULL OR status NOT IN ('PROCESSED', 'SKIPPED', 'ERROR')
+        OR status IS NULL OR status NOT IN ('PROCESSED', 'SKIPPED', 'ERROR', 'PROCESSING')
         OR notification_sent IS NULL OR notification_sent NOT IN (0, 1)`,
   },
   {
@@ -306,6 +306,9 @@ const indexes = [
   `CREATE INDEX IF NOT EXISTS idx_scheduled_notifications_status_created ON scheduled_notifications(status, created_at)`,
   `CREATE INDEX IF NOT EXISTS idx_scheduled_notifications_type_status ON scheduled_notifications(notification_type, status)`,
   `CREATE INDEX IF NOT EXISTS idx_scheduled_notifications_contract ON scheduled_notifications(contract_address) WHERE contract_address IS NOT NULL`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_scheduled_notifications_dedup_key ON scheduled_notifications(deduplication_key) WHERE deduplication_key IS NOT NULL`,
+  `CREATE INDEX IF NOT EXISTS idx_scheduled_notifications_archivable ON scheduled_notifications(processing_completed_at) WHERE status IN ('COMPLETED','FAILED','CANCELLED')`,
+  `CREATE INDEX IF NOT EXISTS idx_scheduled_notifications_type_lower_created ON scheduled_notifications(LOWER(notification_type), created_at)`,
   `CREATE INDEX IF NOT EXISTS idx_execution_log_notification_id ON notification_execution_log(scheduled_notification_id)`,
   `CREATE INDEX IF NOT EXISTS idx_execution_log_execution_time ON notification_execution_log(execution_time)`,
   `CREATE INDEX IF NOT EXISTS idx_execution_log_status_execution_time ON notification_execution_log(status, execution_time)`,
@@ -320,6 +323,7 @@ const indexes = [
   `CREATE INDEX IF NOT EXISTS idx_processed_events_status_processed ON processed_events(status, processed_at)`,
   `CREATE INDEX IF NOT EXISTS idx_processed_events_event_type_status ON processed_events(event_type, status)`,
   `CREATE INDEX IF NOT EXISTS idx_processed_events_tx_hash ON processed_events(tx_hash) WHERE tx_hash IS NOT NULL`,
+  `CREATE INDEX IF NOT EXISTS idx_processed_events_type_lower_processed ON processed_events(LOWER(event_type), processed_at)`,
   `CREATE INDEX IF NOT EXISTS idx_polling_cursors_contract ON polling_cursors(contract_address)`,
   `CREATE INDEX IF NOT EXISTS idx_polling_cursors_updated_at ON polling_cursors(updated_at)`,
   `CREATE INDEX IF NOT EXISTS idx_idempotency_keys_key ON idempotency_keys(idempotency_key)`,
@@ -375,6 +379,15 @@ async function assertLegacyDataIsValid(db: sqlite3.Database): Promise<void> {
   }
 }
 
+async function getTableColumns(db: sqlite3.Database, tableName: string): Promise<string[]> {
+  const rows = await new Promise<Array<{ name: string }>>((resolve, reject) => {
+    db.all(`PRAGMA table_info(${tableName})`, (error, result) =>
+      error ? reject(error) : resolve(result as Array<{ name: string }>),
+    );
+  });
+  return rows.map((r) => r.name);
+}
+
 const migration = {
   id: '004',
   name: 'database-data-integrity',
@@ -383,7 +396,11 @@ const migration = {
 
     for (const table of tables) {
       await run(db, table.create);
-      await run(db, `INSERT INTO ${table.name}_v004 SELECT * FROM ${table.name}`);
+      const sourceCols = await getTableColumns(db, table.name);
+      const targetCols = await getTableColumns(db, `${table.name}_v004`);
+      const commonCols = targetCols.filter((col) => sourceCols.includes(col));
+      const colList = commonCols.join(', ');
+      await run(db, `INSERT INTO ${table.name}_v004 (${colList}) SELECT ${colList} FROM ${table.name}`);
     }
 
     for (const tableName of [

@@ -33,12 +33,11 @@ describe('Notification Template System', () => {
     await db.initialize();
 
     // Run template schema migration
+    await db.run('DROP TABLE IF EXISTS template_usage_log');
+    await db.run('DROP TABLE IF EXISTS notification_templates');
     const schemaPath = path.join(__dirname, '../database/template-schema.sql');
     const schema = fs.readFileSync(schemaPath, 'utf-8');
-    const statements = schema
-      .split(';')
-      .map((s) => s.trim())
-      .filter((s) => s.length > 0);
+    const statements = (db as any).splitSqlStatements(schema);
 
     for (const statement of statements) {
       await db.run(statement);

@@ -17,6 +17,7 @@ import {
   parseEventVersion,
   validateEventPayload,
 } from '../utils/event-utils';
+import { RawEventData, captureRawEvent, RawEventRetentionOptions } from './event-raw-retention';
 
 /** RPC event types this listener already accepts and passes through unchanged. */
 export const SUPPORTED_RPC_EVENT_TYPES = ['contract', 'system', 'diagnostic'] as const;
@@ -37,6 +38,8 @@ export interface NormalizedEvent {
   value: string;
   txHash: string | null;
   payloadVersion: number | null;
+  /** Retained original event representation (issue #945). */
+  raw?: RawEventData | null;
 }
 
 export type NormalizationResult =
@@ -64,6 +67,7 @@ function missing(field: string, detail: string): EventParseError {
 export function normalizeSorobanEvent(
   event: unknown,
   context: NormalizationContext,
+  options?: RawEventRetentionOptions,
 ): NormalizationResult {
   const errors: EventParseError[] = [];
 
@@ -108,6 +112,7 @@ export function normalizeSorobanEvent(
   const version = parseEventVersion(raw.value);
   const payloadVersion = version.found && version.version !== undefined ? version.version : null;
   const txHash = typeof raw.txHash === 'string' && raw.txHash.length > 0 ? raw.txHash : null;
+  const rawData = captureRawEvent(event, options);
 
   return {
     ok: true,
@@ -121,6 +126,7 @@ export function normalizeSorobanEvent(
       value,
       txHash,
       payloadVersion,
+      raw: rawData,
     },
   };
 }

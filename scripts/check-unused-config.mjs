@@ -232,9 +232,9 @@ function findVariableUsage(varName, files) {
   // Build regex patterns for different access methods
   const patterns = [
     // JavaScript/TypeScript patterns
-    new RegExp(`process\\.env\\.${varName}\\b`, 'g'),
+    new RegExp(`process\\.env(?:\\?\\.|\\.)${varName}\\b`, 'g'),
     new RegExp(`process\\.env\\[['"]${varName}['"]\\]`, 'g'),
-    new RegExp(`import\\.meta\\.env\\.${varName}\\b`, 'g'),
+    new RegExp(`import\\.meta\\.env(?:\\?\\.|\\.)${varName}\\b`, 'g'),
     new RegExp(`import\\.meta\\.env\\[['"]${varName}['"]\\]`, 'g'),
     
     // Destructuring patterns

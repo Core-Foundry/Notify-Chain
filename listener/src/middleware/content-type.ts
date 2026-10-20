@@ -61,11 +61,11 @@ export function validateContentType(
   }
 
   // If request explicitly specifies empty body (Content-Length: 0), allow it
-  if (req.headers['content-length'] === '0') {
+  if (req.headers && req.headers['content-length'] === '0') {
     return true;
   }
 
-  const rawHeader = req.headers['content-type'];
+  const rawHeader = req.headers ? req.headers['content-type'] : undefined;
   if (!rawHeader || (typeof rawHeader === 'string' && rawHeader.trim() === '')) {
     // Content-Type is omitted: allow for backward compatibility with existing clients
     return true;

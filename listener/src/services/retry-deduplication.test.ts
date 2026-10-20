@@ -13,33 +13,14 @@ import fs from 'fs/promises';
 describe('Retry Deduplication - Edge Cases', () => {
   let db: Database;
   let repository: ScheduledNotificationRepository;
-  const testDbPath = path.join(__dirname, '../../test-data/test-retry-dedup.db');
-
   beforeEach(async () => {
-    // Clean up any existing test database
-    try {
-      await fs.unlink(testDbPath);
-      await fs.unlink(testDbPath + '-journal').catch(() => {});
-      await fs.unlink(testDbPath + '-wal').catch(() => {});
-      await fs.unlink(testDbPath + '-shm').catch(() => {});
-    } catch {
-      // File doesn't exist, ignore
-    }
-
-    await new Promise(resolve => setTimeout(resolve, 100));
-
-    db = new Database(testDbPath);
+    db = new Database(':memory:');
     await db.initialize();
     repository = new ScheduledNotificationRepository(db);
   });
 
   afterEach(async () => {
     await db.close();
-    try {
-      await fs.unlink(testDbPath);
-    } catch {
-      // Ignore cleanup errors
-    }
   });
 
   /**

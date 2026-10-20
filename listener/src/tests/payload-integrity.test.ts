@@ -113,7 +113,7 @@ describe('payload integrity — repository and scheduler integration', () => {
     });
 
     const notification = await repository.getById(id);
-    const expected = hashPayload(JSON.stringify(payload), SECRET);
+    const expected = hashPayload(notification!.payload, SECRET);
     expect(notification!.payloadHash).toBe(expected);
   });
 

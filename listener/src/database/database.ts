@@ -219,6 +219,9 @@ export class Database {
     
     for (const line of lines) {
       const trimmed = line.trim();
+      if (trimmed.startsWith('--')) {
+        continue;
+      }
       
       // Check for BEGIN keyword (case insensitive)
       if (/^\s*BEGIN\s*$/i.test(trimmed)) {
@@ -247,7 +250,7 @@ export class Database {
       statements.push(current.trim());
     }
     
-    return statements.filter(s => s.length > 0 && !s.startsWith('--'));
+    return statements.filter(s => s.length > 0);
   }
 
   /**
@@ -257,9 +260,27 @@ export class Database {
   private async applyIncrementalMigrations(): Promise<void> {
     try {
       await this.run('ALTER TABLE scheduled_notifications ADD COLUMN next_retry_at DATETIME');
-    } catch (error: any) {
-      // Completely ignore ALL errors here. SQLite might complain the column exists.
-      return;
+    } catch {
+      // Ignore if column already exists
+    }
+    try {
+      await this.run('ALTER TABLE scheduled_notifications ADD COLUMN deduplication_key TEXT');
+    } catch {
+      // Ignore if column already exists
+    }
+    try {
+      await this.run(
+        `CREATE UNIQUE INDEX IF NOT EXISTS idx_scheduled_notifications_dedup_key
+         ON scheduled_notifications(deduplication_key)
+         WHERE deduplication_key IS NOT NULL`,
+      );
+    } catch {
+      // Ignore if index already exists
+    }
+    try {
+      await this.run('ALTER TABLE processed_events ADD COLUMN raw_data TEXT');
+    } catch {
+      // Ignore if column already exists
     }
   }
 
