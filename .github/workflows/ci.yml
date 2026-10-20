@@ -7,6 +7,77 @@ on:
     branches: [main]
 
 jobs:
+  contracts:
+    name: Soroban contract validation (Rust 1.86.0)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.86.0
+          targets: wasm32v1-none
+          components: rustfmt
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: contract
+
+      - name: Report resolved Soroban SDK
+        working-directory: contract
+        run: cargo tree --locked --workspace --all-features -i soroban-sdk
+
+      - name: Test and build contract workspace
+        working-directory: contract
+        run: |
+          set +e
+          cargo test --workspace --all-features --locked
+          test_status=$?
+          cargo build --workspace --release --locked --target wasm32v1-none
+          build_status=$?
+          if [ "$test_status" -ne 0 ] || [ "$build_status" -ne 0 ]; then
+            echo "Contract validation failed (tests: $test_status, Wasm build: $build_status)."
+            exit 1
+          fi
+
+  dashboard-visual:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install dashboard dependencies
+        working-directory: dashboard
+        run: npm ci --legacy-peer-deps
+
+      - name: Install Playwright browser
+        working-directory: dashboard
+        run: npx playwright install chrome
+
+      - name: Compare dashboard screenshots
+        working-directory: dashboard
+        run: npm run test:visual
+
+      - name: Upload visual comparison artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dashboard-visual-comparison
+          path: |
+            dashboard/test-results/
+            dashboard/playwright-report/
+          if-no-files-found: ignore
+          retention-days: 14
+
   migrations:
     runs-on: ubuntu-latest
     steps:
@@ -23,13 +94,39 @@ jobs:
           cd listener
           npm ci
 
-      - name: Verify migration order and apply migrations
-        env:
-          DATABASE_PATH: ./data/notifications.db
+      - name: Migration integrity check
         run: |
           cd listener
-          npm run check-migrations   # fails if pending migrations
+          # ids unique, up/down present, full set applies, reversible set rolls back,
+          # destructive set is guarded (see docs/migration-rollback.md).
+          npm run check:migrations-integrity
+
+      - name: Apply migrations against a scratch database
+        env:
+          DATABASE_PATH: ./data/notifications.db
+          # Scratch DB with no production data: it is safe to run the destructive
+          # rebuild migrations here. Real environments must back up first.
+          ALLOW_DESTRUCTIVE_MIGRATIONS: 'true'
+        run: |
+          cd listener
+          npm run check-migrations   # fails if pending migrations are uncommitted
           npm run migrate            # apply all migrations
+          npm run migrate            # second run must be a clean no-op (idempotent)
+
+      - name: Verify rollback behavior
+        env:
+          DATABASE_PATH: ./data/rollback.db
+        run: |
+          cd listener
+          # Full apply on scratch DB (safe because CI opt-in).
+          ALLOW_DESTRUCTIVE_MIGRATIONS=true npm run migrate
+          # Destructive migrations cannot be rolled back; rollback CLI/dry-run behave safely.
+          npm run rollback -- --dry-run
+          # Simulate post-restore state by deleting ledger entries for destructive migrations,
+          # then verify the newest reversible migration can be rolled back cleanly.
+          node -e "const sqlite3=require('sqlite3');const db=new sqlite3.Database('./data/rollback.db',()=>{db.run(\"DELETE FROM migrations WHERE id IN ('006','007')\",()=>db.close());});"
+          npm run rollback -- --dry-run
+          npm run rollback
 
       - name: Run listener typecheck and tests
         run: |

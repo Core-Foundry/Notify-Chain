@@ -214,6 +214,32 @@ export const APP_CONFIG_SCHEMA: ConfigSchema = {
     type: 'string',
     required: true,
   },
+  nodeEnv: {
+    type: 'string',
+    enum: ['development', 'test', 'staging', 'production'],
+    description: 'Deployment environment used to derive environment-specific defaults (e.g. CORS).',
+  },
+  corsAllowedOrigins: {
+    type: 'array',
+    description: 'Explicit list of browser origins allowed to access the events API.',
+    custom: (value: any, path: string) => {
+      if (!Array.isArray(value)) {
+        return null;
+      }
+      for (const origin of value) {
+        if (typeof origin !== 'string' || origin.trim() === '') {
+          return `Field "${path}" must contain only non-empty origin strings.`;
+        }
+        if (origin === '*') {
+          return `Field "${path}" must not contain the wildcard "*"; list explicit origins instead.`;
+        }
+        if (!/^https?:\/\/[^\s/]+$/.test(origin)) {
+          return `Field "${path}" contains invalid origin "${origin}"; expected scheme://host[:port] with no path.`;
+        }
+      }
+      return null;
+    },
+  },
   contractAddresses: {
     type: 'array',
     required: true,
@@ -260,5 +286,18 @@ export const APP_CONFIG_SCHEMA: ConfigSchema = {
     rateLimitEventRetentionMs: { type: 'number', min: 60000 },
     eventRetentionMs: { type: 'number', min: 60000 },
     executionLogRetentionMs: { type: 'number', min: 60000 },
+  },
+  eventBatching: {
+    enabled: { type: 'boolean' },
+    maxBatchSize: { type: 'number', min: 1 },
+    windowMs: { type: 'number', min: 0 },
+  },
+  digest: {
+    enabled: { type: 'boolean' },
+    intervalMs: { type: 'number', min: 1000 },
+    maxEventsPerDigest: { type: 'number', min: 1 },
+  },
+  localization: {
+    defaultLocale: { type: 'string' },
   },
 };

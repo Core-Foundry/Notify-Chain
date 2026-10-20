@@ -44,7 +44,8 @@ export class NotificationScheduler {
     discordService?: DiscordNotificationService | null,
     batchValidator?: BatchValidationService,
     providerRegistry?: ProviderRegistry,
-    deliveryReceiptRepository?: DeliveryReceiptRepository
+    deliveryReceiptRepository?: DeliveryReceiptRepository,
+    private clock: () => Date = () => new Date(),
   ) {
     this.repository = repository;
     this.config = { retryDelayMs: 5_000, ...config };
@@ -133,7 +134,7 @@ export class NotificationScheduler {
         this.processorId,
         this.config.lockTimeoutMs,
         this.config.batchSize,
-        requestId
+        requestId,
       );
 
       if (notifications.length === 0) {
@@ -154,7 +155,7 @@ export class NotificationScheduler {
       if (activeNotifications.length === 0) return;
 
       const batchRejection = this.batchValidator.rejectIfInvalid(
-        this.toValidationBatch(activeNotifications)
+        this.toValidationBatch(activeNotifications),
       );
 
       if (batchRejection) {
@@ -167,9 +168,11 @@ export class NotificationScheduler {
         for (const notification of activeNotifications) {
           await this.repository.markAsFailedOrRetry(
             notification.id!,
-            new Error(`Batch validation failed: ${batchRejection.errors.map((e) => e.message).join('; ')}`),
+            new Error(
+              `Batch validation failed: ${batchRejection.errors.map((e) => e.message).join('; ')}`,
+            ),
             notification.retryCount,
-            notification.maxRetries
+            notification.maxRetries,
           );
         }
         return;
@@ -194,7 +197,7 @@ export class NotificationScheduler {
             notification.id!,
             new Error('Scheduler shutting down'),
             notification.retryCount,
-            notification.maxRetries
+            notification.maxRetries,
           );
         }
         return;
@@ -216,7 +219,7 @@ export class NotificationScheduler {
             notification.id!,
             new Error('Scheduler shutting down'),
             notification.retryCount,
-            notification.maxRetries
+            notification.maxRetries,
           );
           return;
         }
@@ -236,17 +239,14 @@ export class NotificationScheduler {
           workerManager.completeJob(jobId);
         }
       };
-      const workers = Array.from(
-        { length: Math.min(concurrency, queue.length) },
-        async () => {
-          // Array.shift() is atomic in the single-threaded event loop, so each
-          // notification is claimed by exactly one worker.
-          let next: ScheduledNotification | undefined;
-          while ((next = queue.shift()) !== undefined) {
-            await processOne(next);
-          }
+      const workers = Array.from({ length: Math.min(concurrency, queue.length) }, async () => {
+        // Array.shift() is atomic in the single-threaded event loop, so each
+        // notification is claimed by exactly one worker.
+        let next: ScheduledNotification | undefined;
+        while ((next = queue.shift()) !== undefined) {
+          await processOne(next);
         }
-      );
+      });
       await Promise.all(workers);
 
       logger.info('Scheduler batch complete', {
@@ -277,7 +277,7 @@ export class NotificationScheduler {
    */
   private startClaimLease(
     notification: ScheduledNotification,
-    requestId: string
+    requestId: string,
   ): NotificationClaimLease | null {
     return startClaimLease({
       repository: this.repository,
@@ -303,7 +303,7 @@ export class NotificationScheduler {
   private async processNotification(
     notification: ScheduledNotification,
     requestId: string,
-    jobId?: string
+    jobId?: string,
   ): Promise<void> {
     const startTime = Date.now();
     const executionAttempt = notification.retryCount + 1;
@@ -337,7 +337,7 @@ export class NotificationScheduler {
           notification.id!,
           new Error('Not yet due for execution'),
           notification.retryCount,
-          notification.maxRetries
+          notification.maxRetries,
         );
         if (jobId) {
           jobMonitor.failJob(jobId, 'Not yet due for execution', {
@@ -408,7 +408,9 @@ export class NotificationScheduler {
             requestId,
             id: notification.id,
           });
-        } else if (!verifyPayloadIntegrity(notification.payload, notification.payloadHash, secret)) {
+        } else if (
+          !verifyPayloadIntegrity(notification.payload, notification.payloadHash, secret)
+        ) {
           logger.error('Payload integrity verification failed — rejecting notification', {
             requestId,
             id: notification.id,
@@ -418,7 +420,7 @@ export class NotificationScheduler {
             notification.id!,
             new Error('Payload integrity check failed: hash mismatch'),
             notification.maxRetries, // exhaust retries — don't retry a tampered payload
-            notification.maxRetries
+            notification.maxRetries,
           );
           if (jobId) {
             jobMonitor.failJob(jobId, 'Payload integrity check failed: hash mismatch', {
@@ -438,8 +440,7 @@ export class NotificationScheduler {
       const durationMs = Date.now() - startTime;
 
       if (success) {
-        await this.repository.markAsCompleted(notification.id!, requestId);
-        await this.enqueueNextLocalOccurrence(notification, requestId);
+        await this.repository.markAsCompleted(notification.id!, requestId, this.clock());
         await this.repository.logExecution({
           scheduledNotificationId: notification.id!,
           executionAttempt,
@@ -480,7 +481,11 @@ export class NotificationScheduler {
         await this.recordDeliveryReceipt(notification, executionAttempt, {
           success: false,
           degradedCapabilities: [],
-          errorCode: isTimeout ? 'TIMEOUT' : typeof providerCode === 'string' ? providerCode : 'DELIVERY_FAILED',
+          errorCode: isTimeout
+            ? 'TIMEOUT'
+            : typeof providerCode === 'string'
+              ? providerCode
+              : 'DELIVERY_FAILED',
           errorMessage: isTimeout ? 'Provider request timed out' : 'Provider delivery failed',
         }).catch((receiptError) => {
           logger.error('Failed to persist delivery receipt', {
@@ -508,7 +513,7 @@ export class NotificationScheduler {
         error as Error,
         notification.retryCount,
         notification.maxRetries,
-        nextRetryAt
+        nextRetryAt,
       );
 
       await this.repository.logExecution({
@@ -618,7 +623,7 @@ export class NotificationScheduler {
    */
   private async executeNotification(
     notification: ScheduledNotification,
-    requestId: string
+    requestId: string,
   ): Promise<DeliveryResult> {
     const payload = JSON.parse(notification.payload);
     const type = notification.notificationType;
@@ -653,36 +658,36 @@ export class NotificationScheduler {
       case 'discord':
         if (!this.discordService) {
           throw new Error(
-            'Discord service not configured and no Discord provider registered in the registry'
+            'Discord service not configured and no Discord provider registered in the registry',
           );
         }
         return {
           success: await this.discordService.sendEventNotification(
-          payload.event,
-          payload.contractConfig,
-          `scheduler-${notification.id}-${requestId}`
+            payload.event,
+            payload.contractConfig,
+            `scheduler-${notification.id}-${requestId}`,
           ),
           degradedCapabilities: [],
         };
 
       case 'webhook':
         throw new Error(
-          'Webhook delivery not yet implemented. Register a WebhookNotificationProvider in the ProviderRegistry.'
+          'Webhook delivery not yet implemented. Register a WebhookNotificationProvider in the ProviderRegistry.',
         );
 
       case 'email':
         throw new Error(
-          'Email delivery not yet implemented. Register an email NotificationProvider in the ProviderRegistry.'
+          'Email delivery not yet implemented. Register an email NotificationProvider in the ProviderRegistry.',
         );
 
       case 'sms':
         throw new Error(
-          'SMS delivery not yet implemented. Register an SMS NotificationProvider in the ProviderRegistry.'
+          'SMS delivery not yet implemented. Register an SMS NotificationProvider in the ProviderRegistry.',
         );
 
       default:
         throw new Error(
-          `Unsupported notification type: "${type}". Register a provider for this type in the ProviderRegistry.`
+          `Unsupported notification type: "${type}". Register a provider for this type in the ProviderRegistry.`,
         );
     }
   }
@@ -727,14 +732,16 @@ export class NotificationScheduler {
     await this.deliveryReceiptRepository.create({
       notificationId: notification.id,
       channel: notification.notificationType,
-      status: result.success ? 'delivered' : result.statusCode && result.statusCode >= 400 && result.statusCode < 500
-        ? 'rejected'
-        : 'failed',
+      status: result.success
+        ? 'delivered'
+        : result.statusCode && result.statusCode >= 400 && result.statusCode < 500
+          ? 'rejected'
+          : 'failed',
       attemptCount,
       providerMessageId: result.providerMessageId ?? null,
       providerResponse: result.providerResponse ?? null,
       errorCode: result.errorCode ?? null,
-      errorMessage: result.success ? null : result.errorMessage ?? 'Provider delivery failed',
+      errorMessage: result.success ? null : (result.errorMessage ?? 'Provider delivery failed'),
     });
   }
 }
