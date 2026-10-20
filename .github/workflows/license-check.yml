@@ -1,0 +1,70 @@
+name: License Check
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - staging
+  # Re-run weekly so newly introduced advisories/license changes are caught
+  schedule:
+    - cron: "0 8 * * 1"
+
+jobs:
+  license-check-node:
+    name: Node.js dependency licenses
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install listener dependencies
+        working-directory: listener
+        run: npm ci
+
+      - name: Install dashboard dependencies
+        working-directory: dashboard
+        run: npm ci
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Run license check (all Node workspaces)
+        run: node scripts/check-licenses.js listener dashboard frontend
+
+      - name: Upload license report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: node-license-report
+          # The script writes to stdout; capture via tee in a pre-step if a
+          # saved artefact is needed. This upload step is a placeholder for
+          # teams that extend the script to emit a JSON report file.
+          path: license-report.json
+          if-no-files-found: ignore
+
+  license-check-rust:
+    name: Rust dependency licenses (cargo-deny)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          profile: minimal
+          override: true
+
+      - name: Install cargo-deny
+        uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check licenses bans advisories sources
+          manifest-path: contract/Cargo.toml
+          log-level: warn
+          arguments: --all-features --config contract/deny.toml

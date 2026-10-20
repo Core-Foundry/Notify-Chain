@@ -39,7 +39,7 @@ export interface RetrySchedulerConfig {
   maxDelayMs: number;
   /** Add ±25 % random jitter to prevent thundering herd. Default: true. */
   jitter: boolean;
-/**
+  /**
    * Timeout (ms) applied to outbound webhook requests (`WEBHOOK_TIMEOUT_MS`).
    * Default: DEFAULT_WEBHOOK_TIMEOUT_MS.
    */
@@ -64,9 +64,11 @@ export interface RetrySchedulerConfig {
  * `RETRY_BACKOFF_DEFAULTS` and can still be overridden per-instance via
  * `RetrySchedulerConfig.backoff`.
  */
-export const RETRY_SCHEDULER_DEFAULTS: Readonly<Omit<RetrySchedulerConfig, 'backoff'> & {
-  backoff: Readonly<RetryBackoffConfig>;
-}> = {
+export const RETRY_SCHEDULER_DEFAULTS: Readonly<
+  Omit<RetrySchedulerConfig, 'backoff'> & {
+    backoff: Readonly<RetryBackoffConfig>;
+  }
+> = {
   enabled: true,
   pollIntervalMs: 15_000,
   lockTimeoutMs: 60_000,
@@ -94,7 +96,7 @@ export function calculateBackoffDelay(
   baseDelayMs: number,
   multiplier: number,
   maxDelayMs: number,
-  jitter: boolean
+  jitter: boolean,
 ): number {
   return computeBackoffDelay(attempt, baseDelayMs, multiplier, maxDelayMs, jitter);
 }
@@ -121,6 +123,7 @@ export class RetryScheduler {
   private discordService: DiscordNotificationService | null;
   private webhookDeliveryService: WebhookDeliveryService;
   private deliveryReceiptRepository?: DeliveryReceiptRepository;
+  private readonly clock: () => Date;
   private timer: NodeJS.Timeout | null = null;
   private running = false;
 
@@ -130,6 +133,7 @@ export class RetryScheduler {
     discordService?: DiscordNotificationService | null,
     webhookDeliveryService?: WebhookDeliveryService,
     deliveryReceiptRepository?: DeliveryReceiptRepository,
+    clock: () => Date = () => new Date(),
   ) {
     this.config = { ...RETRY_SCHEDULER_DEFAULTS, ...config };
     this.policy = new RetryPolicy({
@@ -143,10 +147,11 @@ export class RetryScheduler {
     this.processorId = this.config.processorId ?? `retry-${uuidv4()}`;
     this.repository = repository;
     this.discordService = discordService ?? null;
-this.webhookDeliveryService =
+    this.webhookDeliveryService =
       webhookDeliveryService ??
       new WebhookDeliveryService({ timeoutMs: this.config.webhookTimeoutMs });
     this.deliveryReceiptRepository = deliveryReceiptRepository;
+    this.clock = clock;
   }
 
   /** Exposed for health checks and tests: the policy driving every retry decision. */
@@ -218,7 +223,7 @@ this.webhookDeliveryService =
         this.processorId,
         this.config.lockTimeoutMs,
         this.config.batchSize,
-        requestId
+        requestId,
       );
 
       if (notifications.length === 0) return;
@@ -236,7 +241,7 @@ this.webhookDeliveryService =
             notification.id!,
             new Error('Retry scheduler shutting down'),
             notification.retryCount,
-            notification.maxRetries
+            notification.maxRetries,
           );
         }
         return;
@@ -257,7 +262,7 @@ this.webhookDeliveryService =
             notification.id!,
             new Error('Retry scheduler shutting down'),
             notification.retryCount,
-            notification.maxRetries
+            notification.maxRetries,
           );
           continue;
         }
@@ -293,7 +298,7 @@ this.webhookDeliveryService =
 
   private async processRetry(
     notification: ScheduledNotification,
-    requestId: string
+    requestId: string,
   ): Promise<void> {
     const priorFailures = notification.retryCount;
     const executionAttempt = priorFailures + 1;
@@ -333,7 +338,7 @@ this.webhookDeliveryService =
       const durationMs = Date.now() - startMs;
 
       if (deliveryResult.success) {
-        await this.repository.markAsCompleted(notification.id!, requestId);
+        await this.repository.markAsCompleted(notification.id!, requestId, this.clock());
         await this.repository.logExecution({
           scheduledNotificationId: notification.id!,
           executionAttempt,
@@ -341,7 +346,11 @@ this.webhookDeliveryService =
           status: 'SUCCESS',
           durationMs,
         });
-        logger.info('Retry succeeded', { requestId, id: notification.id, attempt: executionAttempt });
+        logger.info('Retry succeeded', {
+          requestId,
+          id: notification.id,
+          attempt: executionAttempt,
+        });
         return;
       }
 
@@ -355,7 +364,11 @@ this.webhookDeliveryService =
         await this.recordDeliveryReceipt(notification, executionAttempt, {
           success: false,
           degradedCapabilities: [],
-          errorCode: isTimeout ? 'TIMEOUT' : typeof providerCode === 'string' ? providerCode : 'DELIVERY_FAILED',
+          errorCode: isTimeout
+            ? 'TIMEOUT'
+            : typeof providerCode === 'string'
+              ? providerCode
+              : 'DELIVERY_FAILED',
           errorMessage: isTimeout ? 'Provider request timed out' : 'Provider delivery failed',
         }).catch((receiptError) => {
           logger.error('Failed to persist delivery receipt', {
@@ -367,11 +380,7 @@ this.webhookDeliveryService =
       }
       const failureType = classifyError(err);
 
-      const decision = this.policy.evaluate(
-        failureType,
-        executionAttempt,
-        notification.maxRetries,
-      );
+      const decision = this.policy.evaluate(failureType, executionAttempt, notification.maxRetries);
       const isFinalAttempt = !decision.shouldRetry;
 
       const nextRetryAt =
@@ -434,7 +443,7 @@ this.webhookDeliveryService =
 
   private async deliver(
     notification: ScheduledNotification,
-    requestId: string
+    requestId: string,
   ): Promise<DeliveryResult> {
     const payload = JSON.parse(notification.payload);
 
@@ -445,7 +454,7 @@ this.webhookDeliveryService =
           success: await this.discordService.sendEventNotification(
             payload.event,
             payload.contractConfig,
-            `retry-${notification.id}-${requestId}`
+            `retry-${notification.id}-${requestId}`,
           ),
           degradedCapabilities: [],
         };
@@ -466,7 +475,8 @@ this.webhookDeliveryService =
         if (!result.success) {
           const failureType = classifyHttpStatus(result.statusCode);
           throw new DeliveryError(
-            result.errorReason ?? `Webhook delivery failed (HTTP ${result.statusCode ?? 'unknown'})`,
+            result.errorReason ??
+              `Webhook delivery failed (HTTP ${result.statusCode ?? 'unknown'})`,
             failureType,
             { statusCode: result.statusCode },
           );
@@ -499,14 +509,16 @@ this.webhookDeliveryService =
     await this.deliveryReceiptRepository.create({
       notificationId: notification.id,
       channel: notification.notificationType,
-      status: result.success ? 'delivered' : result.statusCode && result.statusCode >= 400 && result.statusCode < 500
-        ? 'rejected'
-        : 'failed',
+      status: result.success
+        ? 'delivered'
+        : result.statusCode && result.statusCode >= 400 && result.statusCode < 500
+          ? 'rejected'
+          : 'failed',
       attemptCount,
       providerMessageId: result.providerMessageId ?? null,
       providerResponse: result.providerResponse ?? null,
       errorCode: result.errorCode ?? null,
-      errorMessage: result.success ? null : result.errorMessage ?? 'Provider delivery failed',
+      errorMessage: result.success ? null : (result.errorMessage ?? 'Provider delivery failed'),
     });
   }
 }
