@@ -9,8 +9,6 @@ out/
 coverage/
 
 # Env / local
-.env
-.env.*
 !.env.example
 *.log
 .DS_Store
@@ -26,3 +24,4 @@ test-data/
 reports/mutation/
 reports/accessibility/
 reports/node-compatibility/
+config.bat

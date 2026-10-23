@@ -7,9 +7,9 @@
     "node": ">=22"
   },
   "scripts": {
-    "build": "node ./node_modules/typescript/bin/tsc --noEmit && node ./node_modules/vite/bin/vite.js build",
+    "build": "node init && node ./node_modules/typescript/bin/tsc --noEmit && node ./node_modules/vite/bin/vite.js build",
     "preview": "node ./node_modules/vite/bin/vite.js preview",
-    "dev": "node ./node_modules/vite/bin/vite.js",
+    "dev": "node init && node ./node_modules/vite/bin/vite.js",
     "lint": "node ./node_modules/eslint/bin/eslint.js \"src/**/*.{ts,tsx}\" --max-warnings=0",
     "format:check": "node ./node_modules/prettier/bin/prettier.cjs --check \"src/**/{ts,tsx}\" --config ../.prettierrc",
     "test": "node ./node_modules/jest/bin/jest.js",
@@ -17,7 +17,7 @@
     "test:wallet": "node ./node_modules/jest/bin/jest.js src/__tests__/wallet-integration.test.tsx",
     "benchmark": "node ./node_modules/jest/bin/jest.js src/benchmark",
     "storybook": "node ./node_modules/storybook/bin/index.cjs dev -p 6006",
-    "build-storybook": "node ./node_modules/storybook/bin/index.cjs build"
+    "build-storybook": "node init && node ./node_modules/storybook/bin/index.cjs build"
   },
   "dependencies": {
     "@creit.tech/stellar-wallets-kit": "^2.3.0",
