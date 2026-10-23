@@ -14,6 +14,21 @@ import {
 import { assertScheduleTransition } from './schedule-state-machine';
 import { hashPayload } from '../utils/payload-integrity';
 import {
+  validateScheduleHorizon,
+  DEFAULT_MAX_SCHEDULE_HORIZON_SECONDS,
+} from '../utils/schedule-horizon';
+
+/** Raised when a schedule falls outside the permitted window (#971). */
+export class ScheduleHorizonError extends Error {
+  constructor(
+    public readonly reason: 'in_past' | 'beyond_horizon',
+    message: string,
+  ) {
+    super(message);
+    this.name = 'ScheduleHorizonError';
+  }
+}
+import {
   NotificationStatsCache,
   getStatsCache,
   NotificationStats,
@@ -34,6 +49,7 @@ export class ScheduledNotificationRepository {
     private db: Database,
     statsCache?: NotificationStatsCache,
     private defaultTtlSeconds: number = 0,
+    private maxScheduleHorizonSeconds: number = DEFAULT_MAX_SCHEDULE_HORIZON_SECONDS,
   ) {
     this.statsCache = statsCache ?? getStatsCache();
   }
@@ -48,6 +64,15 @@ export class ScheduledNotificationRepository {
    * exists, the existing notification's id is returned without creating a duplicate.
    */
   async create(input: CreateScheduledNotificationInput, requestId?: string): Promise<number> {
+    // Reject schedules beyond the maximum horizon before touching the DB: an
+    // unbounded executeAt bloats queue queries and can exhaust storage (#971).
+    const horizon = validateScheduleHorizon(input.executeAt, {
+      maxHorizonSeconds: this.maxScheduleHorizonSeconds,
+    });
+    if (!horizon.valid) {
+      throw new ScheduleHorizonError(horizon.reason, horizon.message);
+    }
+
     const payloadJson = JSON.stringify(input.payload);
     const secret = process.env.PAYLOAD_INTEGRITY_SECRET;
     const payloadHash = secret ? hashPayload(payloadJson, secret) : null;
