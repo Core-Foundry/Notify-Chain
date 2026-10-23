@@ -10,6 +10,7 @@ The project enables developers to build reactive decentralized applications with
 
 CI quality checks: [dashboard accessibility](docs/accessibility-automation.md),
 [listener Node.js support](listener/docs/node-compatibility.md),
+[webhook response classification](listener/docs/webhook-response-classification.md),
 [critical event mutation testing](listener/docs/mutation-testing.md), and
 [contract build reproducibility](docs/CONTRACT_BUILD_REPRODUCIBILITY.md).
 
