@@ -129,6 +129,23 @@ export class EventDeduplicationService {
   }
 
   /**
+   * Release an in-flight claim when processing is aborted or fails before completion,
+   * allowing another worker or subsequent poll cycle to claim it immediately.
+   */
+  async releaseClaim(eventId: string, contractAddress: string): Promise<void> {
+    const fingerprint = generateFingerprint(eventId, contractAddress);
+    try {
+      await this.db.run(
+        `DELETE FROM processed_events WHERE fingerprint = ? AND status = 'PROCESSING'`,
+        [fingerprint],
+      );
+      logger.info('Event claim released', { eventId, contractAddress, fingerprint });
+    } catch (error) {
+      logger.error('Error releasing event claim', { eventId, contractAddress, error });
+    }
+  }
+
+  /**
    * Finalise a claimed event. A single UPDATE, so the outcome written by the
    * claiming worker cannot interleave with another writer's read-modify-write.
    * Falls back to an insert when no claim row exists (claim failed open).

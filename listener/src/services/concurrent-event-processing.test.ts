@@ -58,6 +58,23 @@ jest.mock('../utils/event-utils', () => ({
   matchesEventFilter: jest.fn().mockReturnValue(true),
 }));
 
+jest.mock('./event-normalization', () => ({
+  normalizeSorobanEvent: jest.fn().mockImplementation((event: any, ctx: any) => ({
+    ok: true,
+    event: {
+      eventId: event.id,
+      contractAddress: ctx.contractAddress,
+      eventName: 'TaskCreated',
+      eventType: event.type,
+      ledger: event.ledger,
+      topic: [],
+      value: '',
+      txHash: event.txHash,
+      payloadVersion: null,
+    },
+  })),
+}));
+
 jest.mock('../store/event-registry', () => ({
   eventRegistry: {
     addFromInput: jest.fn().mockImplementation((input: { eventId: string }) => ({
@@ -71,7 +88,7 @@ jest.mock('../store/event-registry', () => ({
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
 const CONTRACT = 'CCONCURRENCYTESTCONTRACT';
-const contractConfig: ContractConfig = { address: CONTRACT, name: 'Concurrency' } as ContractConfig;
+const contractConfig: ContractConfig = { address: CONTRACT, name: 'Concurrency', events: ['*'] } as ContractConfig;
 
 function makeConfig(): Config {
   return {
@@ -243,6 +260,17 @@ describe('concurrent event processing', () => {
       await service.claimEvent('evt-1', CONTRACT, 100, 'tx', 'contract');
       const second = await service.claimEvent('evt-1', CONTRACT, 100, 'tx', 'contract');
       expect(second.claimed).toBe(false);
+    });
+
+    it('allows immediate reclaim after a claim is explicitly released', async () => {
+      const service = new EventDeduplicationService(dbA);
+      const first = await service.claimEvent('evt-released', CONTRACT, 100, 'tx', 'contract');
+      expect(first.claimed).toBe(true);
+
+      await service.releaseClaim('evt-released', CONTRACT);
+
+      const second = await service.claimEvent('evt-released', CONTRACT, 100, 'tx', 'contract');
+      expect(second.claimed).toBe(true);
     });
   });
 

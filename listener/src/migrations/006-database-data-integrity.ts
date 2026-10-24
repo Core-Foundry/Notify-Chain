@@ -73,7 +73,7 @@ const tables = [
       is_reorg_duplicate BOOLEAN NOT NULL DEFAULT 0 CHECK (is_reorg_duplicate IN (0, 1)),
       reorg_detection_count INTEGER NOT NULL DEFAULT 0 CHECK (reorg_detection_count >= 0),
       last_redetected_at DATETIME,
-      status VARCHAR(20) NOT NULL DEFAULT 'PROCESSED' CHECK (status IN ('PROCESSED', 'SKIPPED', 'ERROR')),
+      status VARCHAR(20) NOT NULL DEFAULT 'PROCESSED' CHECK (status IN ('PROCESSED', 'PROCESSING', 'SKIPPED', 'ERROR')),
       notification_sent BOOLEAN NOT NULL DEFAULT 0 CHECK (notification_sent IN (0, 1)),
       error_reason TEXT
     )`,
@@ -217,7 +217,7 @@ const audits: Array<{ table: string; sql: string }> = [
         OR ledger_number IS NULL OR ledger_number < 0 OR event_type IS NULL
         OR is_reorg_duplicate IS NULL OR is_reorg_duplicate NOT IN (0, 1)
         OR reorg_detection_count IS NULL OR reorg_detection_count < 0
-        OR status IS NULL OR status NOT IN ('PROCESSED', 'SKIPPED', 'ERROR')
+        OR status IS NULL OR status NOT IN ('PROCESSED', 'PROCESSING', 'SKIPPED', 'ERROR')
         OR notification_sent IS NULL OR notification_sent NOT IN (0, 1)`,
   },
   {

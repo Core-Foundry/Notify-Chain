@@ -514,14 +514,17 @@ export class EventSubscriber {
     }
     const isDryRun = this.config.dryRun === true;
 
-    // Check persistent deduplication first (to catch reorg duplicates)
+    // Atomically claim event for processing to prevent concurrent workers from processing simultaneously
     if (this.deduplicationService && !isDryRun) {
-      const duplicate = await this.deduplicationService.isDuplicate(
+      const claim = await this.deduplicationService.claimEvent(
         event.id,
         contractConfig.address,
+        event.ledger,
+        event.txHash,
+        event.type,
       );
-      if (duplicate.isDuplicate) {
-        logger.warn('Skipping event: already processed (persistent deduplication)', {
+      if (!claim.claimed) {
+        logger.warn('Skipping event: already claimed or processed by another worker', {
           requestId: correlationId,
           correlationId,
           eventId: event.id,
