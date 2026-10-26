@@ -400,4 +400,39 @@ describe('representative secrets are never emitted raw', () => {
     expect(result).not.toContain('eyJhbGciOiJIUzI1NiJ9');
     expect(result).toContain('Bearer [REDACTED]');
   });
+
+  it('database DSN credentials are masked for any scheme (#996)', () => {
+    const cases = [
+      'postgres://svc_user:SuperSecretDbPass123@postgres.internal:5432/app_db',
+      'postgresql://svc_user:SuperSecretDbPass123@postgres.internal:5432/app_db',
+      'mysql://svc_user:SuperSecretDbPass123@mysql.internal:3306/app_db',
+      'redis://:SuperSecretDbPass123@redis.internal:6379',
+      'amqp://svc_user:SuperSecretDbPass123@rabbit.internal:5672',
+      'mongodb+srv://svc_user:SuperSecretDbPass123@cluster.mongodb.net/app',
+    ];
+    for (const dsn of cases) {
+      const result = redactString(dsn);
+      expect(result).not.toContain('SuperSecretDbPass123');
+      expect(result).toContain(REDACTED_PLACEHOLDER + '@');
+      // host/path stays useful for debugging
+      expect(result).toMatch(/internal|mongodb\.net/);
+    }
+  });
+
+  it('a DSN in a sensitive object field is replaced wholesale (#996)', () => {
+    const result = redactValue({
+      databaseUrl: 'postgres://svc_user:SuperSecretDbPass123@postgres.internal:5432/app_db',
+      connectionString: 'postgres://svc_user:SuperSecretDbPass123@postgres.internal:5432/app_db',
+      dsn: 'postgres://svc_user:SuperSecretDbPass123@postgres.internal:5432/app_db',
+    }) as Record<string, string>;
+    for (const value of Object.values(result)) {
+      expect(value).toBe(REDACTED_PLACEHOLDER);
+    }
+  });
+
+  it('does not treat a bare host:port as credentials (#996 regression)', () => {
+    expect(redactString('connected to postgres.internal:5432')).toBe(
+      'connected to postgres.internal:5432',
+    );
+  });
 });
