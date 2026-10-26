@@ -1,0 +1,18 @@
+{
+  "schema_version": "1.0.0",
+  "contract": {
+    "id": "CA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA64P7TV5A4W",
+    "name": "notify-chain-events",
+    "wasm_hash": "d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5"
+  },
+  "network": {
+    "name": "testnet",
+    "rpc_url": "https://soroban-testnet.stellar.org",
+    "passphrase": "Test SDF Network ; September 2015"
+  },
+  "deployment": {
+    "deployer_public_key": "GBRPYHIL2CI3WHGSUJGY6O7SROQOMJG7QBCACN4QPKUOQNXJDGONXHPA",
+    "timestamp": "2026-08-29T12:00:00.000Z",
+    "git_commit": "1bc97f1e6727ab42f3e2b0d8825d13701ffde891"
+  }
+}
