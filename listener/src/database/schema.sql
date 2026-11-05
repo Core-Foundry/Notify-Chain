@@ -252,7 +252,7 @@ CREATE TABLE IF NOT EXISTS processed_events (
   last_redetected_at DATETIME,              -- When the event was last detected again (for reorg monitoring)
   
   -- Status and metadata
-  status VARCHAR(20) NOT NULL DEFAULT 'PROCESSED' CHECK (status IN ('PROCESSED', 'SKIPPED', 'ERROR')),
+  status VARCHAR(20) NOT NULL DEFAULT 'PROCESSED' CHECK (status IN ('PROCESSED', 'PROCESSING', 'SKIPPED', 'ERROR')),
   notification_sent BOOLEAN NOT NULL DEFAULT 0 CHECK (notification_sent IN (0, 1)),
   error_reason TEXT                         -- If status is ERROR, what went wrong
 );
