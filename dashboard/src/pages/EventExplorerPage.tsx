@@ -7,6 +7,8 @@ import { EventExplorerSkeleton } from '../components/EventExplorerSkeleton';
 import { PaginationControls } from '../components/PaginationControls';
 import { NotificationDetailsDrawer } from '../components/NotificationDetailsDrawer';
 import { IndexingHealthPanel } from '../components/IndexingHealthPanel';
+import { NetworkHealthWidget } from '../components/NetworkHealthWidget';
+import { resolveNetworkHealthUrl } from '../utils/networkHealth';
 import { NotificationHealthPanel } from '../components/NotificationHealthPanel';
 import { NotificationSummaryPanel } from '../components/NotificationSummaryPanel';
 import { EmptyState } from '../components/EmptyState';
@@ -16,30 +18,31 @@ import {
   useFilteredEvents,
 } from '../hooks/useEventSelectors';
 import { useEventStore } from '../store/eventStore';
-import {
-  fetchEvents,
-  fetchStatus,
-  isListenerApiTimeoutError,
-  type ContractStatus,
-} from '../services/eventsApi';
-import { openEventStream, toEventStreamUrl } from '../services/eventStream';
+import { fetchEvents, fetchStatus, type ContractStatus } from '../services/eventsApi';
 import { resolveIndexingHealthUrl } from '../services/indexingHealthApi';
 import { resolveNotificationHealthUrl } from '../services/notificationHealthApi';
 import { generateMockEvents } from '../utils/eventData';
 import { restoreWalletSession } from '../services/wallet';
 import type { BlockchainEvent } from '../types/event';
 import { useWalletAccountSync } from '../hooks/useWalletAccountSync';
-import { parseSelectedEventId } from '../utils/eventUrlState';
+import { EVENT_ID_PARAM, resolveEventRoute } from '../utils/eventUrlState';
+import { EventActivityChart } from '../components/EventActivityChart';
+import {
+  computeEventActivity,
+  DEFAULT_EVENT_ACTIVITY_RANGE,
+  EVENT_ACTIVITY_RANGES,
+  type EventActivityRange,
+} from '../utils/eventActivityData';
 
 const DEFAULT_EVENT_COUNT = 5000;
 const DEFAULT_LIMIT = 12;
-const EVENT_ID_PARAM = 'eventId';
 const API_URL = import.meta.env.VITE_EVENTS_API_URL ?? 'http://localhost:8787/api/events';
-const STREAM_URL = toEventStreamUrl(API_URL);
 const POLL_INTERVAL_MS = 15_000;
 const LISTENER_BASE_URL = API_URL.replace('/api/events', '');
 const INDEXING_HEALTH_URL =
   import.meta.env.VITE_INDEXING_HEALTH_URL ?? resolveIndexingHealthUrl(API_URL);
+const NETWORK_HEALTH_URL =
+  import.meta.env.VITE_NETWORK_HEALTH_URL ?? resolveNetworkHealthUrl(API_URL);
 const NOTIFICATION_HEALTH_URL =
   import.meta.env.VITE_NOTIFICATION_HEALTH_URL ?? resolveNotificationHealthUrl(API_URL);
 
@@ -78,8 +81,13 @@ export function EventExplorerPage() {
   const [limit, setLimit] = useState(() => parseLimitParam(initialSearch));
   const [selectedNotification, setSelectedNotification] = useState<BlockchainEvent | null>(null);
   const [contractStatuses, setContractStatuses] = useState<ContractStatus[]>([]);
-  const [activityRange, setActivityRange] =
-    useState<EventActivityRange>(DEFAULT_EVENT_ACTIVITY_RANGE);
+  const [activityRange, setActivityRange] = useState<EventActivityRange>(
+    DEFAULT_EVENT_ACTIVITY_RANGE,
+  );
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [refreshError, setRefreshError] = useState<string | null>(null);
+  // Event id from a shared link that does not match any loaded event (#1153).
+  const [missingEventId, setMissingEventId] = useState<string | null>(null);
 
   const events = useEventStore((state) => state.events);
   const setEvents = useEventStore((state) => state.setEvents);
@@ -179,7 +187,6 @@ export function EventExplorerPage() {
     return () => {
       cancelled = true;
       if (intervalId) clearInterval(intervalId);
-      closeStream?.();
     };
   }, [appendEvents, setEvents, markSyncSuccess, markSyncFailure]);
 
@@ -196,7 +203,7 @@ export function EventExplorerPage() {
         setEvents(remoteEvents);
         markSyncSuccess();
       })
-      .catch((error) => {
+      .catch(() => {
         setEvents(generateMockEvents(DEFAULT_EVENT_COUNT));
         setError('Listener API unavailable — showing mock events for demo.');
         markSyncFailure('Wallet refresh failed');
@@ -245,24 +252,35 @@ export function EventExplorerPage() {
       return;
     }
 
-    const eventId = parseSelectedEventId(window.location.search);
-    if (!eventId) {
-      setSelectedNotification(null);
-      return;
+    // Direct navigation / refresh on a shared event link (#1153). The event is
+    // looked up by id once events have loaded; an unknown or malformed id gets
+    // a not-found message instead of silently opening the list.
+    const route = resolveEventRoute(window.location.search, events, !isLoading);
+    switch (route.kind) {
+      case 'none':
+        setSelectedNotification(null);
+        setMissingEventId(null);
+        break;
+      case 'found':
+        setSelectedNotification(route.event);
+        setMissingEventId(null);
+        break;
+      case 'invalid':
+      case 'not-found':
+        setSelectedNotification(null);
+        setMissingEventId(route.eventId);
+        break;
+      case 'pending':
+        break;
     }
-
-    const event = events.find((candidate) => candidate.eventId === eventId) ?? null;
-    setSelectedNotification(event);
-    if (!event) {
-      replaceSelectedEventInUrl(null);
-    }
-  }, [events, lastFetchedAt]);
+  }, [events, lastFetchedAt, isLoading]);
 
   useEffect(() => {
     const handlePopState = () => {
-      const eventId = parseSelectedEventId(window.location.search);
-      setSelectedNotification(
-        eventId ? (events.find((event) => event.eventId === eventId) ?? null) : null,
+      const route = resolveEventRoute(window.location.search, events, true);
+      setSelectedNotification(route.kind === 'found' ? route.event : null);
+      setMissingEventId(
+        route.kind === 'not-found' || route.kind === 'invalid' ? route.eventId : null,
       );
     };
 
@@ -313,12 +331,18 @@ export function EventExplorerPage() {
   }, [markSyncFailure, markSyncSuccess, setError, setEvents]);
 
   const handleSelectEvent = useCallback((event: BlockchainEvent) => {
+    setMissingEventId(null);
     setSelectedNotification(event);
     replaceSelectedEventInUrl(event.eventId);
   }, []);
 
   const handleContractClick = useCallback((contractAddress: string) => {
     window.location.hash = `contract-detail?address=${contractAddress}`;
+  }, []);
+
+  const handleDismissMissingEvent = useCallback(() => {
+    setMissingEventId(null);
+    replaceSelectedEventInUrl(null);
   }, []);
 
   const handleCloseDrawer = useCallback(() => {
@@ -360,6 +384,7 @@ export function EventExplorerPage() {
           </div>
         </section>
       )}
+      <NetworkHealthWidget healthUrl={NETWORK_HEALTH_URL} />
       <IndexingHealthPanel healthUrl={INDEXING_HEALTH_URL} />
       <NotificationHealthPanel healthUrl={NOTIFICATION_HEALTH_URL} />
       <NotificationSummaryPanel apiUrl={NOTIFICATION_HEALTH_URL} />
@@ -367,7 +392,6 @@ export function EventExplorerPage() {
       <EventFiltersBar />
       <NotificationSearchBar />
 
-      {error && !filteredEvents.length && (
       <section className="event-activity" aria-labelledby="event-activity-heading">
         <div className="event-activity__header">
           <h2 id="event-activity-heading">Event Activity</h2>
@@ -416,6 +440,24 @@ export function EventExplorerPage() {
           </div>
           <button type="button" className="event-explorer__retry-button" onClick={handleRetry}>
             Retry Refresh
+          </button>
+        </section>
+      )}
+
+      {missingEventId && (
+        <section className="event-explorer__not-found" role="alert" aria-live="polite">
+          <div>
+            <strong>Event not found.</strong> No event with ID{' '}
+            <code className="event-explorer__not-found-id">{missingEventId.slice(0, 80)}</code> is
+            available. It may have been pruned, belong to another network or contract, or the link
+            may be incomplete.
+          </div>
+          <button
+            type="button"
+            className="event-explorer__retry-button"
+            onClick={handleDismissMissingEvent}
+          >
+            Back to all events
           </button>
         </section>
       )}

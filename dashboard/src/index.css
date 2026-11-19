@@ -3023,6 +3023,81 @@ body.event-explorer--resizing {
   user-select: none;
 }
 
+/* Column management (#1160) */
+.event-explorer__table-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  padding: 12px 18px 0;
+}
+
+.event-explorer__columns-menu {
+  position: relative;
+}
+
+.event-explorer__columns-toggle {
+  cursor: pointer;
+  list-style: none;
+  padding: 6px 12px;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  border-radius: 8px;
+  font-size: 0.85rem;
+}
+
+.event-explorer__columns-toggle::-webkit-details-marker {
+  display: none;
+}
+
+.event-explorer__columns-options {
+  position: absolute;
+  right: 0;
+  z-index: 5;
+  display: grid;
+  gap: 8px;
+  min-width: 240px;
+  margin: 6px 0 0;
+  padding: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  border-radius: 10px;
+  background: var(--surface, #111827);
+}
+
+.event-explorer__columns-legend {
+  font-size: 0.8rem;
+  color: #9aa0a6;
+}
+
+.event-explorer__columns-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.85rem;
+}
+
+.event-explorer__columns-note {
+  color: #9aa0a6;
+  font-size: 0.75rem;
+}
+
+.event-explorer__columns-reset {
+  justify-self: start;
+  font-size: 0.8rem;
+}
+
+/* Horizontal scrolling keeps every visible column readable on small screens. */
+.event-explorer__table-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.event-explorer__table-scroll:focus-visible {
+  outline: 2px solid #60a5fa;
+  outline-offset: -2px;
+}
+
+.event-explorer__unavailable {
+  color: #9aa0a6;
+}
+
 .event-explorer__table-body {
   display: grid;
   --event-explorer-columns: 1.5fr 1fr 0.8fr 1.3fr 0.8fr 1fr;
@@ -3475,19 +3550,9 @@ body.event-explorer--resizing {
 }
 
 @media (max-width: 900px) {
-  .event-explorer__table-header,
-  .event-explorer__row {
-    grid-template-columns: 1.5fr 1fr 0.8fr;
-  }
-
-  .event-explorer__table-header > div:nth-child(4),
-  .event-explorer__table-header > div:nth-child(5),
-  .event-explorer__table-header > div:nth-child(6),
-  .event-explorer__row > .event-explorer__cell:nth-child(4),
-  .event-explorer__row > .event-explorer__cell:nth-child(5),
-  .event-explorer__row > .event-explorer__cell:nth-child(6) {
-    display: none;
-  }
+  /* Columns are no longer hidden on narrow screens (they dropped the ledger /
+     event ID and transaction identifiers). The table scrolls sideways
+     instead, and users can hide optional columns themselves (#1160). */
 
   .event-explorer__header {
     flex-direction: column;
@@ -8887,4 +8952,159 @@ textarea {
 
 [data-theme="light"] .event-explorer__contract-link:hover {
   color: #2563eb;
+}
+
+/* Ledger progress indicator (#1159) */
+.ledger-progress {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid rgba(148, 163, 184, 0.2);
+}
+
+.ledger-progress__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.ledger-progress__title {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.ledger-progress__state {
+  font-size: 0.8rem;
+  padding: 2px 10px;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.15);
+}
+
+.ledger-progress__state[data-state='current'] {
+  background: rgba(34, 197, 94, 0.18);
+}
+
+.ledger-progress__state[data-state='behind'] {
+  background: rgba(59, 130, 246, 0.18);
+}
+
+.ledger-progress__state[data-state='stale'] {
+  background: rgba(234, 179, 8, 0.2);
+}
+
+.ledger-progress__values {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 12px;
+  margin: 12px 0;
+}
+
+.ledger-progress__values dt {
+  font-size: 0.8rem;
+  color: #9aa0a6;
+}
+
+.ledger-progress__values dd {
+  margin: 4px 0 0;
+  font-weight: 600;
+}
+
+.ledger-progress__bar-wrap {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.ledger-progress__bar {
+  flex: 1;
+  height: 8px;
+}
+
+.ledger-progress__note,
+.ledger-progress__stale {
+  margin: 8px 0 0;
+  font-size: 0.85rem;
+  color: #9aa0a6;
+}
+
+.ledger-progress__stale {
+  color: #eab308;
+}
+
+/* Network health widget (#1154) */
+.network-health {
+  margin: 16px 0;
+  padding: 16px 18px;
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  border-left-width: 4px;
+  border-radius: 12px;
+}
+
+.network-health--healthy {
+  border-left-color: #22c55e;
+}
+
+.network-health--degraded {
+  border-left-color: #eab308;
+}
+
+.network-health--unavailable {
+  border-left-color: #ef4444;
+}
+
+.network-health__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.network-health__title {
+  margin: 0;
+  font-size: 1.05rem;
+}
+
+.network-health__state {
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.network-health__details {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 12px;
+  margin: 12px 0 0;
+}
+
+.network-health__details dt {
+  font-size: 0.8rem;
+  color: #9aa0a6;
+}
+
+.network-health__details dd {
+  margin: 4px 0 0;
+}
+
+.network-health__stale,
+.network-health__error {
+  margin: 10px 0 0;
+  font-size: 0.85rem;
+  color: #eab308;
+}
+
+/* Shared event link not found (#1153) */
+.event-explorer__not-found {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 12px 0;
+  padding: 14px 16px;
+  border: 1px solid rgba(234, 179, 8, 0.4);
+  border-radius: 12px;
+  background: rgba(234, 179, 8, 0.08);
+}
+
+.event-explorer__not-found-id {
+  word-break: break-all;
 }
