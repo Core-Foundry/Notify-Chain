@@ -9030,3 +9030,64 @@ textarea {
 .ledger-progress__stale {
   color: #eab308;
 }
+
+/* Network health widget (#1154) */
+.network-health {
+  margin: 16px 0;
+  padding: 16px 18px;
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  border-left-width: 4px;
+  border-radius: 12px;
+}
+
+.network-health--healthy {
+  border-left-color: #22c55e;
+}
+
+.network-health--degraded {
+  border-left-color: #eab308;
+}
+
+.network-health--unavailable {
+  border-left-color: #ef4444;
+}
+
+.network-health__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.network-health__title {
+  margin: 0;
+  font-size: 1.05rem;
+}
+
+.network-health__state {
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.network-health__details {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 12px;
+  margin: 12px 0 0;
+}
+
+.network-health__details dt {
+  font-size: 0.8rem;
+  color: #9aa0a6;
+}
+
+.network-health__details dd {
+  margin: 4px 0 0;
+}
+
+.network-health__stale,
+.network-health__error {
+  margin: 10px 0 0;
+  font-size: 0.85rem;
+  color: #eab308;
+}

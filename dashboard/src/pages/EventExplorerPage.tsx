@@ -7,6 +7,8 @@ import { EventExplorerSkeleton } from '../components/EventExplorerSkeleton';
 import { PaginationControls } from '../components/PaginationControls';
 import { NotificationDetailsDrawer } from '../components/NotificationDetailsDrawer';
 import { IndexingHealthPanel } from '../components/IndexingHealthPanel';
+import { NetworkHealthWidget } from '../components/NetworkHealthWidget';
+import { resolveNetworkHealthUrl } from '../utils/networkHealth';
 import { NotificationHealthPanel } from '../components/NotificationHealthPanel';
 import { NotificationSummaryPanel } from '../components/NotificationSummaryPanel';
 import { EmptyState } from '../components/EmptyState';
@@ -47,6 +49,8 @@ const POLL_INTERVAL_MS = 15_000;
 const LISTENER_BASE_URL = API_URL.replace('/api/events', '');
 const INDEXING_HEALTH_URL =
   import.meta.env.VITE_INDEXING_HEALTH_URL ?? resolveIndexingHealthUrl(API_URL);
+const NETWORK_HEALTH_URL =
+  import.meta.env.VITE_NETWORK_HEALTH_URL ?? resolveNetworkHealthUrl(API_URL);
 const NOTIFICATION_HEALTH_URL =
   import.meta.env.VITE_NOTIFICATION_HEALTH_URL ?? resolveNotificationHealthUrl(API_URL);
 
@@ -85,8 +89,9 @@ export function EventExplorerPage() {
   const [limit, setLimit] = useState(() => parseLimitParam(initialSearch));
   const [selectedNotification, setSelectedNotification] = useState<BlockchainEvent | null>(null);
   const [contractStatuses, setContractStatuses] = useState<ContractStatus[]>([]);
-  const [activityRange, setActivityRange] =
-    useState<EventActivityRange>(DEFAULT_EVENT_ACTIVITY_RANGE);
+  const [activityRange, setActivityRange] = useState<EventActivityRange>(
+    DEFAULT_EVENT_ACTIVITY_RANGE,
+  );
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [refreshError, setRefreshError] = useState<string | null>(null);
 
@@ -368,6 +373,7 @@ export function EventExplorerPage() {
           </div>
         </section>
       )}
+      <NetworkHealthWidget healthUrl={NETWORK_HEALTH_URL} />
       <IndexingHealthPanel healthUrl={INDEXING_HEALTH_URL} />
       <NotificationHealthPanel healthUrl={NOTIFICATION_HEALTH_URL} />
       <NotificationSummaryPanel apiUrl={NOTIFICATION_HEALTH_URL} />
