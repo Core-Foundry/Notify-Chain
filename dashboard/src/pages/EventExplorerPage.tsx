@@ -30,6 +30,13 @@ import { restoreWalletSession } from '../services/wallet';
 import type { BlockchainEvent } from '../types/event';
 import { useWalletAccountSync } from '../hooks/useWalletAccountSync';
 import { parseSelectedEventId } from '../utils/eventUrlState';
+import { EventActivityChart } from '../components/EventActivityChart';
+import {
+  computeEventActivity,
+  DEFAULT_EVENT_ACTIVITY_RANGE,
+  EVENT_ACTIVITY_RANGES,
+  type EventActivityRange,
+} from '../utils/eventActivityData';
 
 const DEFAULT_EVENT_COUNT = 5000;
 const DEFAULT_LIMIT = 12;
@@ -80,6 +87,8 @@ export function EventExplorerPage() {
   const [contractStatuses, setContractStatuses] = useState<ContractStatus[]>([]);
   const [activityRange, setActivityRange] =
     useState<EventActivityRange>(DEFAULT_EVENT_ACTIVITY_RANGE);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [refreshError, setRefreshError] = useState<string | null>(null);
 
   const events = useEventStore((state) => state.events);
   const setEvents = useEventStore((state) => state.setEvents);
@@ -179,7 +188,6 @@ export function EventExplorerPage() {
     return () => {
       cancelled = true;
       if (intervalId) clearInterval(intervalId);
-      closeStream?.();
     };
   }, [appendEvents, setEvents, markSyncSuccess, markSyncFailure]);
 
@@ -367,7 +375,6 @@ export function EventExplorerPage() {
       <EventFiltersBar />
       <NotificationSearchBar />
 
-      {error && !filteredEvents.length && (
       <section className="event-activity" aria-labelledby="event-activity-heading">
         <div className="event-activity__header">
           <h2 id="event-activity-heading">Event Activity</h2>
