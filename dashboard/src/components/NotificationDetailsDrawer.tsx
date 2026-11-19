@@ -4,6 +4,7 @@ import { formatTimestamp } from '../utils/formatTime';
 import { copyTextToClipboard } from '../utils/clipboard';
 import { getEventTypePresentation } from '../utils/eventTypeMapping';
 import { formatRawPayload, copyPayloadToClipboard } from '../utils/payloadViewer';
+import { buildEventShareUrl } from '../utils/eventUrlState';
 
 type FetchState<T> =
   | { status: 'idle' }
@@ -293,6 +294,14 @@ export function NotificationDetailsDrawer({
               aria-label="Copy event ID"
             >
               Copy
+            </button>
+            <button
+              type="button"
+              className="drawer__action"
+              onClick={() => void tryCopy('Event link', buildEventShareUrl(notification.eventId))}
+              aria-label="Copy link to this event"
+            >
+              Copy link
             </button>
           </div>
           <div className="drawer__row">

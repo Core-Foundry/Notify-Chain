@@ -9091,3 +9091,20 @@ textarea {
   font-size: 0.85rem;
   color: #eab308;
 }
+
+/* Shared event link not found (#1153) */
+.event-explorer__not-found {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 12px 0;
+  padding: 14px 16px;
+  border: 1px solid rgba(234, 179, 8, 0.4);
+  border-radius: 12px;
+  background: rgba(234, 179, 8, 0.08);
+}
+
+.event-explorer__not-found-id {
+  word-break: break-all;
+}
