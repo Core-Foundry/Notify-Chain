@@ -18,13 +18,7 @@ import {
   useFilteredEvents,
 } from '../hooks/useEventSelectors';
 import { useEventStore } from '../store/eventStore';
-import {
-  fetchEvents,
-  fetchStatus,
-  isListenerApiTimeoutError,
-  type ContractStatus,
-} from '../services/eventsApi';
-import { openEventStream, toEventStreamUrl } from '../services/eventStream';
+import { fetchEvents, fetchStatus, type ContractStatus } from '../services/eventsApi';
 import { resolveIndexingHealthUrl } from '../services/indexingHealthApi';
 import { resolveNotificationHealthUrl } from '../services/notificationHealthApi';
 import { generateMockEvents } from '../utils/eventData';
@@ -43,7 +37,6 @@ import {
 const DEFAULT_EVENT_COUNT = 5000;
 const DEFAULT_LIMIT = 12;
 const API_URL = import.meta.env.VITE_EVENTS_API_URL ?? 'http://localhost:8787/api/events';
-const STREAM_URL = toEventStreamUrl(API_URL);
 const POLL_INTERVAL_MS = 15_000;
 const LISTENER_BASE_URL = API_URL.replace('/api/events', '');
 const INDEXING_HEALTH_URL =
@@ -210,7 +203,7 @@ export function EventExplorerPage() {
         setEvents(remoteEvents);
         markSyncSuccess();
       })
-      .catch((error) => {
+      .catch(() => {
         setEvents(generateMockEvents(DEFAULT_EVENT_COUNT));
         setError('Listener API unavailable — showing mock events for demo.');
         markSyncFailure('Wallet refresh failed');

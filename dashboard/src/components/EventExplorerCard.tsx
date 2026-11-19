@@ -55,10 +55,6 @@ export const EventExplorerCard = memo(function EventExplorerCard({
   const kindLabel = getEventKindLabel(event.type);
   const isUnknown = !isKnownEventType(event.type);
 
-  const handleCopyClick = useCallback(() => {
-    onCopyContract?.(event.contractAddress);
-  }, [onCopyContract, event.contractAddress]);
-
   const handleKeyDown = useCallback(
     (keyboardEvent: KeyboardEvent<HTMLElement>) => {
       if (!onSelect) {

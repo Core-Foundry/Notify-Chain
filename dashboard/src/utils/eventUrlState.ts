@@ -12,7 +12,7 @@ export const EVENT_ROUTE_HASH = 'explorer';
 
 /** Event ids are opaque, but bounded and free of whitespace/control characters. */
 const MAX_EVENT_ID_LENGTH = 256;
-const EVENT_ID_PATTERN = /^[A-Za-z0-9._:/\-]+$/;
+const EVENT_ID_PATTERN = /^[A-Za-z0-9._:/-]+$/;
 
 export function isValidEventId(value: string): boolean {
   return value.length > 0 && value.length <= MAX_EVENT_ID_LENGTH && EVENT_ID_PATTERN.test(value);
