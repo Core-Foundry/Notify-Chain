@@ -1,0 +1,117 @@
+/**
+ * Print styles for event details (#1161).
+ *
+ * The printable section is always rendered in the DOM (so it carries the same
+ * up-to-date event data as the screen UI) but is invisible until printing.
+ * On paper only the report is shown - navigation, filters, buttons and the
+ * dashboard chrome are removed without affecting the screen layout.
+ */
+
+.printable-event-details {
+  display: none;
+}
+
+@media print {
+  @page {
+    margin: 15mm;
+  }
+
+  html,
+  body {
+    background: #fff !important;
+    color: #000 !important;
+  }
+
+  body * {
+    visibility: hidden !important;
+  }
+
+  .printable-event-details,
+  .printable-event-details * {
+    visibility: visible !important;
+  }
+
+  .app__header,
+  .app__footer,
+  .sidebar,
+  .mobile-nav-drawer,
+  .skip-link,
+  .event-card__actions,
+  .events-page__header,
+  .event-filters-bar {
+    display: none !important;
+  }
+
+  .printable-event-details {
+    display: block !important;
+    position: absolute !important;
+    top: 0 !important;
+    left: 0 !important;
+    width: 100% !important;
+    max-width: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    font-size: 11pt !important;
+    line-height: 1.4 !important;
+    color: #000 !important;
+  }
+
+  .printable-event-details__header {
+    border-bottom: 2px solid #000 !important;
+    margin-bottom: 12pt !important;
+    padding-bottom: 6pt !important;
+  }
+
+  .printable-event-details__title {
+    font-size: 18pt !important;
+    margin: 0 !important;
+  }
+
+  .printable-event-details__generated {
+    font-size: 9pt !important;
+    margin: 4pt 0 0 !important;
+  }
+
+  .printable-event-details__fields {
+    margin: 0 !important;
+  }
+
+  .printable-event-details__field {
+    display: block !important;
+    break-inside: avoid !important;
+    margin: 0 0 6pt !important;
+    padding: 0 !important;
+    border: 0 !important;
+  }
+
+  .printable-event-details__field dt {
+    display: inline-block !important;
+    width: 35% !important;
+    font-weight: 700 !important;
+    vertical-align: top !important;
+  }
+
+  .printable-event-details__field dd {
+    display: inline-block !important;
+    width: 65% !important;
+    margin: 0 !important;
+    overflow-wrap: anywhere !important;
+    word-break: break-word !important;
+  }
+
+  .printable-event-details__monospace {
+    font-family: monospace !important;
+  }
+
+  .printable-event-details__footer {
+    margin-top: 14pt !important;
+    padding-top: 6pt !important;
+    border-top: 1px solid #000 !important;
+    overflow-wrap: anywhere !important;
+  }
+
+  .printable-event-details__footer a {
+    color: #000 !important;
+    text-decoration: underline !important;
+  }
+}

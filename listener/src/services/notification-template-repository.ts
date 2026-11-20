@@ -9,6 +9,7 @@ import {
 } from '../types/notification-template';
 import { TemplateAuditTrail } from './template-audit-trail';
 import { NotificationTemplateCache } from './notification-template-cache';
+import { validateTemplateVariables } from './template-variable-validator';
 
 export class TemplateNotFoundError extends Error {
   constructor(templateId: string) {
@@ -36,6 +37,13 @@ export class NotificationTemplateRepository {
 
   async create(input: CreateNotificationTemplateInput): Promise<AuditedNotificationTemplate> {
     this.validateTemplateInput(input.id, input.name, input.body);
+    this.validateVariables(
+      input.id,
+      input.body,
+      input.subject,
+      input.variables,
+      input.supportedVariables,
+    );
 
     const now = new Date();
     const sql = `
@@ -92,6 +100,13 @@ export class NotificationTemplateRepository {
     const nextName = input.name ?? existing.name;
     const nextBody = input.body ?? existing.body;
     this.validateTemplateInput(templateId, nextName, nextBody);
+    this.validateVariables(
+      templateId,
+      nextBody,
+      input.subject ?? existing.subject,
+      input.variables ?? existing.variables,
+      input.supportedVariables ?? existing.supportedVariables,
+    );
 
     const updated: AuditedNotificationTemplate = {
       ...existing,
@@ -186,6 +201,34 @@ export class NotificationTemplateRepository {
     }
     if (!body?.trim()) {
       throw new TemplateValidationError('Template body is required');
+    }
+  }
+
+  /**
+   * Reject templates that declare required variables they never reference or
+   * that use variables outside the supported set. Templates without a declared
+   * variable list keep the historical permissive behaviour.
+   */
+  private validateVariables(
+    templateId: string,
+    body: string,
+    subject: string | undefined,
+    variables: string[] | undefined,
+    supportedVariables: string[] | undefined,
+  ): void {
+    const result = validateTemplateVariables({
+      body,
+      subject,
+      requiredVariables: variables,
+      supportedVariables,
+      strictUnsupportedVariables:
+        supportedVariables !== undefined || (variables?.length ?? 0) > 0,
+    });
+
+    if (!result.isValid) {
+      throw new TemplateValidationError(
+        `Notification template '${templateId}' failed variable validation: ${result.errors.join('; ')}`,
+      );
     }
   }
 

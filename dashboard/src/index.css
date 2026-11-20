@@ -8888,3 +8888,43 @@ textarea {
 [data-theme="light"] .event-explorer__contract-link:hover {
   color: #2563eb;
 }
+
+/* Network-aware explorer link and print action (#1152, #1161) */
+.event-card__explorer-link {
+  display: inline-block;
+  margin-left: 0.5rem;
+  color: #5b7dff;
+  font-size: 0.8rem;
+  text-decoration: none;
+}
+
+.event-card__explorer-link:hover,
+.event-card__explorer-link:focus-visible {
+  text-decoration: underline;
+}
+
+[data-theme="light"] .event-card__explorer-link {
+  color: #2563eb;
+}
+
+.event-card__actions {
+  display: flex;
+  justify-content: flex-end;
+  padding: 0.5rem 0.75rem;
+}
+
+.event-card__print-button {
+  padding: 0.35rem 0.7rem;
+  border: 1px solid currentColor;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.event-card__print-button:hover,
+.event-card__print-button:focus-visible {
+  background: rgba(91, 125, 255, 0.12);
+}
