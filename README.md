@@ -37,6 +37,12 @@ CI quality checks: [dashboard accessibility](docs/accessibility-automation.md),
 > - [Notification Lifecycle](NOTIFICATION_LIFECYCLE.md) — end-to-end on-chain/off-chain flow from event detection to delivery, ack, retry, and archival.
 > - [Notification Failure Recovery](NOTIFICATION_FAILURE_RECOVERY.md) — retry lifecycle, configuration, and troubleshooting.
 >
+> **Guides**:
+> - [Notification Provider Extension Development Guide](docs/NOTIFICATION_PROVIDER_EXTENSION_GUIDE.md) — provider interfaces, configuration, walkthrough, payload transformations, and error handling for adding a new delivery channel.
+> - [Data Privacy and Information Handling Guide](docs/DATA_PRIVACY_AND_INFORMATION_HANDLING.md) — what the system stores, sensitive vs. non-sensitive data, credential handling, retention/deletion, and API data exposure.
+> - [API Authentication and Integration Quickstart](docs/API_AUTHENTICATION_QUICKSTART.md) — `X-API-Key` and webhook signature auth, cURL/JavaScript examples, and error responses.
+> - [Contract Upgrade Compatibility and State Migration Guide](docs/CONTRACT_UPGRADE_MIGRATION_GUIDE.md) — upgrade paths, storage compatibility, pre-upgrade checks, and rollback limitations.
+>
 > **Repository map**: [Project Structure Guide](docs/PROJECT-STRUCTURE.md) — major directories, modules, and where code belongs.
 >
 > **Event reference**: [Smart Contract Event Reference Guide](CONTRACT_EVENT_REFERENCE.md) — all emitted events, parameters, data types, and usage recommendations for indexers and listeners.
