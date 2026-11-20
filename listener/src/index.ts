@@ -23,6 +23,7 @@ import {
   createDefaultAlertSink,
 } from './services/indexing-reconciliation-engine';
 import { HistoricalBackfillService } from './services/historical-backfill-service';
+import { LedgerRangeBackfillController } from './services/ledger-range-backfill';
 import { EventDeduplicationService } from './services/event-deduplication-service';
 import { initNotificationAnalyticsAggregator } from './services/notification-analytics-aggregator';
 import { NotificationMetricsStore } from './services/notification-metrics-store';
@@ -59,6 +60,7 @@ async function main() {
   let metricsRunner: NotificationMetricsRunner | null = null;
   let metricsStore: NotificationMetricsStore | null = null;
   let deduplicationService: EventDeduplicationService | null = null;
+  let ledgerRangeBackfill: LedgerRangeBackfillController | null = null;
   let deliveryReceiptRepository: DeliveryReceiptRepository | null = null;
 
   if (config.analytics?.enabled) {
@@ -68,6 +70,17 @@ async function main() {
   try {
     logger.info('Initializing database');
     const db = await initializeDatabase(config.databasePath);
+
+    deduplicationService = new EventDeduplicationService(db);
+    ledgerRangeBackfill = new LedgerRangeBackfillController({
+      rpcUrl: config.stellarRpcUrl,
+      contractConfigs: config.contractAddresses,
+      backfillConfig: config.backfill ?? {},
+      deduplicationService,
+      discordService: config.discord
+        ? new DiscordNotificationService(config.discord)
+        : null,
+    });
 
     repository = new ScheduledNotificationRepository(
       db,
@@ -193,6 +206,7 @@ async function main() {
     metricsStore,
     healthMonitor,
     deliveryReceiptRepository,
+    ledgerRangeBackfill,
     eventStream: {
       enabled: process.env.EVENT_STREAM_ENABLED === 'true',
       heartbeatMs: Number(process.env.EVENT_STREAM_HEARTBEAT_MS || 15_000),

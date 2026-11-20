@@ -63,6 +63,8 @@ import {
 import { CreateNotificationTemplateInput } from '../types/notification-template';
 import { BatchValidationService } from '../services/batch-validation-service';
 import { handleArchiveRequest } from './archive-api';
+import { handleBackfillRequest } from './backfill-api';
+import type { LedgerRangeBackfillController } from '../services/ledger-range-backfill';
 import { handleDeliveryMetricsRequest } from './delivery-metrics-api';
 import { ArchiveStore } from '../services/archive-store';
 import { ArchiveService } from '../services/archive-service';
@@ -116,6 +118,11 @@ export interface EventsServerOptions {
   archiveStore?: ArchiveStore | null;
   /** Archive service for the admin /run endpoint (optional). */
   archiveService?: ArchiveService | null;
+  /**
+   * Controller for operator-triggered historical backfills over an explicit
+   * ledger range (#1165). Omitted or null leaves the admin routes as 404.
+   */
+  ledgerRangeBackfill?: LedgerRangeBackfillController | null;
   /** Persisted metrics snapshots for historical analytics (optional). */
   metricsStore?: NotificationMetricsStore | null;
   /** Maximum age of signed requests in seconds (default: 300 = 5 minutes). */
@@ -2293,6 +2300,14 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
       );
       if (handled) return;
     }
+
+    // POST /api/admin/backfill + GET /api/admin/backfill/status (#1165)
+    const backfillHandled = await handleBackfillRequest(req, res, url, {
+      controller: options.ledgerRangeBackfill ?? null,
+      apiKeys: options.apiKeys,
+      requestId,
+    });
+    if (backfillHandled) return;
 
     // GET /api/notifications/delivery-metrics and /history  (Issue #482)
     const deliveryMetricsHandled = handleDeliveryMetricsRequest(
