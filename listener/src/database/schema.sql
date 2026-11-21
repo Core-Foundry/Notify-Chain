@@ -123,13 +123,19 @@ CREATE INDEX IF NOT EXISTS idx_execution_log_execution_time
 CREATE INDEX IF NOT EXISTS idx_execution_log_status_execution_time 
   ON notification_execution_log(status, execution_time);
 
--- One immutable receipt per provider delivery attempt
+-- One immutable receipt per provider delivery attempt (#1116)
 CREATE TABLE IF NOT EXISTS delivery_receipts (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   notification_id INTEGER NOT NULL,
+  event_id TEXT,
+  contract_address TEXT,
   channel TEXT NOT NULL,
   status TEXT NOT NULL CHECK (status IN ('delivered', 'failed', 'rejected', 'pending')),
+  outcome TEXT NOT NULL DEFAULT 'UNKNOWN' CHECK (outcome IN ('ACCEPTED', 'REJECTED', 'UNKNOWN')),
+  provider_status INTEGER,
   attempt_count INTEGER NOT NULL CHECK (attempt_count > 0),
+  attempt_timestamp DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  delivered_at DATETIME,
   provider_message_id TEXT,
   provider_response TEXT,
   error_code TEXT,
@@ -142,6 +148,12 @@ CREATE INDEX IF NOT EXISTS idx_delivery_receipts_notification_attempt
   ON delivery_receipts(notification_id, attempt_count, id);
 CREATE INDEX IF NOT EXISTS idx_delivery_receipts_status_created
   ON delivery_receipts(status, created_at);
+CREATE INDEX IF NOT EXISTS idx_delivery_receipts_outcome_created
+  ON delivery_receipts(outcome, created_at);
+CREATE INDEX IF NOT EXISTS idx_delivery_receipts_event
+  ON delivery_receipts(event_id);
+CREATE INDEX IF NOT EXISTS idx_delivery_receipts_contract
+  ON delivery_receipts(contract_address);
 
 -- Migration: add next_retry_at for explicit retry scheduling (no-op when column exists in CREATE TABLE)
 -- SQLite does not support IF NOT EXISTS for ADD COLUMN; runMigrations tolerates duplicate-column errors.
@@ -496,4 +508,59 @@ BEFORE DELETE ON schedule_audit_log
 FOR EACH ROW
 BEGIN
   SELECT RAISE(ABORT, 'Schedule audit records are immutable');
+END;
+
+-- ===============================================
+-- EVENT RETENTION & HOLDS (#1115)
+-- ===============================================
+
+-- Active and released event retention holds
+CREATE TABLE IF NOT EXISTS event_retention_holds (
+  id TEXT PRIMARY KEY,
+  contract_address TEXT,
+  event_id TEXT,
+  fingerprint TEXT,
+  reason TEXT NOT NULL,
+  held_by TEXT NOT NULL DEFAULT 'system',
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  status VARCHAR(20) NOT NULL DEFAULT 'ACTIVE' CHECK (status IN ('ACTIVE', 'RELEASED')),
+  released_at DATETIME,
+  released_by TEXT,
+  release_reason TEXT,
+  metadata TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_retention_holds_status ON event_retention_holds(status);
+CREATE INDEX IF NOT EXISTS idx_retention_holds_fingerprint ON event_retention_holds(fingerprint);
+CREATE INDEX IF NOT EXISTS idx_retention_holds_contract_event ON event_retention_holds(contract_address, event_id);
+CREATE INDEX IF NOT EXISTS idx_retention_holds_contract ON event_retention_holds(contract_address);
+
+-- Immutable audit log for event retention actions
+CREATE TABLE IF NOT EXISTS retention_audit_log (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  action TEXT NOT NULL CHECK (action IN ('POLICY_SET', 'POLICY_UPDATED', 'POLICY_REMOVED', 'HOLD_APPLIED', 'HOLD_RELEASED', 'CLEANUP_EXECUTED')),
+  contract_address TEXT,
+  event_id TEXT,
+  fingerprint TEXT,
+  actor TEXT NOT NULL DEFAULT 'system',
+  timestamp DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  details TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_retention_audit_action ON retention_audit_log(action);
+CREATE INDEX IF NOT EXISTS idx_retention_audit_contract ON retention_audit_log(contract_address);
+CREATE INDEX IF NOT EXISTS idx_retention_audit_timestamp ON retention_audit_log(timestamp);
+
+CREATE TRIGGER IF NOT EXISTS prevent_retention_audit_update
+BEFORE UPDATE ON retention_audit_log
+FOR EACH ROW
+BEGIN
+  SELECT RAISE(ABORT, 'Retention audit records are immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS prevent_retention_audit_delete
+BEFORE DELETE ON retention_audit_log
+FOR EACH ROW
+BEGIN
+  SELECT RAISE(ABORT, 'Retention audit records are immutable');
 END;

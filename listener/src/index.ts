@@ -11,6 +11,7 @@ import { ScheduleAuditTrail } from './services/schedule-audit-trail';
 import { getTemplateCache } from './services/notification-template-cache';
 import { NotificationAPI } from './services/notification-api';
 import { DatabaseCleanupJob } from './services/database-cleanup-job';
+import { EventRetentionService } from './services/event-retention-service';
 import { ArchiveService } from './services/archive-service';
 import { ArchiveStore } from './services/archive-store';
 import { loadArchiveConfig } from './services/archive-config';
@@ -82,13 +83,28 @@ async function main() {
       getUptimeMs: () => Date.now() - PROCESS_START_TIME,
     });
 
-    // Rebuild registry with configured event TTL
+    // Initialize EventRetentionService with configured default and per-contract retention
+    const retentionService = new EventRetentionService(db, {
+      defaultRetentionMs: config.cleanup?.processedEventRetentionMs ?? (30 * 24 * 60 * 60 * 1000),
+      contractConfigs: config.contractAddresses,
+      cleanupIntervalMs: config.cleanup?.intervalMs,
+    });
+    await retentionService.ensureSchema();
+
+    // Rebuild registry with configured event TTL and contract TTLs
     if (config.cleanup) {
       eventRegistry.setTtlMs(config.cleanup.eventRetentionMs);
+      for (const contract of config.contractAddresses) {
+        const periodMs = contract.retentionPeriodMs ??
+          (contract.retentionDays !== undefined ? contract.retentionDays * 86_400_000 : undefined);
+        if (periodMs) {
+          eventRegistry.setContractTtlMs(contract.address, periodMs);
+        }
+      }
     }
 
     if (config.cleanup) {
-      databaseCleanupJob = new DatabaseCleanupJob(db, config.cleanup, eventRegistry);
+      databaseCleanupJob = new DatabaseCleanupJob(db, config.cleanup, eventRegistry, retentionService);
       databaseCleanupJob.start();
     }
 

@@ -182,6 +182,9 @@ function validateContractAddresses(value: unknown): ContractConfig[] {
 
     const address = (item as any).address;
     const events = (item as any).events;
+    const userId = (item as any).userId;
+    const retentionDays = (item as any).retentionDays;
+    const retentionPeriodMs = (item as any).retentionPeriodMs;
 
     if (typeof address !== 'string' || !address.trim()) {
       throw new ConfigError(`CONTRACT_ADDRESSES[${index}].address must be a non-empty string.`);
@@ -193,9 +196,24 @@ function validateContractAddresses(value: unknown): ContractConfig[] {
       );
     }
 
+    if (retentionDays !== undefined) {
+      if (typeof retentionDays !== 'number' || !Number.isInteger(retentionDays) || retentionDays < 1) {
+        throw new ConfigError(`CONTRACT_ADDRESSES[${index}].retentionDays must be a positive integer.`);
+      }
+    }
+
+    if (retentionPeriodMs !== undefined) {
+      if (typeof retentionPeriodMs !== 'number' || !Number.isInteger(retentionPeriodMs) || retentionPeriodMs < 1) {
+        throw new ConfigError(`CONTRACT_ADDRESSES[${index}].retentionPeriodMs must be a positive integer.`);
+      }
+    }
+
     return {
       address: address.trim(),
       events: events.map((event) => event.trim()),
+      ...(userId && typeof userId === 'string' ? { userId: userId.trim() } : {}),
+      ...(retentionDays !== undefined ? { retentionDays } : {}),
+      ...(retentionPeriodMs !== undefined ? { retentionPeriodMs } : {}),
     };
   });
 }
@@ -808,6 +826,13 @@ export function validateConfig(config: Config): void {
             );
           }
         });
+      }
+
+      if (contract.retentionDays !== undefined && (contract.retentionDays < 1 || !Number.isInteger(contract.retentionDays))) {
+        errors.push(`CONTRACT_ADDRESSES[${index}].retentionDays must be a positive integer.`);
+      }
+      if (contract.retentionPeriodMs !== undefined && (contract.retentionPeriodMs < 1 || !Number.isInteger(contract.retentionPeriodMs))) {
+        errors.push(`CONTRACT_ADDRESSES[${index}].retentionPeriodMs must be a positive integer.`);
       }
     });
   }
