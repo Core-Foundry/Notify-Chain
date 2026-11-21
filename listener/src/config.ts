@@ -22,6 +22,7 @@ import {
 import {
   validateCorsOrigin,
   CorsValidationError,
+  isSensitiveEnvironment,
 } from './utils/cors-validator';
 import { validateSecrets } from './config/validate-secrets';
 import { ConfigurationSchemaValidator, APP_CONFIG_SCHEMA } from './config-schema';
@@ -168,7 +169,6 @@ function validateContractAddresses(value: unknown): ContractConfig[] {
   if (value.length === 0) {
     throw new ConfigError(
       'CONTRACT_ADDRESSES is empty. The listener requires at least one contract to monitor. ' +
-        'Add contract configurations or the service will not process any events.'
         'Add contract configurations or the service will not process any events.',
     );
   }
@@ -468,6 +468,8 @@ function parseScheduleRecoveryPolicy(): 'EXECUTE' | 'EXPIRE' | 'REQUIRE_INTERVEN
   throw new ConfigError(
     'SCHEDULE_RECOVERY_POLICY must be one of EXECUTE, EXPIRE, REQUIRE_INTERVENTION.',
   );
+}
+
 function loadEventBatchingConfig(): EventBatchingConfig {
   return {
     enabled: parseBooleanEnv('EVENT_BATCHING_ENABLED', false),
@@ -514,7 +516,6 @@ export function loadConfig(): Config {
     new Set([
       ...explicitFallbacks,
       ...(allRpcUrlsFromEnv.length > 1 ? allRpcUrlsFromEnv.slice(1) : []),
-    ])
     ]),
   ).filter((url) => url !== primaryRpcUrl);
 
@@ -536,7 +537,11 @@ export function loadConfig(): Config {
     maxReconnectAttempts: parseIntegerEnv('MAX_RECONNECT_ATTEMPTS', '5'),
     reconnectDelayMs: parseIntegerEnv('RECONNECT_DELAY_MS', '5000'),
     eventsApiPort: parseIntegerEnv('EVENTS_API_PORT', '8787'),
-    eventsApiCorsOrigin: trimEnv('EVENTS_API_CORS_ORIGIN') || 'http://localhost:5173',
+    // Production/staging must configure this explicitly (#1133): falling
+    // back to a localhost default would silently permit a dev-only origin.
+    eventsApiCorsOrigin:
+      trimEnv('EVENTS_API_CORS_ORIGIN') ||
+      (isSensitiveEnvironment(process.env.NODE_ENV) ? '' : 'http://localhost:5173'),
     databasePath: trimEnv('DATABASE_PATH') || './data/notifications.db',
     discord,
     retryQueue: {
@@ -660,11 +665,6 @@ export function validateConfig(config: Config): void {
         errors.push(
           `Fallback RPC URL at index ${idx} is not a valid URL (received: "${fbUrl}").`
         );
-            `Fallback RPC URL at index ${idx} must use HTTP or HTTPS protocol (received: "${url.protocol}").`,
-          );
-        }
-      } catch {
-        errors.push(`Fallback RPC URL at index ${idx} is not a valid URL (received: "${fbUrl}").`);
       }
     }
   }
@@ -748,8 +748,14 @@ export function validateConfig(config: Config): void {
     errors.push(`EVENTS_API_PORT must be between 1 and 65535 (received: ${config.eventsApiPort}).`);
   }
 
-  // Validate CORS configuration during startup (#689)
-  if (config.eventsApiCorsOrigin) {
+  // Validate CORS configuration during startup (#689, #1133)
+  if (!config.eventsApiCorsOrigin) {
+    if (isSensitiveEnvironment(process.env.NODE_ENV)) {
+      errors.push(
+        'EVENTS_API_CORS_ORIGIN must be explicitly configured in production/staging environments.',
+      );
+    }
+  } else {
     try {
       validateCorsOrigin({
         corsOrigin: config.eventsApiCorsOrigin,
@@ -852,7 +858,6 @@ export function validateConfig(config: Config): void {
     if (config.scheduler.concurrency < 1) {
       errors.push(
         `WORKER_CONCURRENCY must be >= 1 (received: ${config.scheduler.concurrency}). ` +
-          'Set the number of notifications processed concurrently per poll cycle.'
           'Set the number of notifications processed concurrently per poll cycle.',
       );
     }
@@ -921,7 +926,6 @@ export function validateConfig(config: Config): void {
       config.retryPolicy.maxAttempts !== undefined &&
       config.retryPolicy.maxAttempts < 1
     ) {
-    if (config.retryPolicy.maxAttempts !== undefined && config.retryPolicy.maxAttempts < 1) {
       errors.push(
         `RETRY_POLICY_MAX_ATTEMPTS must be >= 1 (received: ${config.retryPolicy.maxAttempts}). ` +
           'A value of 1 disables retries entirely.',
@@ -1007,9 +1011,6 @@ export function validateConfig(config: Config): void {
     }
   }
 
-  // ── Backfill ───────────────────────────────────────────────────────────────
-  if (config.backfill) {
-    if (config.backfill.maxLedgers < 0) {
   // ── Event queue ────────────────────────────────────────────────────────────
   if (config.eventQueue?.maxConcurrency !== undefined && config.eventQueue.maxConcurrency < 1) {
     errors.push(
@@ -1039,7 +1040,6 @@ export function validateConfig(config: Config): void {
       errors.push(
         `RPC_RATE_LIMIT_BURST_SIZE must be >= 1 ` +
           `(received: ${config.rpcRateLimit.burstSize}).`,
-        `RPC_RATE_LIMIT_BURST_SIZE must be >= 1 ` + `(received: ${config.rpcRateLimit.burstSize}).`,
       );
     }
     if (config.rpcRateLimit.throttleDelayMs < 0) {

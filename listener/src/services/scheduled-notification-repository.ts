@@ -400,21 +400,6 @@ export class ScheduledNotificationRepository {
   /**
    * Mark notification as completed
    */
-  async markAsCompleted(id: number, requestId?: string): Promise<void> {
-    assertScheduleTransition(NotificationStatus.PROCESSING, NotificationStatus.COMPLETED);
-    const sql = `
-      UPDATE scheduled_notifications
-      SET 
-        status = ?,
-        processing_completed_at = ?,
-        updated_at = ?,
-        processor_id = NULL,
-        lock_expires_at = NULL
-      WHERE id = ?
-    `;
-
-    const now = new Date().toISOString();
-    await this.db.run(sql, [NotificationStatus.COMPLETED, now, now, id]);
   async markAsCompleted(
     id: number,
     requestId?: string,
@@ -463,13 +448,17 @@ export class ScheduledNotificationRepository {
         if (update.changes === 0) return;
         transitioned = true;
       } else {
-        await this.db.run(
+        // Atomic, status-guarded claim (#1163): only a row still PROCESSING is
+        // completed, so a cancellation that already moved it to CANCELLED
+        // between pickup and completion is not silently overwritten.
+        const update = await this.db.run(
           `UPDATE scheduled_notifications
            SET status = ?, processing_completed_at = ?, updated_at = ?,
                processor_id = NULL, lock_expires_at = NULL
-           WHERE id = ?`,
-          [NotificationStatus.COMPLETED, now, now, id],
+           WHERE id = ? AND status = ?`,
+          [NotificationStatus.COMPLETED, now, now, id, NotificationStatus.PROCESSING],
         );
+        if (update.changes === 0) return;
         transitioned = true;
       }
     });
@@ -492,8 +481,6 @@ export class ScheduledNotificationRepository {
   }
 
   /** Mark a notification expired and release its processing lock. */
-  async markAsExpired(id: number): Promise<void> {
-    assertScheduleTransition(NotificationStatus.PROCESSING, NotificationStatus.EXPIRED);
   async markAsExpired(id: number, reason = 'Notification expired before delivery'): Promise<void> {
     const now = new Date().toISOString();
     const errorMessage = reason;
@@ -939,7 +926,7 @@ export class ScheduledNotificationRepository {
   /**
    * Update mutable fields on a PENDING scheduled notification.
    */
-  async updatePending(
+  async updatePendingFields(
     id: number,
     updates: { executeAt?: Date; priority?: number },
   ): Promise<boolean> {

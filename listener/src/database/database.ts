@@ -256,6 +256,21 @@ export class Database {
    * Apply migrations for databases created before schema.sql was updated in-place.
    */
 
+  /**
+   * Incremental, additive migrations applied to `scheduled_notifications` on
+   * every startup. Each has a stable id recorded in `schema_migrations`
+   * (#1167) so a repeated initialization neither re-runs nor re-attempts a
+   * migration that already applied, and the history can be inspected
+   * (`SELECT * FROM schema_migrations`). A migration is only recorded once
+   * its SQL has actually succeeded; an error other than the legacy
+   * "duplicate column name" case propagates without being marked applied.
+   */
+  private static readonly INCREMENTAL_MIGRATIONS: ReadonlyArray<{ id: string; sql: string }> = [
+    { id: '006-scheduled-notifications-next-retry-at', sql: 'ALTER TABLE scheduled_notifications ADD COLUMN next_retry_at DATETIME' },
+    { id: '006-scheduled-notifications-version', sql: 'ALTER TABLE scheduled_notifications ADD COLUMN version INTEGER NOT NULL DEFAULT 1 CHECK (version >= 1)' },
+    { id: '006-scheduled-notifications-recovery-state', sql: "ALTER TABLE scheduled_notifications ADD COLUMN recovery_state TEXT CHECK (recovery_state IS NULL OR recovery_state = 'AWAITING_INTERVENTION')" },
+  ];
+
   private async applyIncrementalMigrations(): Promise<void> {
     // Guard: skip migrations entirely if the scheduled_notifications table does
     // not exist yet (fresh or older schema where it hasn't been created).
@@ -266,20 +281,32 @@ export class Database {
       return;
     }
 
+    await this.run(`
+      CREATE TABLE IF NOT EXISTS schema_migrations (
+        id TEXT PRIMARY KEY,
+        applied_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
     // Each additive migration is independent so a pre-existing column does not
     // prevent newer columns from being applied to an existing database.
-    const migrations = [
-      'ALTER TABLE scheduled_notifications ADD COLUMN next_retry_at DATETIME',
-      'ALTER TABLE scheduled_notifications ADD COLUMN version INTEGER NOT NULL DEFAULT 1 CHECK (version >= 1)',
-      "ALTER TABLE scheduled_notifications ADD COLUMN recovery_state TEXT CHECK (recovery_state IS NULL OR recovery_state = 'AWAITING_INTERVENTION')",
-    ];
-    for (const sql of migrations) {
+    for (const migration of Database.INCREMENTAL_MIGRATIONS) {
+      const applied = await this.get<{ id: string }>(
+        'SELECT id FROM schema_migrations WHERE id = ?',
+        [migration.id],
+      );
+      if (applied) continue;
+
       try {
-        await this.run(sql);
+        await this.run(migration.sql);
       } catch (error: any) {
-        if (/duplicate column name/i.test(String(error?.message ?? error))) continue;
-        throw error;
+        // A database upgraded before this ledger existed may already have
+        // the column; treat that as already-applied rather than a failure.
+        if (!/duplicate column name/i.test(String(error?.message ?? error))) {
+          throw error;
+        }
       }
+      await this.run('INSERT INTO schema_migrations (id) VALUES (?)', [migration.id]);
     }
   }
 

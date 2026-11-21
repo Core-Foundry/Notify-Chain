@@ -273,7 +273,7 @@ export class NotificationAPI {
       }
     }
 
-    const ok = await this.repository.updatePending(id, updates);
+    const ok = await this.repository.updatePendingFields(id, updates);
     if (ok) {
       await this.scheduleAudit?.record({
         scheduledNotificationId: id,
