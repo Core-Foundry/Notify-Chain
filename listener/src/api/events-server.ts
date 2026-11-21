@@ -22,7 +22,12 @@ import { TemplateService } from '../services/template-service';
 import { handleTemplateRoutes } from './template-routes';
 import { sendOk, sendErr, sendJson, ErrorCode } from '../utils/response';
 import { normalizePaginationParams } from '../utils/pagination';
-import { handleApiError, ApiError } from './error-handler';
+import {
+  handleApiError,
+  handleOperationalError,
+  handleQueryTimeout,
+  ApiError,
+} from './error-handler';
 import { applyRequestIdMiddleware } from '../middleware/request-id';
 import { validateContentType, getMimeType } from '../middleware/content-type';
 import { NotificationHistoryService } from '../services/notification-history';
@@ -86,6 +91,7 @@ import { WebhookNotificationProvider } from '../services/providers/webhook-provi
 import { ProviderHealthResult } from '../types/provider-capabilities';
 import { EVENT_STREAM_PATH, handleEventStream } from './event-stream';
 import { resolveLocalDateTime } from '../services/local-schedule';
+import { handleCsrfProtection, validateCsrfSecret } from './csrf-protection';
 
 export interface EventsServerOptions {
   port: number;
@@ -131,6 +137,8 @@ export interface EventsServerOptions {
    * replay cache (default: 10000).
    */
   webhookReplayCacheMaxEntries?: number;
+  /** Shared HMAC secret for CSRF tokens in multi-instance deployments. */
+  csrfSecret?: string;
   /** Optional health monitor — exposes its last report at GET /api/notifications/health. */
   healthMonitor?: NotificationHealthMonitor | null;
   /** Receipt repository for the notification delivery status endpoint. */
@@ -469,6 +477,7 @@ function isRateLimitExempt(pathname: string): boolean {
 
 export function createEventsServer(options: EventsServerOptions): http.Server {
   const corsOrigin = options.corsOrigin ?? 'http://localhost:5173';
+  validateCsrfSecret(options.csrfSecret ?? process.env.CSRF_SECRET);
   const historyService = new NotificationHistoryService();
   const suggestionService = new SearchSuggestionService();
   const notificationSearchService = new NotificationSearchService();
@@ -526,11 +535,15 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
     }
 
     res.setHeader('Access-Control-Allow-Origin', corsOrigin);
+    res.setHeader('Vary', 'Origin');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
     res.setHeader(
       'Access-Control-Allow-Headers',
-      'Content-Type, X-API-Key, Authorization, X-Correlation-Id, X-Request-Id, Last-Event-ID',
+      'Content-Type, X-API-Key, X-CSRF-Token, Authorization, X-Correlation-Id, X-Request-Id, Last-Event-ID',
     );
+    if (corsOrigin !== '*') {
+      res.setHeader('Access-Control-Allow-Credentials', 'true');
+    }
     res.setHeader(
       'Access-Control-Expose-Headers',
       'X-Request-Id, X-Correlation-Id, X-Response-Time',
@@ -547,6 +560,16 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
     {
       const { normalisedPath } = normaliseApiPath(url.pathname);
       url.pathname = normalisedPath;
+    }
+    if (
+      handleCsrfProtection(req, res, {
+        pathname: url.pathname,
+        allowedOrigin: corsOrigin,
+        isProduction: options.isProduction ?? process.env.NODE_ENV === 'production',
+        secret: options.csrfSecret ?? process.env.CSRF_SECRET,
+      })
+    ) {
+      return;
     }
     applyVersionHeaders(req.method ?? 'GET', url.pathname, res);
 
@@ -641,7 +664,11 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
             requestId,
             correlationId,
           });
-          sendErr(res, 500, 'Internal health check failure', ErrorCode.INTERNAL_ERROR);
+          handleOperationalError(res, err, {
+            requestId,
+            correlationId,
+            fallbackMessage: 'Internal health check failure',
+          });
         });
       return;
     }
@@ -658,7 +685,11 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
             requestId,
             correlationId,
           });
-          sendErr(res, 500, 'Internal status check failure', ErrorCode.INTERNAL_ERROR);
+          handleOperationalError(res, err, {
+            requestId,
+            correlationId,
+            fallbackMessage: 'Internal status check failure',
+          });
         });
       return;
     }
@@ -825,7 +856,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
         })
         .catch((error) => {
           logger.error('Failed to fetch metrics history', { error, requestId, correlationId });
-          sendErr(res, 500, (error as Error).message, ErrorCode.INTERNAL_ERROR);
+          handleOperationalError(res, error, { requestId, correlationId });
         });
       return;
     }
@@ -973,7 +1004,11 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
               return;
             }
             logger.error('Failed to process webhook', { requestId, correlationId, error: err });
-            sendErr(res, 500, 'Internal server error', ErrorCode.INTERNAL_ERROR);
+            handleOperationalError(res, err, {
+              requestId,
+              correlationId,
+              fallbackMessage: 'Internal server error',
+            });
           }
         })
         .catch((err) => {
@@ -1409,6 +1444,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
             requestId,
             correlationId,
           });
+          if (handleQueryTimeout(res, error, requestId, correlationId)) return;
           res.writeHead(500, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ error: (error as Error).message, code: 'SCHEDULE_FAILED' }));
         }
@@ -1430,7 +1466,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
         })
         .catch((error) => {
           logger.error('Failed to get scheduler stats', { error, requestId, correlationId });
-          sendErr(res, 500, (error as Error).message, ErrorCode.INTERNAL_ERROR);
+          handleOperationalError(res, error, { requestId, correlationId });
         });
       return;
     }
@@ -1448,7 +1484,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
         })
         .catch((error: Error) => {
           logger.error('Failed to get execution metrics', { error, requestId, correlationId });
-          sendErr(res, 500, error.message, ErrorCode.INTERNAL_ERROR);
+          handleOperationalError(res, error, { requestId, correlationId });
         });
       return;
     }
@@ -1466,7 +1502,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
         })
         .catch((error: Error) => {
           logger.error('Failed to get retry distribution', { error, requestId, correlationId });
-          sendErr(res, 500, error.message, ErrorCode.INTERNAL_ERROR);
+          handleOperationalError(res, error, { requestId, correlationId });
         });
       return;
     }
@@ -1618,7 +1654,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
             correlationId,
             id,
           });
-          sendErr(res, 500, (error as Error).message, ErrorCode.INTERNAL_ERROR);
+          handleOperationalError(res, error, { requestId, correlationId });
         });
       return;
     }
@@ -1647,7 +1683,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
         })
         .catch((error) => {
           logger.error('Failed to get notification', { error, requestId, correlationId, id });
-          sendErr(res, 500, (error as Error).message, ErrorCode.INTERNAL_ERROR);
+          handleOperationalError(res, error, { requestId, correlationId });
         });
       return;
     }
@@ -1714,7 +1750,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
               return;
             }
             logger.error('Failed to cancel notification', { error, requestId, correlationId, id });
-            sendErr(res, 500, (error as Error).message, ErrorCode.INTERNAL_ERROR);
+            handleOperationalError(res, error, { requestId, correlationId });
           }
         })();
       });
@@ -1762,7 +1798,11 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
         .then((receipts) => sendOk(res, 200, { receipts }))
         .catch((error) => {
           logger.error('Failed to retrieve delivery receipts', { error, requestId, correlationId });
-          sendErr(res, 500, 'Failed to retrieve delivery receipts', ErrorCode.INTERNAL_ERROR);
+          handleOperationalError(res, error, {
+            requestId,
+            correlationId,
+            fallbackMessage: 'Failed to retrieve delivery receipts',
+          });
         });
       return;
     }
@@ -1829,7 +1869,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
             requestId,
             correlationId,
           });
-          sendErr(res, 500, (error as Error).message, ErrorCode.INTERNAL_ERROR);
+          handleOperationalError(res, error, { requestId, correlationId });
         });
       return;
     }
@@ -1893,7 +1933,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
         })
         .catch((error) => {
           logger.error('Failed to search notifications', { error, requestId, correlationId });
-          sendErr(res, 500, (error as Error).message, ErrorCode.INTERNAL_ERROR);
+          handleOperationalError(res, error, { requestId, correlationId });
         });
       return;
     }
@@ -1923,7 +1963,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
             requestId,
             correlationId,
           });
-          sendErr(res, 500, (error as Error).message, ErrorCode.INTERNAL_ERROR);
+          handleOperationalError(res, error, { requestId, correlationId });
         });
       return;
     }
@@ -1943,7 +1983,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
         })
         .catch((error: Error) => {
           logger.error('Failed to list templates', { error, requestId, correlationId });
-          sendErr(res, 500, error.message, ErrorCode.INTERNAL_ERROR);
+          handleOperationalError(res, error, { requestId, correlationId });
         });
       return;
     }
@@ -1980,7 +2020,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
             correlationId,
             templateId,
           });
-          sendErr(res, 500, error.message, ErrorCode.INTERNAL_ERROR);
+          handleOperationalError(res, error, { requestId, correlationId });
         });
       return;
     }
@@ -2007,7 +2047,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
         })
         .catch((error: Error) => {
           logger.error('Failed to load template', { error, requestId, correlationId, templateId });
-          sendErr(res, 500, error.message, ErrorCode.INTERNAL_ERROR);
+          handleOperationalError(res, error, { requestId, correlationId });
         });
       return;
     }
@@ -2073,7 +2113,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
               templateId,
               actor,
             });
-            sendErr(res, 500, (error as Error).message, ErrorCode.INTERNAL_ERROR);
+            handleOperationalError(res, error, { requestId, correlationId });
           }
         })();
       });
@@ -2107,7 +2147,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
             correlationId,
             templateId,
           });
-          sendErr(res, 500, (error as Error).message, ErrorCode.INTERNAL_ERROR);
+          handleOperationalError(res, error, { requestId, correlationId });
         });
       return;
     }
@@ -2154,7 +2194,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
               return;
             }
             logger.error('Failed to create template', { error, requestId, correlationId });
-            sendErr(res, 500, (error as Error).message, ErrorCode.INTERNAL_ERROR);
+            handleOperationalError(res, error, { requestId, correlationId });
           }
         })();
       });
@@ -2210,7 +2250,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
               correlationId,
               templateId,
             });
-            sendErr(res, 500, (error as Error).message, ErrorCode.INTERNAL_ERROR);
+            handleOperationalError(res, error, { requestId, correlationId });
           }
         })();
       });

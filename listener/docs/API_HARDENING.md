@@ -4,6 +4,33 @@ Covers issues #985 (ETags), #986 (correlation IDs), #987 (error codes) and
 #988 (scoped credentials). Error codes are documented in
 [`API_ERROR_REFERENCE.md`](../API_ERROR_REFERENCE.md).
 
+## Browser CSRF protection
+
+The dashboard currently uses a client-side Stellar wallet and API-key headers;
+it does not authenticate with a server-side session cookie. Browser-origin
+state-changing API requests are nevertheless protected to prevent future
+cookie-backed integrations from becoming a CSRF path:
+
+- The configured `corsOrigin` is the only allowed browser Origin for mutations.
+  Requests with an untrusted Origin fail with `403 FORBIDDEN`; requests from
+  non-browser API clients that omit Origin and cookies remain compatible.
+- The dashboard first requests `GET /api/csrf-token`. The listener issues an
+  origin-bound, one-hour token in both the response and a `csrf_token` cookie.
+  Mutations must send that token in `X-CSRF-Token`, matching the cookie.
+- The token is HMAC-bound to the configured dashboard Origin and expiry, so
+  copying it to another Origin or using it after expiry fails validation.
+- The cookie is `HttpOnly`, `Path=/`, and expires after one hour. It is
+  `SameSite=None; Secure` in production so a separately hosted dashboard can
+  make credentialed API calls; local HTTP development uses `SameSite=Strict`
+  without `Secure`. It is a CSRF token cookie, not an authentication/session
+  cookie.
+- Set `CSRF_SECRET` to a random secret of at least 32 bytes and share it across
+  listener replicas. If unset, a per-process random key is used; tokens are
+  invalidated when that process restarts.
+- Credentialed cross-origin requests are permitted only for the configured
+  Origin. Production uses `SameSite=None` because the dashboard and API may be
+  on different sites; Origin binding and token validation remain mandatory.
+
 ## Conditional GET with ETags (#985)
 
 These endpoints return a strong `ETag` (SHA-256 of the response body) and

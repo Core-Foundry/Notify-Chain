@@ -2,10 +2,11 @@ import http from 'http';
 import type { AddressInfo } from 'net';
 import { ERROR_CODE_CATALOG, ErrorCode, isKnownErrorCode } from './api-error-codes';
 import { err, sendErr } from '../utils/response';
-import { ApiError, handleApiError } from '../api/error-handler';
+import { ApiError, handleApiError, handleOperationalError } from '../api/error-handler';
 import { ValidationError } from '../utils/validation';
 import { runWithRequestCorrelation } from '../middleware/correlation';
 import { runWithCorrelationContext } from '../utils/correlation-context';
+import { DatabaseQueryTimeoutError } from '../database/database';
 
 jest.mock('../utils/logger', () => {
   const actual = jest.requireActual('../utils/logger');
@@ -42,6 +43,7 @@ describe('error code catalog', () => {
       'INVALID_PERMISSIONS',
       'NOT_FOUND',
       'RATE_LIMITED',
+      'QUERY_TIMEOUT',
       'VALIDATION_ERROR',
       'INTERNAL_ERROR',
     ]) {
@@ -118,6 +120,12 @@ describe('error paths over HTTP', () => {
     '/api-error/rate-limited': (res) => handleApiError(res, ApiError.rateLimited('Slow down')),
     '/api-error/bad-request': (res) => handleApiError(res, ApiError.badRequest('Bad input')),
     '/api-error/unavailable': (res) => handleApiError(res, ApiError.serviceUnavailable('Off')),
+    '/api-error/query-timeout': (res) =>
+      handleApiError(res, new DatabaseQueryTimeoutError(100)),
+    '/api-error/operational-query-timeout': (res) =>
+      handleOperationalError(res, new DatabaseQueryTimeoutError(100), {
+        requestId: 'req-timeout',
+      }),
     '/validation': (res) =>
       handleApiError(res, new ValidationError([{ field: 'name', message: 'name is required' }])),
     '/unknown-throw': (res) => handleApiError(res, new Error('boom')),
@@ -166,6 +174,8 @@ describe('error paths over HTTP', () => {
     ['/api-error/rate-limited', 429, 'RATE_LIMITED'],
     ['/api-error/bad-request', 400, 'BAD_REQUEST'],
     ['/api-error/unavailable', 503, 'SERVICE_UNAVAILABLE'],
+    ['/api-error/query-timeout', 504, 'QUERY_TIMEOUT'],
+    ['/api-error/operational-query-timeout', 504, 'QUERY_TIMEOUT'],
     ['/validation', 400, 'BAD_REQUEST'],
     ['/unknown-throw', 500, 'INTERNAL_ERROR'],
     ['/send-err', 404, 'NOT_FOUND'],
