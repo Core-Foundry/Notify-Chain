@@ -8,7 +8,7 @@ import { PreferencesUpdateInput } from '../types/preferences';
 import { NotificationAPI } from '../services/notification-api';
 import { ApiCredentialService } from '../services/api-credential-service';
 import { handleCredentialRoutes } from './credentials-api';
-import { authorizeRequest, type AuthPrincipal } from './api-key-auth';
+import { authorizeRequest, principalClientId, type AuthPrincipal } from './api-key-auth';
 import { NotificationType } from '../types/scheduled-notification';
 import { ScheduleValidationError, toScheduleValidationResponse } from '../services/schedule-validator';
 import {
@@ -880,29 +880,8 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
 
           const secrets = options.webhookSecrets ?? [];
           const maxAgeSeconds = options.signatureExpirationSeconds ?? 300;
-        const secrets = options.webhookSecrets ?? [];
-        const maxAgeSeconds = options.signatureExpirationSeconds ?? 300;
-        
-        // Use default database for audit log or mock one if not available.
-        // Actually since SecurityAuditService requires Database, let's pass a real one.
-        const db = getDatabase();
-        const { SecurityAuditService } = require('../services/security-audit');
-        const auditService = new SecurityAuditService(db);
 
-        const auth = await verifyWebhookRequest({
-          headers: req.headers as Record<string, string | string[] | undefined>,
-          rawBody,
-          secrets,
-          sourceIp,
-          requestId,
-          correlationId,
-          maxAgeSeconds,
-          requireTimestamp: options.requireWebhookTimestamp !== false,
-          replayCache: webhookReplayCache,
-          auditService,
-        });
-
-          const auth = verifyWebhookRequest({
+          const auth = await verifyWebhookRequest({
             headers: req.headers as Record<string, string | string[] | undefined>,
             rawBody,
             secrets,
@@ -911,7 +890,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
             correlationId,
             maxAgeSeconds,
             requireTimestamp: options.requireWebhookTimestamp !== false,
-            replayCache: idempotencyKey ? undefined : webhookReplayCache,
+            replayCache: webhookReplayCache,
             auditService: webhookAuditService,
           });
 
@@ -1094,14 +1073,38 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
       (req.method === 'GET' || req.method === 'POST') &&
       (url.pathname === '/api/admin/export' || url.pathname === '/api/export')
     ) {
-      const apiKeyHeader = req.headers['x-api-key'];
-      if (options.apiKeys && options.apiKeys.length > 0) {
-        const provided = Array.isArray(apiKeyHeader) ? apiKeyHeader[0] : apiKeyHeader;
-        const allowed = options.apiKeys.some((k) => k.key === provided);
-        if (!allowed) {
-          sendErr(res, 401, 'Unauthorized', ErrorCode.UNAUTHORIZED);
-          return;
-        }
+      // Administrative endpoint: authorization is enforced server-side via the
+      // shared auth module regardless of frontend restrictions, and is never
+      // left open when no API keys/credentials happen to be configured —
+      // this route can return sensitive data (`includeSensitive`), so it must
+      // fail closed (#1135).
+      const exportSourceIp =
+        (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ||
+        (req.socket?.remoteAddress as string | undefined);
+      const exportAuth = await authorizeRequest(req, {
+        apiKeys: options.apiKeys,
+        credentialService: options.credentialService,
+        requireAuthentication: true,
+      });
+      await webhookAuditService
+        .record({
+          action: 'admin_action',
+          actor: exportAuth.allowed
+            ? (principalClientId(exportAuth.principal) ?? 'anonymous')
+            : 'anonymous',
+          sourceIp: exportSourceIp,
+          requestId,
+          correlationId,
+          outcome: exportAuth.allowed ? 'http_200' : `http_${exportAuth.status}`,
+          details: { route: url.pathname, method: req.method },
+        })
+        .catch((err) => {
+          logger.error('Failed to write security audit record', { err, requestId, correlationId });
+        });
+      if (!exportAuth.allowed) {
+        if (exportAuth.status === 401) res.setHeader('WWW-Authenticate', 'ApiKey header="X-API-Key"');
+        sendErr(res, exportAuth.status, exportAuth.message, exportAuth.code, exportAuth.details);
+        return;
       }
 
       const processExport = async (rawFilters: Record<string, unknown>) => {
@@ -1585,10 +1588,165 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
     const patchScheduleMatch = url.pathname.match(/^\/api\/schedule\/(\d+)$/);
     if (req.method === 'PATCH' && patchScheduleMatch) {
       if (!requireApiKey()) return;
+      if (!options.notificationAPI) {
+        sendErr(res, 503, 'Scheduler not enabled', ErrorCode.SERVICE_UNAVAILABLE);
+        return;
+      }
+      const id = Number(patchScheduleMatch[1]);
+      const versionHeader = req.headers['if-match'] ?? req.headers['x-schedule-version'];
+      const rawVersion = Array.isArray(versionHeader) ? versionHeader[0] : versionHeader;
+      const expectedVersion = Number(
+        String(rawVersion ?? '').replace(/^W\//, '').replace(/^"/, '').replace(/"$/, ''),
+      );
+      if (!Number.isSafeInteger(expectedVersion) || expectedVersion < 1) {
+        sendErr(
+          res,
+          428,
+          'Provide the current schedule version in If-Match or X-Schedule-Version.',
+          ErrorCode.BAD_REQUEST,
+        );
+        return;
+      }
+      if (!validateContentType(req, res, ['application/json'])) return;
+      let body = '';
+      req.on('data', (chunk) => {
+        body += chunk.toString();
+      });
+      req.on('end', () => {
+        void (async () => {
+          try {
+            const patch = JSON.parse(body || '{}');
+            const allowed = new Set([
+              'payload', 'notificationType', 'targetRecipient', 'executeAt', 'expiresAt',
+              'maxRetries', 'priority', 'eventId', 'contractAddress', 'metadata',
+            ]);
+            if (
+              !patch ||
+              typeof patch !== 'object' ||
+              Array.isArray(patch) ||
+              Object.keys(patch).some((key) => !allowed.has(key)) ||
+              Object.keys(patch).length === 0
+            ) {
+              sendErr(
+                res,
+                400,
+                'Provide a non-empty JSON object containing only modifiable schedule fields.',
+                ErrorCode.BAD_REQUEST,
+              );
+              return;
+            }
+            if (patch.executeAt !== undefined) patch.executeAt = new Date(patch.executeAt);
+            const updated = await options.notificationAPI!.modifyNotification(
+              id,
+              expectedVersion,
+              patch,
+              requestId,
+            );
+            if (!updated) {
+              sendErr(res, 404, 'Notification not found', ErrorCode.NOT_FOUND);
+              return;
+            }
+            res.setHeader('ETag', `"${updated.version ?? expectedVersion + 1}"`);
+            sendOk(res, 200, updated);
+          } catch (error) {
+            const statusCode = Number((error as any)?.statusCode);
+            if (error instanceof SyntaxError) {
+              sendErr(res, 400, 'Invalid JSON', ErrorCode.PARSE_ERROR);
+              return;
+            }
+            if (Number.isInteger(statusCode) && statusCode >= 400 && statusCode < 500) {
+              const errorCode = statusCode === 409 ? ErrorCode.CONFLICT : ErrorCode.BAD_REQUEST;
+              sendErr(res, statusCode, (error as Error).message, errorCode);
+              return;
+            }
+            if (error instanceof Error && !/SQLITE_|database|constraint/i.test(error.message)) {
+              sendErr(res, 422, error.message, ErrorCode.BAD_REQUEST);
+              return;
+            }
+            logger.error('Failed to modify scheduled notification', { id, error, requestId, correlationId });
+            handleApiError(res, error, requestId, correlationId);
+          }
+        })();
+      });
+      return;
+    }
+
+    // POST /api/schedule/:id/recovery — resolve an operator intervention hold.
+    const recoveryMatch = url.pathname.match(/^\/api\/schedule\/(\d+)\/recovery$/);
+    if (req.method === 'POST' && recoveryMatch) {
+      if (!requireApiKey()) return;
+      if (!options.notificationAPI) {
+        sendErr(res, 503, 'Scheduler not enabled', ErrorCode.SERVICE_UNAVAILABLE);
+        return;
+      }
+      let body = '';
+      req.on('data', (chunk) => {
+        body += chunk.toString();
+      });
+      req.on('end', () => {
+        void (async () => {
+          try {
+            const data = JSON.parse(body || '{}');
+            if (data.action !== 'EXECUTE' && data.action !== 'EXPIRE') {
+              sendErr(res, 400, 'action must be EXECUTE or EXPIRE', ErrorCode.BAD_REQUEST);
+              return;
+            }
+            const result = await options.notificationAPI!.resolveRecovery(
+              Number(recoveryMatch[1]),
+              data.action,
+            );
+            if (!result) {
+              sendErr(res, 409, 'Schedule is not awaiting intervention or does not exist', ErrorCode.CONFLICT);
+              return;
+            }
+            sendOk(res, 200, result);
+          } catch (error) {
+            if (error instanceof SyntaxError) {
+              sendErr(res, 400, 'Invalid JSON', ErrorCode.PARSE_ERROR);
+              return;
+            }
+            handleApiError(res, error, requestId, correlationId);
+          }
+        })();
+      });
+      return;
+    }
+
     // POST /api/schedule/:id/resume — release a notification held by the
     // intervene missed-schedule policy so the next poll delivers it.
     const resumeMatch = url.pathname.match(/^\/api\/schedule\/(\d+)\/resume$/);
     if (req.method === 'POST' && resumeMatch) {
+      if (!requireApiKey()) return;
+      if (!options.notificationAPI) {
+        sendErr(res, 503, 'Scheduler not enabled', ErrorCode.SERVICE_UNAVAILABLE);
+        return;
+      }
+
+      const id = parseInt(resumeMatch[1], 10);
+      options.notificationAPI
+        .releaseMissedSchedule(id)
+        .then((released) => {
+          if (!released) {
+            sendErr(
+              res,
+              404,
+              'Notification not found or not awaiting intervention',
+              ErrorCode.NOT_FOUND,
+            );
+            return;
+          }
+          sendOk(res, 200, { id, released: true });
+        })
+        .catch((error) => {
+          logger.error('Failed to release missed schedule', { error, requestId, correlationId, id });
+          sendErr(res, 500, (error as Error).message, ErrorCode.INTERNAL_ERROR);
+        });
+      return;
+    }
+
+    // GET /api/schedule/:id/audit — audit trail for a scheduled notification.
+    const scheduleAuditMatch = url.pathname.match(/^\/api\/schedule\/(\d+)\/audit$/);
+    if (req.method === 'GET' && scheduleAuditMatch) {
       if (!options.notificationAPI) {
         sendErr(res, 503, 'Scheduler not enabled', ErrorCode.SERVICE_UNAVAILABLE);
         return;
@@ -1721,7 +1879,6 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
       return;
     }
 
-    function isValidApiKey(apiKey: string | undefined, allowedKeys: Array<{ key: string; name?: string }> | undefined): boolean {
     function isValidApiKey(
       apiKey: string | undefined,
       allowedKeys: Array<{ key: string; name?: string }> | undefined,
@@ -1767,21 +1924,6 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
       return;
     }
 
-    // Get notification delivery history endpoint
-    if (req.method === 'GET' && req.url?.startsWith('/api/notifications/history')) {
-      const apiKey = req.headers['x-api-key'] as string | undefined;
-      if (!isValidApiKey(apiKey, options.apiKeys)) {
-        sendErr(res, 401, 'Unauthorized: Invalid or missing API key', ErrorCode.UNAUTHORIZED);
-        return;
-      }
-
-      const url = new URL(req.url, 'http://localhost');
-      const limit = url.searchParams.get('limit')
-        ? parseInt(url.searchParams.get('limit')!, 10)
-        : undefined;
-      const offset = url.searchParams.get('offset')
-        ? parseInt(url.searchParams.get('offset')!, 10)
-        : undefined;
     // Get notification delivery history endpoint.
     // Matched on the rewritten pathname so /api/v1/notifications/history is
     // routed (and authenticated) the same as the unversioned path.
@@ -2282,6 +2424,40 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
       options.archiveStore &&
       (url.pathname === '/api/archive' || url.pathname.startsWith('/api/archive/'))
     ) {
+      // POST /api/archive/run is an administrative action (triggers an
+      // on-demand archive cycle) and must enforce authorization server-side,
+      // independently of frontend restrictions and even when no API
+      // keys/credentials happen to be configured (#1135).
+      if (req.method === 'POST' && url.pathname === '/api/archive/run') {
+        const archiveSourceIp =
+          (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ||
+          (req.socket?.remoteAddress as string | undefined);
+        const archiveAuth = await authorizeRequest(req, {
+          apiKeys: options.apiKeys,
+          credentialService: options.credentialService,
+          requireAuthentication: true,
+        });
+        await webhookAuditService
+          .record({
+            action: 'admin_action',
+            actor: archiveAuth.allowed
+              ? (principalClientId(archiveAuth.principal) ?? 'anonymous')
+              : 'anonymous',
+            sourceIp: archiveSourceIp,
+            requestId,
+            correlationId,
+            outcome: archiveAuth.allowed ? 'http_200' : `http_${archiveAuth.status}`,
+            details: { route: url.pathname, method: req.method },
+          })
+          .catch((err) => {
+            logger.error('Failed to write security audit record', { err, requestId, correlationId });
+          });
+        if (!archiveAuth.allowed) {
+          if (archiveAuth.status === 401) res.setHeader('WWW-Authenticate', 'ApiKey header="X-API-Key"');
+          sendErr(res, archiveAuth.status, archiveAuth.message, archiveAuth.code, archiveAuth.details);
+          return;
+        }
+      }
       const handled = await handleArchiveRequest(
         req,
         res,
