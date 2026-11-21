@@ -2,6 +2,7 @@ import { memo } from 'react';
 import type { BlockchainEvent } from '../types/event';
 import { formatRelativeTimestamp, formatTimestamp, parseToDate } from '../utils/formatTime';
 import { CopyButton } from './CopyButton';
+import { useEventSelection } from '../hooks/useEventSelectors';
 
 interface EventRowProps {
   event: BlockchainEvent;
@@ -17,6 +18,8 @@ function shortenAddress(address: string): string {
 export const EventRow = memo(function EventRow({ event }: EventRowProps) {
   const label = event.eventName ?? event.type;
   const receivedAt = parseToDate(event.receivedAt);
+  const { selectedEventIds, toggleEventSelection } = useEventSelection();
+  const isSelected = selectedEventIds.includes(event.eventId);
 
   return (
     <article
@@ -25,6 +28,14 @@ export const EventRow = memo(function EventRow({ event }: EventRowProps) {
       aria-label={`${label}, ledger ${event.ledger}`}
     >
       <div className="event-row__primary">
+        <label className="event-row__compare-toggle">
+          <input
+            type="checkbox"
+            checked={isSelected}
+            onChange={() => toggleEventSelection(event.eventId)}
+            aria-label={`Select ${label} for comparison`}
+          />
+        </label>
         <span className="event-row__name">{label}</span>
         <span className="event-row__ledger">Ledger {event.ledger}</span>
       </div>

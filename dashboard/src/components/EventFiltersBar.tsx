@@ -2,6 +2,7 @@ import { memo } from 'react';
 import { useEventStore } from '../store/eventStore';
 import { useEventCount, useEventFilters, useFilterOptions } from '../hooks/useEventSelectors';
 import { SearchAutocomplete } from './SearchAutocomplete';
+import { TopicFilterBuilder } from './TopicFilterBuilder';
 import type { NotificationSortOption } from '../types/event';
 
 const SORT_OPTIONS: { value: NotificationSortOption; label: string }[] = [
@@ -55,6 +56,9 @@ export const EventFiltersBar = memo(function EventFiltersBar() {
             </option>
           ))}
         </select>
+      </div>
+      <div className="event-filters__group">
+        <TopicFilterBuilder />
       </div>
       {/* Sort control (#495) */}
       <div className="event-filters__group">
