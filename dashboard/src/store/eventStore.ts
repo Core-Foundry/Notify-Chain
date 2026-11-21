@@ -10,6 +10,8 @@ import { filterEvents } from '../utils/eventData';
 interface EventStoreState {
   events: BlockchainEvent[];
   filters: EventFilters;
+  /** Event ids selected for side-by-side comparison (#1156). */
+  selectedEventIds: string[];
   isLoading: boolean;
   error: string | null;
   lastFetchedAt: number;
@@ -27,6 +29,9 @@ interface EventStoreState {
   setDateTo: (dateTo: string) => void;
   setTxHashFilter: (txHash: string) => void;
   setSortBy: (sortBy: NotificationSortOption) => void;
+  addTopicFilter: (topic: string) => void;
+  removeTopicFilter: (topic: string) => void;
+  clearTopicFilters: () => void;
   setLoading: (isLoading: boolean) => void;
   setError: (error: string | null) => void;
   markSyncSuccess: () => void;
@@ -36,6 +41,8 @@ interface EventStoreState {
     status: NotificationLifecycleStatus,
   ) => void;
   invalidateEvents: () => void;
+  toggleEventSelection: (eventId: string) => void;
+  clearEventSelection: () => void;
 }
 
 function dedupeEventsById(
@@ -89,7 +96,10 @@ export const useEventStore = create<EventStoreState>(
       dateTo: '',
       txHash: '',
       sortBy: loadPersistedSort(),
+      topics: [],
     },
+
+    selectedEventIds: [],
 
     isLoading: false,
     error: null,
@@ -186,6 +196,32 @@ export const useEventStore = create<EventStoreState>(
       }));
     },
 
+    addTopicFilter: (topic) =>
+      set((state) => ({
+        filters: {
+          ...state.filters,
+          topics: state.filters.topics?.includes(topic)
+            ? state.filters.topics
+            : [...(state.filters.topics ?? []), topic],
+        },
+      })),
+
+    removeTopicFilter: (topic) =>
+      set((state) => ({
+        filters: {
+          ...state.filters,
+          topics: (state.filters.topics ?? []).filter((t) => t !== topic),
+        },
+      })),
+
+    clearTopicFilters: () =>
+      set((state) => ({
+        filters: {
+          ...state.filters,
+          topics: [],
+        },
+      })),
+
     setLoading: (isLoading) =>
       set({ isLoading }),
 
@@ -222,6 +258,15 @@ export const useEventStore = create<EventStoreState>(
       set({
         lastFetchedAt: 0,
       }),
+
+    toggleEventSelection: (eventId) =>
+      set((state) => ({
+        selectedEventIds: state.selectedEventIds.includes(eventId)
+          ? state.selectedEventIds.filter((id) => id !== eventId)
+          : [...state.selectedEventIds, eventId],
+      })),
+
+    clearEventSelection: () => set({ selectedEventIds: [] }),
   }),
 );
 
@@ -240,6 +285,7 @@ export function selectFilteredEvents(
     filters.dateTo,
     filters.txHash,
     filters.sortBy ?? 'newest',
+    filters.topics ?? [],
   );
 }
 
@@ -265,6 +311,18 @@ export function selectContractOptions(
       ),
     ),
   );
+}
+
+export function selectSelectedEvents(state: EventStoreState): BlockchainEvent[] {
+  if (state.selectedEventIds.length === 0) return [];
+  const byId = new Map(state.events.map((event) => [event.eventId, event]));
+  return state.selectedEventIds
+    .map((id) => byId.get(id))
+    .filter((event): event is BlockchainEvent => Boolean(event));
+}
+
+export function selectTopicOptions(state: EventStoreState): string[] {
+  return Array.from(new Set(state.events.flatMap((event) => event.topic ?? [])));
 }
 
 export function selectEventTypeOptions(

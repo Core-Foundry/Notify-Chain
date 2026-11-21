@@ -880,29 +880,8 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
 
           const secrets = options.webhookSecrets ?? [];
           const maxAgeSeconds = options.signatureExpirationSeconds ?? 300;
-        const secrets = options.webhookSecrets ?? [];
-        const maxAgeSeconds = options.signatureExpirationSeconds ?? 300;
-        
-        // Use default database for audit log or mock one if not available.
-        // Actually since SecurityAuditService requires Database, let's pass a real one.
-        const db = getDatabase();
-        const { SecurityAuditService } = require('../services/security-audit');
-        const auditService = new SecurityAuditService(db);
 
-        const auth = await verifyWebhookRequest({
-          headers: req.headers as Record<string, string | string[] | undefined>,
-          rawBody,
-          secrets,
-          sourceIp,
-          requestId,
-          correlationId,
-          maxAgeSeconds,
-          requireTimestamp: options.requireWebhookTimestamp !== false,
-          replayCache: webhookReplayCache,
-          auditService,
-        });
-
-          const auth = verifyWebhookRequest({
+          const auth = await verifyWebhookRequest({
             headers: req.headers as Record<string, string | string[] | undefined>,
             rawBody,
             secrets,
@@ -911,7 +890,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
             correlationId,
             maxAgeSeconds,
             requireTimestamp: options.requireWebhookTimestamp !== false,
-            replayCache: idempotencyKey ? undefined : webhookReplayCache,
+            replayCache: webhookReplayCache,
             auditService: webhookAuditService,
           });
 
@@ -1238,6 +1217,11 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
 
           let executeAt: Date;
           let metadata = data.metadata;
+          // Normalized timezone reported back in the response (#1162). Local
+          // schedules echo the IANA zone the client supplied; a plain
+          // `executeAt` is already an absolute instant, stored and reported
+          // in UTC.
+          let timezone = 'UTC';
           if (data.timeZone != null || data.localDateTime != null) {
             if (typeof data.timeZone !== 'string' || typeof data.localDateTime !== 'string') {
               res.writeHead(400, { 'Content-Type': 'application/json' });
@@ -1266,6 +1250,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
             try {
               const resolved = resolveLocalDateTime(data.localDateTime, data.timeZone);
               executeAt = resolved.executeAt;
+              timezone = resolved.timeZone;
               const base =
                 metadata && typeof metadata === 'object' && !Array.isArray(metadata) ? metadata : {};
               metadata = {
@@ -1289,8 +1274,15 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
               return;
             }
           } else {
-            executeAt = new Date(data.executeAt);
-            if (isNaN(executeAt.getTime())) {
+            // #1162: executeAt may be an absolute (Z/offset) instant or a
+            // naive local time paired with an optional `timezone` field;
+            // either way the resolved instant is stored and reported in UTC.
+            try {
+              const resolved = parseExecuteAtWithTimezone(data.executeAt, data.timezone);
+              executeAt = resolved.utcDate;
+              timezone = resolved.timezone;
+            } catch (error) {
+              if (error instanceof InvalidTimezoneError) throw error;
               res.writeHead(400, { 'Content-Type': 'application/json' });
               res.end(
                 JSON.stringify({ error: 'executeAt is not a valid date', code: 'INVALID_DATE' }),
@@ -1585,10 +1577,165 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
     const patchScheduleMatch = url.pathname.match(/^\/api\/schedule\/(\d+)$/);
     if (req.method === 'PATCH' && patchScheduleMatch) {
       if (!requireApiKey()) return;
+      if (!options.notificationAPI) {
+        sendErr(res, 503, 'Scheduler not enabled', ErrorCode.SERVICE_UNAVAILABLE);
+        return;
+      }
+      const id = Number(patchScheduleMatch[1]);
+      const versionHeader = req.headers['if-match'] ?? req.headers['x-schedule-version'];
+      const rawVersion = Array.isArray(versionHeader) ? versionHeader[0] : versionHeader;
+      const expectedVersion = Number(
+        String(rawVersion ?? '').replace(/^W\//, '').replace(/^"/, '').replace(/"$/, ''),
+      );
+      if (!Number.isSafeInteger(expectedVersion) || expectedVersion < 1) {
+        sendErr(
+          res,
+          428,
+          'Provide the current schedule version in If-Match or X-Schedule-Version.',
+          ErrorCode.BAD_REQUEST,
+        );
+        return;
+      }
+      if (!validateContentType(req, res, ['application/json'])) return;
+      let body = '';
+      req.on('data', (chunk) => {
+        body += chunk.toString();
+      });
+      req.on('end', () => {
+        void (async () => {
+          try {
+            const patch = JSON.parse(body || '{}');
+            const allowed = new Set([
+              'payload', 'notificationType', 'targetRecipient', 'executeAt', 'expiresAt',
+              'maxRetries', 'priority', 'eventId', 'contractAddress', 'metadata',
+            ]);
+            if (
+              !patch ||
+              typeof patch !== 'object' ||
+              Array.isArray(patch) ||
+              Object.keys(patch).some((key) => !allowed.has(key)) ||
+              Object.keys(patch).length === 0
+            ) {
+              sendErr(
+                res,
+                400,
+                'Provide a non-empty JSON object containing only modifiable schedule fields.',
+                ErrorCode.BAD_REQUEST,
+              );
+              return;
+            }
+            if (patch.executeAt !== undefined) patch.executeAt = new Date(patch.executeAt);
+            const updated = await options.notificationAPI!.modifyNotification(
+              id,
+              expectedVersion,
+              patch,
+              requestId,
+            );
+            if (!updated) {
+              sendErr(res, 404, 'Notification not found', ErrorCode.NOT_FOUND);
+              return;
+            }
+            res.setHeader('ETag', `"${updated.version ?? expectedVersion + 1}"`);
+            sendOk(res, 200, updated);
+          } catch (error) {
+            const statusCode = Number((error as any)?.statusCode);
+            if (error instanceof SyntaxError) {
+              sendErr(res, 400, 'Invalid JSON', ErrorCode.PARSE_ERROR);
+              return;
+            }
+            if (Number.isInteger(statusCode) && statusCode >= 400 && statusCode < 500) {
+              const errorCode = statusCode === 409 ? ErrorCode.CONFLICT : ErrorCode.BAD_REQUEST;
+              sendErr(res, statusCode, (error as Error).message, errorCode);
+              return;
+            }
+            if (error instanceof Error && !/SQLITE_|database|constraint/i.test(error.message)) {
+              sendErr(res, 422, error.message, ErrorCode.BAD_REQUEST);
+              return;
+            }
+            logger.error('Failed to modify scheduled notification', { id, error, requestId, correlationId });
+            handleApiError(res, error, requestId, correlationId);
+          }
+        })();
+      });
+      return;
+    }
+
+    // POST /api/schedule/:id/recovery — resolve an operator intervention hold.
+    const recoveryMatch = url.pathname.match(/^\/api\/schedule\/(\d+)\/recovery$/);
+    if (req.method === 'POST' && recoveryMatch) {
+      if (!requireApiKey()) return;
+      if (!options.notificationAPI) {
+        sendErr(res, 503, 'Scheduler not enabled', ErrorCode.SERVICE_UNAVAILABLE);
+        return;
+      }
+      let body = '';
+      req.on('data', (chunk) => {
+        body += chunk.toString();
+      });
+      req.on('end', () => {
+        void (async () => {
+          try {
+            const data = JSON.parse(body || '{}');
+            if (data.action !== 'EXECUTE' && data.action !== 'EXPIRE') {
+              sendErr(res, 400, 'action must be EXECUTE or EXPIRE', ErrorCode.BAD_REQUEST);
+              return;
+            }
+            const result = await options.notificationAPI!.resolveRecovery(
+              Number(recoveryMatch[1]),
+              data.action,
+            );
+            if (!result) {
+              sendErr(res, 409, 'Schedule is not awaiting intervention or does not exist', ErrorCode.CONFLICT);
+              return;
+            }
+            sendOk(res, 200, result);
+          } catch (error) {
+            if (error instanceof SyntaxError) {
+              sendErr(res, 400, 'Invalid JSON', ErrorCode.PARSE_ERROR);
+              return;
+            }
+            handleApiError(res, error, requestId, correlationId);
+          }
+        })();
+      });
+      return;
+    }
+
     // POST /api/schedule/:id/resume — release a notification held by the
     // intervene missed-schedule policy so the next poll delivers it.
     const resumeMatch = url.pathname.match(/^\/api\/schedule\/(\d+)\/resume$/);
     if (req.method === 'POST' && resumeMatch) {
+      if (!requireApiKey()) return;
+      if (!options.notificationAPI) {
+        sendErr(res, 503, 'Scheduler not enabled', ErrorCode.SERVICE_UNAVAILABLE);
+        return;
+      }
+
+      const id = parseInt(resumeMatch[1], 10);
+      options.notificationAPI
+        .releaseMissedSchedule(id)
+        .then((released) => {
+          if (!released) {
+            sendErr(
+              res,
+              404,
+              'Notification not found or not awaiting intervention',
+              ErrorCode.NOT_FOUND,
+            );
+            return;
+          }
+          sendOk(res, 200, { id, released: true });
+        })
+        .catch((error) => {
+          logger.error('Failed to release missed schedule', { error, requestId, correlationId, id });
+          sendErr(res, 500, (error as Error).message, ErrorCode.INTERNAL_ERROR);
+        });
+      return;
+    }
+
+    // GET /api/schedule/:id/audit — audit trail for a scheduled notification.
+    const scheduleAuditMatch = url.pathname.match(/^\/api\/schedule\/(\d+)\/audit$/);
+    if (req.method === 'GET' && scheduleAuditMatch) {
       if (!options.notificationAPI) {
         sendErr(res, 503, 'Scheduler not enabled', ErrorCode.SERVICE_UNAVAILABLE);
         return;
@@ -1721,7 +1868,6 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
       return;
     }
 
-    function isValidApiKey(apiKey: string | undefined, allowedKeys: Array<{ key: string; name?: string }> | undefined): boolean {
     function isValidApiKey(
       apiKey: string | undefined,
       allowedKeys: Array<{ key: string; name?: string }> | undefined,
@@ -1767,21 +1913,6 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
       return;
     }
 
-    // Get notification delivery history endpoint
-    if (req.method === 'GET' && req.url?.startsWith('/api/notifications/history')) {
-      const apiKey = req.headers['x-api-key'] as string | undefined;
-      if (!isValidApiKey(apiKey, options.apiKeys)) {
-        sendErr(res, 401, 'Unauthorized: Invalid or missing API key', ErrorCode.UNAUTHORIZED);
-        return;
-      }
-
-      const url = new URL(req.url, 'http://localhost');
-      const limit = url.searchParams.get('limit')
-        ? parseInt(url.searchParams.get('limit')!, 10)
-        : undefined;
-      const offset = url.searchParams.get('offset')
-        ? parseInt(url.searchParams.get('offset')!, 10)
-        : undefined;
     // Get notification delivery history endpoint.
     // Matched on the rewritten pathname so /api/v1/notifications/history is
     // routed (and authenticated) the same as the unversioned path.
