@@ -218,3 +218,80 @@ pub fn is_api_key_active(
     let credentials = load_credentials(&env, &organization);
     has_active_fingerprint(&credentials, &fingerprint)
 }
+
+pub fn configure_reviewers(
+    env: Env,
+    bounty_id: u64,
+    reviewers: Vec<Address>,
+    threshold: u32,
+) -> Result<(), Error> {
+    let bounty = storage::get_bounty(&env, bounty_id).ok_or(Error::BountyNotFound)?;
+    bounty.creator.require_auth();
+
+    if threshold == 0 || threshold > reviewers.len() as u32 {
+        return Err(Error::InvalidApprovalThreshold);
+    }
+
+    storage::set_bounty_reviewers(&env, bounty_id, &reviewers);
+    storage::set_bounty_approval_threshold(&env, bounty_id, threshold);
+    Ok(())
+}
+
+pub fn approve_bounty_submission(
+    env: Env,
+    bounty_id: u64,
+    submission_id: u64,
+    reviewer: Address,
+) -> Result<bool, Error> {
+    reviewer.require_auth();
+
+    let reviewers = storage::get_bounty_reviewers(&env, bounty_id);
+    let mut is_authorized = false;
+    for r in reviewers.iter() {
+        if r == reviewer {
+            is_authorized = true;
+            break;
+        }
+    }
+
+    if !is_authorized {
+        return Err(Error::UnauthorizedReviewer);
+    }
+
+    let mut approvals = storage::get_submission_approvals(&env, submission_id);
+    for existing in approvals.iter() {
+        if existing == reviewer {
+            return Err(Error::DuplicateApproval);
+        }
+    }
+
+    approvals.push_back(reviewer);
+    storage::set_submission_approvals(&env, submission_id, &approvals);
+
+    let threshold = storage::get_bounty_approval_threshold(&env, bounty_id);
+    let met = approvals.len() >= threshold;
+    if met {
+        storage::set_submission_approved(&env, submission_id, true);
+    }
+
+    Ok(met)
+}
+
+pub fn release_bounty_reward(
+    env: Env,
+    bounty_id: u64,
+    submission_id: u64,
+) -> Result<(), Error> {
+    let bounty = storage::get_bounty(&env, bounty_id).ok_or(Error::BountyNotFound)?;
+    bounty.creator.require_auth();
+
+    let threshold = storage::get_bounty_approval_threshold(&env, bounty_id);
+    let approvals = storage::get_submission_approvals(&env, submission_id);
+
+    if approvals.len() < threshold {
+        return Err(Error::ApprovalConditionNotMet);
+    }
+
+    storage::release_reward(&env, bounty_id, submission_id);
+    Ok(())
+}
