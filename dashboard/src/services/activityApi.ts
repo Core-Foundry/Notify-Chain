@@ -1,5 +1,6 @@
 import type { ActivityEvent, ActivityFeedResponse, ActivityType } from '../types/activity';
 import { getEventsApiBaseUrl } from '../config/eventsApiUrl';
+import { csrfFetch } from './csrfFetch';
 
 const BASE_URL = getEventsApiBaseUrl();
 
@@ -15,7 +16,7 @@ export async function fetchActivityFeed(
 }
 
 export async function markActivityAsRead(eventId: string): Promise<void> {
-  const response = await fetch(`${BASE_URL}/api/activity/${eventId}/read`, {
+  const response = await csrfFetch(`${BASE_URL}/api/activity/${eventId}/read`, {
     method: 'PUT',
   });
   if (!response.ok) {

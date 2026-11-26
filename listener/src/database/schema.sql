@@ -123,13 +123,19 @@ CREATE INDEX IF NOT EXISTS idx_execution_log_execution_time
 CREATE INDEX IF NOT EXISTS idx_execution_log_status_execution_time 
   ON notification_execution_log(status, execution_time);
 
--- One immutable receipt per provider delivery attempt
+-- One immutable receipt per provider delivery attempt (#1116)
 CREATE TABLE IF NOT EXISTS delivery_receipts (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   notification_id INTEGER NOT NULL,
+  event_id TEXT,
+  contract_address TEXT,
   channel TEXT NOT NULL,
   status TEXT NOT NULL CHECK (status IN ('delivered', 'failed', 'rejected', 'pending')),
+  outcome TEXT NOT NULL DEFAULT 'UNKNOWN' CHECK (outcome IN ('ACCEPTED', 'REJECTED', 'UNKNOWN')),
+  provider_status INTEGER,
   attempt_count INTEGER NOT NULL CHECK (attempt_count > 0),
+  attempt_timestamp DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  delivered_at DATETIME,
   provider_message_id TEXT,
   provider_response TEXT,
   error_code TEXT,
@@ -142,6 +148,12 @@ CREATE INDEX IF NOT EXISTS idx_delivery_receipts_notification_attempt
   ON delivery_receipts(notification_id, attempt_count, id);
 CREATE INDEX IF NOT EXISTS idx_delivery_receipts_status_created
   ON delivery_receipts(status, created_at);
+CREATE INDEX IF NOT EXISTS idx_delivery_receipts_outcome_created
+  ON delivery_receipts(outcome, created_at);
+CREATE INDEX IF NOT EXISTS idx_delivery_receipts_event
+  ON delivery_receipts(event_id);
+CREATE INDEX IF NOT EXISTS idx_delivery_receipts_contract
+  ON delivery_receipts(contract_address);
 
 -- Migration: add next_retry_at for explicit retry scheduling (no-op when column exists in CREATE TABLE)
 -- SQLite does not support IF NOT EXISTS for ADD COLUMN; runMigrations tolerates duplicate-column errors.
@@ -238,7 +250,12 @@ CREATE TABLE IF NOT EXISTS processed_events (
   -- Event identification (fingerprint components)
   event_id TEXT NOT NULL,                   -- Unique identifier from blockchain RPC
   contract_address TEXT NOT NULL,           -- Contract that emitted the event
-  fingerprint TEXT NOT NULL UNIQUE,         -- Composite key: contract_address:event_id (for faster lookups)
+  -- Stellar network this event belongs to (#1168). Part of the fingerprint
+  -- hash, so the same contract/event id on two networks never collides.
+  -- Legacy rows predating this column are backfilled to 'unknown' by the
+  -- 008 migration; see docs/migration-rollback.md.
+  network TEXT NOT NULL DEFAULT 'unknown',
+  fingerprint TEXT NOT NULL UNIQUE,         -- Composite key: network:contract_address:event_id (for faster lookups)
   
   -- Processing metadata
   ledger_number INTEGER NOT NULL CHECK (ledger_number >= 0),
@@ -254,7 +271,13 @@ CREATE TABLE IF NOT EXISTS processed_events (
   -- Status and metadata
   status VARCHAR(20) NOT NULL DEFAULT 'PROCESSED' CHECK (status IN ('PROCESSED', 'SKIPPED', 'ERROR')),
   notification_sent BOOLEAN NOT NULL DEFAULT 0 CHECK (notification_sent IN (0, 1)),
-  error_reason TEXT                         -- If status is ERROR, what went wrong
+  error_reason TEXT,                        -- If status is ERROR, what went wrong
+
+  -- Enriched blockchain transaction metadata (JSON) and its completeness marker.
+  -- metadata_status is one of 'complete' | 'partial' | 'unavailable'; NULL for
+  -- rows recorded before enrichment existed.
+  tx_metadata TEXT,
+  metadata_status TEXT
 );
 
 -- Indexes for efficient lookups
@@ -271,8 +294,34 @@ CREATE INDEX IF NOT EXISTS idx_processed_events_reorg_duplicates
   ON processed_events(is_reorg_duplicate, processed_at) 
   WHERE is_reorg_duplicate = 1;
 
-CREATE INDEX IF NOT EXISTS idx_processed_events_ledger_contract 
+CREATE INDEX IF NOT EXISTS idx_processed_events_ledger_contract
   ON processed_events(ledger_number, contract_address);
+
+-- Supports isolating/querying events by network (#1168)
+CREATE INDEX IF NOT EXISTS idx_processed_events_network
+  ON processed_events(network);
+-- (contract_address, event_id) uniqueness is enforced by the guarded
+-- ux_processed_events_contract_event index created in Database bootstrap and
+-- migration 008, which first audit existing rows for duplicates (#1121).
+
+-- Per-stage processing latency for an event (#1120). One row per
+-- processed_events record; a NULL stage means it was not measured. Holds
+-- durations only, never event payloads.
+CREATE TABLE IF NOT EXISTS event_processing_timings (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  processed_event_id INTEGER NOT NULL UNIQUE,
+  retrieval_ms REAL CHECK (retrieval_ms IS NULL OR retrieval_ms >= 0),
+  decode_validation_ms REAL CHECK (decode_validation_ms IS NULL OR decode_validation_ms >= 0),
+  persistence_ms REAL CHECK (persistence_ms IS NULL OR persistence_ms >= 0),
+  notification_prep_ms REAL CHECK (notification_prep_ms IS NULL OR notification_prep_ms >= 0),
+  total_ms REAL CHECK (total_ms IS NULL OR total_ms >= 0),
+  outcome VARCHAR(20) NOT NULL CHECK (outcome IN ('processed', 'duplicate', 'skipped', 'error')),
+  recorded_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (processed_event_id) REFERENCES processed_events(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_event_processing_timings_recorded_at
+  ON event_processing_timings(recorded_at);
 
 -- Cursor tracking for event polling to detect reorgs
 CREATE TABLE IF NOT EXISTS polling_cursors (
@@ -327,6 +376,29 @@ CREATE INDEX IF NOT EXISTS idx_idempotency_keys_expires_at
 
 CREATE INDEX IF NOT EXISTS idx_idempotency_keys_created_at
   ON idempotency_keys(created_at);
+
+-- Generic Idempotency-Key records for event-management mutations (#1114).
+-- Unlike idempotency_keys this is not tied to a created notification, so it
+-- also covers updates/cancellations. A key is unique per client scope; the
+-- fingerprint binds it to one method + path + canonical body. Rows with
+-- status IN_PROGRESS guard against concurrent duplicates; expired rows are
+-- replaced on the next use of the key and purged by cleanup.
+CREATE TABLE IF NOT EXISTS api_idempotency_keys (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  scope TEXT NOT NULL,
+  idempotency_key TEXT NOT NULL,
+  request_fingerprint TEXT NOT NULL,
+  status VARCHAR(20) NOT NULL CHECK (status IN ('IN_PROGRESS', 'COMPLETED')),
+  response_status INTEGER CHECK (response_status IS NULL OR response_status BETWEEN 100 AND 599),
+  response_body TEXT,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  expires_at DATETIME NOT NULL,
+  UNIQUE (scope, idempotency_key),
+  CHECK (status = 'IN_PROGRESS' OR (response_status IS NOT NULL AND response_body IS NOT NULL))
+);
+
+CREATE INDEX IF NOT EXISTS idx_api_idempotency_keys_expires_at
+  ON api_idempotency_keys(expires_at);
 
 -- Backpressure events table for tracking queue saturation and recovery
 CREATE TABLE IF NOT EXISTS backpressure_events (
@@ -497,3 +569,108 @@ FOR EACH ROW
 BEGIN
   SELECT RAISE(ABORT, 'Schedule audit records are immutable');
 END;
+
+-- ===============================================
+-- EVENT RETENTION & HOLDS (#1115)
+-- ===============================================
+
+-- Active and released event retention holds
+CREATE TABLE IF NOT EXISTS event_retention_holds (
+  id TEXT PRIMARY KEY,
+  contract_address TEXT,
+  event_id TEXT,
+  fingerprint TEXT,
+  reason TEXT NOT NULL,
+  held_by TEXT NOT NULL DEFAULT 'system',
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  status VARCHAR(20) NOT NULL DEFAULT 'ACTIVE' CHECK (status IN ('ACTIVE', 'RELEASED')),
+  released_at DATETIME,
+  released_by TEXT,
+  release_reason TEXT,
+  metadata TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_retention_holds_status ON event_retention_holds(status);
+CREATE INDEX IF NOT EXISTS idx_retention_holds_fingerprint ON event_retention_holds(fingerprint);
+CREATE INDEX IF NOT EXISTS idx_retention_holds_contract_event ON event_retention_holds(contract_address, event_id);
+CREATE INDEX IF NOT EXISTS idx_retention_holds_contract ON event_retention_holds(contract_address);
+
+-- Immutable audit log for event retention actions
+CREATE TABLE IF NOT EXISTS retention_audit_log (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  action TEXT NOT NULL CHECK (action IN ('POLICY_SET', 'POLICY_UPDATED', 'POLICY_REMOVED', 'HOLD_APPLIED', 'HOLD_RELEASED', 'CLEANUP_EXECUTED')),
+  contract_address TEXT,
+  event_id TEXT,
+  fingerprint TEXT,
+  actor TEXT NOT NULL DEFAULT 'system',
+  timestamp DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  details TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_retention_audit_action ON retention_audit_log(action);
+CREATE INDEX IF NOT EXISTS idx_retention_audit_contract ON retention_audit_log(contract_address);
+CREATE INDEX IF NOT EXISTS idx_retention_audit_timestamp ON retention_audit_log(timestamp);
+
+CREATE TRIGGER IF NOT EXISTS prevent_retention_audit_update
+BEFORE UPDATE ON retention_audit_log
+FOR EACH ROW
+BEGIN
+  SELECT RAISE(ABORT, 'Retention audit records are immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS prevent_retention_audit_delete
+BEFORE DELETE ON retention_audit_log
+FOR EACH ROW
+BEGIN
+  SELECT RAISE(ABORT, 'Retention audit records are immutable');
+END;
+-- Webhook and notification destinations with explicit account ownership
+CREATE TABLE IF NOT EXISTS destinations (
+  id TEXT PRIMARY KEY,
+  owner_id TEXT NOT NULL CHECK (LENGTH(TRIM(owner_id)) > 0),
+  provider TEXT NOT NULL CHECK (provider IN ('webhook', 'discord', 'email', 'telegram')),
+  display_name TEXT NOT NULL CHECK (LENGTH(TRIM(display_name)) > 0),
+  enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
+  status TEXT NOT NULL DEFAULT 'not_configured' CHECK (status IN ('connected', 'not_configured', 'error', 'disabled')),
+  settings_json TEXT NOT NULL DEFAULT '{}',
+  secrets_json TEXT NOT NULL DEFAULT '{}',
+  last_error TEXT,
+  last_tested_at INTEGER,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_destinations_owner_id
+  ON destinations(owner_id);
+
+CREATE INDEX IF NOT EXISTS idx_destinations_owner_provider
+  ON destinations(owner_id, provider);
+
+CREATE INDEX IF NOT EXISTS idx_destinations_owner_created
+  ON destinations(owner_id, created_at);
+
+CREATE TRIGGER IF NOT EXISTS update_destinations_timestamp
+AFTER UPDATE ON destinations
+FOR EACH ROW
+BEGIN
+  UPDATE destinations
+  SET updated_at = CURRENT_TIMESTAMP
+  WHERE id = NEW.id;
+END;
+
+-- Explicit ownership binding for scheduled notifications referencing a destination
+CREATE TABLE IF NOT EXISTS scheduled_notification_destinations (
+  scheduled_notification_id INTEGER PRIMARY KEY,
+  destination_id TEXT,
+  owner_id TEXT NOT NULL CHECK (LENGTH(TRIM(owner_id)) > 0),
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (scheduled_notification_id) REFERENCES scheduled_notifications(id) ON DELETE CASCADE,
+  FOREIGN KEY (destination_id) REFERENCES destinations(id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_sched_dest_destination_id
+  ON scheduled_notification_destinations(destination_id)
+  WHERE destination_id IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_sched_dest_owner_id
+  ON scheduled_notification_destinations(owner_id);

@@ -37,14 +37,22 @@ CI quality checks: [dashboard accessibility](docs/accessibility-automation.md),
 > - [Notification Lifecycle](NOTIFICATION_LIFECYCLE.md) — end-to-end on-chain/off-chain flow from event detection to delivery, ack, retry, and archival.
 > - [Notification Failure Recovery](NOTIFICATION_FAILURE_RECOVERY.md) — retry lifecycle, configuration, and troubleshooting.
 >
+> **Guides**:
+> - [Notification Provider Extension Development Guide](docs/NOTIFICATION_PROVIDER_EXTENSION_GUIDE.md) — provider interfaces, configuration, walkthrough, payload transformations, and error handling for adding a new delivery channel.
+> - [Data Privacy and Information Handling Guide](docs/DATA_PRIVACY_AND_INFORMATION_HANDLING.md) — what the system stores, sensitive vs. non-sensitive data, credential handling, retention/deletion, and API data exposure.
+> - [API Authentication and Integration Quickstart](docs/API_AUTHENTICATION_QUICKSTART.md) — `X-API-Key` and webhook signature auth, cURL/JavaScript examples, and error responses.
+> - [Contract Upgrade Compatibility and State Migration Guide](docs/CONTRACT_UPGRADE_MIGRATION_GUIDE.md) — upgrade paths, storage compatibility, pre-upgrade checks, and rollback limitations.
+>
 > **Repository map**: [Project Structure Guide](docs/PROJECT-STRUCTURE.md) — major directories, modules, and where code belongs.
 >
 > **Event reference**: [Smart Contract Event Reference Guide](CONTRACT_EVENT_REFERENCE.md) — all emitted events, parameters, data types, and usage recommendations for indexers and listeners.
+> **Event decoding**: [Stellar Event Decoding Cookbook](STELLAR_EVENT_DECODING_COOKBOOK.md) — RPC event structure, XDR topic/payload decoding, SDK examples, and common mistakes.
 >
 > **Dashboard Storybook**: [dashboard/STORYBOOK.md](dashboard/STORYBOOK.md) — component documentation for design and development reviews.
 > **API errors**: [API Error Reference](docs/API_ERROR_REFERENCE.md) — every error response the listener API returns, with causes and resolutions.
 >
 > **Operations**: [Database Backup and Restore](docs/DATABASE_BACKUP_RESTORE.md) — backup strategy, critical data tiers, backup verification, and a tested restore procedure for the listener database.
+> **Event recovery**: [Data Recovery and Event Reconciliation Guide](DATA_RECOVERY_EVENT_RECONCILIATION.md) — identify missing events, query retained RPC history, compare IDs safely, and understand recovery limits.
 >
 > **Architecture decisions**: [Architecture Decision Records](docs/adr/README.md) — the *why* behind the project's significant technical choices, including the [off-chain listener architecture](docs/adr/0001-off-chain-listener-architecture.md), [Soroban on Stellar](docs/adr/0002-soroban-smart-contracts.md), [SQLite persistence](docs/adr/0003-sqlite-for-local-persistence.md), [TypeScript for the listener](docs/adr/0004-typescript-for-listener-service.md), and the [event deduplication strategy](docs/adr/0005-event-deduplication-strategy.md).
 >
@@ -686,6 +694,10 @@ Contributions are welcome! Please follow these steps (or start with the canonica
 - [`CONTRIBUTOR_DEVELOPMENT_WORKFLOW_GUIDE.md`](CONTRIBUTOR_DEVELOPMENT_WORKFLOW_GUIDE.md)
 - [`docs/GIT_WORKFLOW.md`](docs/GIT_WORKFLOW.md) — branching strategy, commit conventions, and the PR process
 - [`docs/CONTRIBUTOR_TROUBLESHOOTING.md`](docs/CONTRIBUTOR_TROUBLESHOOTING.md) — fixes for common build, test, and workflow problems
+- [`docs/STELLAR_RPC_PROVIDER_GUIDE.md`](docs/STELLAR_RPC_PROVIDER_GUIDE.md) — configuring Stellar RPC providers, failover and rate limits
+- [`docs/EVENT_PROCESSING_TROUBLESHOOTING.md`](docs/EVENT_PROCESSING_TROUBLESHOOTING.md) — missing/delayed events, ledger cursors, RPC and database recovery
+- [`docs/CONTRACT_ERROR_TABLE.md`](docs/CONTRACT_ERROR_TABLE.md) — contract error codes and recovery (checked by `npm run check:contract-errors`)
+- [`Documents/Task Bounty/EXPIRY_AND_REFUND.md`](Documents/Task%20Bounty/EXPIRY_AND_REFUND.md) — TaskBounty deadlines, expiry and refunds
 - [`docs/adr/README.md`](docs/adr/README.md) — architecture decision records; read these before proposing a significant design change
 - [`docs/ROADMAP.md`](docs/ROADMAP.md) — planned features and milestones
 

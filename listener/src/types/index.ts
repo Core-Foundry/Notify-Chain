@@ -18,6 +18,16 @@ export interface ContractConfig {
   events: string[];
   /** Optional user ID for per-user notification preference gating */
   userId?: string;
+  /**
+   * Optional retention period for events emitted by this contract, in milliseconds.
+   * When set, overrides the default event retention policy.
+   */
+  retentionPeriodMs?: number;
+  /**
+   * Optional retention period for events emitted by this contract, in days.
+   * Convenience alternative to retentionPeriodMs (1 day = 86,400,000 ms).
+   */
+  retentionDays?: number;
 }
 
 export interface DiscordConfig {
@@ -637,3 +647,7 @@ export class ListenerApiClient {
     return parsed as T;
   }
 }
+
+export * from './retention';
+export * from './delivery-receipt';
+

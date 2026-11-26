@@ -19,6 +19,8 @@ export interface ChannelNotificationTemplate {
   subjectTemplate?: string;
   bodyTemplate: string;
   variables: string[];               // Required variables
+  /** Explicit allowlist of variables this template may use. */
+  supportedVariables?: string[];
   defaultValues: Record<string, any>;  // Default/fallback values
   isActive: boolean;
   version: number;
@@ -36,6 +38,8 @@ export interface CreateTemplateInput {
   subjectTemplate?: string;
   bodyTemplate: string;
   variables?: string[];
+  /** Explicit allowlist of variables this template may use. */
+  supportedVariables?: string[];
   defaultValues?: Record<string, any>;
   isActive?: boolean;
   createdBy?: string;
@@ -47,6 +51,7 @@ export interface UpdateTemplateInput {
   subjectTemplate?: string;
   bodyTemplate?: string;
   variables?: string[];
+  supportedVariables?: string[];
   defaultValues?: Record<string, any>;
   isActive?: boolean;
   updatedBy?: string;
@@ -104,6 +109,8 @@ export interface AuditedNotificationTemplate {
   subject?: string;
   body: string;
   variables?: string[];
+  /** Explicit allowlist of variables this template may use. */
+  supportedVariables?: string[];
   metadata?: Record<string, unknown>;
   createdAt: Date;
   updatedAt: Date;
@@ -116,6 +123,8 @@ export interface CreateNotificationTemplateInput {
   subject?: string;
   body: string;
   variables?: string[];
+  /** Explicit allowlist of variables this template may use. */
+  supportedVariables?: string[];
   metadata?: Record<string, unknown>;
 }
 
@@ -125,6 +134,7 @@ export interface UpdateNotificationTemplateInput {
   subject?: string;
   body?: string;
   variables?: string[];
+  supportedVariables?: string[];
   metadata?: Record<string, unknown>;
 }
 

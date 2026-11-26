@@ -7,13 +7,27 @@ const DEFAULT_WINDOW_MS = 60000;
 /**
  * Generates a deterministic fingerprint for a notification event.
  * Uses SHA256 hash for collision resistance and includes:
+ * - Network (#1168: prevents the same contract/event id on two networks
+ *   from colliding on the same fingerprint)
  * - Contract address (identifies source contract)
  * - Event ID (unique event identifier)
  *
+ * `network` is optional so in-memory, single-network callers (e.g. the
+ * Discord notification deduplicator) are unaffected; persisted,
+ * multi-network-aware storage (`EventDeduplicationService`) always supplies it.
+ *
  * This fingerprint serves as the primary deduplication key.
  */
-export function generateFingerprint(eventId: string, contractAddress: string): string {
-  const raw = `${contractAddress}:${eventId}`;
+export function generateFingerprint(
+  eventId: string,
+  contractAddress: string,
+  network = '',
+): string {
+  // No network supplied: keep the original (pre-#1168) hash input exactly,
+  // so fingerprints already persisted for existing rows keep matching.
+  const raw = network
+    ? `${network}:${contractAddress}:${eventId}`
+    : `${contractAddress}:${eventId}`;
   return crypto.createHash('sha256').update(raw).digest('hex');
 }
 

@@ -1,7 +1,9 @@
 import { memo, type KeyboardEvent } from 'react';
 import type { BlockchainEvent } from '../types/event';
 import { formatRelativeTimestamp, formatTimestamp, formatUtcTimestamp } from '../utils/formatTime';
+import { formatNumber } from '../utils/formatNumber';
 import { useActiveTimeZone } from '../store/timezoneStore';
+import { useActiveLocale } from '../store/localeStore';
 import { CopyButton } from './CopyButton';
 
 export type EventCardVariant = 'compact' | 'expanded';
@@ -19,6 +21,8 @@ function shortenAddress(address: string): string {
 }
 
 import { getEventBadgeClass } from '../utils/eventTypeMapping';
+import { EXTERNAL_LINK_PROPS, getEventExplorerUrl } from '../utils/explorerLinks';
+import { PrintableEventDetails } from './PrintableEventDetails';
 
 function SkeletonLine({ width = '100%', height = '14px' }: { width?: string; height?: string }) {
   return <span className="event-card__skeleton" style={{ width, height }} aria-hidden="true" />;
@@ -96,6 +100,7 @@ function IdValue({ value, label }: { value: string; label: string }) {
 
 function CompactCard({ event, onClick }: { event: BlockchainEvent; onClick?: (e: BlockchainEvent) => void }) {
   const timeZone = useActiveTimeZone();
+  const locale = useActiveLocale();
   const displayName = event.eventName ?? event.type;
   const badgeClass = getEventBadgeClass(event.eventName);
   const Wrapper = onClick ? 'div' : 'article';
@@ -112,7 +117,9 @@ function CompactCard({ event, onClick }: { event: BlockchainEvent; onClick?: (e:
     >
       <div className="event-card__primary">
         <span className={`event-card__badge ${badgeClass}`}>{displayName}</span>
-        <span className="event-card__ledger">Ledger {event.ledger}</span>
+        <span className="event-card__ledger" data-raw={event.ledger}>
+          Ledger {formatNumber(event.ledger, locale)}
+        </span>
       </div>
       <div className="event-card__meta">
         <span className="event-card__address" title={event.contractAddress}>
@@ -120,16 +127,15 @@ function CompactCard({ event, onClick }: { event: BlockchainEvent; onClick?: (e:
         </span>
         <span
           className="event-card__time"
-          title={`${formatTimestamp(event.receivedAt, timeZone)} (UTC: ${formatUtcTimestamp(event.receivedAt)})`}
+          data-raw={event.receivedAt}
+          title={`${formatTimestamp(event.receivedAt, timeZone, locale)} (UTC: ${formatUtcTimestamp(event.receivedAt)})`}
         >
-          {formatRelativeTimestamp(event.receivedAt, Date.now(), timeZone)}
+          {formatRelativeTimestamp(event.receivedAt, Date.now(), timeZone, locale)}
         </span>
       </div>
       <div className="event-card__details">
-        <span>Value: {event.value}</span>
-        {event.txHash && <span title={event.txHash}>Tx: {shortenAddress(event.txHash)}</span>}
-        <span className="event-card__value-preview" title={event.value}>
-          Value: {event.value}
+        <span className="event-card__value-preview" data-raw={event.value} title={event.value}>
+          Value: {formatNumber(event.value, locale)}
         </span>
         {event.txHash && (
           <span title={event.txHash}>
@@ -150,8 +156,10 @@ function ExpandedCard({
   onClick?: (e: BlockchainEvent) => void;
 }) {
   const timeZone = useActiveTimeZone();
+  const locale = useActiveLocale();
   const displayName = event.eventName ?? event.type;
   const badgeClass = getEventBadgeClass(event.eventName);
+  const explorerUrl = getEventExplorerUrl(event);
   const Wrapper = onClick ? 'div' : 'article';
 
   return (
@@ -182,19 +190,30 @@ function ExpandedCard({
               <dd title={event.txHash}>
                 {event.txHash}
                 <CopyButton value={event.txHash} label="transaction hash" size="xs" />
+                {explorerUrl && (
+                  <a
+                    className="event-card__explorer-link"
+                    href={explorerUrl}
+                    {...EXTERNAL_LINK_PROPS}
+                  >
+                    View on Stellar Explorer
+                  </a>
+                )}
               </dd>
-              <IdValue value={event.txHash} label="tx hash" />
             </div>
           )}
 
           <div className="event-card__field">
             <dt>Ledger</dt>
-            <dd>{event.ledger.toLocaleString()}</dd>
+            <dd data-raw={event.ledger}>{formatNumber(event.ledger, locale)}</dd>
           </div>
 
           <div className="event-card__field">
             <dt>Value</dt>
-            <dd className="event-card__payload">{event.value}</dd>
+            <dd className="event-card__payload" data-raw={event.value} title={event.value}>
+              {formatNumber(event.value, locale)}
+              <CopyButton value={event.value} label="value" size="xs" />
+            </dd>
           </div>
 
           {event.topic.length > 0 && (
@@ -214,7 +233,7 @@ function ExpandedCard({
 
           <div className="event-card__field">
             <dt>Received</dt>
-            <dd>{formatTimestamp(event.receivedAt, timeZone)}</dd>
+            <dd data-raw={event.receivedAt}>{formatTimestamp(event.receivedAt, timeZone, locale)}</dd>
           </div>
 
           <div className="event-card__field">
@@ -230,6 +249,14 @@ function ExpandedCard({
           </div>
         </dl>
       </div>
+
+      <div className="event-card__actions event-card__actions--no-print">
+        <button type="button" className="event-card__print-button" onClick={() => window.print()}>
+          Print details
+        </button>
+      </div>
+
+      <PrintableEventDetails event={event} />
     </Wrapper>
   );
 }
