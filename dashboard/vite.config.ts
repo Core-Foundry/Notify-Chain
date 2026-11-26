@@ -14,6 +14,10 @@ const securityHeaders = {
 
 export default defineConfig({
   plugins: [react()],
+  envPrefix: 'VITE_',
+  build: {
+    sourcemap: false,
+  },
   server: {
     port: 5173,
     headers: securityHeaders,
