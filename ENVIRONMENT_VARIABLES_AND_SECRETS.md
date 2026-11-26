@@ -280,6 +280,19 @@ The archiver moves old completed/failed/cancelled notifications to a separate ar
 
 ## 3. Dashboard service variables
 
+### Browser source-map publication policy
+
+Production builds for `dashboard/` and `frontend/` explicitly disable Vite
+source-map output. Do not copy production `.map` files to public static-asset
+origins. If private maps are introduced for error monitoring, upload them only
+to the monitoring provider and exclude them from public deployment artifacts.
+The Vite development server remains available for local source-level debugging.
+
+Only `VITE_*` variables are exposed to browser code. Treat every such value as
+public configuration; credentials and other secrets must remain in server-side
+services or secret stores and must not be passed to frontend builds as client
+variables.
+
 These are Vite build-time variables. They are embedded into the static bundle at build time and are **not secret**. All variables must be prefixed with `VITE_`.
 
 | Variable                       | Default                            | Required                | Description                                                                                                                                        |
