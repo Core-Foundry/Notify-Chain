@@ -11,9 +11,11 @@ import { getJobMonitor } from './job-monitor';
 import { ProviderRegistry, getProviderRegistry } from './provider-registry';
 import { verifyPayloadIntegrity } from '../utils/payload-integrity';
 import { DeliveryReceiptRepository } from './delivery-receipt-repository';
+import { determineDeliveryOutcome } from '../types/delivery-receipt';
 import { DeliveryResult } from '../types/provider-capabilities';
 import { NotificationClaimLease, startClaimLease } from './notification-claim-lease';
 import { nextLocalOccurrence, readLocalSchedule } from './local-schedule';
+import { isWithinDeliveryWindow, nextDeliveryWindowOpening } from './delivery-window';
 
 /**
  * Background scheduler that processes scheduled notifications
@@ -402,6 +404,43 @@ export class NotificationScheduler {
         });
       }
 
+      // Respect the recipient's quiet hours / delivery window. Events received
+      // during restricted periods are never discarded: the record is kept and
+      // re-scheduled for the next window opening, at which point delivery
+      // resumes through the normal poll cycle.
+      const windowCheck = isWithinDeliveryWindow(notification, this.clock());
+      if (!windowCheck.allowed) {
+        const nextOpening = nextDeliveryWindowOpening(notification, this.clock());
+        logger.info('Notification deferred until delivery window opens', {
+          requestId,
+          id: notification.id,
+          reason: windowCheck.reason,
+          nextOpening,
+        });
+        await this.repository.markAsFailedOrRetry(
+          notification.id!,
+          new Error(`Deferred until delivery window opens: ${windowCheck.reason}`),
+          notification.retryCount,
+          notification.maxRetries,
+          nextOpening,
+        );
+        await this.repository.logExecution({
+          scheduledNotificationId: notification.id!,
+          executionAttempt,
+          executionTime: new Date(),
+          status: 'RETRY',
+          errorMessage: `Deferred until delivery window opens: ${windowCheck.reason}`,
+          durationMs: Date.now() - startTime,
+        });
+        if (jobId) {
+          jobMonitor.completeJob(jobId, {
+            notificationId: notification.id,
+            deferredUntil: nextOpening.toISOString(),
+          });
+        }
+        return;
+      }
+
       // Verify payload integrity before executing
       const secret = process.env.PAYLOAD_INTEGRITY_SECRET;
       if (secret) {
@@ -754,19 +793,47 @@ export class NotificationScheduler {
     result: DeliveryResult,
   ): Promise<void> {
     if (!this.deliveryReceiptRepository || notification.id == null) return;
+
+    let eventId = notification.eventId ?? null;
+    let contractAddress = notification.contractAddress ?? null;
+
+    if (!eventId || !contractAddress) {
+      try {
+        const parsed = JSON.parse(notification.payload);
+        if (!eventId && parsed.event?.id) {
+          eventId = String(parsed.event.id);
+        }
+        if (!contractAddress && parsed.contractConfig?.address) {
+          contractAddress = String(parsed.contractConfig.address);
+        }
+      } catch {
+        // Ignored
+      }
+    }
+
+    const outcome = determineDeliveryOutcome({
+      success: result.success,
+      statusCode: result.statusCode,
+      errorCode: result.errorCode,
+      errorMessage: result.errorMessage,
+    });
+
+    const now = new Date();
     await this.deliveryReceiptRepository.create({
       notificationId: notification.id,
+      eventId,
+      contractAddress,
       channel: notification.notificationType,
-      status: result.success
-        ? 'delivered'
-        : result.statusCode && result.statusCode >= 400 && result.statusCode < 500
-          ? 'rejected'
-          : 'failed',
+      status: outcome === 'ACCEPTED' ? 'delivered' : outcome === 'REJECTED' ? 'rejected' : 'failed',
+      outcome,
+      providerStatus: result.statusCode ?? null,
       attemptCount,
+      attemptTimestamp: now,
+      deliveredAt: outcome === 'ACCEPTED' ? now : null,
       providerMessageId: result.providerMessageId ?? null,
       providerResponse: result.providerResponse ?? null,
       errorCode: result.errorCode ?? null,
-      errorMessage: result.success ? null : (result.errorMessage ?? 'Provider delivery failed'),
+      errorMessage: outcome === 'ACCEPTED' ? null : (result.errorMessage ?? 'Provider delivery failed'),
     });
   }
 }

@@ -16,6 +16,7 @@ import {
   getNotificationTypeColor,
   extractVariables,
 } from '../utils/templateRenderer';
+import { sanitizeHtml } from '../utils/htmlSanitizer';
 
 export interface TemplatePreviewModalProps {
   isOpen: boolean;
@@ -264,7 +265,7 @@ function EmailPreview({ payload }: { payload: EmailPayload }) {
       </div>
       <div className="preview-email__body">
         {payload.html ? (
-          <div dangerouslySetInnerHTML={{ __html: payload.html }} />
+          <div dangerouslySetInnerHTML={{ __html: sanitizeHtml(payload.html) }} />
         ) : (
           <div className="preview-email__text">{payload.body}</div>
         )}

@@ -1,34 +1,35 @@
 import { useState, useCallback, memo, useMemo, useEffect, useRef } from 'react';
 import type { BlockchainEvent } from '../types/event';
 import { EventExplorerCard } from './EventExplorerCard';
+import type { DashboardColumnId, DashboardDensity } from '../utils/dashboardPreferences';
+import {
+  formatDate,
+  formatNumber,
+  getActiveLocale,
+} from '../utils/localeFormat';
 
 const STORAGE_KEY = 'notify-chain-event-table-widths';
 
-export const DEFAULT_COLUMN_WIDTHS = [
-  220,
-  160,
-  110,
-  180,
-  100,
-  160,
-] as const;
+export const DEFAULT_COLUMN_WIDTHS = [220, 160, 110, 180, 100, 160] as const;
 
 export const MIN_COLUMN_WIDTH = 80;
 
 const COLUMN_LABELS = [
-  'Contract',
-  'Event',
-  'Kind',
-  'Received',
-  'Ledger',
-  'Transaction',
-] as const;
+  { id: 'contract', label: 'Contract' },
+  { id: 'event', label: 'Event' },
+  { id: 'kind', label: 'Kind' },
+  { id: 'received', label: 'Received' },
+  { id: 'ledger', label: 'Ledger' },
+  { id: 'transaction', label: 'Transaction' },
+] as const satisfies readonly { id: DashboardColumnId; label: string }[];
 
 interface EventExplorerTableProps {
   events: BlockchainEvent[];
   onSelectEvent?: (event: BlockchainEvent) => void;
   contractStatuses?: unknown[];
   onContractClick?: (contractAddress: string) => void;
+  density?: DashboardDensity;
+  visibleColumns?: DashboardColumnId[];
 }
 
 export function loadColumnWidths(): number[] {
@@ -41,10 +42,7 @@ export function loadColumnWidths(): number[] {
 
     const parsed = JSON.parse(raw) as unknown;
 
-    if (
-      !Array.isArray(parsed) ||
-      parsed.length !== DEFAULT_COLUMN_WIDTHS.length
-    ) {
+    if (!Array.isArray(parsed) || parsed.length !== DEFAULT_COLUMN_WIDTHS.length) {
       return [...DEFAULT_COLUMN_WIDTHS];
     }
 
@@ -102,10 +100,10 @@ export const EventExplorerTable = memo(function EventExplorerTable({
   events,
   onSelectEvent,
   onContractClick,
+  density = 'comfortable',
+  visibleColumns = COLUMN_LABELS.map(({ id }) => id),
 }: EventExplorerTableProps) {
-  const [columnWidths, setColumnWidths] = useState<number[]>(
-    loadColumnWidths,
-  );
+  const [columnWidths, setColumnWidths] = useState<number[]>(loadColumnWidths);
 
   const [copiedAddress, setCopiedAddress] = useState<string | null>(null);
 
@@ -137,10 +135,7 @@ export const EventExplorerTable = memo(function EventExplorerTable({
       const { index, startX, startWidth } = dragRef.current;
       const difference = event.clientX - startX;
 
-      const newWidth = Math.max(
-        MIN_COLUMN_WIDTH,
-        startWidth + difference,
-      );
+      const newWidth = Math.max(MIN_COLUMN_WIDTH, startWidth + difference);
 
       setColumnWidths((current) => {
         const updated = [...current];
@@ -187,10 +182,7 @@ export const EventExplorerTable = memo(function EventExplorerTable({
     }
   }, []);
 
-  const isCopied = useMemo(
-    () => (address: string) => copiedAddress === address,
-    [copiedAddress],
-  );
+  const isCopied = useMemo(() => (address: string) => copiedAddress === address, [copiedAddress]);
 
   const handleSelectEvent = useCallback(
     (event: BlockchainEvent) => {
@@ -199,20 +191,62 @@ export const EventExplorerTable = memo(function EventExplorerTable({
     [onSelectEvent],
   );
 
-  const gridTemplate = widthsToGridTemplate(columnWidths);
+  const columns = COLUMN_LABELS.filter(({ id }) => visibleColumns.includes(id));
+  const gridTemplate = widthsToGridTemplate(
+    columns.map(({ id }) => columnWidths[COLUMN_LABELS.findIndex((column) => column.id === id)]),
+  );
+
+  const locale = getActiveLocale();
+
+  const columnTitles = useMemo(
+    () =>
+      COLUMN_LABELS.map((label) => {
+        if (label === 'Received') {
+          return `${label} (${locale})`;
+        }
+
+        if (label === 'Ledger') {
+          return `${label} (${locale})`;
+        }
+
+        return label;
+      }),
+    [locale],
+  );
 
   return (
-    <section className="event-explorer__table-wrapper">
+    <section className={`event-explorer__table-wrapper event-explorer__table-wrapper--${density}`}>
       <div
         className="event-explorer__table-header"
         role="rowgroup"
         style={{ gridTemplateColumns: gridTemplate }}
       >
+        {columns.map(({ id, label }, visibleIndex) => {
+          const index = COLUMN_LABELS.findIndex((column) => column.id === id);
+          return (
+            <div key={label} className="event-explorer__column-header" role="columnheader">
+              <span>{label}</span>
+
+              {visibleIndex < columns.length - 1 && (
+                <button
+                  type="button"
+                  className="event-explorer__resize-handle"
+                  aria-label={`Resize ${label} column`}
+                  onMouseDown={(event) => {
+                    event.preventDefault();
+                    startResize(index, event.clientX);
+                  }}
+                />
+              )}
+            </div>
+          );
+        })}
         {COLUMN_LABELS.map((label, index) => (
           <div
             key={label}
             className="event-explorer__column-header"
             role="columnheader"
+            title={columnTitles[index]}
           >
             <span>{label}</span>
 
@@ -242,10 +276,13 @@ export const EventExplorerTable = memo(function EventExplorerTable({
           <EventExplorerCard
             key={event.eventId}
             event={event}
+            visibleColumns={visibleColumns}
             onCopyContract={handleCopyContract}
             isCopied={isCopied(event.contractAddress)}
-            onSelectEvent={handleSelectEvent}
+            onSelect={handleSelectEvent}
             onContractClick={onContractClick}
+            formattedReceived={formatDate(event.receivedAt, locale)}
+            formattedLedger={formatNumber(event.ledger, locale)}
           />
         ))}
       </div>

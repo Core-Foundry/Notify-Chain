@@ -1,6 +1,7 @@
 import { Database } from '../database/database';
 import logger from '../utils/logger';
 import { EventRegistry } from '../store/event-registry';
+import { EventRetentionService } from './event-retention-service';
 
 export interface CleanupConfig {
   /** How often to run cleanup (ms). Default: 1 hour. */
@@ -26,13 +27,16 @@ const DEFAULTS: CleanupConfig = {
 export class CleanupService {
   private timer: ReturnType<typeof setInterval> | null = null;
   private readonly config: CleanupConfig;
+  private readonly retentionService?: EventRetentionService;
 
   constructor(
     private readonly db: Database,
     private readonly registry: EventRegistry,
     config: Partial<CleanupConfig> = {},
+    retentionService?: EventRetentionService,
   ) {
     this.config = { ...DEFAULTS, ...config };
+    this.retentionService = retentionService;
   }
 
   start(): void {
@@ -62,6 +66,14 @@ export class CleanupService {
     const executionLogCutoff = new Date(Date.now() - this.config.executionLogRetentionMs).toISOString();
     const processedEventRetentionSeconds = this.config.processedEventRetentionMs / 1000;
 
+    const processedEventPromise = this.retentionService
+      ? this.retentionService.cleanupExpiredEvents().then((r) => ({ changes: r.totalDeleted }))
+      : this.db.run(
+          `DELETE FROM processed_events
+           WHERE processed_at < datetime('now', '-' || ? || ' seconds')`,
+          [processedEventRetentionSeconds],
+        );
+
     const [notifResult, rateLimitResult, executionLogResult, processedEventResult] = await Promise.all([
       this.db.run(
         `DELETE FROM scheduled_notifications
@@ -77,11 +89,7 @@ export class CleanupService {
         `DELETE FROM notification_execution_log WHERE execution_time < ?`,
         [executionLogCutoff],
       ),
-      this.db.run(
-        `DELETE FROM processed_events
-         WHERE processed_at < datetime('now', '-' || ? || ' seconds')`,
-        [processedEventRetentionSeconds],
-      ),
+      processedEventPromise,
     ]);
 
     const result = {
