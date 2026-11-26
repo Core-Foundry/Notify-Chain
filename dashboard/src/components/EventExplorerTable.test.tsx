@@ -123,3 +123,52 @@ describe('EventExplorerTable resizing UI', () => {
     expect(container.querySelectorAll('.event-explorer__cell')).toHaveLength(2);
   });
 });
+describe('EventExplorerTable column visibility (#1160)', () => {
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  it('lets users hide an optional column and remembers it', () => {
+    render(<EventExplorerTable events={[sampleEvent]} />);
+
+    expect(screen.getByRole('columnheader', { name: /Kind/ })).toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText('Kind'));
+
+    expect(screen.queryByRole('columnheader', { name: /Kind/ })).not.toBeInTheDocument();
+    expect(document.querySelector('[data-column="kind"]')).toBeNull();
+    expect(JSON.parse(localStorage.getItem('notify-chain-event-table-columns')!)).not.toContain(
+      'kind',
+    );
+  });
+
+  it('keeps identifier columns locked visible', () => {
+    render(<EventExplorerTable events={[sampleEvent]} />);
+
+    for (const label of ['Contract', 'Event', 'Ledger']) {
+      expect(screen.getByLabelText(label)).toBeDisabled();
+    }
+    expect(screen.getByRole('button', { name: /copy event ID/i })).toBeInTheDocument();
+  });
+
+  it('marks unavailable values and empty columns', () => {
+    render(<EventExplorerTable events={[{ ...sampleEvent, txHash: undefined }]} />);
+
+    expect(screen.getByLabelText('Transaction hash not available')).toBeInTheDocument();
+    expect(screen.getByText('(no data on this page)')).toBeInTheDocument();
+  });
+
+  it('wraps the table in a horizontally scrollable region', () => {
+    render(<EventExplorerTable events={[sampleEvent]} />);
+
+    const region = screen.getByRole('table', { name: 'Contract events' });
+    expect(region).toHaveClass('event-explorer__table-scroll');
+  });
+
+  it('selects an event when its row is activated', () => {
+    const onSelectEvent = jest.fn();
+    render(<EventExplorerTable events={[sampleEvent]} onSelectEvent={onSelectEvent} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /View details for Transfer/ }));
+    expect(onSelectEvent).toHaveBeenCalledWith(sampleEvent);
+  });
+});

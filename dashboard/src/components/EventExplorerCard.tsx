@@ -22,6 +22,19 @@ export interface EventExplorerCardProps {
   onSelect?: (event: BlockchainEvent) => void;
   contractStatuses?: ContractStatus[];
   onContractClick?: (contractAddress: string) => void;
+  /** Columns to render, in table order (#1160). Defaults to every column. */
+  visibleColumns?: readonly EventColumnId[];
+}
+
+const ALL_COLUMNS = new Set<EventColumnId>(EVENT_COLUMN_IDS);
+
+/** Placeholder for a value the event does not have. */
+function Unavailable({ what }: { what: string }) {
+  return (
+    <span className="event-explorer__unavailable" aria-label={`${what} not available`}>
+      —
+    </span>
+  );
   visibleColumns?: DashboardColumnId[];
 }
 
@@ -32,6 +45,9 @@ export const EventExplorerCard = memo(function EventExplorerCard({
   onSelect,
   contractStatuses = [],
   onContractClick,
+  visibleColumns,
+}: EventExplorerCardProps) {
+  const show = visibleColumns ? new Set(visibleColumns) : ALL_COLUMNS;
   visibleColumns = ['contract', 'event', 'kind', 'received', 'ledger', 'transaction'],
 }: EventExplorerCardProps) {
   const timeZone = useActiveTimeZone();
@@ -74,6 +90,13 @@ export const EventExplorerCard = memo(function EventExplorerCard({
       onKeyDown={onSelect ? handleKeyDown : undefined}
       aria-label={onSelect ? `View details for ${label} notification` : undefined}
     >
+      {show.has('contract') && (
+        <div
+          className="event-explorer__cell"
+          data-label="Contract"
+          role="cell"
+          data-column="contract"
+        >
       {isVisible('contract') && (
         <div className="event-explorer__cell" data-label="Contract" role="cell">
           <div className="event-explorer__contract-block">
@@ -108,12 +131,16 @@ export const EventExplorerCard = memo(function EventExplorerCard({
         </div>
       )}
 
+      {show.has('event') && (
+        <div className="event-explorer__cell" data-label="Event" role="cell" data-column="event">
       {isVisible('event') && (
         <div className="event-explorer__cell" data-label="Event" role="cell">
           <p className="event-explorer__event-name">{label}</p>
         </div>
       )}
 
+      {show.has('kind') && (
+        <div className="event-explorer__cell" data-label="Kind" role="cell" data-column="kind">
       {isVisible('kind') && (
         <div className="event-explorer__cell" data-label="Kind" role="cell">
           <span
@@ -124,6 +151,28 @@ export const EventExplorerCard = memo(function EventExplorerCard({
           </span>
         </div>
       )}
+
+      {show.has('received') && (
+        <div
+          className="event-explorer__cell"
+          data-label="Received"
+          role="cell"
+          data-column="received"
+        >
+          {hasColumnValue(event, 'received') ? (
+            <time dateTime={new Date(event.receivedAt).toISOString()}>
+              {formatTimestamp(event.receivedAt)}
+            </time>
+          ) : (
+            <time className="event-explorer__unavailable" aria-label="Received time not available">
+              Unknown time
+            </time>
+          )}
+        </div>
+      )}
+
+      {show.has('ledger') && (
+        <div className="event-explorer__cell" data-label="Ledger" role="cell" data-column="ledger">
       <div className="event-explorer__cell" data-label="Received" role="cell">
         <time dateTime={receivedAtUtc} title={receivedAtUtc ? `UTC: ${receivedAtUtc}` : undefined}>
           {formatTimestamp(event.receivedAt, timeZone)}
@@ -145,6 +194,13 @@ export const EventExplorerCard = memo(function EventExplorerCard({
         </div>
       )}
 
+      {show.has('transaction') && (
+        <div
+          className="event-explorer__cell"
+          data-label="Transaction"
+          role="cell"
+          data-column="transaction"
+        >
       {isVisible('transaction') && (
         <div className="event-explorer__cell" data-label="Transaction" role="cell">
           {event.txHash ? (
@@ -153,6 +209,7 @@ export const EventExplorerCard = memo(function EventExplorerCard({
               <CopyButton value={event.txHash} label="tx hash" size="xs" />
             </div>
           ) : (
+            <Unavailable what="Transaction hash" />
             <span>—</span>
           )}
         </div>
