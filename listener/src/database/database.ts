@@ -7,6 +7,17 @@ import { applyDestinationOwnershipMigration } from '../migrations/008-destinatio
 
 /** How long a write waits for a competing connection's lock before failing. */
 export const DATABASE_BUSY_TIMEOUT_MS = 5_000;
+/** Maximum time a database operation may execute before it is interrupted. */
+export const DATABASE_QUERY_TIMEOUT_MS = 10_000;
+
+export class DatabaseQueryTimeoutError extends Error {
+  public readonly code = 'DATABASE_QUERY_TIMEOUT';
+
+  constructor(public readonly timeoutMs: number) {
+    super(`Database query exceeded the ${timeoutMs}ms execution limit`);
+    this.name = 'DatabaseQueryTimeoutError';
+  }
+}
 
 /**
  * SQLite Database Service
@@ -17,6 +28,8 @@ export interface DatabaseRecoveryOptions {
   maxReconnectAttempts?: number;
   /** Base delay for exponential backoff between reconnect attempts, in ms. Default 100. */
   reconnectBaseDelayMs?: number;
+  /** Maximum execution time for each database operation. Default 10000. */
+  queryTimeoutMs?: number;
 }
 
 export class Database {
@@ -25,6 +38,10 @@ export class Database {
   private isInitialized: boolean = false;
   private readonly maxReconnectAttempts: number;
   private readonly reconnectBaseDelayMs: number;
+  private readonly queryTimeoutMs: number;
+  private readonly transactionContext = new AsyncLocalStorage<symbol>();
+  private activeTransactionToken: symbol | null = null;
+  private operationQueue: Promise<void> = Promise.resolve();
   /** True while a transaction is open; recovery never fires mid-transaction. */
   private inTransaction: boolean = false;
   /**
@@ -40,6 +57,49 @@ export class Database {
     this.dbPath = dbPath;
     this.maxReconnectAttempts = Math.max(0, recovery.maxReconnectAttempts ?? 3);
     this.reconnectBaseDelayMs = Math.max(0, recovery.reconnectBaseDelayMs ?? 100);
+    this.queryTimeoutMs = recovery.queryTimeoutMs ?? DATABASE_QUERY_TIMEOUT_MS;
+    if (!Number.isFinite(this.queryTimeoutMs) || this.queryTimeoutMs <= 0) {
+      throw new RangeError('queryTimeoutMs must be a positive finite number');
+    }
+  }
+
+  private async withOperationLock<T>(operation: () => Promise<T>): Promise<T> {
+    const transactionToken = this.transactionContext.getStore();
+    if (transactionToken && transactionToken === this.activeTransactionToken) {
+      return operation();
+    }
+
+    let release!: () => void;
+    const previousOperation = this.operationQueue;
+    this.operationQueue = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await previousOperation;
+    try {
+      return await operation();
+    } finally {
+      release();
+    }
+  }
+
+  private async executeWithTimeout<T>(operation: () => Promise<T>): Promise<T> {
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      this.db?.interrupt();
+    }, this.queryTimeoutMs);
+
+    try {
+      const result = await operation();
+      if (timedOut) throw new DatabaseQueryTimeoutError(this.queryTimeoutMs);
+      return result;
+    } catch (error) {
+      if (error instanceof DatabaseQueryTimeoutError) throw error;
+      if (timedOut) throw new DatabaseQueryTimeoutError(this.queryTimeoutMs);
+      throw error;
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   /**
@@ -88,44 +148,46 @@ export class Database {
    * recovery happens while a transaction is open (see transaction()).
    */
   private async executeWithRecovery<T>(op: () => Promise<T>): Promise<T> {
-    let lastError: any;
-    for (let attempt = 0; attempt <= this.maxReconnectAttempts; attempt++) {
-      try {
-        if (!this.db) {
-          if (!this.isInitialized) throw new Error('Database not initialized');
-          await this.reconnect();
-        }
-        return await op();
-      } catch (err) {
-        lastError = err;
-        if (this.inTransaction || !this.isConnectionError(err)) {
-          throw err;
-        }
-        if (attempt < this.maxReconnectAttempts) {
-          const delayMs = this.reconnectBaseDelayMs * Math.pow(2, attempt);
-          logger.warn('Database connection failure detected; attempting recovery', {
-            path: this.dbPath,
-            attempt: attempt + 1,
-            maxReconnectAttempts: this.maxReconnectAttempts,
-            delayMs,
-            error: String((err as any)?.message || err),
-          });
-          try {
-            await new Promise((r) => setTimeout(r, delayMs));
+    return this.withOperationLock(async () => {
+      let lastError: any;
+      for (let attempt = 0; attempt <= this.maxReconnectAttempts; attempt++) {
+        try {
+          if (!this.db) {
+            if (!this.isInitialized) throw new Error('Database not initialized');
             await this.reconnect();
-          } catch (reconnectErr) {
-            lastError = reconnectErr;
-            logger.error('Database reconnect attempt failed', {
+          }
+          return await this.executeWithTimeout(op);
+        } catch (err) {
+          lastError = err;
+          if (this.inTransaction || !this.isConnectionError(err)) {
+            throw err;
+          }
+          if (attempt < this.maxReconnectAttempts) {
+            const delayMs = this.reconnectBaseDelayMs * Math.pow(2, attempt);
+            logger.warn('Database connection failure detected; attempting recovery', {
               path: this.dbPath,
               attempt: attempt + 1,
-              error: String((reconnectErr as any)?.message || reconnectErr),
+              maxReconnectAttempts: this.maxReconnectAttempts,
+              delayMs,
+              error: String((err as any)?.message || err),
             });
-            continue;
+            try {
+              await new Promise((r) => setTimeout(r, delayMs));
+              await this.reconnect();
+            } catch (reconnectErr) {
+              lastError = reconnectErr;
+              logger.error('Database reconnect attempt failed', {
+                path: this.dbPath,
+                attempt: attempt + 1,
+                error: String((reconnectErr as any)?.message || reconnectErr),
+              });
+              continue;
+            }
           }
         }
       }
-    }
-    throw lastError;
+      throw lastError;
+    });
   }
 
   /**
@@ -436,6 +498,31 @@ export class Database {
   async transaction<T>(callback: () => Promise<T>): Promise<T> {
     if (!this.db) throw new Error('Database not initialized');
 
+    return this.withOperationLock(async () => {
+      const transactionToken = Symbol('database-transaction');
+      this.activeTransactionToken = transactionToken;
+      this.inTransaction = true;
+      try {
+        await this.transactionContext.run(transactionToken, async () => {
+          try {
+            await this.run('BEGIN TRANSACTION');
+            await callback();
+            await this.run('COMMIT');
+          } catch (error) {
+            try {
+              await this.run('ROLLBACK');
+            } catch (rollbackError) {
+              logger.error('Rollback failed after transaction error', { error: rollbackError });
+            }
+            logger.error('Transaction rolled back', { error });
+            throw error;
+          }
+        });
+      } finally {
+        this.inTransaction = false;
+        this.activeTransactionToken = null;
+      }
+    });
     const context = this.transactionContext.getStore();
     if (context) {
       return this.runInSavepoint(context, callback);
@@ -500,19 +587,21 @@ export class Database {
    * Close database connection
    */
   async close(): Promise<void> {
-    if (!this.db) return;
+    return this.withOperationLock(async () => {
+      if (!this.db) return;
 
-    return new Promise((resolve, reject) => {
-      this.db!.close((err) => {
-        if (err) {
-          logger.error('Failed to close database', { error: err });
-          reject(err);
-        } else {
-          logger.info('Database connection closed');
-          this.db = null;
-          this.isInitialized = false;
-          resolve();
-        }
+      return new Promise((resolve, reject) => {
+        this.db!.close((err) => {
+          if (err) {
+            logger.error('Failed to close database', { error: err });
+            reject(err);
+          } else {
+            logger.info('Database connection closed');
+            this.db = null;
+            this.isInitialized = false;
+            resolve();
+          }
+        });
       });
     });
   }

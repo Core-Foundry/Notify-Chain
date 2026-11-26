@@ -67,6 +67,10 @@ export class ApiError extends Error {
     return new ApiError(message, 503, ErrorCode.SERVICE_UNAVAILABLE);
   }
 
+  static queryTimeout(message: string): ApiError {
+    return new ApiError(message, 504, ErrorCode.QUERY_TIMEOUT);
+  }
+
   static internal(message: string, details?: unknown): ApiError {
     return new ApiError(message, 500, ErrorCode.INTERNAL_ERROR, details);
   }
@@ -113,6 +117,25 @@ export function handleApiError(
     return;
   }
 
+  if (error instanceof DatabaseQueryTimeoutError) {
+    const timeoutError = ApiError.queryTimeout(error.message);
+    logger.error('Database query timed out', {
+      requestId,
+      correlationId,
+      timeoutMs: error.timeoutMs,
+    });
+    sendErr(
+      res,
+      timeoutError.statusCode,
+      timeoutError.message,
+      timeoutError.errorCode,
+      undefined,
+      correlationId,
+    );
+    return;
+  }
+
+  const message = error instanceof Error ? error.message : String(error);
   // Unhandled / unexpected error: log full internal detail but send a safe
   // generic message to the client (#1141).
   logger.error('Unhandled API error', {
@@ -125,6 +148,40 @@ export function handleApiError(
   });
   const safeMessage = process.env.NODE_ENV === 'production' ? 'An unexpected error occurred' : redactString(message);
   sendErr(res, 500, safeMessage, ErrorCode.INTERNAL_ERROR, undefined, correlationId);
+}
+
+export function handleOperationalError(
+  res: http.ServerResponse,
+  error: unknown,
+  options: {
+    requestId?: string;
+    correlationId?: string;
+    fallbackMessage?: string;
+  } = {},
+): void {
+  if (handleQueryTimeout(res, error, options.requestId, options.correlationId)) return;
+
+  const message =
+    options.fallbackMessage ?? (error instanceof Error ? error.message : String(error));
+  sendErr(
+    res,
+    500,
+    message,
+    ErrorCode.INTERNAL_ERROR,
+    undefined,
+    options.correlationId,
+  );
+}
+
+export function handleQueryTimeout(
+  res: http.ServerResponse,
+  error: unknown,
+  requestId?: string,
+  correlationId?: string,
+): boolean {
+  if (!(error instanceof DatabaseQueryTimeoutError)) return false;
+  handleApiError(res, error, requestId, correlationId);
+  return true;
 }
 
 export function wrapAsyncHandler(

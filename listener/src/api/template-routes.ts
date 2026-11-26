@@ -20,6 +20,8 @@ import { sendOk, sendErr, ErrorCode } from '../utils/response';
 import { validateContentType } from '../middleware/content-type';
 import { principalHasScopes, type AuthPrincipal } from './api-key-auth';
 import type { ApiScope } from '../types/api-credential';
+import { DatabaseQueryTimeoutError } from '../database/database';
+import { handleApiError } from './error-handler';
 
 const PermissionScope = {
   ADMIN: 'notifications:write',
@@ -101,6 +103,11 @@ function respondWithError(
   error: unknown,
   options: { notFoundMessage?: string } = {},
 ): void {
+  if (error instanceof DatabaseQueryTimeoutError) {
+    handleApiError(res, error);
+    return;
+  }
+
   if (error instanceof ValidationError) {
     sendJson(res, 400, validationErrorBody(error));
     return;

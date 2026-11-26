@@ -1,5 +1,22 @@
 # Database Query Performance
 
+## Runtime execution limits
+
+The listener database wrapper caps each SQLite operation at 10 seconds by
+default (`DATABASE_QUERY_TIMEOUT_MS`). Constructing a `Database` accepts a
+positive finite `queryTimeoutMs` override. When an operation exceeds its
+deadline, the wrapper calls SQLite's `interrupt()` and waits for the driver's
+completion callback before allowing another operation to use the connection.
+Database operations are serialized so cancellation cannot interrupt a
+different request; transactions keep exclusive use of the connection until
+they commit or roll back.
+
+Timed-out operations reject with `DatabaseQueryTimeoutError`; the API maps this
+to HTTP 504 with error code `QUERY_TIMEOUT`, distinct from request validation
+errors (HTTP 400). The separate 5-second SQLite busy timeout continues to bound
+lock contention. Queries completing within the configured limit retain their
+existing behavior.
+
 ## Goal
 
 Identify the listener’s hottest SQLite queries and speed them up with targeted
