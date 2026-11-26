@@ -31,6 +31,21 @@
       "expectedFields": [{ "name": "channel", "type": "u32" }, { "name": "enabled", "type": "bool" }, { "name": "updated_at", "type": "u64" }]
     },
     {
+      "eventName": "ChannelCreated",
+      "expectedTopics": [{ "name": "creator", "type": "Address" }, { "name": "category", "type": "NotificationCategory" }, { "name": "priority", "type": "NotificationPriority" }],
+      "expectedFields": [{ "name": "channel_id", "type": "BytesN<32>" }]
+    },
+    {
+      "eventName": "ChannelSubscribed",
+      "expectedTopics": [{ "name": "channel_id", "type": "BytesN<32>" }, { "name": "subscriber", "type": "Address" }, { "name": "category", "type": "NotificationCategory" }],
+      "expectedFields": [{ "name": "subscriber_count", "type": "u32" }]
+    },
+    {
+      "eventName": "ChannelUnsubscribed",
+      "expectedTopics": [{ "name": "channel_id", "type": "BytesN<32>" }, { "name": "subscriber", "type": "Address" }, { "name": "category", "type": "NotificationCategory" }],
+      "expectedFields": [{ "name": "subscriber_count", "type": "u32" }]
+    },
+    {
       "eventName": "ContractPaused",
       "expectedTopics": [{ "name": "admin", "type": "Address" }, { "name": "category", "type": "NotificationCategory" }, { "name": "priority", "type": "NotificationPriority" }],
       "expectedFields": []
@@ -104,6 +119,11 @@
       "eventName": "BatchNotificationsCreated",
       "expectedTopics": [{ "name": "creator", "type": "Address" }, { "name": "category", "type": "NotificationCategory" }, { "name": "priority", "type": "NotificationPriority" }],
       "expectedFields": [{ "name": "count", "type": "u32" }, { "name": "ids", "type": "Vec<BytesN<32>>" }]
+    },
+    {
+      "eventName": "BatchSubscribeCompleted",
+      "expectedTopics": [{ "name": "subscriber", "type": "Address" }, { "name": "category", "type": "NotificationCategory" }, { "name": "priority", "type": "NotificationPriority" }],
+      "expectedFields": [{ "name": "succeeded", "type": "u32" }, { "name": "failed", "type": "u32" }]
     },
     {
       "eventName": "BatchProcessingCompleted",
