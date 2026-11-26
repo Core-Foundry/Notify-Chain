@@ -8,6 +8,7 @@ import { PreferencesUpdateInput } from '../types/preferences';
 import { NotificationAPI } from '../services/notification-api';
 import { ApiCredentialService } from '../services/api-credential-service';
 import { handleCredentialRoutes } from './credentials-api';
+import { authorizeRequest, principalClientId, type AuthPrincipal } from './api-key-auth';
 import {
   DestinationNotFoundError,
   DestinationOwnershipError,
@@ -1368,14 +1369,38 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
       (req.method === 'GET' || req.method === 'POST') &&
       (url.pathname === '/api/admin/export' || url.pathname === '/api/export')
     ) {
-      const apiKeyHeader = req.headers['x-api-key'];
-      if (options.apiKeys && options.apiKeys.length > 0) {
-        const provided = Array.isArray(apiKeyHeader) ? apiKeyHeader[0] : apiKeyHeader;
-        const allowed = options.apiKeys.some((k) => k.key === provided);
-        if (!allowed) {
-          sendErr(res, 401, 'Unauthorized', ErrorCode.UNAUTHORIZED);
-          return;
-        }
+      // Administrative endpoint: authorization is enforced server-side via the
+      // shared auth module regardless of frontend restrictions, and is never
+      // left open when no API keys/credentials happen to be configured —
+      // this route can return sensitive data (`includeSensitive`), so it must
+      // fail closed (#1135).
+      const exportSourceIp =
+        (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ||
+        (req.socket?.remoteAddress as string | undefined);
+      const exportAuth = await authorizeRequest(req, {
+        apiKeys: options.apiKeys,
+        credentialService: options.credentialService,
+        requireAuthentication: true,
+      });
+      await webhookAuditService
+        .record({
+          action: 'admin_action',
+          actor: exportAuth.allowed
+            ? (principalClientId(exportAuth.principal) ?? 'anonymous')
+            : 'anonymous',
+          sourceIp: exportSourceIp,
+          requestId,
+          correlationId,
+          outcome: exportAuth.allowed ? 'http_200' : `http_${exportAuth.status}`,
+          details: { route: url.pathname, method: req.method },
+        })
+        .catch((err) => {
+          logger.error('Failed to write security audit record', { err, requestId, correlationId });
+        });
+      if (!exportAuth.allowed) {
+        if (exportAuth.status === 401) res.setHeader('WWW-Authenticate', 'ApiKey header="X-API-Key"');
+        sendErr(res, exportAuth.status, exportAuth.message, exportAuth.code, exportAuth.details);
+        return;
       }
 
       const processExport = async (rawFilters: Record<string, unknown>) => {
@@ -2801,6 +2826,40 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
       options.archiveStore &&
       (url.pathname === '/api/archive' || url.pathname.startsWith('/api/archive/'))
     ) {
+      // POST /api/archive/run is an administrative action (triggers an
+      // on-demand archive cycle) and must enforce authorization server-side,
+      // independently of frontend restrictions and even when no API
+      // keys/credentials happen to be configured (#1135).
+      if (req.method === 'POST' && url.pathname === '/api/archive/run') {
+        const archiveSourceIp =
+          (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ||
+          (req.socket?.remoteAddress as string | undefined);
+        const archiveAuth = await authorizeRequest(req, {
+          apiKeys: options.apiKeys,
+          credentialService: options.credentialService,
+          requireAuthentication: true,
+        });
+        await webhookAuditService
+          .record({
+            action: 'admin_action',
+            actor: archiveAuth.allowed
+              ? (principalClientId(archiveAuth.principal) ?? 'anonymous')
+              : 'anonymous',
+            sourceIp: archiveSourceIp,
+            requestId,
+            correlationId,
+            outcome: archiveAuth.allowed ? 'http_200' : `http_${archiveAuth.status}`,
+            details: { route: url.pathname, method: req.method },
+          })
+          .catch((err) => {
+            logger.error('Failed to write security audit record', { err, requestId, correlationId });
+          });
+        if (!archiveAuth.allowed) {
+          if (archiveAuth.status === 401) res.setHeader('WWW-Authenticate', 'ApiKey header="X-API-Key"');
+          sendErr(res, archiveAuth.status, archiveAuth.message, archiveAuth.code, archiveAuth.details);
+          return;
+        }
+      }
       const handled = await handleArchiveRequest(
         req,
         res,

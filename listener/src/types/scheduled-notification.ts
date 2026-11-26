@@ -62,6 +62,10 @@ export interface ScheduledNotification {
   /** Number of executed or skipped series occurrences. */
   occurrenceCount?: number;
   lastRunAt?: Date | null;
+  /** Set when a missed schedule is held for operator intervention. */
+  recoveryState?: 'AWAITING_INTERVENTION' | null;
+  /** Optimistic-locking version, incremented on every mutating update. */
+  version?: number;
   /** Optional owning account identifier when created via an authenticated principal. */
   ownerId?: string | null;
   /** Optional owned destination record referenced by this notification. */
