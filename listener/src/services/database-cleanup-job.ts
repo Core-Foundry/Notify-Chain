@@ -3,6 +3,7 @@ import { AppCleanupConfig } from '../types';
 import { EventRegistry } from '../store/event-registry';
 import logger from '../utils/logger';
 import { getWorkerManager } from './worker-manager';
+import { EventRetentionService } from './event-retention-service';
 
 const DELETE_BATCH_SIZE = 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -81,12 +82,16 @@ export class DatabaseCleanupJob {
   private timer: ReturnType<typeof setInterval> | null = null;
   private activeRun: Promise<DatabaseCleanupResult | null> | null = null;
   private runSequence = 0;
+  private readonly retentionService?: EventRetentionService;
 
   constructor(
     private readonly db: Database,
     private readonly config: AppCleanupConfig,
     private readonly registry?: EventRegistry,
-  ) {}
+    retentionService?: EventRetentionService,
+  ) {
+    this.retentionService = retentionService;
+  }
 
   start(): void {
     if (this.timer) return;
@@ -150,6 +155,8 @@ export class DatabaseCleanupJob {
       notification_templates: 'Template definitions remain active application configuration.',
       notification_template_audit_log:
         'Template audit history is immutable and retained for compliance.',
+      retention_audit_log: 'Retention audit history is immutable and retained for compliance.',
+      event_retention_holds: 'Retention holds protect events and are managed by EventRetentionService.',
     };
     const failedTables: string[] = [];
 
@@ -171,6 +178,12 @@ export class DatabaseCleanupJob {
               table: target.table,
               missingColumns,
             });
+            continue;
+          }
+
+          if (target.table === 'processed_events' && this.retentionService) {
+            const cleanupResult = await this.retentionService.cleanupExpiredEvents(new Date(startedAt));
+            deletedCounts[target.table] = cleanupResult.totalDeleted;
             continue;
           }
 

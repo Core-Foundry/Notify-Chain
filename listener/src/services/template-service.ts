@@ -8,6 +8,7 @@
 import { TemplateRepository } from './template-repository';
 import { TemplateValidator } from './template-validator';
 import { TemplateRenderer } from './template-renderer';
+import { validateTemplateVariables } from './template-variable-validator';
 import logger from '../utils/logger';
 import {
   CreateTemplateInput,
@@ -115,6 +116,22 @@ export class TemplateService {
         input.channelType
       );
 
+      // Variable validation runs before persistence so unsupported or missing
+      // required variables never reach the delivery pipeline.
+      const variableValidation = validateTemplateVariables({
+        body: input.bodyTemplate,
+        subject: input.subjectTemplate,
+        requiredVariables: input.variables,
+        supportedVariables: input.supportedVariables,
+        defaultValues: input.defaultValues,
+        strictUnsupportedVariables:
+          input.supportedVariables !== undefined || (input.variables?.length ?? 0) > 0,
+      });
+      validation.isValid = validation.isValid && variableValidation.isValid;
+      validation.errors.push(...variableValidation.errors);
+      validation.warnings = [...(validation.warnings ?? []), ...variableValidation.warnings];
+      validation.detectedVariables = variableValidation.detectedVariables;
+
       if (!validation.isValid) {
         return {
           success: false,
@@ -185,6 +202,22 @@ export class TemplateService {
           subjectToValidate,
           existing.channelType
         );
+
+        const variableValidation = validateTemplateVariables({
+          body: bodyToValidate,
+          subject: subjectToValidate,
+          requiredVariables: input.variables ?? existing.variables,
+          supportedVariables: input.supportedVariables ?? existing.supportedVariables,
+          defaultValues: input.defaultValues ?? existing.defaultValues,
+          strictUnsupportedVariables:
+            input.supportedVariables !== undefined ||
+            existing.supportedVariables !== undefined ||
+            (input.variables?.length ?? existing.variables?.length ?? 0) > 0,
+        });
+        validation.isValid = validation.isValid && variableValidation.isValid;
+        validation.errors.push(...variableValidation.errors);
+        validation.warnings = [...(validation.warnings ?? []), ...variableValidation.warnings];
+        validation.detectedVariables = variableValidation.detectedVariables;
 
         if (!validation.isValid) {
           return {

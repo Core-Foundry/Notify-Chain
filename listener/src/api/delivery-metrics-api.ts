@@ -44,6 +44,7 @@ import {
   getNotificationAnalyticsAggregator,
 } from '../services/notification-analytics-aggregator';
 import { NotificationMetricsStore } from '../services/notification-metrics-store';
+import { handleOperationalError } from './error-handler';
 
 export interface DeliveryMetricsHandlerOptions {
   /** Override the aggregator (useful in tests). */
@@ -149,7 +150,10 @@ function handleMetricsHistory(
         requestId: meta.requestId,
         correlationId: meta.correlationId,
       });
-      sendErr(res, 500, (error as Error).message, ErrorCode.INTERNAL_ERROR);
+      handleOperationalError(res, error, {
+        requestId: meta.requestId,
+        correlationId: meta.correlationId,
+      });
     });
 }
 

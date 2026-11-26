@@ -1,10 +1,11 @@
 import { memo, useCallback, type KeyboardEvent } from 'react';
 import type { BlockchainEvent } from '../types/event';
 import type { ContractStatus } from '../services/eventsApi';
-import { formatTimestamp } from '../utils/formatTime';
+import { formatTimestamp, toUtcIsoString } from '../utils/formatTime';
+import { useActiveTimeZone } from '../store/timezoneStore';
 import { getEventKindClass, getEventKindLabel, isKnownEventType } from '../utils/eventTypeMapping';
 import { CopyButton } from './CopyButton';
-import { EVENT_COLUMN_IDS, hasColumnValue, type EventColumnId } from '../utils/eventTableColumns';
+import type { DashboardColumnId } from '../utils/dashboardPreferences';
 
 function shortenAddress(address: string) {
   if (address.length <= 14) {
@@ -34,6 +35,7 @@ function Unavailable({ what }: { what: string }) {
       —
     </span>
   );
+  visibleColumns?: DashboardColumnId[];
 }
 
 export const EventExplorerCard = memo(function EventExplorerCard({
@@ -46,6 +48,10 @@ export const EventExplorerCard = memo(function EventExplorerCard({
   visibleColumns,
 }: EventExplorerCardProps) {
   const show = visibleColumns ? new Set(visibleColumns) : ALL_COLUMNS;
+  visibleColumns = ['contract', 'event', 'kind', 'received', 'ledger', 'transaction'],
+}: EventExplorerCardProps) {
+  const timeZone = useActiveTimeZone();
+  const receivedAtUtc = toUtcIsoString(event.receivedAt);
   const contractStatus = contractStatuses.find(
     (status) => status.address === event.contractAddress,
   );
@@ -54,6 +60,11 @@ export const EventExplorerCard = memo(function EventExplorerCard({
   const badgeClass = getEventKindClass(event.type);
   const kindLabel = getEventKindLabel(event.type);
   const isUnknown = !isKnownEventType(event.type);
+  const isVisible = (column: DashboardColumnId) => visibleColumns.includes(column);
+  const receivedDate = new Date(event.receivedAt);
+  const receivedDateTime = Number.isNaN(receivedDate.getTime())
+    ? undefined
+    : receivedDate.toISOString();
 
   const handleKeyDown = useCallback(
     (keyboardEvent: KeyboardEvent<HTMLElement>) => {
@@ -86,6 +97,8 @@ export const EventExplorerCard = memo(function EventExplorerCard({
           role="cell"
           data-column="contract"
         >
+      {isVisible('contract') && (
+        <div className="event-explorer__cell" data-label="Contract" role="cell">
           <div className="event-explorer__contract-block">
             <button
               type="button"
@@ -120,12 +133,16 @@ export const EventExplorerCard = memo(function EventExplorerCard({
 
       {show.has('event') && (
         <div className="event-explorer__cell" data-label="Event" role="cell" data-column="event">
+      {isVisible('event') && (
+        <div className="event-explorer__cell" data-label="Event" role="cell">
           <p className="event-explorer__event-name">{label}</p>
         </div>
       )}
 
       {show.has('kind') && (
         <div className="event-explorer__cell" data-label="Kind" role="cell" data-column="kind">
+      {isVisible('kind') && (
+        <div className="event-explorer__cell" data-label="Kind" role="cell">
           <span
             className={`event-explorer__badge ${badgeClass}`}
             title={isUnknown ? `Unrecognized event kind: ${event.type}` : undefined}
@@ -156,6 +173,20 @@ export const EventExplorerCard = memo(function EventExplorerCard({
 
       {show.has('ledger') && (
         <div className="event-explorer__cell" data-label="Ledger" role="cell" data-column="ledger">
+      <div className="event-explorer__cell" data-label="Received" role="cell">
+        <time dateTime={receivedAtUtc} title={receivedAtUtc ? `UTC: ${receivedAtUtc}` : undefined}>
+          {formatTimestamp(event.receivedAt, timeZone)}
+        </time>
+      </div>
+
+      {isVisible('received') && (
+        <div className="event-explorer__cell" data-label="Received" role="cell">
+          <time dateTime={receivedDateTime}>{formatTimestamp(event.receivedAt)}</time>
+        </div>
+      )}
+
+      {isVisible('ledger') && (
+        <div className="event-explorer__cell" data-label="Ledger" role="cell">
           <div className="event-explorer__id-cell">
             <span>{event.ledger.toLocaleString()}</span>
             <CopyButton value={event.eventId} label="event ID" size="xs" />
@@ -170,6 +201,8 @@ export const EventExplorerCard = memo(function EventExplorerCard({
           role="cell"
           data-column="transaction"
         >
+      {isVisible('transaction') && (
+        <div className="event-explorer__cell" data-label="Transaction" role="cell">
           {event.txHash ? (
             <div className="event-explorer__id-cell">
               <span title={event.txHash}>{shortenAddress(event.txHash)}</span>
@@ -177,6 +210,7 @@ export const EventExplorerCard = memo(function EventExplorerCard({
             </div>
           ) : (
             <Unavailable what="Transaction hash" />
+            <span>—</span>
           )}
         </div>
       )}

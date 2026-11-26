@@ -7,6 +7,7 @@
 
 import { Database } from '../database/database';
 import { generateFingerprint } from './notification-deduplicator';
+import { UNKNOWN_NETWORK } from './event-deduplication-service';
 
 export interface AffectedRecord {
   table: 'processed_events' | 'scheduled_notifications' | 'notification_execution_log';
@@ -101,13 +102,21 @@ export class EventStoreConsistencyReport {
       id: number;
       event_id: string;
       contract_address: string;
+      network: string;
       fingerprint: string;
       tx_hash: string | null;
-    }>('SELECT id, event_id, contract_address, fingerprint, tx_hash FROM processed_events');
+    }>('SELECT id, event_id, contract_address, network, fingerprint, tx_hash FROM processed_events');
 
     const fingerprintCheck = CHECKS[0];
     for (const event of events) {
-      if (generateFingerprint(event.event_id, event.contract_address) !== event.fingerprint) {
+      // Rows with no real network (migration-backfilled 'unknown', or an
+      // unconfigured service's '') predate network being part of the
+      // fingerprint; their stored hash was computed without it (#1168).
+      const expected =
+        !event.network || event.network === UNKNOWN_NETWORK
+          ? generateFingerprint(event.event_id, event.contract_address)
+          : generateFingerprint(event.event_id, event.contract_address, event.network);
+      if (expected !== event.fingerprint) {
         findings.push({
           check: fingerprintCheck.id,
           explanation: fingerprintCheck.explanation,

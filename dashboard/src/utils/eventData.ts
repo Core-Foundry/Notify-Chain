@@ -88,16 +88,20 @@ export function filterEvents(
   dateTo = '',
   txHash = '',
   sortBy: NotificationSortOption = 'newest',
+  topics: string[] = [],
 ): BlockchainEvent[] {
   const normalizedSearch = search.trim().toLowerCase();
   const normalizedTxHash = txHash.trim().toLowerCase();
   const fromMs = dateFrom ? new Date(dateFrom).getTime() : 0;
   // dateTo is inclusive: include the entire day
   const toMs = dateTo ? new Date(dateTo).getTime() + 86_399_999 : Infinity;
+  const topicSet = new Set(topics.filter(Boolean));
 
   const filtered = events.filter((event) => {
     if (contractAddress !== 'all' && event.contractAddress !== contractAddress) return false;
     if (eventType !== 'all' && event.eventName !== eventType) return false;
+
+    if (topicSet.size > 0 && !(event.topic ?? []).some((t) => topicSet.has(t))) return false;
 
     if (status === 'read' && !event.read) return false;
     if (status === 'unread' && event.read) return false;
