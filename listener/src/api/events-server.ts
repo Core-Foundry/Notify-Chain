@@ -104,7 +104,7 @@ import { DataExportService } from '../services/data-export-service';
 import { SecurityAuditService } from '../services/security-audit';
 import { validatePayload, Schemas } from '../middleware/request-validator';
 import { parseLedgerRangeParams } from '../utils/ledger-range-validator';
-import { ValidationError, validationErrorBody } from '../utils/validation';
+import { ValidationError, validationErrorBody, isValidStellarContractId } from '../utils/validation';
 import { ResponseTimeMiddleware } from '../middleware/response-time';
 import { addSecurityHeaders } from '../middleware/security-headers';
 import { DEFAULT_MAX_BODY_BYTES, enforceBodyLimit } from '../middleware/body-limit';
@@ -1543,6 +1543,17 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
             return;
           }
 
+          if (data.contractAddress != null && !isValidStellarContractId(data.contractAddress)) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(
+              JSON.stringify({
+                error: 'contractAddress must be a valid Stellar contract identifier (56-character Base32 string starting with C)',
+                code: 'INVALID_CONTRACT_ADDRESS',
+              }),
+            );
+            return;
+          }
+
           let scheduleOwnerId: string | undefined;
           let resolvedTargetRecipient: string = data.targetRecipient;
           let resolvedNotificationType: NotificationType | undefined = data.notificationType;
@@ -1553,33 +1564,43 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
               sendErr(res, 400, 'destinationId must be a non-empty string', ErrorCode.BAD_REQUEST);
               return;
             }
+
             const destAuth = await authorizeRequest(req, {
               apiKeys: options.apiKeys,
               credentialService: options.credentialService,
               requiredScopes: ['webhooks:manage'],
               requireAuthentication: options.requireDestinationAuth,
             });
+
             if (!destAuth.allowed) {
-              if (destAuth.status === 401) res.setHeader('WWW-Authenticate', 'ApiKey header="X-API-Key"');
+              if (destAuth.status === 401) {
+                res.setHeader('WWW-Authenticate', 'ApiKey header="X-API-Key"');
+              }
               sendErr(res, destAuth.status, destAuth.message, destAuth.code, destAuth.details);
               return;
             }
+
             const resolvedOwner = resolveDestinationOwnerId(destAuth.principal, req);
+
             if (!resolvedOwner) {
               sendErr(res, 401, 'Unable to resolve destination owner', ErrorCode.UNAUTHORIZED);
               return;
             }
+
             if (!destinationService) {
               sendErr(res, 503, 'Destination service is not configured', ErrorCode.SERVICE_UNAVAILABLE);
               return;
             }
+
             const ownedDestination = await destinationService.resolveOwnedDestination(
               data.destinationId.trim(),
               resolvedOwner,
             );
+
             scheduleOwnerId = ownedDestination.ownerId;
             validatedDestinationId = ownedDestination.id;
             resolvedTargetRecipient = ownedDestination.targetRecipient;
+
             if (!resolvedNotificationType) {
               resolvedNotificationType =
                 ownedDestination.provider === 'discord'
@@ -1589,8 +1610,10 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
                     : NotificationType.WEBHOOK;
             }
           }
+          }
 
           let executeAt: Date;
+          let timezone: string = data.timeZone ?? 'UTC';
           let metadata = data.metadata;
           // Normalized timezone reported back in the response (#1162). Local
           // schedules echo the IANA zone the client supplied; a plain

@@ -11,9 +11,16 @@ use crate::base::events::{
     NetworkConfigInitialized, NotificationAccessed, NotificationAcknowledged, NotificationArchived,
     NotificationCategory, NotificationDelivered, NotificationExpired, NotificationExtended,
     NotificationLimitsConfigured, NotificationPriority, NotificationRecalled, NotificationRevoked,
-    NotificationScheduled, OwnershipTransferInitiated, OwnershipTransferred, RecordsCleanedUp,
-    ScheduledNotificationCancelled, SchemaVersionSet, SubscriptionCancelled, Withdrawal,
-    publish_operation_correlation,
+NotificationScheduled,
+OwnershipTransferInitiated,
+OwnershipTransferred,
+RecordsCleanedUp,
+ScheduledNotificationCancelled,
+SchemaVersionSet,
+SubscriptionCancelled,
+TaskDeadlineExtended,
+Withdrawal,
+publish_operation_correlation,
 };
 use crate::base::metadata_validation::{validate_metadata, NotificationMetadata};
 use crate::base::types::{
@@ -2777,6 +2784,85 @@ pub fn extend_notification_expiry(
 // ============================================================================
 // Notification Limits Configuration
 // ============================================================================
+
+// ============================================================================
+// Notification Limits Configuration
+// ============================================================================
+
+/// Extends the submission deadline of an active bounty task to a new absolute
+/// timestamp.
+///
+/// Only the notification's original creator may call this function; the contract
+/// admin cannot extend on the creator's behalf, ensuring accountability sits with
+/// the task owner. The notification must still be active — not expired, revoked,
+/// delivered (completed), or recalled (cancelled). The supplied `new_deadline`
+/// must be strictly greater than the current `expires_at`.
+///
+/// Emits a [`TaskDeadlineExtended`] event carrying both the previous and updated
+/// deadlines so off-chain consumers can track every change transparently.
+///
+/// # Errors
+/// - `ContractPaused`             – contract is paused
+/// - `NotFound`                   – notification does not exist
+/// - `NotificationExpired`        – notification has already expired
+/// - `NotificationRevoked`        – notification has been revoked
+/// - `NotificationDelivered`      – task is already marked delivered (completed)
+/// - `Unauthorized`               – caller is not the notification creator
+/// - `InvalidInput`               – `new_deadline` ≤ current `expires_at`
+pub fn extend_task_deadline(
+    env: Env,
+    notification_id: BytesN<32>,
+    caller: Address,
+    new_deadline: u64,
+) -> Result<(), Error> {
+    caller.require_auth();
+
+    if get_paused_status(&env) {
+        return Err(Error::ContractPaused);
+    }
+
+    let key = DataKey::ScheduledNotification(notification_id.clone());
+    let mut notification = load_notification(&env, &notification_id).ok_or(Error::NotFound)?;
+
+    if is_revoked(&notification) {
+        return Err(Error::NotificationRevoked);
+    }
+
+    if is_expired(&env, &notification) {
+        return Err(Error::NotificationExpired);
+    }
+
+    // Completed (delivered) and recalled tasks may not be extended.
+    if notification.delivered || notification.recalled_at.is_some() {
+        return Err(Error::NotificationDelivered);
+    }
+
+    // Only the original creator may extend — no admin override.
+    if caller != notification.creator {
+        return Err(Error::Unauthorized);
+    }
+
+    // New deadline must be strictly later than the current one.
+    if new_deadline <= notification.expires_at {
+        return Err(Error::InvalidInput);
+    }
+
+    let old_deadline = notification.expires_at;
+    notification.expires_at = new_deadline;
+    env.storage().persistent().set(&key, &notification);
+
+    TaskDeadlineExtended {
+        notification_id,
+        creator: caller,
+        category: NotificationCategory::Notification,
+        priority: NotificationPriority::Medium,
+        old_deadline,
+        new_deadline,
+    }
+    .publish(&env);
+
+    Ok(())
+}
 
 /// Configures protocol-level notification limits. Only admin can call.
 /// Validates that min expiration is less than max expiration.

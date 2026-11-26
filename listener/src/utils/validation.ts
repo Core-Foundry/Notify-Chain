@@ -143,3 +143,16 @@ export function parseOptionalDateParam(raw: string | null | undefined, field: st
 export function validationErrorBody(error: ValidationError): { error: string; details: ValidationIssue[] } {
   return { error: 'Validation failed', details: error.issues };
 }
+
+/**
+ * Returns true when `value` is a well-formed Stellar/Soroban contract identifier:
+ * exactly 56 characters, starts with 'C', and contains only Base32 alphabet chars
+ * (A-Z and 2-7).  Mirrors the boot-time checks in config.ts so the same rule
+ * is enforced at every API boundary without an SDK import.
+ */
+export function isValidStellarContractId(value: unknown): value is string {
+  if (typeof value !== 'string') return false;
+  if (value.length !== 56) return false;
+  if (value[0] !== 'C') return false;
+  return /^[A-Z2-7]{56}$/.test(value);
+}

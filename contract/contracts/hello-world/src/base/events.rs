@@ -372,6 +372,22 @@ pub struct NotificationExtended {
     pub new_expires_at: u64,
 }
 
+/// Emitted when a task creator extends the submission deadline for an active bounty task.
+#[contractevent]
+#[derive(Clone)]
+pub struct TaskDeadlineExtended {
+    #[topic]
+    pub notification_id: BytesN<32>,
+    #[topic]
+    pub creator: Address,
+    #[topic]
+    pub category: NotificationCategory,
+    #[topic]
+    pub priority: NotificationPriority,
+    pub old_deadline: u64,
+    pub new_deadline: u64,
+}
+
 /// Emitted when a notification is acknowledged by an authorized user.
 #[contractevent(data_format = "single-value")]
 #[derive(Clone)]

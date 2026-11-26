@@ -672,7 +672,20 @@ impl AutoShareContract {
         .unwrap();
     }
 
-    // ============================================================================
+    /// Extends the submission deadline of an active bounty task to a new absolute timestamp.
+    ///
+    /// Only the original task creator may call this — no admin override. The task must
+    /// still be active (not expired, revoked, delivered, or recalled) and `new_deadline`
+    /// must be strictly later than the current deadline. Emits a `TaskDeadlineExtended`
+    /// event carrying both the previous and updated deadlines.
+    pub fn extend_task_deadline(
+        env: Env,
+        notification_id: BytesN<32>,
+        caller: Address,
+        new_deadline: u64,
+    ) -> Result<(), base::errors::Error> {
+        autoshare_logic::extend_task_deadline(env, notification_id, caller, new_deadline)
+    }    // ============================================================================
     // Notification Limits Configuration
     // ============================================================================
 
@@ -1297,6 +1310,7 @@ mod tests {
     mod expired_authorization_test;
     mod expiration_test;
     mod extended_coverage_test;
+    mod deadline_extension_test;
     mod fuzz_test;
     mod input_bounds_test;
     mod initialization_state_test;
