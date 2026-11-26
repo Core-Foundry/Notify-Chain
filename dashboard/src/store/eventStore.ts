@@ -6,6 +6,7 @@ import type {
   NotificationSortOption,
 } from '../types/event';
 import { filterEvents } from '../utils/eventData';
+import { loadDashboardPreferences, saveDashboardPreferences } from '../utils/dashboardPreferences';
 
 interface EventStoreState {
   events: BlockchainEvent[];
@@ -57,31 +58,6 @@ function dedupeEventsById(
   return Array.from(byId.values());
 }
 
-const SORT_STORAGE_KEY = 'notifychain:sortBy';
-
-function loadPersistedSort(): NotificationSortOption {
-  try {
-    const saved = localStorage.getItem(
-      SORT_STORAGE_KEY,
-    ) as NotificationSortOption | null;
-
-    if (
-      saved &&
-      [
-        'newest',
-        'oldest',
-        'priority',
-        'delivery_status',
-      ].includes(saved)
-    ) {
-      return saved;
-    }
-  } catch {
-    // localStorage may be unavailable in some environments
-  }
-
-  return 'newest';
-}
 
 export const useEventStore = create<EventStoreState>(
   (set) => ({
@@ -97,6 +73,7 @@ export const useEventStore = create<EventStoreState>(
       txHash: '',
       sortBy: loadPersistedSort(),
       topics: [],
+      sortBy: loadDashboardPreferences().defaultSort,
     },
 
     selectedEventIds: [],
@@ -179,14 +156,10 @@ export const useEventStore = create<EventStoreState>(
       })),
 
     setSortBy: (sortBy) => {
-      try {
-        localStorage.setItem(
-          SORT_STORAGE_KEY,
-          sortBy,
-        );
-      } catch {
-        // localStorage may be unavailable
-      }
+      saveDashboardPreferences({
+        ...loadDashboardPreferences(),
+        defaultSort: sortBy,
+      });
 
       set((state) => ({
         filters: {

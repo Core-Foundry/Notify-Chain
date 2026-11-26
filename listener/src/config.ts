@@ -182,6 +182,9 @@ function validateContractAddresses(value: unknown): ContractConfig[] {
 
     const address = (item as any).address;
     const events = (item as any).events;
+    const userId = (item as any).userId;
+    const retentionDays = (item as any).retentionDays;
+    const retentionPeriodMs = (item as any).retentionPeriodMs;
 
     if (typeof address !== 'string' || !address.trim()) {
       throw new ConfigError(`CONTRACT_ADDRESSES[${index}].address must be a non-empty string.`);
@@ -193,9 +196,24 @@ function validateContractAddresses(value: unknown): ContractConfig[] {
       );
     }
 
+    if (retentionDays !== undefined) {
+      if (typeof retentionDays !== 'number' || !Number.isInteger(retentionDays) || retentionDays < 1) {
+        throw new ConfigError(`CONTRACT_ADDRESSES[${index}].retentionDays must be a positive integer.`);
+      }
+    }
+
+    if (retentionPeriodMs !== undefined) {
+      if (typeof retentionPeriodMs !== 'number' || !Number.isInteger(retentionPeriodMs) || retentionPeriodMs < 1) {
+        throw new ConfigError(`CONTRACT_ADDRESSES[${index}].retentionPeriodMs must be a positive integer.`);
+      }
+    }
+
     return {
       address: address.trim(),
       events: events.map((event) => event.trim()),
+      ...(userId && typeof userId === 'string' ? { userId: userId.trim() } : {}),
+      ...(retentionDays !== undefined ? { retentionDays } : {}),
+      ...(retentionPeriodMs !== undefined ? { retentionPeriodMs } : {}),
     };
   });
 }
@@ -449,6 +467,7 @@ function loadRpcFallbackConfig(fallbackUrls: string[]): RpcFallbackConfig {
     cooldownMs: parseIntegerEnv('RPC_COOLDOWN_MS', '60000'),
     requestTimeoutMs: parseIntegerEnv('RPC_REQUEST_TIMEOUT_MS', '10000'),
     maxRetries: parseOptionalIntegerEnv('RPC_MAX_RETRIES'),
+    failbackToPrimary: (trimEnv('RPC_FAILBACK_ENABLED') ?? 'true').toLowerCase() !== 'false',
   };
 }
 
@@ -514,7 +533,6 @@ export function loadConfig(): Config {
     new Set([
       ...explicitFallbacks,
       ...(allRpcUrlsFromEnv.length > 1 ? allRpcUrlsFromEnv.slice(1) : []),
-    ])
     ]),
   ).filter((url) => url !== primaryRpcUrl);
 
@@ -527,7 +545,6 @@ export function loadConfig(): Config {
     stellarRpcFallbackUrls: combinedFallbacks,
     stellarRpcUrls,
     rpcFallback,
-    stellarNetworkPassphrase: trimEnv('STELLAR_NETWORK_PASSPHRASE') || 'Test SDF Network ; September 2015',
     stellarNetworkPassphrase:
       trimEnv('STELLAR_NETWORK_PASSPHRASE') || 'Test SDF Network ; September 2015',
     contractAddresses: validateContractAddresses(rawContractAddresses),
@@ -638,7 +655,8 @@ export function validateConfig(config: Config): void {
         );
       }
     } catch {
-      errors.push(`STELLAR_RPC_URL is not a valid URL (received: "${config.stellarRpcUrl}").`);
+      // The raw value is not echoed: a malformed URL may still embed a credential.
+      errors.push('STELLAR_RPC_URL is not a valid URL.');
     }
   }
 
@@ -653,18 +671,12 @@ export function validateConfig(config: Config): void {
         const url = new URL(fbUrl);
         if (url.protocol !== 'http:' && url.protocol !== 'https:') {
           errors.push(
-            `Fallback RPC URL at index ${idx} must use HTTP or HTTPS protocol (received: "${url.protocol}").`
-          );
-        }
-      } catch {
-        errors.push(
-          `Fallback RPC URL at index ${idx} is not a valid URL (received: "${fbUrl}").`
-        );
             `Fallback RPC URL at index ${idx} must use HTTP or HTTPS protocol (received: "${url.protocol}").`,
           );
         }
       } catch {
-        errors.push(`Fallback RPC URL at index ${idx} is not a valid URL (received: "${fbUrl}").`);
+        // The raw value is not echoed: a malformed URL may still embed a credential.
+        errors.push(`Fallback RPC URL at index ${idx} is not a valid URL.`);
       }
     }
   }
@@ -672,17 +684,6 @@ export function validateConfig(config: Config): void {
   if (config.rpcFallback) {
     if (config.rpcFallback.failureThreshold < 1) {
       errors.push(
-        `RPC_FAILURE_THRESHOLD must be >= 1 (received: ${config.rpcFallback.failureThreshold}).`
-      );
-    }
-    if (config.rpcFallback.cooldownMs < 0) {
-      errors.push(
-        `RPC_COOLDOWN_MS must be >= 0 (received: ${config.rpcFallback.cooldownMs}).`
-      );
-    }
-    if (config.rpcFallback.requestTimeoutMs < 500) {
-      errors.push(
-        `RPC_REQUEST_TIMEOUT_MS must be at least 500 ms (received: ${config.rpcFallback.requestTimeoutMs}).`
         `RPC_FAILURE_THRESHOLD must be >= 1 (received: ${config.rpcFallback.failureThreshold}).`,
       );
     }
@@ -808,6 +809,13 @@ export function validateConfig(config: Config): void {
             );
           }
         });
+      }
+
+      if (contract.retentionDays !== undefined && (contract.retentionDays < 1 || !Number.isInteger(contract.retentionDays))) {
+        errors.push(`CONTRACT_ADDRESSES[${index}].retentionDays must be a positive integer.`);
+      }
+      if (contract.retentionPeriodMs !== undefined && (contract.retentionPeriodMs < 1 || !Number.isInteger(contract.retentionPeriodMs))) {
+        errors.push(`CONTRACT_ADDRESSES[${index}].retentionPeriodMs must be a positive integer.`);
       }
     });
   }

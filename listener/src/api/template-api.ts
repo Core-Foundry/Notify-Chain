@@ -29,6 +29,7 @@ import { TemplateService } from '../services/template-service';
 import logger from '../utils/logger';
 import { TemplateChannelType } from '../types/notification-template';
 import { sendOk, sendErr, ErrorCode } from '../utils/response';
+import { handleOperationalError } from './error-handler';
 
 export const TEMPLATE_READ_PERMISSION = 'templates:read';
 export const TEMPLATE_WRITE_PERMISSION = 'templates:write';
@@ -300,7 +301,9 @@ export function createTemplateAPIHandler(options: TemplateAPIOptions) {
       sendErr(res, 404, 'Endpoint not found', ErrorCode.NOT_FOUND);
     } catch (error) {
       logger.error('Template API error', { error, path: url.pathname });
-      sendErr(res, 500, error instanceof Error ? error.message : 'Unknown error', ErrorCode.INTERNAL_ERROR);
+      handleOperationalError(res, error, {
+        fallbackMessage: error instanceof Error ? error.message : 'Unknown error',
+      });
     }
   };
 }

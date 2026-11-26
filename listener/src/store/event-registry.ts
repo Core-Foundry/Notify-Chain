@@ -11,6 +11,7 @@ export type RegistryListener = (event: DisplayEvent) => void;
 export class EventRegistry {
   private readonly events = new Map<string, DisplayEvent>();
   private readonly listeners = new Set<RegistryListener>();
+  private readonly contractTtls = new Map<string, number>();
   private readonly maxEvents: number;
   private ttlMs: number;
   private cleanupTimer: ReturnType<typeof setInterval> | null = null;
@@ -41,6 +42,20 @@ export class EventRegistry {
     this.ttlMs = ttlMs;
   }
 
+  setContractTtlMs(contractAddress: string, ttlMs: number): void {
+    if (!Number.isFinite(ttlMs) || ttlMs < 1) {
+      throw new Error('ttlMs must be a positive number');
+    }
+    this.contractTtls.set(contractAddress.trim(), ttlMs);
+  }
+
+  getTtlForContract(contractAddress?: string | null): number {
+    if (contractAddress && this.contractTtls.has(contractAddress.trim())) {
+      return this.contractTtls.get(contractAddress.trim())!;
+    }
+    return this.ttlMs;
+  }
+
   stopCleanup(): void {
     if (this.cleanupTimer) {
       clearInterval(this.cleanupTimer);
@@ -49,9 +64,11 @@ export class EventRegistry {
   }
 
   pruneExpired(): number {
-    const cutoff = Date.now() - this.ttlMs;
+    const now = Date.now();
     let removed = 0;
     for (const [key, event] of this.events) {
+      const ttl = this.getTtlForContract(event.contractAddress);
+      const cutoff = now - ttl;
       if (event.receivedAt < cutoff) {
         this.events.delete(key);
         removed++;
@@ -71,16 +88,31 @@ export class EventRegistry {
     }
 
     const topic = formatScValArray(input.topic);
+    const value = formatScValValue(input.value);
+    const eventName = input.eventName ?? topic[0] ?? null;
     const displayEvent: DisplayEvent = {
       eventId: input.eventId,
       contractAddress: input.contractAddress,
-      eventName: input.eventName ?? topic[0] ?? null,
+      eventName,
       ledger: input.ledger,
       type: input.type,
       topic,
-      value: formatScValValue(input.value),
+      value,
       txHash: input.txHash,
       receivedAt: Date.now(),
+      // Preserve the decoded payload exactly as ingested. Falls back to a
+      // snapshot of the decoded values when the caller did not supply one.
+      rawPayload: input.rawPayload ?? {
+        eventId: input.eventId,
+        contractAddress: input.contractAddress,
+        eventName,
+        ledger: input.ledger,
+        type: input.type,
+        topic: [...topic],
+        value,
+        txHash: input.txHash,
+      },
+      txMetadata: input.txMetadata,
     };
 
     this.events.set(eventKey, displayEvent);
