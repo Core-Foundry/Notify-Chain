@@ -3,6 +3,7 @@ import { fetchIndexingHealth } from '../services/indexingHealthApi';
 import type { IndexingHealth, IndexingSyncStatus } from '../types/indexingHealth';
 import { formatTimestampShort } from '../utils/formatTime';
 import { formatDuration } from '../utils/formatDuration';
+import { LedgerProgressIndicator } from './LedgerProgressIndicator';
 
 const DEFAULT_POLL_INTERVAL_MS = 5000;
 
@@ -148,6 +149,8 @@ export function IndexingHealthPanel(props: { healthUrl: string; pollIntervalMs?:
       </dl>
 
       {detail && <p className="indexing-health__detail">{detail}</p>}
+
+      <LedgerProgressIndicator health={health} fetchFailed={error !== null} />
     </section>
   );
 }

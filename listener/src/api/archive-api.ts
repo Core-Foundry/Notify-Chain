@@ -23,6 +23,7 @@ import {
   validationErrorBody,
 } from '../utils/validation';
 import { sendOk, sendErr, ErrorCode } from '../utils/response';
+import { handleOperationalError } from './error-handler';
 
 export interface ArchiveApiHandlerDeps {
   store: ArchiveStore;
@@ -55,7 +56,7 @@ export async function handleArchiveRequest(
       sendOk(res, 200, result);
     } catch (err) {
       logger.error('Archive run failed', { error: err, requestId });
-      sendErr(res, 500, (err as Error).message, ErrorCode.INTERNAL_ERROR);
+      handleOperationalError(res, err, { requestId });
     }
     return true;
   }
@@ -79,7 +80,7 @@ export async function handleArchiveRequest(
       sendOk(res, 200, record);
     } catch (err) {
       logger.error('Failed to fetch archive record', { error: err, requestId, id });
-      sendErr(res, 500, (err as Error).message, ErrorCode.INTERNAL_ERROR);
+      handleOperationalError(res, err, { requestId });
     }
     return true;
   }
@@ -122,7 +123,7 @@ export async function handleArchiveRequest(
         return true;
       }
       logger.error('Failed to query archive', { error: err, requestId });
-      sendErr(res, 500, (err as Error).message, ErrorCode.INTERNAL_ERROR);
+      handleOperationalError(res, err, { requestId });
     }
     return true;
   }

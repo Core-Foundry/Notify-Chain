@@ -29,7 +29,8 @@
     "check-migrations": "ts-node src/scripts/check-migrations.ts",
     "check:migrations-integrity": "ts-node src/scripts/check-migration-integrity.ts",
     "validate:batch": "ts-node src/utils/batch-validator.ts",
-    "replay-event": "ts-node src/scripts/replay-event.ts"
+    "replay-event": "ts-node src/scripts/replay-event.ts",
+    "backfill:ledger-range": "ts-node src/scripts/backfill-ledger-range.ts"
   },
   "keywords": [],
   "author": "",

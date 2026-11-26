@@ -1,0 +1,349 @@
+/* Error Boundary Styles */
+
+.error-boundary {
+  padding: 1.5rem;
+  margin: 1rem 0;
+  background-color: #fff3cd;
+  border: 1px solid #ffc107;
+  border-radius: 0.5rem;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+.error-boundary__inner {
+  max-width: 600px;
+}
+
+.error-boundary__icon {
+  display: inline-block;
+  margin-right: 0.75rem;
+  font-size: 1.5rem;
+}
+
+.error-boundary__title {
+  margin: 0 0 0.5rem 0;
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: #856404;
+}
+
+.error-boundary__message {
+  margin: 0.75rem 0;
+  color: #856404;
+  line-height: 1.5;
+}
+
+.error-boundary__retry {
+  margin-top: 1rem;
+  padding: 0.5rem 1rem;
+  background-color: #ffc107;
+  border: 1px solid #856404;
+  border-radius: 0.375rem;
+  color: #856404;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.error-boundary__retry:hover {
+  background-color: #e0a800;
+  border-color: #664d03;
+}
+
+.error-boundary__retry:active {
+  transform: scale(0.98);
+}
+
+/* Enhanced Error Boundary Styles */
+
+.enhanced-error-boundary {
+  padding: 2rem;
+  margin: 1.5rem 0;
+  background: linear-gradient(135deg, #fff5f5 0%, #ffe0e0 100%);
+  border: 2px solid #ff6b6b;
+  border-radius: 0.75rem;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+}
+
+.enhanced-error-boundary__container {
+  max-width: 700px;
+  margin: 0 auto;
+}
+
+.enhanced-error-boundary__header {
+  display: flex;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+  align-items: flex-start;
+}
+
+.enhanced-error-boundary__icon {
+  font-size: 2rem;
+  flex-shrink: 0;
+  line-height: 1;
+}
+
+.enhanced-error-boundary__title {
+  margin: 0;
+  font-size: 1.375rem;
+  font-weight: 700;
+  color: #c92a2a;
+  line-height: 1.4;
+}
+
+.enhanced-error-boundary__severity {
+  margin: 0.5rem 0 0 0;
+  font-size: 0.875rem;
+  color: #a61e4d;
+}
+
+.enhanced-error-boundary__severity strong {
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.enhanced-error-boundary__message {
+  margin-bottom: 1.5rem;
+  color: #5c2e3a;
+  line-height: 1.6;
+}
+
+.enhanced-error-boundary__message p {
+  margin: 0.5rem 0;
+}
+
+.enhanced-error-boundary__reassurance {
+  font-size: 0.95rem;
+  color: #7d3c4a;
+  font-style: italic;
+}
+
+.enhanced-error-boundary__details {
+  margin: 1.5rem 0;
+  padding: 1rem;
+  background-color: rgba(255, 255, 255, 0.5);
+  border: 1px solid #ffb3ba;
+  border-radius: 0.5rem;
+  cursor: pointer;
+}
+
+.enhanced-error-boundary__details summary {
+  font-weight: 600;
+  color: #c92a2a;
+  cursor: pointer;
+  user-select: none;
+}
+
+.enhanced-error-boundary__details summary:hover {
+  color: #a61e4d;
+}
+
+.enhanced-error-boundary__code {
+  margin-top: 0.75rem;
+  padding: 0.75rem;
+  background-color: #f8f9fa;
+  border-radius: 0.375rem;
+  overflow-x: auto;
+  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+  font-size: 0.85rem;
+  color: #2d3748;
+}
+
+.enhanced-error-boundary__code code {
+  word-break: break-word;
+}
+
+.enhanced-error-boundary__error-id {
+  margin: 0.75rem 0 0 0;
+  font-size: 0.85rem;
+  color: #5c2e3a;
+}
+
+.enhanced-error-boundary__error-id code {
+  background-color: #f8f9fa;
+  padding: 0.25rem 0.5rem;
+  border-radius: 0.25rem;
+  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+  font-size: 0.8rem;
+}
+
+.enhanced-error-boundary__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-top: 1.5rem;
+}
+
+.enhanced-error-boundary__action-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.625rem 1.25rem;
+  background-color: #ff6b6b;
+  color: white;
+  border: none;
+  border-radius: 0.5rem;
+  font-size: 0.95rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+}
+
+.enhanced-error-boundary__action-button:hover {
+  background-color: #ff5252;
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(255, 107, 107, 0.3);
+}
+
+.enhanced-error-boundary__action-button:active {
+  transform: translateY(0);
+  box-shadow: 0 2px 4px rgba(255, 107, 107, 0.2);
+}
+
+.enhanced-error-boundary__action-button--secondary {
+  background-color: #f1f3f5;
+  color: #5c2e3a;
+}
+
+.enhanced-error-boundary__action-button--secondary:hover {
+  background-color: #e9ecef;
+}
+
+.enhanced-error-boundary__action-icon {
+  font-size: 1.1em;
+}
+
+.enhanced-error-boundary__debug {
+  margin-top: 1.5rem;
+  padding: 1rem;
+  background-color: #f8f9fa;
+  border: 1px dashed #ffb3ba;
+  border-radius: 0.5rem;
+  font-size: 0.85rem;
+  color: #5c2e3a;
+}
+
+.enhanced-error-boundary__debug-label {
+  margin: 0 0 0.5rem 0;
+  font-weight: 600;
+}
+
+.enhanced-error-boundary__debug-list {
+  margin: 0;
+  padding-left: 1.25rem;
+}
+
+.enhanced-error-boundary__debug-list li {
+  margin: 0.25rem 0;
+  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+  word-break: break-all;
+}
+
+/* Dark mode support */
+@media (prefers-color-scheme: dark) {
+  .enhanced-error-boundary {
+    background: linear-gradient(135deg, #2c1717 0%, #3a1f1f 100%);
+    border-color: #ff8787;
+    color: #ffb3ba;
+  }
+
+  .enhanced-error-boundary__title {
+    color: #ff8787;
+  }
+
+  .enhanced-error-boundary__severity {
+    color: #ff99a3;
+  }
+
+  .enhanced-error-boundary__message {
+    color: #ffb3ba;
+  }
+
+  .enhanced-error-boundary__details {
+    background-color: rgba(0, 0, 0, 0.2);
+    border-color: #ff8787;
+  }
+
+  .enhanced-error-boundary__details summary {
+    color: #ff8787;
+  }
+
+  .enhanced-error-boundary__code {
+    background-color: #1a1a1a;
+    color: #e0e0e0;
+  }
+
+  .enhanced-error-boundary__action-button {
+    background-color: #ff8787;
+  }
+
+  .enhanced-error-boundary__action-button:hover {
+    background-color: #ff6b6b;
+  }
+
+  .enhanced-error-boundary__action-button--secondary {
+    background-color: #374151;
+    color: #e0e0e0;
+  }
+
+  .enhanced-error-boundary__action-button--secondary:hover {
+    background-color: #4b5563;
+  }
+
+  .enhanced-error-boundary__debug {
+    background-color: #1f1f1f;
+    border-color: #ff99a3;
+  }
+}
+
+/* Responsive styles */
+@media (max-width: 640px) {
+  .enhanced-error-boundary {
+    padding: 1.5rem 1rem;
+    margin: 1rem 0;
+  }
+
+  .enhanced-error-boundary__header {
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+
+  .enhanced-error-boundary__actions {
+    flex-direction: column;
+  }
+
+  .enhanced-error-boundary__action-button {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .enhanced-error-boundary__title {
+    font-size: 1.15rem;
+  }
+}
+
+/* Accessibility improvements */
+@media (prefers-reduced-motion: reduce) {
+  .enhanced-error-boundary__action-button {
+    transition: none;
+  }
+
+  .enhanced-error-boundary__action-button:hover {
+    transform: none;
+  }
+
+  .enhanced-error-boundary__action-button:active {
+    transform: none;
+  }
+}
+
+/* Focus styles for keyboard navigation */
+.enhanced-error-boundary__action-button:focus-visible {
+  outline: 3px solid #ff6b6b;
+  outline-offset: 2px;
+}
+
+.enhanced-error-boundary__action-button--secondary:focus-visible {
+  outline-color: #5c2e3a;
+}
