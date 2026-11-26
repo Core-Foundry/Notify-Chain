@@ -37,6 +37,7 @@ export const ErrorCode = {
   UNSUPPORTED_MEDIA_TYPE: 'UNSUPPORTED_MEDIA_TYPE',
   UNPROCESSABLE: 'UNPROCESSABLE',
   RATE_LIMITED: 'RATE_LIMITED',
+  QUERY_TIMEOUT: 'QUERY_TIMEOUT',
   INTERNAL_ERROR: 'INTERNAL_ERROR',
   SERVICE_UNAVAILABLE: 'SERVICE_UNAVAILABLE',
 } as const;
@@ -88,6 +89,10 @@ export const ERROR_CODE_CATALOG: Readonly<Record<ErrorCodeValue, ErrorCodeDefini
       'The request is well-formed but cannot be processed (e.g. template render failure).',
   },
   RATE_LIMITED: { status: 429, description: 'Rate limit exceeded; honour the Retry-After header.' },
+  QUERY_TIMEOUT: {
+    status: 504,
+    description: 'A database operation exceeded its execution limit and was cancelled.',
+  },
   INTERNAL_ERROR: { status: 500, description: 'An unexpected server-side failure occurred.' },
   SERVICE_UNAVAILABLE: {
     status: 503,

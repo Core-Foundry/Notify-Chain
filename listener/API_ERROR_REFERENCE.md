@@ -45,6 +45,7 @@ Codes are never renamed or reused once published. The source of truth is
 | `UNSUPPORTED_MEDIA_TYPE` | 415 | `Content-Type` not accepted. |
 | `UNPROCESSABLE` | 422 | Well-formed but cannot be processed. |
 | `RATE_LIMITED` | 429 | Rate limit exceeded; honour `Retry-After`. |
+| `QUERY_TIMEOUT` | 504 | A database operation exceeded its execution limit and was cancelled. |
 | `INTERNAL_ERROR` | 500 | Unexpected server failure. |
 | `SERVICE_UNAVAILABLE` | 503 | A required optional service is not configured. |
 
@@ -76,6 +77,7 @@ Batch validation endpoints return structured validation results instead:
 | 401 | Unauthorized | Missing webhook signature, missing key ID, unknown key ID, expired signature, invalid signature | Re-sign the exact raw body with a registered secret and send required headers. |
 | 404 | Not found | Unknown route, scheduled notification ID not found, template not found, archived record not found | Verify the endpoint path and resource ID. |
 | 429 | Too many requests | Rate limit exceeded for the client IP or API key | Wait for `Retry-After`, reduce request rate, or request a higher configured limit. |
+| 504 | Database query timeout | A database operation exceeded its execution limit and was cancelled. | Retry when appropriate; if repeated, narrow the query or investigate database load. |
 | 500 | Internal server error | Database read/write failure, downstream service failure, unexpected handler error | Check listener logs with the request/correlation ID, database health, and downstream dependency status. |
 | 503 | Service unavailable | Optional service disabled or unavailable, such as scheduler, templates, archive, analytics, metrics, or rate-limit metrics | Enable/configure the service or retry after the dependency is restored. |
 

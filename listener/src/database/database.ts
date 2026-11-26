@@ -1,10 +1,23 @@
 import * as sqlite3 from 'sqlite3';
 import * as fs from 'fs';
 import * as path from 'path';
+import { AsyncLocalStorage } from 'async_hooks';
 import logger from '../utils/logger';
+import { applyDestinationOwnershipMigration } from '../migrations/008-destination-ownership';
 
 /** How long a write waits for a competing connection's lock before failing. */
 export const DATABASE_BUSY_TIMEOUT_MS = 5_000;
+/** Maximum time a database operation may execute before it is interrupted. */
+export const DATABASE_QUERY_TIMEOUT_MS = 10_000;
+
+export class DatabaseQueryTimeoutError extends Error {
+  public readonly code = 'DATABASE_QUERY_TIMEOUT';
+
+  constructor(public readonly timeoutMs: number) {
+    super(`Database query exceeded the ${timeoutMs}ms execution limit`);
+    this.name = 'DatabaseQueryTimeoutError';
+  }
+}
 
 /**
  * SQLite Database Service
@@ -15,6 +28,8 @@ export interface DatabaseRecoveryOptions {
   maxReconnectAttempts?: number;
   /** Base delay for exponential backoff between reconnect attempts, in ms. Default 100. */
   reconnectBaseDelayMs?: number;
+  /** Maximum execution time for each database operation. Default 10000. */
+  queryTimeoutMs?: number;
 }
 
 export class Database {
@@ -23,13 +38,68 @@ export class Database {
   private isInitialized: boolean = false;
   private readonly maxReconnectAttempts: number;
   private readonly reconnectBaseDelayMs: number;
+  private readonly queryTimeoutMs: number;
+  private readonly transactionContext = new AsyncLocalStorage<symbol>();
+  private activeTransactionToken: symbol | null = null;
+  private operationQueue: Promise<void> = Promise.resolve();
   /** True while a transaction is open; recovery never fires mid-transaction. */
   private inTransaction: boolean = false;
+  /**
+   * Marks async work running inside a `transaction()` callback so nested
+   * calls become SAVEPOINTs instead of an illegal second BEGIN (issue #1121).
+   */
+  private readonly transactionContext = new AsyncLocalStorage<{ depth: number }>();
+  /** Serialises top-level transactions on the single shared connection. */
+  private transactionQueue: Promise<void> = Promise.resolve();
+  private savepointCounter = 0;
 
   constructor(dbPath: string = './data/notifications.db', recovery: DatabaseRecoveryOptions = {}) {
     this.dbPath = dbPath;
     this.maxReconnectAttempts = Math.max(0, recovery.maxReconnectAttempts ?? 3);
     this.reconnectBaseDelayMs = Math.max(0, recovery.reconnectBaseDelayMs ?? 100);
+    this.queryTimeoutMs = recovery.queryTimeoutMs ?? DATABASE_QUERY_TIMEOUT_MS;
+    if (!Number.isFinite(this.queryTimeoutMs) || this.queryTimeoutMs <= 0) {
+      throw new RangeError('queryTimeoutMs must be a positive finite number');
+    }
+  }
+
+  private async withOperationLock<T>(operation: () => Promise<T>): Promise<T> {
+    const transactionToken = this.transactionContext.getStore();
+    if (transactionToken && transactionToken === this.activeTransactionToken) {
+      return operation();
+    }
+
+    let release!: () => void;
+    const previousOperation = this.operationQueue;
+    this.operationQueue = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await previousOperation;
+    try {
+      return await operation();
+    } finally {
+      release();
+    }
+  }
+
+  private async executeWithTimeout<T>(operation: () => Promise<T>): Promise<T> {
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      this.db?.interrupt();
+    }, this.queryTimeoutMs);
+
+    try {
+      const result = await operation();
+      if (timedOut) throw new DatabaseQueryTimeoutError(this.queryTimeoutMs);
+      return result;
+    } catch (error) {
+      if (error instanceof DatabaseQueryTimeoutError) throw error;
+      if (timedOut) throw new DatabaseQueryTimeoutError(this.queryTimeoutMs);
+      throw error;
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   /**
@@ -78,44 +148,46 @@ export class Database {
    * recovery happens while a transaction is open (see transaction()).
    */
   private async executeWithRecovery<T>(op: () => Promise<T>): Promise<T> {
-    let lastError: any;
-    for (let attempt = 0; attempt <= this.maxReconnectAttempts; attempt++) {
-      try {
-        if (!this.db) {
-          if (!this.isInitialized) throw new Error('Database not initialized');
-          await this.reconnect();
-        }
-        return await op();
-      } catch (err) {
-        lastError = err;
-        if (this.inTransaction || !this.isConnectionError(err)) {
-          throw err;
-        }
-        if (attempt < this.maxReconnectAttempts) {
-          const delayMs = this.reconnectBaseDelayMs * Math.pow(2, attempt);
-          logger.warn('Database connection failure detected; attempting recovery', {
-            path: this.dbPath,
-            attempt: attempt + 1,
-            maxReconnectAttempts: this.maxReconnectAttempts,
-            delayMs,
-            error: String((err as any)?.message || err),
-          });
-          try {
-            await new Promise((r) => setTimeout(r, delayMs));
+    return this.withOperationLock(async () => {
+      let lastError: any;
+      for (let attempt = 0; attempt <= this.maxReconnectAttempts; attempt++) {
+        try {
+          if (!this.db) {
+            if (!this.isInitialized) throw new Error('Database not initialized');
             await this.reconnect();
-          } catch (reconnectErr) {
-            lastError = reconnectErr;
-            logger.error('Database reconnect attempt failed', {
+          }
+          return await this.executeWithTimeout(op);
+        } catch (err) {
+          lastError = err;
+          if (this.inTransaction || !this.isConnectionError(err)) {
+            throw err;
+          }
+          if (attempt < this.maxReconnectAttempts) {
+            const delayMs = this.reconnectBaseDelayMs * Math.pow(2, attempt);
+            logger.warn('Database connection failure detected; attempting recovery', {
               path: this.dbPath,
               attempt: attempt + 1,
-              error: String((reconnectErr as any)?.message || reconnectErr),
+              maxReconnectAttempts: this.maxReconnectAttempts,
+              delayMs,
+              error: String((err as any)?.message || err),
             });
-            continue;
+            try {
+              await new Promise((r) => setTimeout(r, delayMs));
+              await this.reconnect();
+            } catch (reconnectErr) {
+              lastError = reconnectErr;
+              logger.error('Database reconnect attempt failed', {
+                path: this.dbPath,
+                attempt: attempt + 1,
+                error: String((reconnectErr as any)?.message || reconnectErr),
+              });
+              continue;
+            }
           }
         }
       }
-    }
-    throw lastError;
+      throw lastError;
+    });
   }
 
   /**
@@ -204,6 +276,7 @@ export class Database {
     await this.transaction(async () => {
       await this.applyIncrementalMigrations();
       await this.exec(schema);
+      await this.applyEventIntegrityConstraints();
     });
 
     logger.info('Database migrations completed');
@@ -297,6 +370,14 @@ export class Database {
       );
       if (applied) continue;
 
+    const migrations = [
+      'ALTER TABLE scheduled_notifications ADD COLUMN next_retry_at DATETIME',
+      'ALTER TABLE scheduled_notifications ADD COLUMN version INTEGER NOT NULL DEFAULT 1 CHECK (version >= 1)',
+      "ALTER TABLE scheduled_notifications ADD COLUMN recovery_state TEXT CHECK (recovery_state IS NULL OR recovery_state = 'AWAITING_INTERVENTION')",
+      'ALTER TABLE processed_events ADD COLUMN tx_metadata TEXT',
+      'ALTER TABLE processed_events ADD COLUMN metadata_status TEXT',
+    ];
+    for (const sql of migrations) {
       try {
         await this.run(migration.sql);
       } catch (error: any) {
@@ -305,9 +386,73 @@ export class Database {
         if (!/duplicate column name/i.test(String(error?.message ?? error))) {
           throw error;
         }
+        const message = String(error?.message ?? error);
+        // Tolerate an already-applied column and a table that does not yet
+        // exist (created later by schema.sql on this run).
+        if (/duplicate column name/i.test(message) || /no such table/i.test(message)) continue;
+        throw error;
       }
       await this.run('INSERT INTO schema_migrations (id) VALUES (?)', [migration.id]);
     }
+
+    // Network isolation for persisted events (#1168). Legacy rows predating
+    // this column have no reliable network to backfill from, so they are
+    // explicitly tagged 'unknown' rather than guessed — see
+    // docs/migration-rollback.md for the documented recovery/backfill path.
+    const processedEventsTable = await this.get<{ name: string }>(
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'processed_events'",
+    );
+    if (processedEventsTable) {
+      try {
+        await this.run("ALTER TABLE processed_events ADD COLUMN network TEXT NOT NULL DEFAULT 'unknown'");
+      } catch (error: any) {
+        if (!/duplicate column name/i.test(String(error?.message ?? error))) throw error;
+      }
+    }
+    // Safely upgrade any legacy `destinations` table lacking `owner_id` before
+    // `schema.sql` creates ownership indexes on `destinations(owner_id)`.
+    if (this.db) {
+      const legacyDestTable = await this.get<{ name: string }>(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'destinations'",
+      );
+      if (legacyDestTable) {
+        await applyDestinationOwnershipMigration(this.db);
+      }
+    }
+  }
+
+  /**
+   * Event-table uniqueness that cannot live in schema.sql (issue #1121).
+   *
+   * `CREATE UNIQUE INDEX` fails outright when existing rows already violate
+   * it, which would block startup. The duplicate audit runs first: a clean
+   * table gets the constraint, while a table with legacy duplicates keeps
+   * every row and logs the conflict for an operator to resolve (migration
+   * 008 performs the same audit and refuses to proceed).
+   */
+  private async applyEventIntegrityConstraints(): Promise<void> {
+    const existing = await this.get<{ name: string }>(
+      "SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'ux_processed_events_contract_event'",
+    );
+    if (existing) return;
+
+    const duplicates = await this.get<{ count: number }>(
+      `SELECT COUNT(*) AS count FROM (
+         SELECT 1 FROM processed_events
+         GROUP BY contract_address, event_id HAVING COUNT(*) > 1
+       )`,
+    );
+    if ((duplicates?.count ?? 0) > 0) {
+      logger.error('processed_events has duplicate (contract_address, event_id) rows; unique constraint not applied', {
+        duplicateGroups: duplicates?.count,
+      });
+      return;
+    }
+
+    await this.run(
+      `CREATE UNIQUE INDEX IF NOT EXISTS ux_processed_events_contract_event
+         ON processed_events(contract_address, event_id)`,
+    );
   }
 
   /**
@@ -387,29 +532,103 @@ export class Database {
   }
 
   /**
-   * Execute multiple statements in a transaction
+   * Execute multiple statements atomically: every write made by `callback`
+   * commits together, or all of it is rolled back and the error rethrown.
+   *
+   * Transaction boundaries (issue #1121):
+   * - Top-level transactions are serialised. All callers share one SQLite
+   *   connection, so two overlapping `BEGIN`s would otherwise fail with
+   *   "cannot start a transaction within a transaction".
+   * - A `transaction()` call made from inside another transaction's callback
+   *   becomes a SAVEPOINT. A failing inner step rolls back only its own
+   *   writes; the error still propagates, so an outer callback that does not
+   *   catch it rolls back the whole unit.
    */
-  async transaction(callback: () => Promise<void>): Promise<void> {
+  async transaction<T>(callback: () => Promise<T>): Promise<T> {
     if (!this.db) throw new Error('Database not initialized');
+
+    return this.withOperationLock(async () => {
+      const transactionToken = Symbol('database-transaction');
+      this.activeTransactionToken = transactionToken;
+      this.inTransaction = true;
+      try {
+        await this.transactionContext.run(transactionToken, async () => {
+          try {
+            await this.run('BEGIN TRANSACTION');
+            await callback();
+            await this.run('COMMIT');
+          } catch (error) {
+            try {
+              await this.run('ROLLBACK');
+            } catch (rollbackError) {
+              logger.error('Rollback failed after transaction error', { error: rollbackError });
+            }
+            logger.error('Transaction rolled back', { error });
+            throw error;
+          }
+        });
+      } finally {
+        this.inTransaction = false;
+        this.activeTransactionToken = null;
+      }
+    });
+    const context = this.transactionContext.getStore();
+    if (context) {
+      return this.runInSavepoint(context, callback);
+    }
+
+    const previous = this.transactionQueue;
+    let release!: () => void;
+    this.transactionQueue = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await previous;
 
     // Recovery is suspended for the whole transaction: a mid-transaction
     // reconnect would lose the transaction silently, so any failure rolls
     // back and propagates to the caller instead.
     this.inTransaction = true;
     try {
-      await this.run('BEGIN TRANSACTION');
-      await callback();
-      await this.run('COMMIT');
-    } catch (error) {
-      try {
-        await this.run('ROLLBACK');
-      } catch (rollbackError) {
-        logger.error('Rollback failed after transaction error', { error: rollbackError });
-      }
-      logger.error('Transaction rolled back', { error });
-      throw error;
+      return await this.transactionContext.run({ depth: 0 }, async () => {
+        await this.run('BEGIN TRANSACTION');
+        try {
+          const result = await callback();
+          await this.run('COMMIT');
+          return result;
+        } catch (error) {
+          try {
+            await this.run('ROLLBACK');
+          } catch (rollbackError) {
+            logger.error('Rollback failed after transaction error', { error: rollbackError });
+          }
+          logger.error('Transaction rolled back', { error });
+          throw error;
+        }
+      });
     } finally {
       this.inTransaction = false;
+      release();
+    }
+  }
+
+  private async runInSavepoint<T>(
+    context: { depth: number },
+    callback: () => Promise<T>,
+  ): Promise<T> {
+    const name = `sp_${++this.savepointCounter}`;
+    await this.run(`SAVEPOINT ${name}`);
+    try {
+      const result = await this.transactionContext.run({ depth: context.depth + 1 }, callback);
+      await this.run(`RELEASE SAVEPOINT ${name}`);
+      return result;
+    } catch (error) {
+      try {
+        await this.run(`ROLLBACK TO SAVEPOINT ${name}`);
+        await this.run(`RELEASE SAVEPOINT ${name}`);
+      } catch (rollbackError) {
+        logger.error('Savepoint rollback failed', { error: rollbackError, savepoint: name });
+      }
+      throw error;
     }
   }
 
@@ -417,19 +636,21 @@ export class Database {
    * Close database connection
    */
   async close(): Promise<void> {
-    if (!this.db) return;
+    return this.withOperationLock(async () => {
+      if (!this.db) return;
 
-    return new Promise((resolve, reject) => {
-      this.db!.close((err) => {
-        if (err) {
-          logger.error('Failed to close database', { error: err });
-          reject(err);
-        } else {
-          logger.info('Database connection closed');
-          this.db = null;
-          this.isInitialized = false;
-          resolve();
-        }
+      return new Promise((resolve, reject) => {
+        this.db!.close((err) => {
+          if (err) {
+            logger.error('Failed to close database', { error: err });
+            reject(err);
+          } else {
+            logger.info('Database connection closed');
+            this.db = null;
+            this.isInitialized = false;
+            resolve();
+          }
+        });
       });
     });
   }

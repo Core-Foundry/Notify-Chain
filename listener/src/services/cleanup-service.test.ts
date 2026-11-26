@@ -162,6 +162,20 @@ describe('CleanupService', () => {
 
     jest.advanceTimersByTime(400);
     // Should only fire once despite two start() calls
-    expect(db.run).toHaveBeenCalledTimes(3); // one interval tick × 3 SQL statements
+    expect(db.run).toHaveBeenCalledTimes(4); // one interval tick × 4 SQL statements
+  });
+
+  it('delegates processed events cleanup to EventRetentionService when provided', async () => {
+    const db = makeDb(5);
+    const registry = new EventRegistry();
+    const mockRetentionService = {
+      cleanupExpiredEvents: jest.fn().mockResolvedValue({ totalDeleted: 7 }),
+    } as any;
+    const service = new CleanupService(db, registry, {}, mockRetentionService);
+
+    const result = await service.runDbCleanup();
+
+    expect(mockRetentionService.cleanupExpiredEvents).toHaveBeenCalled();
+    expect(result.processedEvents).toBe(7);
   });
 });

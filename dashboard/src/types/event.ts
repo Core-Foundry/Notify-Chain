@@ -95,4 +95,10 @@ export interface EventFilters {
   txHash?: string;
   /** Active sort order for the notification list (#495). Defaults to "newest". */
   sortBy?: NotificationSortOption;
+  /**
+   * Selected event topics to filter by (#1155). An event matches when its
+   * `topic` array contains at least one of these values. Empty means no
+   * topic filtering is applied.
+   */
+  topics?: string[];
 }

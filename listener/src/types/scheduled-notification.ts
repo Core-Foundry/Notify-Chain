@@ -66,6 +66,10 @@ export interface ScheduledNotification {
   recoveryState?: 'AWAITING_INTERVENTION' | null;
   /** Optimistic-locking version, incremented on every mutating update. */
   version?: number;
+  /** Optional owning account identifier when created via an authenticated principal. */
+  ownerId?: string | null;
+  /** Optional owned destination record referenced by this notification. */
+  destinationId?: string | null;
 }
 
 export interface CreateScheduledNotificationInput {
@@ -83,6 +87,10 @@ export interface CreateScheduledNotificationInput {
   priority?: number;
   metadata?: Record<string, any>;
   recurrence?: RecurrenceRule;
+  /** Optional owning account identifier bound server-side. */
+  ownerId?: string;
+  /** Optional destination ID whose ownership is validated server-side. */
+  destinationId?: string;
 }
 
 export interface ScheduledNotificationRow {

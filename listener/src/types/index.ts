@@ -18,6 +18,16 @@ export interface ContractConfig {
   events: string[];
   /** Optional user ID for per-user notification preference gating */
   userId?: string;
+  /**
+   * Optional retention period for events emitted by this contract, in milliseconds.
+   * When set, overrides the default event retention policy.
+   */
+  retentionPeriodMs?: number;
+  /**
+   * Optional retention period for events emitted by this contract, in days.
+   * Convenience alternative to retentionPeriodMs (1 day = 86,400,000 ms).
+   */
+  retentionDays?: number;
 }
 
 export interface DiscordConfig {
@@ -341,11 +351,19 @@ export interface RpcFallbackConfig {
   requestTimeoutMs: number;
   /** Maximum number of endpoint retries for a single operation across pool (default: pool size) */
   maxRetries?: number;
+  /**
+   * When true (default), the manager returns to the highest-priority endpoint
+   * (the primary first) once its cooldown has elapsed, instead of staying on a
+   * fallback indefinitely. Controlled by `RPC_FAILBACK_ENABLED`.
+   */
+  failbackToPrimary?: boolean;
 }
 
 /** Operational status metrics for an RPC endpoint */
 export interface RpcEndpointStatus {
   url: string;
+  /** Credential-free form of `url`, safe to log or expose via APIs. */
+  redactedUrl?: string;
   isPrimary: boolean;
   status: 'healthy' | 'degraded' | 'unhealthy';
   consecutiveFailures: number;
@@ -629,3 +647,7 @@ export class ListenerApiClient {
     return parsed as T;
   }
 }
+
+export * from './retention';
+export * from './delivery-receipt';
+
