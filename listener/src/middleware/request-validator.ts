@@ -19,6 +19,7 @@ import {
   isInteger,
   isValidDate,
   isOneOf,
+  isValidStellarContractId,
 } from '../utils/validation';
 import logger from '../utils/logger';
 
@@ -261,6 +262,10 @@ export const Schemas = {
       contractAddress: {
         type: 'string',
         required: false,
+        validator: (val) =>
+          val !== undefined && val !== null && val !== '' && !isValidStellarContractId(val)
+            ? 'contractAddress must be a valid Stellar contract identifier (56-character Base32 string starting with C)'
+            : null,
       },
       eventId: {
         type: 'string',
