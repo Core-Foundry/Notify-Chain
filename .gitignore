@@ -7,7 +7,6 @@ build/
 .next/
 out/
 coverage/
-**/target/
 
 # Env / local
 .env
