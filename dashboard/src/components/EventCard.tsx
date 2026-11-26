@@ -21,6 +21,8 @@ function shortenAddress(address: string): string {
 }
 
 import { getEventBadgeClass } from '../utils/eventTypeMapping';
+import { EXTERNAL_LINK_PROPS, getEventExplorerUrl } from '../utils/explorerLinks';
+import { PrintableEventDetails } from './PrintableEventDetails';
 
 function SkeletonLine({ width = '100%', height = '14px' }: { width?: string; height?: string }) {
   return <span className="event-card__skeleton" style={{ width, height }} aria-hidden="true" />;
@@ -157,6 +159,7 @@ function ExpandedCard({
   const locale = useActiveLocale();
   const displayName = event.eventName ?? event.type;
   const badgeClass = getEventBadgeClass(event.eventName);
+  const explorerUrl = getEventExplorerUrl(event);
   const Wrapper = onClick ? 'div' : 'article';
 
   return (
@@ -187,8 +190,16 @@ function ExpandedCard({
               <dd title={event.txHash}>
                 {event.txHash}
                 <CopyButton value={event.txHash} label="transaction hash" size="xs" />
+                {explorerUrl && (
+                  <a
+                    className="event-card__explorer-link"
+                    href={explorerUrl}
+                    {...EXTERNAL_LINK_PROPS}
+                  >
+                    View on Stellar Explorer
+                  </a>
+                )}
               </dd>
-              <IdValue value={event.txHash} label="tx hash" />
             </div>
           )}
 
@@ -238,6 +249,14 @@ function ExpandedCard({
           </div>
         </dl>
       </div>
+
+      <div className="event-card__actions event-card__actions--no-print">
+        <button type="button" className="event-card__print-button" onClick={() => window.print()}>
+          Print details
+        </button>
+      </div>
+
+      <PrintableEventDetails event={event} />
     </Wrapper>
   );
 }
