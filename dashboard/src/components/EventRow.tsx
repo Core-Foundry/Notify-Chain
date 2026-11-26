@@ -5,6 +5,7 @@ import { formatNumber } from '../utils/formatNumber';
 import { useActiveTimeZone } from '../store/timezoneStore';
 import { useActiveLocale } from '../store/localeStore';
 import { CopyButton } from './CopyButton';
+import { useEventSelection } from '../hooks/useEventSelectors';
 
 interface EventRowProps {
   event: BlockchainEvent;
@@ -32,6 +33,14 @@ export const EventRow = memo(function EventRow({ event }: EventRowProps) {
       aria-label={`${label}, ledger ${formattedLedger}`}
     >
       <div className="event-row__primary">
+        <label className="event-row__compare-toggle">
+          <input
+            type="checkbox"
+            checked={isSelected}
+            onChange={() => toggleEventSelection(event.eventId)}
+            aria-label={`Select ${label} for comparison`}
+          />
+        </label>
         <span className="event-row__name">{label}</span>
         <span className="event-row__ledger" title={`Ledger ${event.ledger}`}>
           Ledger {formattedLedger}

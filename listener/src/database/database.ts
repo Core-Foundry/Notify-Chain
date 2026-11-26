@@ -360,6 +360,20 @@ export class Database {
       }
     }
 
+    // Network isolation for persisted events (#1168). Legacy rows predating
+    // this column have no reliable network to backfill from, so they are
+    // explicitly tagged 'unknown' rather than guessed — see
+    // docs/migration-rollback.md for the documented recovery/backfill path.
+    const processedEventsTable = await this.get<{ name: string }>(
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'processed_events'",
+    );
+    if (processedEventsTable) {
+      try {
+        await this.run("ALTER TABLE processed_events ADD COLUMN network TEXT NOT NULL DEFAULT 'unknown'");
+      } catch (error: any) {
+        if (!/duplicate column name/i.test(String(error?.message ?? error))) throw error;
+      }
+    }
     // Safely upgrade any legacy `destinations` table lacking `owner_id` before
     // `schema.sql` creates ownership indexes on `destinations(owner_id)`.
     if (this.db) {

@@ -88,13 +88,28 @@ export interface EventClaimResult {
  */
 export const DEFAULT_CLAIM_LEASE_SECONDS = 300;
 
+/** Sentinel network value for rows persisted before network isolation existed (#1168). */
+export const UNKNOWN_NETWORK = 'unknown';
+
 export class EventDeduplicationService {
   private db: Database;
   private readonly claimLeaseSeconds: number;
+  /**
+   * Stellar network these events belong to (#1168). Baked into every
+   * fingerprint and persisted alongside each row so a contract address/event
+   * id pair on one network can never be mistaken for the same pair on
+   * another network sharing this database.
+   */
+  private readonly network: string;
 
-  constructor(database: Database, options: { claimLeaseSeconds?: number } = {}) {
+  constructor(database: Database, options: { claimLeaseSeconds?: number; network?: string } = {}) {
     this.db = database;
     this.claimLeaseSeconds = options.claimLeaseSeconds ?? DEFAULT_CLAIM_LEASE_SECONDS;
+    // Default '' (not the 'unknown' sentinel): an unconfigured caller keeps
+    // the exact pre-#1168 fingerprint format, so existing rows and callers
+    // that never pass `network` see no behavior change. The 'unknown'
+    // sentinel is reserved for the migration's backfill of legacy rows.
+    this.network = options.network || '';
   }
 
   /**
@@ -118,15 +133,15 @@ export class EventDeduplicationService {
     txHash: string | undefined,
     eventType: string,
   ): Promise<EventClaimResult> {
-    const fingerprint = generateFingerprint(eventId, contractAddress);
+    const fingerprint = generateFingerprint(eventId, contractAddress, this.network);
     try {
       const result = await this.db.run(
         `
         INSERT INTO processed_events (
-          event_id, contract_address, fingerprint, ledger_number, tx_hash,
+          event_id, contract_address, network, fingerprint, ledger_number, tx_hash,
           event_type, notification_sent, status, is_reorg_duplicate, processed_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, 0, 'PROCESSING', 0, CURRENT_TIMESTAMP)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 0, 'PROCESSING', 0, CURRENT_TIMESTAMP)
         ON CONFLICT(fingerprint) DO UPDATE SET
           processed_at = CURRENT_TIMESTAMP,
           ledger_number = excluded.ledger_number
@@ -136,6 +151,7 @@ export class EventDeduplicationService {
         [
           eventId,
           contractAddress,
+          this.network || UNKNOWN_NETWORK,
           fingerprint,
           ledgerNumber,
           txHash ?? null,
@@ -175,6 +191,7 @@ export class EventDeduplicationService {
     errorReason?: string,
     txMetadata?: TransactionMetadata | null,
   ): Promise<void> {
+    const fingerprint = generateFingerprint(eventId, contractAddress, this.network);
     const fingerprint = generateFingerprint(eventId, contractAddress);
     const serializedMetadata = serializeMetadata(txMetadata);
     const metadataStatus = txMetadata?.metadataStatus ?? null;
@@ -210,6 +227,14 @@ export class EventDeduplicationService {
         await this.db.run(
           `
           INSERT INTO processed_events (
+            event_id, contract_address, network, fingerprint, ledger_number, tx_hash,
+            event_type, notification_sent, status, error_reason, is_reorg_duplicate
+          )
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+          ON CONFLICT(fingerprint) DO NOTHING
+          `,
+          [eventId, contractAddress, this.network || UNKNOWN_NETWORK, fingerprint, ledgerNumber, txHash ?? null, eventType,
+            notificationSent ? 1 : 0, status, errorReason ?? null],
             event_id, contract_address, fingerprint, ledger_number, tx_hash,
             event_type, notification_sent, status, error_reason, is_reorg_duplicate,
             tx_metadata, metadata_status
@@ -356,7 +381,7 @@ export class EventDeduplicationService {
     contractAddress: string,
     ledgerNumber: number,
   ): Promise<void> {
-    const fingerprint = generateFingerprint(eventId, contractAddress);
+    const fingerprint = generateFingerprint(eventId, contractAddress, this.network);
     try {
       await this.db.run(
         `
@@ -384,7 +409,7 @@ export class EventDeduplicationService {
     contractAddress: string
   ): Promise<{ isDuplicate: boolean; isReorgDuplicate: boolean }> {
     try {
-      const fingerprint = generateFingerprint(eventId, contractAddress);
+      const fingerprint = generateFingerprint(eventId, contractAddress, this.network);
       const rows = await this.db.all(
         `
         SELECT event_id, is_reorg_duplicate 
@@ -430,6 +455,7 @@ export class EventDeduplicationService {
     txMetadata?: TransactionMetadata | null,
   ): Promise<void> {
     try {
+      const fingerprint = generateFingerprint(eventId, contractAddress, this.network);
       const fingerprint = generateFingerprint(eventId, contractAddress);
       const serializedMetadata = serializeMetadata(txMetadata);
       const metadataStatus = txMetadata?.metadataStatus ?? null;
@@ -441,6 +467,10 @@ export class EventDeduplicationService {
       const rows = await this.db.all<{ reorg_detection_count: number }>(
         `
         INSERT INTO processed_events (
+          event_id, contract_address, network, fingerprint, ledger_number, tx_hash,
+          event_type, notification_sent, status, error_reason, is_reorg_duplicate
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
           event_id, contract_address, fingerprint, ledger_number, tx_hash,
           event_type, notification_sent, status, error_reason, is_reorg_duplicate,
           tx_metadata, metadata_status
@@ -456,6 +486,7 @@ export class EventDeduplicationService {
           metadata_status = COALESCE(excluded.metadata_status, processed_events.metadata_status)
         RETURNING reorg_detection_count
         `,
+        [eventId, contractAddress, this.network || UNKNOWN_NETWORK, fingerprint, ledgerNumber, txHash, eventType, notificationSent ? 1 : 0, status, errorReason]
         [eventId, contractAddress, fingerprint, ledgerNumber, txHash, eventType, notificationSent ? 1 : 0, status, errorReason, serializedMetadata, metadataStatus]
       );
 
@@ -702,6 +733,19 @@ export class EventDeduplicationService {
         totalReorgsDetected: 0,
       };
     }
+  }
+
+  /**
+   * Count processed events for a single network (#1168). Lets callers
+   * isolate per-network activity instead of reading across every network
+   * sharing this database.
+   */
+  async countEventsForNetwork(network: string): Promise<number> {
+    const rows = await this.db.all<{ count: number }>(
+      `SELECT COUNT(*) as count FROM processed_events WHERE network = ?`,
+      [network],
+    );
+    return rows[0]?.count ?? 0;
   }
 
   /**

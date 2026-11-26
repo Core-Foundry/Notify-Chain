@@ -250,7 +250,12 @@ CREATE TABLE IF NOT EXISTS processed_events (
   -- Event identification (fingerprint components)
   event_id TEXT NOT NULL,                   -- Unique identifier from blockchain RPC
   contract_address TEXT NOT NULL,           -- Contract that emitted the event
-  fingerprint TEXT NOT NULL UNIQUE,         -- Composite key: contract_address:event_id (for faster lookups)
+  -- Stellar network this event belongs to (#1168). Part of the fingerprint
+  -- hash, so the same contract/event id on two networks never collides.
+  -- Legacy rows predating this column are backfilled to 'unknown' by the
+  -- 008 migration; see docs/migration-rollback.md.
+  network TEXT NOT NULL DEFAULT 'unknown',
+  fingerprint TEXT NOT NULL UNIQUE,         -- Composite key: network:contract_address:event_id (for faster lookups)
   
   -- Processing metadata
   ledger_number INTEGER NOT NULL CHECK (ledger_number >= 0),
@@ -292,6 +297,9 @@ CREATE INDEX IF NOT EXISTS idx_processed_events_reorg_duplicates
 CREATE INDEX IF NOT EXISTS idx_processed_events_ledger_contract
   ON processed_events(ledger_number, contract_address);
 
+-- Supports isolating/querying events by network (#1168)
+CREATE INDEX IF NOT EXISTS idx_processed_events_network
+  ON processed_events(network);
 -- (contract_address, event_id) uniqueness is enforced by the guarded
 -- ux_processed_events_contract_event index created in Database bootstrap and
 -- migration 008, which first audit existing rows for duplicates (#1121).

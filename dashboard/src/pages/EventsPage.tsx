@@ -1,4 +1,5 @@
 import { useEffect } from 'react';
+import { EventComparisonView } from '../components/EventComparisonView';
 import { EventFiltersBar } from '../components/EventFiltersBar';
 import { EventListPanel } from '../components/EventListPanel';
 import { EventsListSkeleton } from '../components/EventsListSkeleton';
@@ -98,6 +99,8 @@ export function EventsPage() {
       </header>
 
       <EventFiltersBar />
+
+      <EventComparisonView />
 
       <div aria-live="assertive" role="alert">
         {error && <p className="events-page__status events-page__status--warning">{error}</p>}
