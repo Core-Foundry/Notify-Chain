@@ -400,6 +400,22 @@ export class ScheduledNotificationRepository {
   /**
    * Mark notification as completed
    */
+  async markAsCompleted(id: number, requestId?: string): Promise<void> {
+    assertScheduleTransition(NotificationStatus.PROCESSING, NotificationStatus.COMPLETED);
+    const sql = `
+      UPDATE scheduled_notifications
+      SET 
+        status = ?,
+        processing_completed_at = ?,
+        updated_at = ?,
+        processor_id = NULL,
+        lock_expires_at = NULL
+      WHERE id = ?
+    `;
+
+    const now = new Date().toISOString();
+    await this.db.run(sql, [NotificationStatus.COMPLETED, now, now, id]);
+  }
   async markAsCompleted(
     id: number,
     requestId?: string,
