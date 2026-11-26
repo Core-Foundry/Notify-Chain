@@ -228,6 +228,29 @@ pub struct NotificationTemplate {
     pub updated_at: Option<u64>,
 }
 
+/// Read-only grouped view of related contract configuration and state (issue #1201).
+///
+/// All fields are returned by `get_state_snapshot` in a single call so off-chain
+/// consumers see a consistent view without making independent queries. Fields
+/// that have never been written are represented with their documented default
+/// or `None`; no snapshot field uses a sentinel value.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ContractStateSnapshot {
+    /// Current admin address. `None` before `initialize_admin` is called.
+    pub admin: Option<Address>,
+    /// Pending admin after a two-step ownership transfer, if one is in progress.
+    pub pending_owner: Option<Address>,
+    /// Whether privileged operations are currently paused. `false` by default.
+    pub paused: bool,
+    /// Active schema version. `0` means no version has been configured.
+    pub schema_version: u32,
+    /// Version of the on-chain notification payload format.
+    pub notification_version: u32,
+    /// Notification limits: payload size, expiration window and batch size.
+    pub limits: NotificationLimits,
+}
+
 /// Protocol-level configurable limits for notifications.
 /// Allows administrators to set boundaries on notification sizes,
 /// expiration periods, and batch operation sizes.
@@ -242,40 +265,4 @@ pub struct NotificationLimits {
     pub min_expiration_seconds: u64,
     /// Maximum number of notifications in a batch operation
     pub max_batch_size: u32,
-}
-
-// ============================================================================
-// Notification Delivery Idempotency
-// ============================================================================
-
-/// Persisted idempotency record for a notification delivery request.
-///
-/// A delivery request is uniquely identified by the caller-supplied
-/// `idempotency_key`. The first successful submission stores this record; any
-/// subsequent submission with the same key returns the recorded outcome
-/// instead of creating a duplicate delivery.
-///
-/// # Field ordering (storage optimization — issue #371)
-///
-/// Fixed-width fields are grouped before the variable-length `result` string:
-///
-/// 1. Identity    — `key` (BytesN<32>), `notification_id` (BytesN<32>)
-/// 2. Ownership   — `submitter` (Address)
-/// 3. Scalars     — `created_at` (u64), `delivered` (bool)
-/// 4. Variable    — `result` (String)
-#[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct IdempotencyRecord {
-    /// Caller-supplied idempotency key uniquely identifying the request.
-    pub key: BytesN<32>,
-    /// Notification identifier the delivery request targeted.
-    pub notification_id: BytesN<32>,
-    /// Address that submitted the original delivery request.
-    pub submitter: Address,
-    /// Ledger timestamp (seconds) when the record was first persisted.
-    pub created_at: u64,
-    /// Whether the original delivery request completed successfully.
-    pub delivered: bool,
-    /// Opaque result payload returned to duplicate callers verbatim.
-    pub result: String,
 }

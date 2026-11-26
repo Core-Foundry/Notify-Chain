@@ -1,12 +1,15 @@
 import {
   ProviderCapability,
   ProviderMetadata,
+  PayloadLimits,
   NotificationProvider,
+  NotificationFormat,
   DeliveryPayload,
   DeliveryResult,
   ProviderHealthResult,
 } from '../../types/provider-capabilities';
 import { sendWebhook, WebhookSendOptions } from '../webhook-sender';
+import { stampWebhookPayloadVersion } from '../../utils/webhook-payload-version';
 import { sanitizeCredentials } from '../../utils/credential-sanitizer';
 import logger from '../../utils/logger';
 
@@ -21,12 +24,30 @@ const WEBHOOK_CAPABILITIES = new Set<ProviderCapability>([
   ProviderCapability.ATTACHMENTS,
 ]);
 
+const WEBHOOK_SUPPORTED_FORMATS = new Set<NotificationFormat>([
+  NotificationFormat.JSON,
+  NotificationFormat.PLAIN_TEXT,
+]);
+
+/**
+ * Generic webhooks accept larger payloads than chat channels but still enforce
+ * an upper bound to protect downstream consumers.
+ */
+const WEBHOOK_PAYLOAD_LIMITS: PayloadLimits = {
+  maxBodyLength: 60_000,
+  maxFieldCount: 100,
+  maxPayloadBytes: 65_536,
+};
+
 export class WebhookNotificationProvider implements NotificationProvider {
   readonly metadata: ProviderMetadata = {
     id: 'webhook',
     name: 'HTTP Webhook',
     version: '1.0.0',
     capabilities: WEBHOOK_CAPABILITIES,
+    supportedFormats: WEBHOOK_SUPPORTED_FORMATS,
+    defaultFormat: NotificationFormat.JSON,
+    payloadLimits: WEBHOOK_PAYLOAD_LIMITS,
   };
 
   private readonly config: Required<Omit<WebhookProviderConfig, 'healthCheckUrl'>> & {
@@ -43,6 +64,14 @@ export class WebhookNotificationProvider implements NotificationProvider {
 
   hasCapability(capability: ProviderCapability): boolean {
     return this.metadata.capabilities.has(capability);
+  }
+
+  supportsFormat(format: NotificationFormat): boolean {
+    return this.metadata.supportedFormats.has(format);
+  }
+
+  getCapabilities(): ProviderMetadata {
+    return this.metadata;
   }
 
   async deliver(payload: DeliveryPayload): Promise<DeliveryResult> {
@@ -62,13 +91,17 @@ export class WebhookNotificationProvider implements NotificationProvider {
       }
     }
 
+    // Stamp the documented webhook contract version onto the outbound body and
+    // advertise it via header so consumers can identify the payload schema.
+    const stamped = stampWebhookPayloadVersion(body as Record<string, unknown>);
+
     const opts: WebhookSendOptions = {
       timeoutMs: this.config.timeoutMs,
-      headers: { ...this.config.defaultHeaders },
+      headers: { ...this.config.defaultHeaders, ...stamped.headers },
     };
 
     try {
-      const response = await sendWebhook(targetRecipient, body, opts);
+      const response = await sendWebhook(targetRecipient, stamped.payload, opts);
 
       if (!response.ok) {
         const errorText = await response.text().catch(() => '');

@@ -1,33 +1,47 @@
 import { useState, useCallback, memo, useMemo, useEffect, useRef } from 'react';
 import type { BlockchainEvent } from '../types/event';
 import { EventExplorerCard } from './EventExplorerCard';
+import type { ContractStatus } from '../services/eventsApi';
+import {
+  EVENT_COLUMNS,
+  EVENT_COLUMN_IDS,
+  findEmptyColumns,
+  isColumnLocked,
+  loadVisibleColumns,
+  persistVisibleColumns,
+  toggleColumn,
+  type EventColumnId,
+} from '../utils/eventTableColumns';
+import type { DashboardColumnId, DashboardDensity } from '../utils/dashboardPreferences';
+import {
+  formatDate,
+  formatNumber,
+  getActiveLocale,
+} from '../utils/localeFormat';
 
 const STORAGE_KEY = 'notify-chain-event-table-widths';
 
-export const DEFAULT_COLUMN_WIDTHS = [
-  220,
-  160,
-  110,
-  180,
-  100,
-  160,
-] as const;
+export const DEFAULT_COLUMN_WIDTHS = [220, 160, 110, 180, 100, 160] as const;
 
 export const MIN_COLUMN_WIDTH = 80;
 
+const COLUMN_LABELS = EVENT_COLUMNS.map((column) => column.label);
 const COLUMN_LABELS = [
-  'Contract',
-  'Event',
-  'Kind',
-  'Received',
-  'Ledger',
-  'Transaction',
-] as const;
+  { id: 'contract', label: 'Contract' },
+  { id: 'event', label: 'Event' },
+  { id: 'kind', label: 'Kind' },
+  { id: 'received', label: 'Received' },
+  { id: 'ledger', label: 'Ledger' },
+  { id: 'transaction', label: 'Transaction' },
+] as const satisfies readonly { id: DashboardColumnId; label: string }[];
 
 interface EventExplorerTableProps {
   events: BlockchainEvent[];
   onSelectEvent?: (event: BlockchainEvent) => void;
-  contractStatuses?: unknown[];
+  contractStatuses?: ContractStatus[];
+  onContractClick?: (contractAddress: string) => void;
+  density?: DashboardDensity;
+  visibleColumns?: DashboardColumnId[];
 }
 
 export function loadColumnWidths(): number[] {
@@ -40,10 +54,7 @@ export function loadColumnWidths(): number[] {
 
     const parsed = JSON.parse(raw) as unknown;
 
-    if (
-      !Array.isArray(parsed) ||
-      parsed.length !== DEFAULT_COLUMN_WIDTHS.length
-    ) {
+    if (!Array.isArray(parsed) || parsed.length !== DEFAULT_COLUMN_WIDTHS.length) {
       return [...DEFAULT_COLUMN_WIDTHS];
     }
 
@@ -73,6 +84,58 @@ export function widthsToGridTemplate(widths: number[]) {
   return widths.map((width) => `${width}px`).join(' ');
 }
 
+/** Grid template for the visible columns only (#1160). */
+export function visibleGridTemplate(widths: number[], visible: readonly EventColumnId[]) {
+  return widthsToGridTemplate(
+    EVENT_COLUMN_IDS.flatMap((id, index) => (visible.includes(id) ? [widths[index]] : [])),
+  );
+}
+
+function ColumnVisibilityMenu({
+  visible,
+  emptyColumns,
+  onToggle,
+  onReset,
+}: {
+  visible: readonly EventColumnId[];
+  emptyColumns: ReadonlySet<EventColumnId>;
+  onToggle: (id: EventColumnId) => void;
+  onReset: () => void;
+}) {
+  return (
+    <details className="event-explorer__columns-menu">
+      <summary className="event-explorer__columns-toggle">Columns</summary>
+      <fieldset className="event-explorer__columns-options">
+        <legend className="event-explorer__columns-legend">Visible columns</legend>
+        {EVENT_COLUMNS.map((column) => {
+          const locked = isColumnLocked(column.id);
+          const inputId = `event-column-${column.id}`;
+          return (
+            <label key={column.id} htmlFor={inputId} className="event-explorer__columns-option">
+              <input
+                id={inputId}
+                type="checkbox"
+                checked={visible.includes(column.id)}
+                disabled={locked}
+                aria-label={column.label}
+                onChange={() => onToggle(column.id)}
+              />
+              <span>{column.label}</span>
+              {locked && <span className="event-explorer__columns-note">(always shown)</span>}
+              {!locked && emptyColumns.has(column.id) && (
+                <span className="event-explorer__columns-note">(no data on this page)</span>
+              )}
+            </label>
+          );
+        })}
+        <button type="button" className="event-explorer__columns-reset" onClick={onReset}>
+          Show all columns
+        </button>
+      </fieldset>
+    </details>
+  );
+}
+
 async function syncCopyText(text: string) {
   if (navigator.clipboard?.writeText) {
     return navigator.clipboard.writeText(text);
@@ -100,10 +163,28 @@ async function syncCopyText(text: string) {
 export const EventExplorerTable = memo(function EventExplorerTable({
   events,
   onSelectEvent,
+  contractStatuses,
+  onContractClick,
+  density = 'comfortable',
+  visibleColumns = COLUMN_LABELS.map(({ id }) => id),
 }: EventExplorerTableProps) {
-  const [columnWidths, setColumnWidths] = useState<number[]>(
-    loadColumnWidths,
-  );
+  const [visibleColumns, setVisibleColumns] = useState<EventColumnId[]>(loadVisibleColumns);
+  const emptyColumns = useMemo(() => findEmptyColumns(events), [events]);
+
+  const handleToggleColumn = useCallback((id: EventColumnId) => {
+    setVisibleColumns((current) => {
+      const next = toggleColumn(current, id);
+      persistVisibleColumns(next);
+      return next;
+    });
+  }, []);
+
+  const handleResetColumns = useCallback(() => {
+    const all = [...EVENT_COLUMN_IDS];
+    persistVisibleColumns(all);
+    setVisibleColumns(all);
+  }, []);
+  const [columnWidths, setColumnWidths] = useState<number[]>(loadColumnWidths);
 
   const [copiedAddress, setCopiedAddress] = useState<string | null>(null);
 
@@ -135,10 +216,7 @@ export const EventExplorerTable = memo(function EventExplorerTable({
       const { index, startX, startWidth } = dragRef.current;
       const difference = event.clientX - startX;
 
-      const newWidth = Math.max(
-        MIN_COLUMN_WIDTH,
-        startWidth + difference,
-      );
+      const newWidth = Math.max(MIN_COLUMN_WIDTH, startWidth + difference);
 
       setColumnWidths((current) => {
         const updated = [...current];
@@ -185,10 +263,7 @@ export const EventExplorerTable = memo(function EventExplorerTable({
     }
   }, []);
 
-  const isCopied = useMemo(
-    () => (address: string) => copiedAddress === address,
-    [copiedAddress],
-  );
+  const isCopied = useMemo(() => (address: string) => copiedAddress === address, [copiedAddress]);
 
   const handleSelectEvent = useCallback(
     (event: BlockchainEvent) => {
@@ -197,20 +272,80 @@ export const EventExplorerTable = memo(function EventExplorerTable({
     [onSelectEvent],
   );
 
-  const gridTemplate = widthsToGridTemplate(columnWidths);
+  const gridTemplate = visibleGridTemplate(columnWidths, visibleColumns);
+  // Visible columns keep their full width; narrow screens scroll sideways
+  // instead of dropping identifier columns (#1160).
+  const minTableWidth = EVENT_COLUMN_IDS.reduce(
+    (total, id, index) => (visibleColumns.includes(id) ? total + columnWidths[index] : total),
+    0,
+  );
+  const lastVisible = visibleColumns[visibleColumns.length - 1];
 
   return (
     <section className="event-explorer__table-wrapper">
+      <div className="event-explorer__table-toolbar">
+        <ColumnVisibilityMenu
+          visible={visibleColumns}
+          emptyColumns={emptyColumns}
+          onToggle={handleToggleColumn}
+          onReset={handleResetColumns}
+        />
+  const columns = COLUMN_LABELS.filter(({ id }) => visibleColumns.includes(id));
+  const gridTemplate = widthsToGridTemplate(
+    columns.map(({ id }) => columnWidths[COLUMN_LABELS.findIndex((column) => column.id === id)]),
+  );
+
+  const locale = getActiveLocale();
+
+  const columnTitles = useMemo(
+    () =>
+      COLUMN_LABELS.map((label) => {
+        if (label === 'Received') {
+          return `${label} (${locale})`;
+        }
+
+        if (label === 'Ledger') {
+          return `${label} (${locale})`;
+        }
+
+        return label;
+      }),
+    [locale],
+  );
+
+  return (
+    <section className={`event-explorer__table-wrapper event-explorer__table-wrapper--${density}`}>
       <div
         className="event-explorer__table-header"
         role="rowgroup"
         style={{ gridTemplateColumns: gridTemplate }}
       >
+        {columns.map(({ id, label }, visibleIndex) => {
+          const index = COLUMN_LABELS.findIndex((column) => column.id === id);
+          return (
+            <div key={label} className="event-explorer__column-header" role="columnheader">
+              <span>{label}</span>
+
+              {visibleIndex < columns.length - 1 && (
+                <button
+                  type="button"
+                  className="event-explorer__resize-handle"
+                  aria-label={`Resize ${label} column`}
+                  onMouseDown={(event) => {
+                    event.preventDefault();
+                    startResize(index, event.clientX);
+                  }}
+                />
+              )}
+            </div>
+          );
+        })}
         {COLUMN_LABELS.map((label, index) => (
           <div
             key={label}
             className="event-explorer__column-header"
             role="columnheader"
+            title={columnTitles[index]}
           >
             <span>{label}</span>
 
@@ -228,21 +363,75 @@ export const EventExplorerTable = memo(function EventExplorerTable({
           </div>
         ))}
       </div>
-
       <div
-        className="event-explorer__table-body"
-        role="rowgroup"
-        style={{
-          ['--event-explorer-columns' as string]: gridTemplate,
-        }}
+        className="event-explorer__table-scroll"
+        role="table"
+        aria-label="Contract events"
+        tabIndex={0}
       >
+        <div
+          className="event-explorer__table-header"
+          role="rowgroup"
+          style={{ gridTemplateColumns: gridTemplate, minWidth: minTableWidth }}
+        >
+          {COLUMN_LABELS.map((label, index) =>
+            !visibleColumns.includes(EVENT_COLUMN_IDS[index]) ? null : (
+              <div
+                key={label}
+                className="event-explorer__column-header"
+                role="columnheader"
+                data-column={EVENT_COLUMN_IDS[index]}
+              >
+                <span>{label}</span>
+
+                {EVENT_COLUMN_IDS[index] !== lastVisible && (
+                  <button
+                    type="button"
+                    className="event-explorer__resize-handle"
+                    aria-label={`Resize ${label} column`}
+                    onMouseDown={(event) => {
+                      event.preventDefault();
+                      startResize(index, event.clientX);
+                    }}
+                  />
+                )}
+              </div>
+            ),
+          )}
+        </div>
+
+        <div
+          className="event-explorer__table-body"
+          role="rowgroup"
+          style={{
+            ['--event-explorer-columns' as string]: gridTemplate,
+            minWidth: minTableWidth,
+          }}
+        >
+          {events.map((event) => (
+            <EventExplorerCard
+              key={event.eventId}
+              event={event}
+              onCopyContract={handleCopyContract}
+              isCopied={isCopied(event.contractAddress)}
+              onSelect={onSelectEvent ? handleSelectEvent : undefined}
+              contractStatuses={contractStatuses}
+              onContractClick={onContractClick}
+              visibleColumns={visibleColumns}
+            />
+          ))}
+        </div>
         {events.map((event) => (
           <EventExplorerCard
             key={event.eventId}
             event={event}
+            visibleColumns={visibleColumns}
             onCopyContract={handleCopyContract}
             isCopied={isCopied(event.contractAddress)}
-            onSelectEvent={handleSelectEvent}
+            onSelect={handleSelectEvent}
+            onContractClick={onContractClick}
+            formattedReceived={formatDate(event.receivedAt, locale)}
+            formattedLedger={formatNumber(event.ledger, locale)}
           />
         ))}
       </div>

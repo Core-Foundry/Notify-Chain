@@ -7,9 +7,11 @@ import { ScheduledNotificationRepository } from './services/scheduled-notificati
 import { NotificationTemplateRepository } from './services/notification-template-repository';
 import { NotificationTemplateService } from './services/notification-template-service';
 import { TemplateAuditTrail } from './services/template-audit-trail';
+import { ScheduleAuditTrail } from './services/schedule-audit-trail';
 import { getTemplateCache } from './services/notification-template-cache';
 import { NotificationAPI } from './services/notification-api';
 import { DatabaseCleanupJob } from './services/database-cleanup-job';
+import { EventRetentionService } from './services/event-retention-service';
 import { ArchiveService } from './services/archive-service';
 import { ArchiveStore } from './services/archive-store';
 import { loadArchiveConfig } from './services/archive-config';
@@ -22,6 +24,7 @@ import {
   createDefaultAlertSink,
 } from './services/indexing-reconciliation-engine';
 import { HistoricalBackfillService } from './services/historical-backfill-service';
+import { LedgerRangeBackfillController } from './services/ledger-range-backfill';
 import { EventDeduplicationService } from './services/event-deduplication-service';
 import { initNotificationAnalyticsAggregator } from './services/notification-analytics-aggregator';
 import { NotificationMetricsStore } from './services/notification-metrics-store';
@@ -32,12 +35,19 @@ import { loadConfig, validateConfig, ConfigError } from './config';
 import { SecretValidationError } from './config/validate-secrets';
 import { NotificationHealthMonitor } from './services/notification-health-monitor';
 import { getWorkerManager } from './services/worker-manager';
-import { EventDeduplicationService } from './services/event-deduplication-service';
 import { DeliveryReceiptRepository } from './services/delivery-receipt-repository';
+import { ApiCredentialService } from './services/api-credential-service';
+import { IdempotencyKeyService } from './services/idempotency-key-service';
+import { IdempotencyKeyRepository } from './services/idempotency-key-repository';
+import {
+  ApiIdempotencyService,
+  SqliteApiIdempotencyStore,
+} from './services/api-idempotency-service';
+import { DestinationService } from './services/destination-service';
+import { SecurityAuditService } from './services/security-audit';
 
 dotenv.config();
 
-// Track process startup time for uptime calculation
 const PROCESS_START_TIME = Date.now();
 
 async function main() {
@@ -49,7 +59,6 @@ async function main() {
   let notificationAPI: NotificationAPI | null = null;
   let healthMonitor: NotificationHealthMonitor | null = null;
   let subscriber: EventSubscriber | null = null;
-
   let templateService: NotificationTemplateService | null = null;
   let legacyTemplateService: TemplateService | null = null;
   let databaseCleanupJob: DatabaseCleanupJob | null = null;
@@ -60,7 +69,11 @@ async function main() {
   let metricsRunner: NotificationMetricsRunner | null = null;
   let metricsStore: NotificationMetricsStore | null = null;
   let deduplicationService: EventDeduplicationService | null = null;
+  let ledgerRangeBackfill: LedgerRangeBackfillController | null = null;
   let deliveryReceiptRepository: DeliveryReceiptRepository | null = null;
+  let idempotencyService: IdempotencyKeyService | null = null;
+  let apiIdempotencyService: ApiIdempotencyService | null = null;
+  let destinationService: DestinationService | null = null;
 
   if (config.analytics?.enabled) {
     initNotificationAnalyticsAggregator(config.analytics);
@@ -70,13 +83,48 @@ async function main() {
     logger.info('Initializing database');
     const db = await initializeDatabase(config.databasePath);
 
+    deduplicationService = new EventDeduplicationService(db);
+    ledgerRangeBackfill = new LedgerRangeBackfillController({
+      rpcUrl: config.stellarRpcUrl,
+      contractConfigs: config.contractAddresses,
+      backfillConfig: config.backfill ?? {},
+      deduplicationService,
+      discordService: config.discord
+        ? new DiscordNotificationService(config.discord)
+        : null,
+    });
+
     repository = new ScheduledNotificationRepository(
       db,
       undefined,
       config.notificationDefaultTtlSeconds ?? 0,
     );
     deliveryReceiptRepository = new DeliveryReceiptRepository(db);
-    
+    destinationService = new DestinationService({
+      db,
+      auditService: new SecurityAuditService(db),
+    });
+
+    // Idempotency-Key support for API mutations (#1114). TTL defaults to 24h
+    // and is configurable via IDEMPOTENCY_KEY_TTL_SECONDS.
+    const idempotencyTtlSeconds = Number(process.env.IDEMPOTENCY_KEY_TTL_SECONDS);
+    const idempotencyTtlMs =
+      Number.isFinite(idempotencyTtlSeconds) && idempotencyTtlSeconds > 0
+        ? idempotencyTtlSeconds * 1000
+        : undefined;
+    idempotencyService = new IdempotencyKeyService(new IdempotencyKeyRepository(db));
+    apiIdempotencyService = new ApiIdempotencyService(new SqliteApiIdempotencyStore(db), {
+      ttlMs: idempotencyTtlMs,
+    });
+    // Purge expired idempotency records hourly; unref() keeps this timer from
+    // holding the process open during shutdown.
+    const purgeIdempotencyKeys = (): void => {
+      void Promise.all([
+        apiIdempotencyService?.purgeExpired(),
+        idempotencyService?.cleanupExpiredKeys(),
+      ]).catch((error) => logger.warn('Idempotency key purge failed', { error }));
+    };
+    setInterval(purgeIdempotencyKeys, 60 * 60 * 1000).unref();
 
     healthMonitor = new NotificationHealthMonitor(null, getWorkerManager(), {
       repository,
@@ -84,13 +132,28 @@ async function main() {
       getUptimeMs: () => Date.now() - PROCESS_START_TIME,
     });
 
-    // Rebuild registry with configured event TTL
+    // Initialize EventRetentionService with configured default and per-contract retention
+    const retentionService = new EventRetentionService(db, {
+      defaultRetentionMs: config.cleanup?.processedEventRetentionMs ?? (30 * 24 * 60 * 60 * 1000),
+      contractConfigs: config.contractAddresses,
+      cleanupIntervalMs: config.cleanup?.intervalMs,
+    });
+    await retentionService.ensureSchema();
+
+    // Rebuild registry with configured event TTL and contract TTLs
     if (config.cleanup) {
       eventRegistry.setTtlMs(config.cleanup.eventRetentionMs);
+      for (const contract of config.contractAddresses) {
+        const periodMs = contract.retentionPeriodMs ??
+          (contract.retentionDays !== undefined ? contract.retentionDays * 86_400_000 : undefined);
+        if (periodMs) {
+          eventRegistry.setContractTtlMs(contract.address, periodMs);
+        }
+      }
     }
 
     if (config.cleanup) {
-      databaseCleanupJob = new DatabaseCleanupJob(db, config.cleanup, eventRegistry);
+      databaseCleanupJob = new DatabaseCleanupJob(db, config.cleanup, eventRegistry, retentionService);
       databaseCleanupJob.start();
     }
 
@@ -126,7 +189,16 @@ async function main() {
     templateService = new NotificationTemplateService(templateRepository);
 
     if (config.scheduler?.enabled) {
-      notificationAPI = new NotificationAPI(repository);
+      const scheduleAudit = new ScheduleAuditTrail(db);
+      repository.setScheduleAuditTrail(scheduleAudit);
+      notificationAPI = new NotificationAPI(
+        repository,
+        undefined,
+        undefined,
+        config.scheduler.maxSchedulingHorizonMs,
+      );
+      notificationAPI.setScheduleAuditTrail(scheduleAudit);
+      notificationAPI.setDestinationService(destinationService);
 
       const legacyTemplateRepo = new TemplateRepository(db);
       legacyTemplateService = new TemplateService(legacyTemplateRepo);
@@ -147,7 +219,6 @@ async function main() {
         deliveryReceiptRepository,
       );
       await scheduler.start();
-
       logger.info('Notification scheduler started successfully');
 
       if (config.retryScheduler?.enabled) {
@@ -157,6 +228,7 @@ async function main() {
           discordService,
           undefined,
           deliveryReceiptRepository,
+          () => new Date(),
         );
         await retryScheduler.start();
         logger.info('Retry scheduler started successfully');
@@ -180,12 +252,25 @@ async function main() {
     schedulerTemplateService: legacyTemplateService,
     webhookSecrets: config.webhookSecrets,
     apiKeys: config.apiKeys,
+    credentialService: new ApiCredentialService(),
+    destinationService,
     rateLimit: config.rateLimit,
     archiveStore,
     archiveService,
     metricsStore,
     healthMonitor,
     deliveryReceiptRepository,
+    ledgerRangeBackfill,
+    idempotencyService,
+    apiIdempotencyService,
+    eventTimingsReader: deduplicationService
+      ? (eventId: string, contractAddress: string) =>
+          deduplicationService!.getStageTimings(eventId, contractAddress)
+      : null,
+    eventStream: {
+      enabled: process.env.EVENT_STREAM_ENABLED === 'true',
+      heartbeatMs: Number(process.env.EVENT_STREAM_HEARTBEAT_MS || 15_000),
+    },
   });
 
   if (healthMonitor) {
@@ -198,7 +283,6 @@ async function main() {
   let isShuttingDown = false;
 
   const shutdown = async (signal: string) => {
-    // Idempotency: prevent duplicate shutdown if multiple signals arrive
     if (isShuttingDown) {
       logger.warn('Shutdown already in progress, ignoring signal', { signal });
       return;
@@ -208,6 +292,15 @@ async function main() {
     logger.info('Graceful shutdown initiated', { signal });
 
     try {
+      // Stop accepting new events first so no new jobs are claimed
+      if (subscriber) {
+        await subscriber.stop();
+      }
+
+      // Wait for in-flight notification jobs to finish before closing anything
+      await getWorkerManager().initiateGracefulShutdown();
+
+      // Tear down schedulers and background services
       if (healthMonitor) {
         healthMonitor.stop();
       }
@@ -216,26 +309,27 @@ async function main() {
         await databaseCleanupJob.stop();
       }
 
-      if (reconciliationEngine) {
-        reconciliationEngine.stop();
+      if (retryScheduler) {
+        await retryScheduler.stop();
       }
 
       if (metricsRunner) {
         await metricsRunner.stop();
       }
 
+      if (reconciliationEngine) {
+        reconciliationEngine.stop();
+      }
+
       if (archiveService) {
         await archiveService.stop();
       }
 
-      if (scheduler) {
-        await scheduler.stop();
+      if (cleanupService) {
+        await cleanupService.stop();
       }
 
-      if (retryScheduler) {
-        await retryScheduler.stop();
-      }
-
+      // Close the HTTP server last so health checks stay reachable during drain
       if (subscriber) {
         await subscriber.stop();
       }
@@ -245,31 +339,26 @@ async function main() {
       logger.info('Graceful shutdown completed successfully', { signal });
       process.exit(0);
     } catch (error) {
-      logger.error('Error during graceful shutdown', { signal, error });
+      logger.error('Error during graceful shutdown', { signal, error: redactValue(error) });
       process.exit(1);
     }
   };
 
-  process.on('SIGINT', async () => {
-    await shutdown('SIGINT');
-  });
-
-  process.on('SIGTERM', async () => {
-    await shutdown('SIGTERM');
-  });
+  process.on('SIGINT', () => shutdown('SIGINT'));
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
 }
+
+installCrashDiagnosticsHandlers(logger);
 
 main().catch((err) => {
   if (err instanceof SecretValidationError) {
-    // Secret validation failures are reported field-by-field without echoing
-    // actual secret values (#692).
     logger.error('Startup secret validation failed — service will not start', {
       error: err.message,
     });
   } else if (err instanceof ConfigError) {
     logger.error('Configuration error', { error: err.message });
   } else {
-    logger.error('Error starting service', { error: err });
+    logger.error('Error starting service', formatCrashDiagnostic(err));
   }
   process.exit(1);
 });

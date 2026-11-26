@@ -1,7 +1,9 @@
 import {
   ProviderCapability,
   ProviderMetadata,
+  PayloadLimits,
   NotificationProvider,
+  NotificationFormat,
   DeliveryPayload,
   DeliveryResult,
   ProviderHealthResult,
@@ -20,12 +22,33 @@ const DISCORD_CAPABILITIES = new Set<ProviderCapability>([
   ProviderCapability.INTERACTIVE_COMPONENTS,
 ]);
 
+const DISCORD_SUPPORTED_FORMATS = new Set<NotificationFormat>([
+  NotificationFormat.EMBED,
+  NotificationFormat.MARKDOWN,
+  NotificationFormat.PLAIN_TEXT,
+]);
+
+/**
+ * Payload limits derived from Discord's webhook constraints:
+ * message content is capped at 2000 characters, embed titles at 256, and an
+ * embed accepts at most 25 fields / 10 attachments.
+ */
+const DISCORD_PAYLOAD_LIMITS: PayloadLimits = {
+  maxBodyLength: 2_000,
+  maxTitleLength: 256,
+  maxAttachmentCount: 10,
+  maxFieldCount: 25,
+};
+
 export class DiscordNotificationProvider implements NotificationProvider {
   readonly metadata: ProviderMetadata = {
     id: 'discord',
     name: 'Discord Webhook',
     version: '1.0.0',
     capabilities: DISCORD_CAPABILITIES,
+    supportedFormats: DISCORD_SUPPORTED_FORMATS,
+    defaultFormat: NotificationFormat.EMBED,
+    payloadLimits: DISCORD_PAYLOAD_LIMITS,
   };
 
   private readonly service: DiscordNotificationService;
@@ -38,6 +61,14 @@ export class DiscordNotificationProvider implements NotificationProvider {
 
   hasCapability(capability: ProviderCapability): boolean {
     return this.metadata.capabilities.has(capability);
+  }
+
+  supportsFormat(format: NotificationFormat): boolean {
+    return this.metadata.supportedFormats.has(format);
+  }
+
+  getCapabilities(): ProviderMetadata {
+    return this.metadata;
   }
 
   async deliver(payload: DeliveryPayload): Promise<DeliveryResult> {
@@ -64,6 +95,7 @@ export class DiscordNotificationProvider implements NotificationProvider {
       const providerResponse = { statusCode: response.status };
 
       if (!response.ok) {
+        const errorText = await response.text().catch(() => '');
         logger.warn('Discord provider: webhook responded with non-OK status', {
           requestId,
           targetRecipient: sanitizeCredentials(targetRecipient),
@@ -74,6 +106,10 @@ export class DiscordNotificationProvider implements NotificationProvider {
           success: false,
           degradedCapabilities,
           errorMessage: `HTTP ${response.status}: ${sanitizeCredentials(errorText)}`,
+          errorCode: `HTTP_${response.status}`,
+          statusCode: response.status,
+          providerMessageId,
+          providerResponse,
         };
       }
 
@@ -81,7 +117,7 @@ export class DiscordNotificationProvider implements NotificationProvider {
         requestId,
         targetRecipient: sanitizeCredentials(targetRecipient),
       });
-      return { success: true, degradedCapabilities };
+      return { success: true, degradedCapabilities, providerMessageId, providerResponse };
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       const sanitized = sanitizeCredentials(errorMessage);

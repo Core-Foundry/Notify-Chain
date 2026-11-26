@@ -13,8 +13,15 @@ import { NotificationPreferencesPage } from './pages/NotificationPreferencesPage
 import { TemplatesPage } from './pages/TemplatesPage';
 import { ChannelDetailsPage } from './pages/ChannelDetailsPage';
 import { RpcBenchmarkPage } from './pages/RpcBenchmarkPage';
+import { NotificationDestinationsPage } from './pages/NotificationDestinationsPage';
+import { ContractDetailPage } from './pages/ContractDetailPage';
+import { AuditHistoryPage } from './pages/AuditHistoryPage';
+import { AdminRouteGuard } from './components/AdminRouteGuard';
+import { TransactionTracePage } from './pages/TransactionTracePage';
 
 import { ThemeToggle } from './components/ThemeToggle';
+import { CommandPalette } from './components/CommandPalette';
+import { TimezoneSelector } from './components/TimezoneSelector';
 import { MobileNavDrawer, NAV_ITEMS, type Tab } from './components/MobileNavDrawer';
 import { ToastProvider } from './context/ToastContext';
 import { useTheme } from './hooks/useTheme';
@@ -26,10 +33,16 @@ import { useEventStore } from './store/eventStore';
 import { SyncStatus } from './components/SyncStatus';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { DashboardLayout } from './layouts/DashboardLayout';
+import { EmptyState } from './components/EmptyState';
 
 export function App() {
   const [tab, setTab] = useState<Tab>(() => {
     const hash = window.location.hash.slice(1);
+
+    // Handle contract-detail route with address parameter
+    if (hash.startsWith('contract-detail?')) {
+      return 'contract-detail';
+    }
 
     if (NAV_ITEMS.some((item) => item.id === hash)) {
       return hash as Tab;
@@ -40,6 +53,7 @@ export function App() {
 
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
+  const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
 
   const isMobileNav = useIsMobileNav();
   const { theme, toggleTheme } = useTheme();
@@ -57,10 +71,19 @@ export function App() {
     setHelpOpen(false);
   }, []);
 
+  const handleOpenCommandPalette = useCallback(() => {
+    setCommandPaletteOpen(true);
+  }, []);
+
+  const handleCloseCommandPalette = useCallback(() => {
+    setCommandPaletteOpen(false);
+  }, []);
+
   useKeyboardShortcuts({
     activeTab: tab,
     onTabChange: setTab,
     onToggleTheme: toggleTheme,
+    onOpenCommandPalette: handleOpenCommandPalette,
     helpOpen,
     onToggleHelp: handleToggleHelp,
     onCloseHelp: handleCloseHelp,
@@ -163,6 +186,13 @@ export function App() {
         isOpen={helpOpen}
         onClose={handleCloseHelp}
       />
+      <CommandPalette
+        isOpen={commandPaletteOpen}
+        onClose={handleCloseCommandPalette}
+        onSelectTab={setTab}
+        onToggleTheme={toggleTheme}
+        onShowShortcuts={handleToggleHelp}
+      />
 
       <DashboardLayout
         activeTab={tab}
@@ -176,6 +206,7 @@ export function App() {
         themeBar={
           <>
             <SyncStatus />
+            <TimezoneSelector />
             <ThemeToggle
               theme={theme}
               onToggle={toggleTheme}
@@ -295,12 +326,56 @@ function renderPanel(tab: Tab, events: any[]) {
         </ErrorBoundary>
       );
 
+    case 'destinations':
+      return (
+        <ErrorBoundary section="Notification Destinations">
+          <NotificationDestinationsPage />
+        </ErrorBoundary>
+      );
+
     case 'rpc-benchmark':
       return (
         <ErrorBoundary section="RPC Benchmark">
           <RpcBenchmarkPage />
         </ErrorBoundary>
       );
+
+    case 'transaction-trace':
+      return (
+        <ErrorBoundary section="Transaction Trace">
+          <TransactionTracePage />
+        </ErrorBoundary>
+      );
+
+    case 'contract-detail': {
+      const hash = window.location.hash.slice(1);
+      const params = new URLSearchParams(hash.split('?')[1] || '');
+      const contractAddress = params.get('address');
+      
+      if (!contractAddress) {
+        return (
+          <ErrorBoundary section="Contract Details">
+            <EmptyState
+              icon="📄"
+              title="Contract address required"
+              message="Please provide a contract address to view its details."
+              action={{
+                label: 'Go to Event Explorer',
+                onClick: () => {
+                  window.location.hash = 'explorer';
+                },
+              }}
+            />
+          </ErrorBoundary>
+        );
+      }
+
+      return (
+        <ErrorBoundary section="Contract Details">
+          <ContractDetailPage contractAddress={contractAddress} />
+        </ErrorBoundary>
+      );
+    }
 
     default:
       return null;

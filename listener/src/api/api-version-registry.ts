@@ -98,7 +98,9 @@ export const ROUTE_CATALOG: ReadonlyArray<VersionedRoute> = [
   { method: 'GET', path: '/api/schedule/jobs', version: 'v1', status: 'active' },
   { method: 'GET', path: '/api/schedule/jobs/failures', version: 'v1', status: 'active' },
   { method: 'GET', path: '/api/schedule/:id', version: 'v1', status: 'active' },
+  { method: 'PATCH', path: '/api/schedule/:id', version: 'v1', status: 'active' },
   { method: 'DELETE', path: '/api/schedule/:id', version: 'v1', status: 'active' },
+  { method: 'POST', path: '/api/schedule/:id/recovery', version: 'v1', status: 'active' },
   { method: 'GET', path: '/api/search/suggestions', version: 'v1', status: 'active' },
   { method: 'GET', path: '/api/preferences/:userId', version: 'v1', status: 'active' },
   { method: 'PUT', path: '/api/preferences/:userId', version: 'v1', status: 'active' },
@@ -114,6 +116,12 @@ export const ROUTE_CATALOG: ReadonlyArray<VersionedRoute> = [
   { method: 'GET', path: '/api/archive', version: 'v1', status: 'active' },
   { method: 'GET', path: '/api/archive/:id', version: 'v1', status: 'active' },
   { method: 'POST', path: '/api/archive/run', version: 'v1', status: 'active' },
+  { method: 'GET', path: '/api/destinations', version: 'v1', status: 'active' },
+  { method: 'POST', path: '/api/destinations', version: 'v1', status: 'active' },
+  { method: 'GET', path: '/api/destinations/:id', version: 'v1', status: 'active' },
+  { method: 'PUT', path: '/api/destinations/:id', version: 'v1', status: 'active' },
+  { method: 'DELETE', path: '/api/destinations/:id', version: 'v1', status: 'active' },
+  { method: 'POST', path: '/api/destinations/:id/test', version: 'v1', status: 'active' },
 
   // ── Example deprecated route (template for future use) ───────────────────
   // When a v2 breaking change is ready, add an entry like this:

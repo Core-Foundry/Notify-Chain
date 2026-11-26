@@ -52,10 +52,7 @@ describe('EventExplorerTable column resizing helpers', () => {
   });
 
   it('clamps widths below the minimum when loading', () => {
-    localStorage.setItem(
-      STORAGE_KEY,
-      JSON.stringify([40, 180, 120, 200, 110, 170]),
-    );
+    localStorage.setItem(STORAGE_KEY, JSON.stringify([40, 180, 120, 200, 110, 170]));
 
     const loaded = loadColumnWidths();
 
@@ -64,9 +61,7 @@ describe('EventExplorerTable column resizing helpers', () => {
   });
 
   it('builds a stable grid template from widths', () => {
-    expect(widthsToGridTemplate([100, 120, 80])).toBe(
-      '100px 120px 80px',
-    );
+    expect(widthsToGridTemplate([100, 120, 80])).toBe('100px 120px 80px');
   });
 });
 
@@ -77,19 +72,14 @@ describe('EventExplorerTable resizing UI', () => {
 
   it('renders resize handles and keeps layout stable while resizing', () => {
     const { getByLabelText, container } = render(
-      <EventExplorerTable
-        events={[sampleEvent]}
-        contractStatuses={[]}
-      />,
+      <EventExplorerTable events={[sampleEvent]} contractStatuses={[]} />,
     );
 
     const handle = getByLabelText('Resize Contract column');
 
     expect(handle).toBeInTheDocument();
 
-    const header = container.querySelector(
-      '.event-explorer__table-header',
-    ) as HTMLElement;
+    const header = container.querySelector('.event-explorer__table-header') as HTMLElement;
 
     const before = header.style.gridTemplateColumns;
 
@@ -106,16 +96,79 @@ describe('EventExplorerTable resizing UI', () => {
 
   it('renders invalid event timestamps without throwing', () => {
     render(
-      <EventExplorerTable
-        events={[{ ...sampleEvent, receivedAt: NaN }]}
-        contractStatuses={[]}
-      />,
+      <EventExplorerTable events={[{ ...sampleEvent, receivedAt: NaN }]} contractStatuses={[]} />,
     );
 
     expect(screen.getByText('Unknown time')).toBeInTheDocument();
 
-    expect(
-      screen.getByText('Unknown time').closest('time'),
-    ).not.toHaveAttribute('dateTime');
+    expect(screen.getByText('Unknown time').closest('time')).not.toHaveAttribute('dateTime');
+  });
+
+  it('respects saved density and visible-column preferences', () => {
+    const { container } = render(
+      <EventExplorerTable
+        events={[sampleEvent]}
+        density="compact"
+        visibleColumns={['event', 'ledger']}
+      />,
+    );
+
+    expect(container.querySelector('.event-explorer__table-wrapper')).toHaveClass(
+      'event-explorer__table-wrapper--compact',
+    );
+    expect(screen.getAllByRole('columnheader').map((header) => header.textContent)).toEqual([
+      'Event',
+      'Ledger',
+    ]);
+    expect(container.querySelectorAll('.event-explorer__cell')).toHaveLength(2);
+  });
+});
+describe('EventExplorerTable column visibility (#1160)', () => {
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  it('lets users hide an optional column and remembers it', () => {
+    render(<EventExplorerTable events={[sampleEvent]} />);
+
+    expect(screen.getByRole('columnheader', { name: /Kind/ })).toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText('Kind'));
+
+    expect(screen.queryByRole('columnheader', { name: /Kind/ })).not.toBeInTheDocument();
+    expect(document.querySelector('[data-column="kind"]')).toBeNull();
+    expect(JSON.parse(localStorage.getItem('notify-chain-event-table-columns')!)).not.toContain(
+      'kind',
+    );
+  });
+
+  it('keeps identifier columns locked visible', () => {
+    render(<EventExplorerTable events={[sampleEvent]} />);
+
+    for (const label of ['Contract', 'Event', 'Ledger']) {
+      expect(screen.getByLabelText(label)).toBeDisabled();
+    }
+    expect(screen.getByRole('button', { name: /copy event ID/i })).toBeInTheDocument();
+  });
+
+  it('marks unavailable values and empty columns', () => {
+    render(<EventExplorerTable events={[{ ...sampleEvent, txHash: undefined }]} />);
+
+    expect(screen.getByLabelText('Transaction hash not available')).toBeInTheDocument();
+    expect(screen.getByText('(no data on this page)')).toBeInTheDocument();
+  });
+
+  it('wraps the table in a horizontally scrollable region', () => {
+    render(<EventExplorerTable events={[sampleEvent]} />);
+
+    const region = screen.getByRole('table', { name: 'Contract events' });
+    expect(region).toHaveClass('event-explorer__table-scroll');
+  });
+
+  it('selects an event when its row is activated', () => {
+    const onSelectEvent = jest.fn();
+    render(<EventExplorerTable events={[sampleEvent]} onSelectEvent={onSelectEvent} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /View details for Transfer/ }));
+    expect(onSelectEvent).toHaveBeenCalledWith(sampleEvent);
   });
 });

@@ -6,18 +6,37 @@ import { eventRegistry } from '../store/event-registry';
 import { preferenceStore } from '../store/preference-store';
 import { PreferencesUpdateInput } from '../types/preferences';
 import { NotificationAPI } from '../services/notification-api';
+import { ApiCredentialService } from '../services/api-credential-service';
+import { handleCredentialRoutes } from './credentials-api';
+import { authorizeRequest, principalClientId, type AuthPrincipal } from './api-key-auth';
+import {
+  DestinationNotFoundError,
+  DestinationOwnershipError,
+  DestinationService,
+  DestinationValidationError,
+} from '../services/destination-service';
+import { handleDestinationRoutes, resolveDestinationOwnerId } from './destinations-api';
+import { authorizeRequest, type AuthPrincipal } from './api-key-auth';
 import { NotificationType } from '../types/scheduled-notification';
+import { ScheduleValidationError, toScheduleValidationResponse } from '../services/schedule-validator';
+import {
+  formatInTimezone,
+  InvalidTimezoneError,
+  parseExecuteAtWithTimezone,
+} from '../utils/timezone';
 import logger from '../utils/logger';
 import { generateRequestId, resolveCorrelationId } from '../utils/request-id';
 import { TemplateService } from '../services/template-service';
 import { handleTemplateRoutes } from './template-routes';
 import { sendOk, sendErr, sendJson, ErrorCode } from '../utils/response';
 import { normalizePaginationParams } from '../utils/pagination';
-import { handleApiError, ApiError } from './error-handler';
+import {
+  handleApiError,
+  handleOperationalError,
+  handleQueryTimeout,
+  ApiError,
+} from './error-handler';
 import { applyRequestIdMiddleware } from '../middleware/request-id';
-import { TemplateService } from '../services/template-service';
-import { handleTemplateRoutes } from './template-routes';
-import { sendOk, sendErr, sendJson, ErrorCode } from '../utils/response';
 import { validateContentType, getMimeType } from '../middleware/content-type';
 import { NotificationHistoryService } from '../services/notification-history';
 import { SearchSuggestionService } from '../services/search-suggestion';
@@ -28,15 +47,30 @@ import {
   IdempotencyKeyReuseError,
 } from '../services/idempotency-key-service';
 import { WebhookReplayCache } from '../services/webhook-replay-cache';
-import { IdempotencyKeyService, IdempotencyKeyReuseError } from '../services/idempotency-key-service';
 import { WebhookSecret, RateLimitConfig, ContractConfig } from '../types';
+import { DeliveryReceiptStatus } from '../types/delivery-receipt';
 import { RateLimiter } from './rate-limiter';
+import { authenticateApiKey, API_KEY_AUTH_MESSAGES } from './api-key-auth';
 import {
   normaliseApiPath,
   applyVersionHeaders,
   buildVersionCatalog,
 } from './api-version-registry';
 import { getDatabase } from '../database/database';
+import {
+  ApiIdempotencyService,
+  InMemoryApiIdempotencyStore,
+  idempotencyScopeFor,
+  type StoredApiResponse,
+} from '../services/api-idempotency-service';
+import {
+  EVENT_LATENCY_DIAGNOSTICS_PATH,
+  getEventLatencyDiagnostics,
+  writeDiagnostics,
+  type PersistedTimingsReader,
+} from './event-latency-diagnostics';
+import { eventLatencyStore } from '../services/event-latency-tracker';
+import { ok, err as errEnvelope } from '../utils/response';
 import {
   getNotificationAnalyticsAggregator,
   NotificationAnalyticsAggregator,
@@ -56,6 +90,8 @@ import {
 import { CreateNotificationTemplateInput } from '../types/notification-template';
 import { BatchValidationService } from '../services/batch-validation-service';
 import { handleArchiveRequest } from './archive-api';
+import { handleBackfillRequest } from './backfill-api';
+import type { LedgerRangeBackfillController } from '../services/ledger-range-backfill';
 import { handleDeliveryMetricsRequest } from './delivery-metrics-api';
 import { ArchiveStore } from '../services/archive-store';
 import { ArchiveService } from '../services/archive-service';
@@ -63,14 +99,25 @@ import { NotificationMetricsStore } from '../services/notification-metrics-store
 import { NotificationHealthMonitor } from '../services/notification-health-monitor';
 import { getJobMonitor } from '../services/job-monitor';
 import { NotificationImportService } from '../services/notification-import-service';
+import { DeliveryReceiptRepository } from '../services/delivery-receipt-repository';
+import { DataExportService } from '../services/data-export-service';
+import { SecurityAuditService } from '../services/security-audit';
+import { validatePayload, Schemas } from '../middleware/request-validator';
+import { parseLedgerRangeParams } from '../utils/ledger-range-validator';
+import { ValidationError, validationErrorBody } from '../utils/validation';
 import { ResponseTimeMiddleware } from '../middleware/response-time';
 import { addSecurityHeaders } from '../middleware/security-headers';
 import { DEFAULT_MAX_BODY_BYTES, enforceBodyLimit } from '../middleware/body-limit';
+import { resolveRequestPolicy } from '../middleware/request-policy';
+import { validateRequestFraming } from '../middleware/request-framing';
 import { sanitizeUrl } from '../utils/logger';
 import { sanitizeCredentials } from '../utils/credential-sanitizer';
 import { DiscordNotificationProvider } from '../services/providers/discord-provider';
 import { WebhookNotificationProvider } from '../services/providers/webhook-provider';
 import { ProviderHealthResult } from '../types/provider-capabilities';
+import { EVENT_STREAM_PATH, handleEventStream } from './event-stream';
+import { resolveLocalDateTime } from '../services/local-schedule';
+import { redactSensitiveFields } from '../utils/redact';
 
 export interface EventsServerOptions {
   port: number;
@@ -84,8 +131,18 @@ export interface EventsServerOptions {
   webhookSecrets?: WebhookSecret[];
   apiKeys?: Array<{ key: string; name?: string }>;
   notificationAPI?: NotificationAPI | null;
+  credentialService?: ApiCredentialService | null;
+  destinationService?: DestinationService | null;
+  requireDestinationAuth?: boolean;
   /** Idempotency-Key replay protection for mutating endpoints (webhooks, schedule). */
   idempotencyService?: IdempotencyKeyService | null;
+  /**
+   * Generic Idempotency-Key handling for event-management mutations such as
+   * schedule cancellation (issue #1114). Defaults to a process-local store.
+   */
+  apiIdempotencyService?: ApiIdempotencyService | null;
+  /** Reads persisted stage timings for the latency diagnostics endpoint (#1120). */
+  eventTimingsReader?: PersistedTimingsReader | null;
   templateService?: NotificationTemplateService | null;
   /** Scheduler-scoped template service, used to render templates for scheduled notifications. */
   schedulerTemplateService?: TemplateService | null;
@@ -100,6 +157,11 @@ export interface EventsServerOptions {
   archiveStore?: ArchiveStore | null;
   /** Archive service for the admin /run endpoint (optional). */
   archiveService?: ArchiveService | null;
+  /**
+   * Controller for operator-triggered historical backfills over an explicit
+   * ledger range (#1165). Omitted or null leaves the admin routes as 404.
+   */
+  ledgerRangeBackfill?: LedgerRangeBackfillController | null;
   /** Persisted metrics snapshots for historical analytics (optional). */
   metricsStore?: NotificationMetricsStore | null;
   /** Maximum age of signed requests in seconds (default: 300 = 5 minutes). */
@@ -115,6 +177,8 @@ export interface EventsServerOptions {
    * replay cache (default: 10000).
    */
   webhookReplayCacheMaxEntries?: number;
+  /** Shared HMAC secret for CSRF tokens in multi-instance deployments. */
+  csrfSecret?: string;
   /** Optional health monitor — exposes its last report at GET /api/notifications/health. */
   healthMonitor?: NotificationHealthMonitor | null;
   /** Receipt repository for the notification delivery status endpoint. */
@@ -134,8 +198,17 @@ export interface EventsServerOptions {
    * are never parsed. Defaults to {@link DEFAULT_MAX_BODY_BYTES}.
    */
   maxBodyBytes?: number;
+  /** Maximum compressed request body size, in bytes. */
+  maxCompressedBytes?: number;
+  /** Maximum decompressed request body size, in bytes. */
+  maxDecompressedBytes?: number;
   /** Optional DataExportService override for administrative exports (#850). */
   dataExportService?: DataExportService | null;
+  /**
+   * Optional SSE feed at GET /api/events/stream. Omitted or disabled leaves
+   * that path as 404 so existing poll clients are unchanged.
+   */
+  eventStream?: { enabled: boolean; heartbeatMs?: number } | null;
 }
 
 type ServiceStatus = 'ok' | 'error' | 'not_configured';
@@ -444,6 +517,7 @@ function isRateLimitExempt(pathname: string): boolean {
 
 export function createEventsServer(options: EventsServerOptions): http.Server {
   const corsOrigin = options.corsOrigin ?? 'http://localhost:5173';
+  validateCsrfSecret(options.csrfSecret ?? process.env.CSRF_SECRET);
   const historyService = new NotificationHistoryService();
   const suggestionService = new SearchSuggestionService();
   const notificationSearchService = new NotificationSearchService();
@@ -455,6 +529,24 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
   const webhookReplayCache = new WebhookReplayCache({
     maxEntries: options.webhookReplayCacheMaxEntries ?? 10_000,
   });
+  const webhookAuditService = new SecurityAuditService(getDatabase());
+  // Idempotency-Key handling for event-management mutations (#1114). Callers
+  // that wire a database pass a SQLite-backed service; otherwise retries are
+  // still deduplicated within this process.
+  const apiIdempotency =
+    options.apiIdempotencyService ?? new ApiIdempotencyService(new InMemoryApiIdempotencyStore());
+  const writeStoredResponse = (
+    res: http.ServerResponse,
+    response: StoredApiResponse,
+    headers: Record<string, string>,
+  ): void => {
+    for (const [name, value] of Object.entries(headers)) res.setHeader(name, value);
+    sendJson(res, response.statusCode, response.body);
+  };
+  const destinationService =
+    options.destinationService !== undefined
+      ? options.destinationService
+      : new DestinationService({ db: getDatabase(), auditService: webhookAuditService });
   // Response-time tracking (#491)
   const responseTime =
     options.responseTimeMiddleware !== undefined && options.responseTimeMiddleware !== null
@@ -475,13 +567,37 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
     // Start response-time tracking for this request (#491)
     responseTime.start(res);
 
+    // Request size and media-type policy (#1138).
+    // Request framing (#1208): reject ambiguous Content-Length /
+    // Transfer-Encoding combinations before any body is read so proxies and
+    // this server always agree on request boundaries.
+    const framing = validateRequestFraming(req, res);
+    if (!framing.allowed) {
+      logger.warn('Rejected ambiguous HTTP request framing', {
+        requestId,
+        correlationId,
+        method: req.method,
+        url: sanitizeUrl(req.url ?? '/'),
+        reason: framing.reason,
+      });
+      return;
+    }
+
     // Request body size limit.
     //
-    // Screened here, before routing, so an oversized payload is answered and
-    // the socket destroyed before any route handler attaches its own `data`
-    // listener and starts accumulating the body in memory.
-    const maxBodyBytes = options.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES;
-    const bodyLimit = enforceBodyLimit(req, res, {
+    // Resolved before the body is read so bulk endpoints get their larger
+    // ceiling while ordinary endpoints keep the configured default. Screening
+    // here means an oversized payload is answered and the socket destroyed
+    // before a route handler starts accumulating it in memory.
+    const requestUrl = new URL(req.url ?? '/', 'http://localhost');
+    const requestPolicy = resolveRequestPolicy(
+      req.method ?? 'GET',
+      requestUrl.pathname,
+      options.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES,
+    );
+    const maxBodyBytes = requestPolicy.maxBytes;
+
+    const bodyLimit = await enforceBodyLimit(req, res, {
       maxBytes: maxBodyBytes,
       onRejected: (reason, observedBytes) => {
         logger.warn('Request body exceeded size limit', {
@@ -500,17 +616,21 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
     }
 
     res.setHeader('Access-Control-Allow-Origin', corsOrigin);
+    res.setHeader('Vary', 'Origin');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
     res.setHeader(
       'Access-Control-Allow-Headers',
-      'Content-Type, X-API-Key, Authorization, X-Correlation-Id, X-Request-Id',
+      'Content-Type, X-API-Key, X-CSRF-Token, Authorization, X-Correlation-Id, X-Request-Id, Last-Event-ID',
     );
+    if (corsOrigin !== '*') {
+      res.setHeader('Access-Control-Allow-Credentials', 'true');
+    }
     res.setHeader(
       'Access-Control-Expose-Headers',
       'X-Request-Id, X-Correlation-Id, X-Response-Time',
     );
 
-    const url = new URL(req.url ?? '/', 'http://localhost');
+    const url = requestUrl;
     const pathname = url.pathname;
 
     // ── API Route Versioning (#386, #984) ──────────────────────────────────
@@ -521,6 +641,16 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
     {
       const { normalisedPath } = normaliseApiPath(url.pathname);
       url.pathname = normalisedPath;
+    }
+    if (
+      handleCsrfProtection(req, res, {
+        pathname: url.pathname,
+        allowedOrigin: corsOrigin,
+        isProduction: options.isProduction ?? process.env.NODE_ENV === 'production',
+        secret: options.csrfSecret ?? process.env.CSRF_SECRET,
+      })
+    ) {
+      return;
     }
     applyVersionHeaders(req.method ?? 'GET', url.pathname, res);
 
@@ -565,10 +695,29 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
       return;
     }
 
+    // Reject unsupported media types before any route reads the body (#1138).
+    // validateContentType intentionally leaves safe methods, empty bodies and
+    // requests without a Content-Type header alone for backward compatibility.
+    // Route-level checks remain in place as a second line of defence.
+    if (!validateContentType(req, res, requestPolicy.allowedContentTypes)) {
+      return;
+    }
+
     // Template API routes (handled first for priority)
     // Note: route matching is handled inline below for NotificationTemplateService compatibility.
     // url.pathname is already rewritten from /api/v1/* → /api/* above
     if (options.schedulerTemplateService && url.pathname.startsWith('/api/templates')) {
+      const auth = await authorizeRequest(req, {
+        apiKeys: options.apiKeys,
+        credentialService: options.credentialService,
+      });
+      if (!auth.allowed) {
+        if (auth.status === 401) res.setHeader('WWW-Authenticate', 'ApiKey header="X-API-Key"');
+        sendErr(res, auth.status, auth.message, auth.code, auth.details);
+        return;
+      }
+      (req as http.IncomingMessage & { authPrincipal?: AuthPrincipal }).authPrincipal =
+        auth.principal;
       handleTemplateRoutes(req, res, requestId, options.schedulerTemplateService)
         .then((handled) => {
           if (!handled) {
@@ -579,6 +728,26 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
           logger.error('Template route handler error', { error, requestId, correlationId });
           handleApiError(res, error, requestId, correlationId);
         });
+      return;
+    }
+
+    if (
+      await handleCredentialRoutes(req, res, url, {
+        credentialService: options.credentialService,
+        apiKeys: options.apiKeys,
+      })
+    ) {
+      return;
+    }
+
+    if (
+      await handleDestinationRoutes(req, res, url, {
+        destinationService,
+        credentialService: options.credentialService,
+        apiKeys: options.apiKeys,
+        requireAuthentication: options.requireDestinationAuth,
+      })
+    ) {
       return;
     }
 
@@ -595,7 +764,11 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
             requestId,
             correlationId,
           });
-          sendErr(res, 500, 'Internal health check failure', ErrorCode.INTERNAL_ERROR);
+          handleOperationalError(res, err, {
+            requestId,
+            correlationId,
+            fallbackMessage: 'Internal health check failure',
+          });
         });
       return;
     }
@@ -612,7 +785,25 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
             requestId,
             correlationId,
           });
-          sendErr(res, 500, 'Internal status check failure', ErrorCode.INTERNAL_ERROR);
+          handleOperationalError(res, err, {
+            requestId,
+            correlationId,
+            fallbackMessage: 'Internal status check failure',
+          });
+        });
+      return;
+    }
+
+    // GET /api/internal/diagnostics/event-latency — per-stage processing
+    // latency (issue #1120). Internal: requires an API key when keys are
+    // configured; responses carry identifiers and durations only.
+    if (req.method === 'GET' && url.pathname === EVENT_LATENCY_DIAGNOSTICS_PATH) {
+      if (!requireApiKey()) return;
+      getEventLatencyDiagnostics(url, eventLatencyStore, options.eventTimingsReader)
+        .then((result) => writeDiagnostics(res, result))
+        .catch((error) => {
+          logger.error('Event latency diagnostics failed', { error, requestId, correlationId });
+          sendErr(res, 500, 'Diagnostics unavailable', ErrorCode.INTERNAL_ERROR);
         });
       return;
     }
@@ -779,7 +970,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
         })
         .catch((error) => {
           logger.error('Failed to fetch metrics history', { error, requestId, correlationId });
-          sendErr(res, 500, (error as Error).message, ErrorCode.INTERNAL_ERROR);
+          handleOperationalError(res, error, { requestId, correlationId });
         });
       return;
     }
@@ -834,29 +1025,8 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
 
           const secrets = options.webhookSecrets ?? [];
           const maxAgeSeconds = options.signatureExpirationSeconds ?? 300;
-        const secrets = options.webhookSecrets ?? [];
-        const maxAgeSeconds = options.signatureExpirationSeconds ?? 300;
-        
-        // Use default database for audit log or mock one if not available.
-        // Actually since SecurityAuditService requires Database, let's pass a real one.
-        const db = getDatabase();
-        const { SecurityAuditService } = require('../services/security-audit');
-        const auditService = new SecurityAuditService(db);
 
-        const auth = await verifyWebhookRequest({
-          headers: req.headers as Record<string, string | string[] | undefined>,
-          rawBody,
-          secrets,
-          sourceIp,
-          requestId,
-          correlationId,
-          maxAgeSeconds,
-          requireTimestamp: options.requireWebhookTimestamp !== false,
-          replayCache: webhookReplayCache,
-          auditService,
-        });
-
-          const auth = verifyWebhookRequest({
+          const auth = await verifyWebhookRequest({
             headers: req.headers as Record<string, string | string[] | undefined>,
             rawBody,
             secrets,
@@ -864,6 +1034,9 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
             requestId,
             correlationId,
             maxAgeSeconds,
+            requireTimestamp: options.requireWebhookTimestamp !== false,
+            replayCache: webhookReplayCache,
+            auditService: webhookAuditService,
           });
 
           if (!auth.authenticated) {
@@ -890,24 +1063,53 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
               return { status: 'accepted', verified: true };
             };
 
-            if (options.idempotencyService && idempotencyKey) {
-              const outcome = await options.idempotencyService.processWithIdempotency(
-                idempotencyKey,
-                rawBody,
-                acceptWebhook,
-                { requestId, correlationId },
+            if (idempotencyKey) {
+              // Webhooks create no notification row, so they use the generic
+              // idempotency store (#1114) rather than idempotency_keys, whose
+              // FK to scheduled_notifications they cannot satisfy. Response
+              // shapes are unchanged: 202 first, 200 + replay:true on retry,
+              // flat { error, code } bodies for rejections.
+              const outcome = await apiIdempotency.execute(
+                {
+                  key: idempotencyKey,
+                  scope: `webhook:${auth.keyId ?? 'unknown'}`,
+                  method: 'POST',
+                  path: url.pathname,
+                  body: rawBody,
+                },
+                async () => ({ statusCode: 202, body: await acceptWebhook() }),
               );
-              const statusCode = outcome.isDuplicate ? 200 : 202;
-              res.writeHead(statusCode, {
-                'Content-Type': 'application/json',
-                'X-Idempotent-Replay': outcome.isDuplicate ? 'true' : 'false',
-              });
-              res.end(
-                JSON.stringify({
-                  ...(outcome.result as object),
-                  replay: outcome.isDuplicate,
-                }),
-              );
+              if (outcome.response.statusCode === 202) {
+                res.writeHead(outcome.replayed ? 200 : 202, {
+                  'Content-Type': 'application/json',
+                  'X-Idempotent-Replay': outcome.replayed ? 'true' : 'false',
+                });
+                res.end(
+                  JSON.stringify({
+                    ...(outcome.response.body as object),
+                    replay: outcome.replayed,
+                  }),
+                );
+              } else {
+                const rejection = (outcome.response.body as {
+                  error?: { code?: string; message?: string };
+                }).error;
+                if (rejection?.code === 'IDEMPOTENCY_KEY_MISMATCH') {
+                  logger.warn('Webhook rejected: idempotency key reused with different body', {
+                    requestId,
+                    correlationId,
+                    idempotencyKey,
+                  });
+                }
+                for (const [name, value] of Object.entries(outcome.headers)) {
+                  res.setHeader(name, value);
+                }
+                writeAuthFailure(
+                  outcome.response.statusCode,
+                  rejection?.message ?? 'Idempotency check failed',
+                  rejection?.code ?? 'IDEMPOTENCY_ERROR',
+                );
+              }
             } else {
               const result = await acceptWebhook();
               res.writeHead(202, { 'Content-Type': 'application/json' });
@@ -924,7 +1126,11 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
               return;
             }
             logger.error('Failed to process webhook', { requestId, correlationId, error: err });
-            sendErr(res, 500, 'Internal server error', ErrorCode.INTERNAL_ERROR);
+            handleOperationalError(res, err, {
+              requestId,
+              correlationId,
+              fallbackMessage: 'Internal server error',
+            });
           }
         })
         .catch((err) => {
@@ -1040,19 +1246,168 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
       return;
     }
 
+    // GET /api/admin/audit — Administrative Audit History Viewer (#1225)
+    //
+    // Returns recorded administrative activity (security audit log entries)
+    // in reverse-chronological order. Supports filtering by action type and
+    // date range, plus limit/offset pagination. Sensitive values are masked
+    // before serialization and only authorized administrators may read it.
+    if (req.method === 'GET' && url.pathname === '/api/admin/audit') {
+      const auth = await authorizeRequest(req, {
+        apiKeys: options.apiKeys,
+        credentialService: options.credentialService,
+      });
+      if (!auth.allowed) {
+        if (auth.status === 401) res.setHeader('WWW-Authenticate', 'ApiKey header="X-API-Key"');
+        sendErr(res, auth.status, auth.message, auth.code, auth.details);
+        return;
+      }
+
+      const principal = auth.principal as
+        | (AuthPrincipal & { role?: string; roles?: string[] })
+        | undefined;
+      const roles = [
+        ...(Array.isArray(principal?.roles) ? principal!.roles! : []),
+        ...(typeof principal?.role === 'string' ? [principal.role] : []),
+      ].map((r) => r.toLowerCase());
+      const isAdmin = roles.includes('admin') || roles.includes('administrator');
+
+      if (!isAdmin) {
+        logger.warn('Rejected non-admin access to audit history', {
+          requestId,
+          correlationId,
+          actor: principal?.name ?? principal?.id ?? 'unknown',
+        });
+        sendErr(res, 403, 'Forbidden: administrator role required', ErrorCode.FORBIDDEN);
+        return;
+      }
+
+      const action = url.searchParams.get('action') ?? undefined;
+      const fromParam = url.searchParams.get('from') ?? url.searchParams.get('startDate');
+      const toParam = url.searchParams.get('to') ?? url.searchParams.get('endDate');
+
+      const parseDate = (value: string | null | undefined): Date | undefined => {
+        if (!value) return undefined;
+        const parsed = new Date(value);
+        return Number.isNaN(parsed.getTime()) ? undefined : parsed;
+      };
+
+      const from = parseDate(fromParam);
+      const to = parseDate(toParam);
+      if ((fromParam && !from) || (toParam && !to)) {
+        sendErr(res, 400, 'Invalid date filter', ErrorCode.BAD_REQUEST);
+        return;
+      }
+
+      const limitParam = url.searchParams.get('limit');
+      const offsetParam = url.searchParams.get('offset');
+      const limit = limitParam
+        ? Math.min(Math.max(parseInt(limitParam, 10) || 50, 1), 200)
+        : 50;
+      const offset = offsetParam ? Math.max(parseInt(offsetParam, 10) || 0, 0) : 0;
+
+      try {
+        const db = getDatabase();
+        const clauses: string[] = [];
+        const params: unknown[] = [];
+
+        if (action) {
+          clauses.push('action = ?');
+          params.push(action);
+        }
+        if (from) {
+          clauses.push('timestamp >= ?');
+          params.push(from.toISOString());
+        }
+        if (to) {
+          clauses.push('timestamp <= ?');
+          params.push(to.toISOString());
+        }
+
+        const where = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
+
+        const countRow = await db.get<{ total: number }>(
+          `SELECT COUNT(*) AS total FROM security_audit_log ${where}`,
+          params,
+        );
+        const total = Number(countRow?.total ?? 0);
+
+        const rows = await db.all<Record<string, unknown>>(
+          `SELECT * FROM security_audit_log ${where} ORDER BY timestamp DESC LIMIT ? OFFSET ?`,
+          [...params, limit, offset],
+        );
+
+        const records = rows.map((row) => {
+          const redacted = redactSensitiveFields(row) as Record<string, unknown>;
+          const ts = redacted.timestamp;
+          return {
+            ...redacted,
+            timestamp:
+              ts instanceof Date ? ts.toISOString() : typeof ts === 'string' ? ts : null,
+          };
+        });
+
+        logger.info('Handling GET /api/admin/audit', {
+          requestId,
+          correlationId,
+          action,
+          from: from?.toISOString(),
+          to: to?.toISOString(),
+          limit,
+          offset,
+          returned: records.length,
+          total,
+        });
+
+        sendOk(res, 200, { total, limit, offset, records });
+      } catch (error) {
+        logger.error('Failed to load administrative audit history', {
+          error,
+          requestId,
+          correlationId,
+        });
+        sendErr(res, 500, 'Failed to load audit history', ErrorCode.INTERNAL_ERROR);
+      }
+      return;
+    }
+
     // GET & POST /api/admin/export (and /api/export) — Data Export Utility (#850)
     if (
       (req.method === 'GET' || req.method === 'POST') &&
       (url.pathname === '/api/admin/export' || url.pathname === '/api/export')
     ) {
-      const apiKeyHeader = req.headers['x-api-key'];
-      if (options.apiKeys && options.apiKeys.length > 0) {
-        const provided = Array.isArray(apiKeyHeader) ? apiKeyHeader[0] : apiKeyHeader;
-        const allowed = options.apiKeys.some((k) => k.key === provided);
-        if (!allowed) {
-          sendErr(res, 401, 'Unauthorized', ErrorCode.UNAUTHORIZED);
-          return;
-        }
+      // Administrative endpoint: authorization is enforced server-side via the
+      // shared auth module regardless of frontend restrictions, and is never
+      // left open when no API keys/credentials happen to be configured —
+      // this route can return sensitive data (`includeSensitive`), so it must
+      // fail closed (#1135).
+      const exportSourceIp =
+        (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ||
+        (req.socket?.remoteAddress as string | undefined);
+      const exportAuth = await authorizeRequest(req, {
+        apiKeys: options.apiKeys,
+        credentialService: options.credentialService,
+        requireAuthentication: true,
+      });
+      await webhookAuditService
+        .record({
+          action: 'admin_action',
+          actor: exportAuth.allowed
+            ? (principalClientId(exportAuth.principal) ?? 'anonymous')
+            : 'anonymous',
+          sourceIp: exportSourceIp,
+          requestId,
+          correlationId,
+          outcome: exportAuth.allowed ? 'http_200' : `http_${exportAuth.status}`,
+          details: { route: url.pathname, method: req.method },
+        })
+        .catch((err) => {
+          logger.error('Failed to write security audit record', { err, requestId, correlationId });
+        });
+      if (!exportAuth.allowed) {
+        if (exportAuth.status === 401) res.setHeader('WWW-Authenticate', 'ApiKey header="X-API-Key"');
+        sendErr(res, exportAuth.status, exportAuth.message, exportAuth.code, exportAuth.details);
+        return;
       }
 
       const processExport = async (rawFilters: Record<string, unknown>) => {
@@ -1175,46 +1530,177 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
         }
 
         try {
-          if (!data.executeAt || !data.payload || !data.targetRecipient) {
+          const hasLocalSchedule = data.timeZone != null || data.localDateTime != null;
+          const hasDestinationRef = typeof data.destinationId === 'string' && data.destinationId.trim().length > 0;
+          if ((!data.executeAt && !hasLocalSchedule) || !data.payload || (!data.targetRecipient && !hasDestinationRef)) {
             res.writeHead(400, { 'Content-Type': 'application/json' });
             res.end(
               JSON.stringify({
-                error: 'Missing required fields: executeAt, payload, targetRecipient',
+                error: 'Missing required fields: executeAt (or timeZone + localDateTime), payload, targetRecipient (or destinationId)',
                 code: 'MISSING_FIELDS',
               }),
             );
             return;
           }
 
-          const executeAt = new Date(data.executeAt);
-          if (isNaN(executeAt.getTime())) {
-            res.writeHead(400, { 'Content-Type': 'application/json' });
-            res.end(
-              JSON.stringify({ error: 'executeAt is not a valid date', code: 'INVALID_DATE' }),
+          let scheduleOwnerId: string | undefined;
+          let resolvedTargetRecipient: string = data.targetRecipient;
+          let resolvedNotificationType: NotificationType | undefined = data.notificationType;
+          let validatedDestinationId: string | undefined;
+
+          if (data.destinationId != null) {
+            if (typeof data.destinationId !== 'string' || !data.destinationId.trim()) {
+              sendErr(res, 400, 'destinationId must be a non-empty string', ErrorCode.BAD_REQUEST);
+              return;
+            }
+            const destAuth = await authorizeRequest(req, {
+              apiKeys: options.apiKeys,
+              credentialService: options.credentialService,
+              requiredScopes: ['webhooks:manage'],
+              requireAuthentication: options.requireDestinationAuth,
+            });
+            if (!destAuth.allowed) {
+              if (destAuth.status === 401) res.setHeader('WWW-Authenticate', 'ApiKey header="X-API-Key"');
+              sendErr(res, destAuth.status, destAuth.message, destAuth.code, destAuth.details);
+              return;
+            }
+            const resolvedOwner = resolveDestinationOwnerId(destAuth.principal, req);
+            if (!resolvedOwner) {
+              sendErr(res, 401, 'Unable to resolve destination owner', ErrorCode.UNAUTHORIZED);
+              return;
+            }
+            if (!destinationService) {
+              sendErr(res, 503, 'Destination service is not configured', ErrorCode.SERVICE_UNAVAILABLE);
+              return;
+            }
+            const ownedDestination = await destinationService.resolveOwnedDestination(
+              data.destinationId.trim(),
+              resolvedOwner,
             );
-            return;
+            scheduleOwnerId = ownedDestination.ownerId;
+            validatedDestinationId = ownedDestination.id;
+            resolvedTargetRecipient = ownedDestination.targetRecipient;
+            if (!resolvedNotificationType) {
+              resolvedNotificationType =
+                ownedDestination.provider === 'discord'
+                  ? NotificationType.DISCORD
+                  : ownedDestination.provider === 'email'
+                    ? NotificationType.EMAIL
+                    : NotificationType.WEBHOOK;
+            }
           }
 
-          const schedule = async (): Promise<{ id: number }> => {
+          let executeAt: Date;
+          let metadata = data.metadata;
+          // Normalized timezone reported back in the response (#1162). Local
+          // schedules echo the IANA zone the client supplied; a plain
+          // `executeAt` is already an absolute instant, stored and reported
+          // in UTC.
+          let timezone = 'UTC';
+          if (data.timeZone != null || data.localDateTime != null) {
+            if (typeof data.timeZone !== 'string' || typeof data.localDateTime !== 'string') {
+              res.writeHead(400, { 'Content-Type': 'application/json' });
+              res.end(
+                JSON.stringify({
+                  error: 'timeZone and localDateTime are both required for a local schedule',
+                  code: 'INVALID_LOCAL_SCHEDULE',
+                }),
+              );
+              return;
+            }
+            if (
+              data.recurrence != null &&
+              data.recurrence !== 'daily' &&
+              data.recurrence !== 'weekly'
+            ) {
+              res.writeHead(400, { 'Content-Type': 'application/json' });
+              res.end(
+                JSON.stringify({
+                  error: 'recurrence must be daily or weekly',
+                  code: 'INVALID_LOCAL_SCHEDULE',
+                }),
+              );
+              return;
+            }
+            try {
+              const resolved = resolveLocalDateTime(data.localDateTime, data.timeZone);
+              executeAt = resolved.executeAt;
+              timezone = resolved.timeZone;
+              const base =
+                metadata && typeof metadata === 'object' && !Array.isArray(metadata) ? metadata : {};
+              metadata = {
+                ...base,
+                localSchedule: {
+                  timeZone: data.timeZone,
+                  localDateTime: resolved.requestedLocal,
+                  recurrence: data.recurrence,
+                  kind: resolved.kind,
+                  resolvedLocal: resolved.resolvedLocal,
+                },
+              };
+            } catch (scheduleError) {
+              res.writeHead(400, { 'Content-Type': 'application/json' });
+              res.end(
+                JSON.stringify({
+                  error: (scheduleError as Error).message,
+                  code: 'INVALID_LOCAL_SCHEDULE',
+                }),
+              );
+              return;
+            }
+          } else {
+            // #1162: executeAt may be an absolute (Z/offset) instant or a
+            // naive local time paired with an optional `timezone` field;
+            // either way the resolved instant is stored and reported in UTC.
+            try {
+              const resolved = parseExecuteAtWithTimezone(data.executeAt, data.timezone);
+              executeAt = resolved.utcDate;
+              timezone = resolved.timezone;
+            } catch (error) {
+              if (error instanceof InvalidTimezoneError) throw error;
+              res.writeHead(400, { 'Content-Type': 'application/json' });
+              res.end(
+                JSON.stringify({ error: 'executeAt is not a valid date', code: 'INVALID_DATE' }),
+              );
+              return;
+            }
+          }
+
+          const schedule = async (): Promise<{
+            id: number;
+            executeAt: string;
+            timezone: string;
+            executeAtLocal: string;
+          }> => {
             const notificationId = await options.notificationAPI!.scheduleNotification({
               payload: data.payload,
-              notificationType: data.notificationType || NotificationType.DISCORD,
-              targetRecipient: data.targetRecipient,
+              notificationType: resolvedNotificationType || NotificationType.DISCORD,
+              targetRecipient: resolvedTargetRecipient,
               executeAt,
+              timezone,
               expiresAt: data.expiresAt,
               maxRetries: data.maxRetries,
               priority: data.priority,
               eventId: data.eventId,
               contractAddress: data.contractAddress,
               metadata: data.metadata,
+              recurrence: data.recurrence,
+              ...(validatedDestinationId ? { destinationId: validatedDestinationId } : {}),
+              ...(scheduleOwnerId ? { ownerId: scheduleOwnerId } : {}),
             });
             logger.info('Notification scheduled via API', {
               requestId,
               correlationId,
               notificationId,
-              executeAt: data.executeAt,
+              executeAt: executeAt.toISOString(),
+              timezone,
             });
-            return { id: notificationId };
+            return {
+              id: notificationId,
+              executeAt: executeAt.toISOString(),
+              timezone,
+              executeAtLocal: formatInTimezone(executeAt, timezone),
+            };
           };
 
           if (options.idempotencyService && idempotencyKey) {
@@ -1225,23 +1711,55 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
               { requestId, correlationId },
             );
             const statusCode = outcome.isDuplicate ? 200 : 201;
+            const result = outcome.result as {
+              id: number;
+              executeAt: string;
+              timezone: string;
+              executeAtLocal: string;
+            };
             res.writeHead(statusCode, {
               'Content-Type': 'application/json',
               'X-Idempotent-Replay': outcome.isDuplicate ? 'true' : 'false',
             });
             res.end(
               JSON.stringify({
-                id: (outcome.result as { id: number }).id,
+                id: result.id,
+                executeAt: result.executeAt,
+                timezone: result.timezone,
+                executeAtLocal: result.executeAtLocal,
                 replay: outcome.isDuplicate,
               }),
             );
             return;
           }
 
-          const { id } = await schedule();
+          const scheduled = await schedule();
           res.writeHead(201, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ id }));
+          res.end(JSON.stringify(scheduled));
         } catch (error) {
+          if (error instanceof DestinationOwnershipError) {
+            sendErr(res, 403, error.message, ErrorCode.FORBIDDEN);
+            return;
+          }
+          if (error instanceof DestinationNotFoundError) {
+            sendErr(res, 404, error.message, ErrorCode.NOT_FOUND);
+            return;
+          }
+          if (error instanceof DestinationValidationError) {
+            sendErr(res, 422, error.message, ErrorCode.UNPROCESSABLE);
+            return;
+          }
+          if (error instanceof ScheduleValidationError) {
+            const response = toScheduleValidationResponse(error);
+            res.writeHead(response.statusCode, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify(response.body));
+            return;
+          }
+          if (error instanceof InvalidTimezoneError) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: error.message, code: 'INVALID_TIMEZONE' }));
+            return;
+          }
           if (error instanceof IdempotencyKeyReuseError) {
             logger.warn('Schedule API rejected request: idempotency key body mismatch', {
               requestId,
@@ -1272,6 +1790,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
             requestId,
             correlationId,
           });
+          if (handleQueryTimeout(res, error, requestId, correlationId)) return;
           res.writeHead(500, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ error: (error as Error).message, code: 'SCHEDULE_FAILED' }));
         }
@@ -1293,7 +1812,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
         })
         .catch((error) => {
           logger.error('Failed to get scheduler stats', { error, requestId, correlationId });
-          sendErr(res, 500, (error as Error).message, ErrorCode.INTERNAL_ERROR);
+          handleOperationalError(res, error, { requestId, correlationId });
         });
       return;
     }
@@ -1311,7 +1830,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
         })
         .catch((error: Error) => {
           logger.error('Failed to get execution metrics', { error, requestId, correlationId });
-          sendErr(res, 500, error.message, ErrorCode.INTERNAL_ERROR);
+          handleOperationalError(res, error, { requestId, correlationId });
         });
       return;
     }
@@ -1329,7 +1848,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
         })
         .catch((error: Error) => {
           logger.error('Failed to get retry distribution', { error, requestId, correlationId });
-          sendErr(res, 500, error.message, ErrorCode.INTERNAL_ERROR);
+          handleOperationalError(res, error, { requestId, correlationId });
         });
       return;
     }
@@ -1444,6 +1963,203 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
       return;
     }
 
+    // PATCH /api/schedule/:id — modify an eligible pending schedule.
+    const patchScheduleMatch = url.pathname.match(/^\/api\/schedule\/(\d+)$/);
+    if (req.method === 'PATCH' && patchScheduleMatch) {
+      if (!requireApiKey()) return;
+      if (!options.notificationAPI) {
+        sendErr(res, 503, 'Scheduler not enabled', ErrorCode.SERVICE_UNAVAILABLE);
+        return;
+      }
+      const id = Number(patchScheduleMatch[1]);
+      const versionHeader = req.headers['if-match'] ?? req.headers['x-schedule-version'];
+      const rawVersion = Array.isArray(versionHeader) ? versionHeader[0] : versionHeader;
+      const expectedVersion = Number(
+        String(rawVersion ?? '').replace(/^W\//, '').replace(/^"/, '').replace(/"$/, ''),
+      );
+      if (!Number.isSafeInteger(expectedVersion) || expectedVersion < 1) {
+        sendErr(
+          res,
+          428,
+          'Provide the current schedule version in If-Match or X-Schedule-Version.',
+          ErrorCode.BAD_REQUEST,
+        );
+        return;
+      }
+      if (!validateContentType(req, res, ['application/json'])) return;
+      let body = '';
+      req.on('data', (chunk) => {
+        body += chunk.toString();
+      });
+      req.on('end', () => {
+        void (async () => {
+          try {
+            const patch = JSON.parse(body || '{}');
+            const allowed = new Set([
+              'payload', 'notificationType', 'targetRecipient', 'executeAt', 'expiresAt',
+              'maxRetries', 'priority', 'eventId', 'contractAddress', 'metadata',
+            ]);
+            if (
+              !patch ||
+              typeof patch !== 'object' ||
+              Array.isArray(patch) ||
+              Object.keys(patch).some((key) => !allowed.has(key)) ||
+              Object.keys(patch).length === 0
+            ) {
+              sendErr(
+                res,
+                400,
+                'Provide a non-empty JSON object containing only modifiable schedule fields.',
+                ErrorCode.BAD_REQUEST,
+              );
+              return;
+            }
+            if (patch.executeAt !== undefined) patch.executeAt = new Date(patch.executeAt);
+            const updated = await options.notificationAPI!.modifyNotification(
+              id,
+              expectedVersion,
+              patch,
+              requestId,
+            );
+            if (!updated) {
+              sendErr(res, 404, 'Notification not found', ErrorCode.NOT_FOUND);
+              return;
+            }
+            res.setHeader('ETag', `"${updated.version ?? expectedVersion + 1}"`);
+            sendOk(res, 200, updated);
+          } catch (error) {
+            const statusCode = Number((error as any)?.statusCode);
+            if (error instanceof SyntaxError) {
+              sendErr(res, 400, 'Invalid JSON', ErrorCode.PARSE_ERROR);
+              return;
+            }
+            if (Number.isInteger(statusCode) && statusCode >= 400 && statusCode < 500) {
+              const errorCode = statusCode === 409 ? ErrorCode.CONFLICT : ErrorCode.BAD_REQUEST;
+              sendErr(res, statusCode, (error as Error).message, errorCode);
+              return;
+            }
+            if (error instanceof Error && !/SQLITE_|database|constraint/i.test(error.message)) {
+              sendErr(res, 422, error.message, ErrorCode.BAD_REQUEST);
+              return;
+            }
+            logger.error('Failed to modify scheduled notification', { id, error, requestId, correlationId });
+            handleApiError(res, error, requestId, correlationId);
+          }
+        })();
+      });
+      return;
+    }
+
+    // POST /api/schedule/:id/recovery — resolve an operator intervention hold.
+    const recoveryMatch = url.pathname.match(/^\/api\/schedule\/(\d+)\/recovery$/);
+    if (req.method === 'POST' && recoveryMatch) {
+      if (!requireApiKey()) return;
+      if (!options.notificationAPI) {
+        sendErr(res, 503, 'Scheduler not enabled', ErrorCode.SERVICE_UNAVAILABLE);
+        return;
+      }
+      let body = '';
+      req.on('data', (chunk) => {
+        body += chunk.toString();
+      });
+      req.on('end', () => {
+        void (async () => {
+          try {
+            const data = JSON.parse(body || '{}');
+            if (data.action !== 'EXECUTE' && data.action !== 'EXPIRE') {
+              sendErr(res, 400, 'action must be EXECUTE or EXPIRE', ErrorCode.BAD_REQUEST);
+              return;
+            }
+            const result = await options.notificationAPI!.resolveRecovery(
+              Number(recoveryMatch[1]),
+              data.action,
+            );
+            if (!result) {
+              sendErr(res, 409, 'Schedule is not awaiting intervention or does not exist', ErrorCode.CONFLICT);
+              return;
+            }
+            sendOk(res, 200, result);
+          } catch (error) {
+            if (error instanceof SyntaxError) {
+              sendErr(res, 400, 'Invalid JSON', ErrorCode.PARSE_ERROR);
+              return;
+            }
+            handleApiError(res, error, requestId, correlationId);
+          }
+        })();
+      });
+      return;
+    }
+
+    // POST /api/schedule/:id/resume — release a notification held by the
+    // intervene missed-schedule policy so the next poll delivers it.
+    const resumeMatch = url.pathname.match(/^\/api\/schedule\/(\d+)\/resume$/);
+    if (req.method === 'POST' && resumeMatch) {
+      if (!requireApiKey()) return;
+      if (!options.notificationAPI) {
+        sendErr(res, 503, 'Scheduler not enabled', ErrorCode.SERVICE_UNAVAILABLE);
+        return;
+      }
+
+      const id = parseInt(resumeMatch[1], 10);
+      options.notificationAPI
+        .releaseMissedSchedule(id)
+        .then((released) => {
+          if (!released) {
+            sendErr(
+              res,
+              404,
+              'Notification not found or not awaiting intervention',
+              ErrorCode.NOT_FOUND,
+            );
+            return;
+          }
+          sendOk(res, 200, { id, released: true });
+        })
+        .catch((error) => {
+          logger.error('Failed to release missed schedule', { error, requestId, correlationId, id });
+          sendErr(res, 500, (error as Error).message, ErrorCode.INTERNAL_ERROR);
+        });
+      return;
+    }
+
+    // GET /api/schedule/:id/audit — audit trail for a scheduled notification.
+    const scheduleAuditMatch = url.pathname.match(/^\/api\/schedule\/(\d+)\/audit$/);
+    if (req.method === 'GET' && scheduleAuditMatch) {
+      if (!options.notificationAPI) {
+        sendErr(res, 503, 'Scheduler not enabled', ErrorCode.SERVICE_UNAVAILABLE);
+        return;
+      }
+
+      const id = parseInt(scheduleAuditMatch[1], 10);
+      options.notificationAPI
+        .getScheduleAuditHistory(id)
+        .then((records) => {
+          sendOk(res, 200, {
+            scheduledNotificationId: id,
+            records: records.map((r) => ({
+              id: r.id,
+              action: r.action,
+              actor: r.actor,
+              timestamp: r.timestamp.toISOString(),
+              fromStatus: r.fromStatus,
+              toStatus: r.toStatus,
+              details: r.details,
+            })),
+          });
+        })
+        .catch((error) => {
+          logger.error('Failed to get schedule audit history', {
+            error,
+            requestId,
+            correlationId,
+            id,
+          });
+          handleOperationalError(res, error, { requestId, correlationId });
+        });
+      return;
+    }
+
     // GET /api/schedule/:id
     if (req.method === 'GET' && url.pathname.startsWith('/api/schedule/')) {
       if (!options.notificationAPI) {
@@ -1468,54 +2184,106 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
         })
         .catch((error) => {
           logger.error('Failed to get notification', { error, requestId, correlationId, id });
-          sendErr(res, 500, (error as Error).message, ErrorCode.INTERNAL_ERROR);
+          handleOperationalError(res, error, { requestId, correlationId });
         });
       return;
     }
 
-    // POST /api/notifications/:id/cancel
-    const cancelMatch = url.pathname.match(/^\/api\/notifications\/([^/]+)\/cancel$/);
-    if (req.method === 'POST' && cancelMatch) {
+    // POST /api/schedule/:id/cancel — primary schedule cancellation endpoint (#969)
+    // Also supports legacy POST /api/notifications/:id/cancel
+    const scheduleCancelMatch = url.pathname.match(
+      /^\/api\/(?:schedule|notifications)\/(\d+)\/cancel$/,
+    );
+    if (req.method === 'POST' && scheduleCancelMatch) {
       if (!options.notificationAPI) {
         sendErr(res, 503, 'Scheduler not enabled', ErrorCode.SERVICE_UNAVAILABLE);
         return;
       }
 
-      const id = parseInt(cancelMatch[1], 10);
+      const id = parseInt(scheduleCancelMatch[1], 10);
       if (isNaN(id)) {
         sendErr(res, 400, 'Invalid notification ID', ErrorCode.BAD_REQUEST);
         return;
       }
 
       let body = '';
-      req.on('data', (chunk) => { body += chunk; });
+      req.on('data', (chunk) => {
+        body += chunk;
+      });
       req.on('end', () => {
         void (async () => {
+          // Parse before the idempotent section: malformed input changes no
+          // state, so it is rejected without consuming the key.
+          let parsed: { reason?: string };
           try {
-            const parsed = body ? JSON.parse(body) as { reason?: string } : {};
-            const ok = await options.notificationAPI!.cancelNotification(id, parsed.reason, requestId);
-            
-            if (!ok) {
-              sendErr(res, 400, 'Unable to cancel notification', ErrorCode.BAD_REQUEST);
-              return;
+            parsed = body ? (JSON.parse(body) as { reason?: string }) : {};
+          } catch {
+            sendErr(res, 400, 'Invalid JSON', ErrorCode.PARSE_ERROR);
+            return;
+          }
+
+          // Responses are built as values so the idempotency layer (#1114)
+          // can store and replay them exactly. Clients without an
+          // Idempotency-Key header get the same responses as before.
+          const cancel = async (): Promise<StoredApiResponse> => {
+            const result = await options.notificationAPI!.cancelSchedule(
+              id,
+              parsed.reason,
+              requestId,
+            );
+
+            if (result.state === 'not_found') {
+              return { statusCode: 404, body: errEnvelope(result.message, ErrorCode.NOT_FOUND) };
             }
-            
-            const notification = await options.notificationAPI!.getNotification(id);
-            sendOk(res, 200, notification);
+
+            if (result.state === 'already_final') {
+              // Completed / failed / processing — do not silently undo.
+              return {
+                statusCode: 409,
+                body: {
+                  cancelled: false,
+                  state: result.state,
+                  status: result.status,
+                  message: result.message,
+                  notification: result.notification ?? null,
+                },
+              };
+            }
+
+            // Fresh cancel and idempotent already_cancelled both return 200.
+            return {
+              statusCode: 200,
+              body: ok({
+                cancelled: result.cancelled,
+                state: result.state,
+                status: result.status,
+                message: result.message,
+                notification: result.notification ?? null,
+              }),
+            };
+          };
+
+          try {
+            const outcome = await apiIdempotency.execute(
+              {
+                key: IdempotencyKeyService.extractKey(req.headers),
+                scope: idempotencyScopeFor(req.headers['x-api-key']),
+                method: 'POST',
+                path: url.pathname,
+                body: parsed,
+              },
+              cancel,
+            );
+            writeStoredResponse(res, outcome.response, outcome.headers);
           } catch (error) {
-            if (error instanceof SyntaxError) {
-              sendErr(res, 400, 'Invalid JSON', ErrorCode.PARSE_ERROR);
-              return;
-            }
             logger.error('Failed to cancel notification', { error, requestId, correlationId, id });
-            sendErr(res, 500, (error as Error).message, ErrorCode.INTERNAL_ERROR);
+            handleOperationalError(res, error, { requestId, correlationId });
           }
         })();
       });
       return;
     }
 
-    function isValidApiKey(apiKey: string | undefined, allowedKeys: Array<{ key: string; name?: string }> | undefined): boolean {
     function isValidApiKey(
       apiKey: string | undefined,
       allowedKeys: Array<{ key: string; name?: string }> | undefined,
@@ -1556,26 +2324,15 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
         .then((receipts) => sendOk(res, 200, { receipts }))
         .catch((error) => {
           logger.error('Failed to retrieve delivery receipts', { error, requestId, correlationId });
-          sendErr(res, 500, 'Failed to retrieve delivery receipts', ErrorCode.INTERNAL_ERROR);
+          handleOperationalError(res, error, {
+            requestId,
+            correlationId,
+            fallbackMessage: 'Failed to retrieve delivery receipts',
+          });
         });
       return;
     }
 
-    // Get notification delivery history endpoint
-    if (req.method === 'GET' && req.url?.startsWith('/api/notifications/history')) {
-      const apiKey = req.headers['x-api-key'] as string | undefined;
-      if (!isValidApiKey(apiKey, options.apiKeys)) {
-        sendErr(res, 401, 'Unauthorized: Invalid or missing API key', ErrorCode.UNAUTHORIZED);
-        return;
-      }
-
-      const url = new URL(req.url, 'http://localhost');
-      const limit = url.searchParams.get('limit')
-        ? parseInt(url.searchParams.get('limit')!, 10)
-        : undefined;
-      const offset = url.searchParams.get('offset')
-        ? parseInt(url.searchParams.get('offset')!, 10)
-        : undefined;
     // Get notification delivery history endpoint.
     // Matched on the rewritten pathname so /api/v1/notifications/history is
     // routed (and authenticated) the same as the unversioned path.
@@ -1623,7 +2380,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
             requestId,
             correlationId,
           });
-          sendErr(res, 500, (error as Error).message, ErrorCode.INTERNAL_ERROR);
+          handleOperationalError(res, error, { requestId, correlationId });
         });
       return;
     }
@@ -1687,7 +2444,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
         })
         .catch((error) => {
           logger.error('Failed to search notifications', { error, requestId, correlationId });
-          sendErr(res, 500, (error as Error).message, ErrorCode.INTERNAL_ERROR);
+          handleOperationalError(res, error, { requestId, correlationId });
         });
       return;
     }
@@ -1717,7 +2474,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
             requestId,
             correlationId,
           });
-          sendErr(res, 500, (error as Error).message, ErrorCode.INTERNAL_ERROR);
+          handleOperationalError(res, error, { requestId, correlationId });
         });
       return;
     }
@@ -1737,7 +2494,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
         })
         .catch((error: Error) => {
           logger.error('Failed to list templates', { error, requestId, correlationId });
-          sendErr(res, 500, error.message, ErrorCode.INTERNAL_ERROR);
+          handleOperationalError(res, error, { requestId, correlationId });
         });
       return;
     }
@@ -1774,7 +2531,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
             correlationId,
             templateId,
           });
-          sendErr(res, 500, error.message, ErrorCode.INTERNAL_ERROR);
+          handleOperationalError(res, error, { requestId, correlationId });
         });
       return;
     }
@@ -1801,7 +2558,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
         })
         .catch((error: Error) => {
           logger.error('Failed to load template', { error, requestId, correlationId, templateId });
-          sendErr(res, 500, error.message, ErrorCode.INTERNAL_ERROR);
+          handleOperationalError(res, error, { requestId, correlationId });
         });
       return;
     }
@@ -1867,7 +2624,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
               templateId,
               actor,
             });
-            sendErr(res, 500, (error as Error).message, ErrorCode.INTERNAL_ERROR);
+            handleOperationalError(res, error, { requestId, correlationId });
           }
         })();
       });
@@ -1901,7 +2658,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
             correlationId,
             templateId,
           });
-          sendErr(res, 500, (error as Error).message, ErrorCode.INTERNAL_ERROR);
+          handleOperationalError(res, error, { requestId, correlationId });
         });
       return;
     }
@@ -1948,7 +2705,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
               return;
             }
             logger.error('Failed to create template', { error, requestId, correlationId });
-            sendErr(res, 500, (error as Error).message, ErrorCode.INTERNAL_ERROR);
+            handleOperationalError(res, error, { requestId, correlationId });
           }
         })();
       });
@@ -2004,7 +2761,7 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
               correlationId,
               templateId,
             });
-            sendErr(res, 500, (error as Error).message, ErrorCode.INTERNAL_ERROR);
+            handleOperationalError(res, error, { requestId, correlationId });
           }
         })();
       });
@@ -2076,6 +2833,40 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
       options.archiveStore &&
       (url.pathname === '/api/archive' || url.pathname.startsWith('/api/archive/'))
     ) {
+      // POST /api/archive/run is an administrative action (triggers an
+      // on-demand archive cycle) and must enforce authorization server-side,
+      // independently of frontend restrictions and even when no API
+      // keys/credentials happen to be configured (#1135).
+      if (req.method === 'POST' && url.pathname === '/api/archive/run') {
+        const archiveSourceIp =
+          (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ||
+          (req.socket?.remoteAddress as string | undefined);
+        const archiveAuth = await authorizeRequest(req, {
+          apiKeys: options.apiKeys,
+          credentialService: options.credentialService,
+          requireAuthentication: true,
+        });
+        await webhookAuditService
+          .record({
+            action: 'admin_action',
+            actor: archiveAuth.allowed
+              ? (principalClientId(archiveAuth.principal) ?? 'anonymous')
+              : 'anonymous',
+            sourceIp: archiveSourceIp,
+            requestId,
+            correlationId,
+            outcome: archiveAuth.allowed ? 'http_200' : `http_${archiveAuth.status}`,
+            details: { route: url.pathname, method: req.method },
+          })
+          .catch((err) => {
+            logger.error('Failed to write security audit record', { err, requestId, correlationId });
+          });
+        if (!archiveAuth.allowed) {
+          if (archiveAuth.status === 401) res.setHeader('WWW-Authenticate', 'ApiKey header="X-API-Key"');
+          sendErr(res, archiveAuth.status, archiveAuth.message, archiveAuth.code, archiveAuth.details);
+          return;
+        }
+      }
       const handled = await handleArchiveRequest(
         req,
         res,
@@ -2087,6 +2878,14 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
       );
       if (handled) return;
     }
+
+    // POST /api/admin/backfill + GET /api/admin/backfill/status (#1165)
+    const backfillHandled = await handleBackfillRequest(req, res, url, {
+      controller: options.ledgerRangeBackfill ?? null,
+      apiKeys: options.apiKeys,
+      requestId,
+    });
+    if (backfillHandled) return;
 
     // GET /api/notifications/delivery-metrics and /history  (Issue #482)
     const deliveryMetricsHandled = handleDeliveryMetricsRequest(

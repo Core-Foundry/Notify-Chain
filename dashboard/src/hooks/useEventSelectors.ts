@@ -1,6 +1,12 @@
 import { useMemo } from 'react';
 import { useShallow } from 'zustand/react/shallow';
-import { selectEventCount, selectFilters, useEventStore } from '../store/eventStore';
+import {
+  selectEventCount,
+  selectFilters,
+  selectSelectedEvents,
+  selectTopicOptions,
+  useEventStore,
+} from '../store/eventStore';
 import { filterEvents } from '../utils/eventData';
 
 export function useFilteredEvents() {
@@ -19,8 +25,23 @@ export function useFilteredEvents() {
         filters.dateTo,
         filters.txHash,
         filters.sortBy ?? 'newest',
+        filters.topics ?? [],
       ),
     [events, filters],
+  );
+}
+
+export function useTopicOptions() {
+  return useEventStore(selectTopicOptions);
+}
+
+export function useTopicFilterActions() {
+  return useEventStore(
+    useShallow((state) => ({
+      addTopicFilter: state.addTopicFilter,
+      removeTopicFilter: state.removeTopicFilter,
+      clearTopicFilters: state.clearTopicFilters,
+    })),
   );
 }
 
@@ -45,6 +66,20 @@ export function useFilterOptions() {
 
     return { contractOptions, eventTypeOptions };
   }, [events]);
+}
+
+export function useEventSelection() {
+  return useEventStore(
+    useShallow((state) => ({
+      selectedEventIds: state.selectedEventIds,
+      toggleEventSelection: state.toggleEventSelection,
+      clearEventSelection: state.clearEventSelection,
+    })),
+  );
+}
+
+export function useSelectedEvents() {
+  return useEventStore(useShallow(selectSelectedEvents));
 }
 
 export function useEventLoadingState() {

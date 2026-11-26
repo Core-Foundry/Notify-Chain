@@ -282,20 +282,6 @@ The archiver moves old completed/failed/cancelled notifications to a separate ar
 
 These are Vite build-time variables. They are embedded into the static bundle at build time and are **not secret**. All variables must be prefixed with `VITE_`.
 
-### Browser source-map publication policy
-
-The production builds for both `dashboard/` and `frontend/` explicitly disable
-Vite source-map output. Production `.map` files must not be copied to a public
-static-asset origin. If private maps are introduced for error monitoring later,
-upload them only to the monitoring provider and exclude them from public
-deployment artifacts. Vite's development server remains enabled for local
-source-level debugging; this does not enable production map publication.
-
-Only `VITE_*` variables are available through Vite's client environment API.
-Any value compiled into browser code is public configuration, never a secret.
-Credentials and other secrets must remain in server-side services or secret
-stores and must not be passed to frontend build processes as client variables.
-
 | Variable                       | Default                            | Required                | Description                                                                                                                                        |
 | ------------------------------ | ---------------------------------- | ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `VITE_EVENTS_API_URL`          | `http://localhost:8787/api/events` | **Yes** (for non-local) | Full URL to the listener events API endpoint. The dashboard polls this to display contract events.                                                 |
