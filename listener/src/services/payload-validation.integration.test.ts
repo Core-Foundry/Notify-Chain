@@ -136,6 +136,7 @@ describe('POST /api/schedule – payload size validation (integration)', () => {
       notificationType: NotificationType.DISCORD,
       targetRecipient: 'https://discord.com/webhook',
       executeAt: futureIso(),
+      metadata: { source: 'integration-test' },
     });
 
     expect(status).toBe(201);
@@ -154,6 +155,7 @@ describe('POST /api/schedule – payload size validation (integration)', () => {
       notificationType: NotificationType.DISCORD,
       targetRecipient: 'https://discord.com/webhook',
       executeAt: futureIso(),
+      metadata: { source: 'integration-test' },
     });
 
     expect(status).toBe(201);
@@ -168,6 +170,7 @@ describe('POST /api/schedule – payload size validation (integration)', () => {
       notificationType: NotificationType.DISCORD,
       targetRecipient: 'https://discord.com/webhook',
       executeAt: futureIso(),
+      metadata: { source: 'integration-test' },
     });
 
     expect(status).toBe(413);
@@ -185,6 +188,7 @@ describe('POST /api/schedule – payload size validation (integration)', () => {
       notificationType: NotificationType.DISCORD,
       targetRecipient: 'https://discord.com/webhook',
       executeAt: futureIso(),
+      metadata: { source: 'integration-test' },
     });
 
     expect(status).toBe(413);
@@ -222,6 +226,7 @@ describe('POST /api/schedule – default 64 KB limit (integration)', () => {
       payload: { message: 'small payload' },
       targetRecipient: 'https://discord.com/webhook',
       executeAt: futureIso(),
+      metadata: { source: 'integration-test' },
     });
     expect(status).toBe(201);
   });
@@ -232,9 +237,84 @@ describe('POST /api/schedule – default 64 KB limit (integration)', () => {
       payload: oversized,
       targetRecipient: 'https://discord.com/webhook',
       executeAt: futureIso(),
+      metadata: { source: 'integration-test' },
     });
 
     expect(status).toBe(413);
     expect(body.error).toContain(`${DEFAULT_MAX_PAYLOAD_SIZE_BYTES}`);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Contract address validation (issue #1211)
+// ---------------------------------------------------------------------------
+describe('POST /api/schedule – contractAddress validation (integration)', () => {
+  const VALID_CONTRACT = `C${'A'.repeat(55)}`; // 56 chars, C-prefix, Base32
+  let server: http.Server;
+
+  beforeEach(async () => {
+    jest.clearAllMocks();
+    server = await startServer(new NotificationAPI(mockRepository));
+  });
+
+  afterEach(async () => {
+    await closeServer(server);
+  });
+
+  const baseBody = () => ({
+    payload: { msg: 'hello' },
+    targetRecipient: 'https://discord.com/webhook',
+    executeAt: futureIso(),
+    metadata: { source: 'integration-test' },
+  });
+
+  it('accepts a request without contractAddress', async () => {
+    const { status } = await postSchedule(server, baseBody());
+    expect(status).toBe(201);
+    expect(mockCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it('accepts a valid 56-character C-prefixed Base32 contract address', async () => {
+    const { status } = await postSchedule(server, { ...baseBody(), contractAddress: VALID_CONTRACT });
+    expect(status).toBe(201);
+    expect(mockCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects a contract address that is too short', async () => {
+    const { status, body } = await postSchedule(server, { ...baseBody(), contractAddress: 'CSHORT' });
+    expect(status).toBe(400);
+    expect(mockCreate).not.toHaveBeenCalled();
+    expect(JSON.stringify(body)).toMatch(/contractAddress/);
+  });
+
+  it('rejects a contract address that is too long', async () => {
+    const { status, body } = await postSchedule(server, { ...baseBody(), contractAddress: `C${'A'.repeat(60)}` });
+    expect(status).toBe(400);
+    expect(mockCreate).not.toHaveBeenCalled();
+    expect(JSON.stringify(body)).toMatch(/contractAddress/);
+  });
+
+  it('rejects a contract address that does not start with C', async () => {
+    const notC = `G${'A'.repeat(55)}`;
+    const { status, body } = await postSchedule(server, { ...baseBody(), contractAddress: notC });
+    expect(status).toBe(400);
+    expect(mockCreate).not.toHaveBeenCalled();
+    expect(JSON.stringify(body)).toMatch(/contractAddress/);
+  });
+
+  it('rejects a contract address containing invalid Base32 characters', async () => {
+    // Replace a few chars with characters outside the Base32 alphabet (0, 1, 8)
+    const bad = `C${'0'.repeat(55)}`;
+    const { status, body } = await postSchedule(server, { ...baseBody(), contractAddress: bad });
+    expect(status).toBe(400);
+    expect(mockCreate).not.toHaveBeenCalled();
+    expect(JSON.stringify(body)).toMatch(/contractAddress/);
+  });
+
+  it('does not reach the RPC layer when contractAddress is malformed', async () => {
+    // The mock repository's create() must never be called for a bad address.
+    const { status } = await postSchedule(server, { ...baseBody(), contractAddress: 'not-a-contract' });
+    expect(status).toBe(400);
+    expect(mockCreate).not.toHaveBeenCalled();
   });
 });

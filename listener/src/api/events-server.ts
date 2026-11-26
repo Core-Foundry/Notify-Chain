@@ -75,7 +75,7 @@ import { DataExportService } from '../services/data-export-service';
 import { SecurityAuditService } from '../services/security-audit';
 import { validatePayload, Schemas } from '../middleware/request-validator';
 import { parseLedgerRangeParams } from '../utils/ledger-range-validator';
-import { ValidationError, validationErrorBody } from '../utils/validation';
+import { ValidationError, validationErrorBody, isValidStellarContractId } from '../utils/validation';
 import { ResponseTimeMiddleware } from '../middleware/response-time';
 import { addSecurityHeaders } from '../middleware/security-headers';
 import { DEFAULT_MAX_BODY_BYTES, enforceBodyLimit } from '../middleware/body-limit';
@@ -880,29 +880,8 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
 
           const secrets = options.webhookSecrets ?? [];
           const maxAgeSeconds = options.signatureExpirationSeconds ?? 300;
-        const secrets = options.webhookSecrets ?? [];
-        const maxAgeSeconds = options.signatureExpirationSeconds ?? 300;
-        
-        // Use default database for audit log or mock one if not available.
-        // Actually since SecurityAuditService requires Database, let's pass a real one.
-        const db = getDatabase();
-        const { SecurityAuditService } = require('../services/security-audit');
-        const auditService = new SecurityAuditService(db);
 
-        const auth = await verifyWebhookRequest({
-          headers: req.headers as Record<string, string | string[] | undefined>,
-          rawBody,
-          secrets,
-          sourceIp,
-          requestId,
-          correlationId,
-          maxAgeSeconds,
-          requireTimestamp: options.requireWebhookTimestamp !== false,
-          replayCache: webhookReplayCache,
-          auditService,
-        });
-
-          const auth = verifyWebhookRequest({
+          const auth = await verifyWebhookRequest({
             headers: req.headers as Record<string, string | string[] | undefined>,
             rawBody,
             secrets,
@@ -1236,7 +1215,19 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
             return;
           }
 
+          if (data.contractAddress != null && !isValidStellarContractId(data.contractAddress)) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(
+              JSON.stringify({
+                error: 'contractAddress must be a valid Stellar contract identifier (56-character Base32 string starting with C)',
+                code: 'INVALID_CONTRACT_ADDRESS',
+              }),
+            );
+            return;
+          }
+
           let executeAt: Date;
+          let timezone: string = data.timeZone ?? 'UTC';
           let metadata = data.metadata;
           if (data.timeZone != null || data.localDateTime != null) {
             if (typeof data.timeZone !== 'string' || typeof data.localDateTime !== 'string') {
@@ -1767,21 +1758,6 @@ export function createEventsServer(options: EventsServerOptions): http.Server {
       return;
     }
 
-    // Get notification delivery history endpoint
-    if (req.method === 'GET' && req.url?.startsWith('/api/notifications/history')) {
-      const apiKey = req.headers['x-api-key'] as string | undefined;
-      if (!isValidApiKey(apiKey, options.apiKeys)) {
-        sendErr(res, 401, 'Unauthorized: Invalid or missing API key', ErrorCode.UNAUTHORIZED);
-        return;
-      }
-
-      const url = new URL(req.url, 'http://localhost');
-      const limit = url.searchParams.get('limit')
-        ? parseInt(url.searchParams.get('limit')!, 10)
-        : undefined;
-      const offset = url.searchParams.get('offset')
-        ? parseInt(url.searchParams.get('offset')!, 10)
-        : undefined;
     // Get notification delivery history endpoint.
     // Matched on the rewritten pathname so /api/v1/notifications/history is
     // routed (and authenticated) the same as the unversioned path.

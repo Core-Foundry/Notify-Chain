@@ -415,6 +415,8 @@ export class ScheduledNotificationRepository {
 
     const now = new Date().toISOString();
     await this.db.run(sql, [NotificationStatus.COMPLETED, now, now, id]);
+  }
+
   async markAsCompleted(
     id: number,
     requestId?: string,
@@ -492,8 +494,6 @@ export class ScheduledNotificationRepository {
   }
 
   /** Mark a notification expired and release its processing lock. */
-  async markAsExpired(id: number): Promise<void> {
-    assertScheduleTransition(NotificationStatus.PROCESSING, NotificationStatus.EXPIRED);
   async markAsExpired(id: number, reason = 'Notification expired before delivery'): Promise<void> {
     const now = new Date().toISOString();
     const errorMessage = reason;

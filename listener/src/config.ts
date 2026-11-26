@@ -168,7 +168,6 @@ function validateContractAddresses(value: unknown): ContractConfig[] {
   if (value.length === 0) {
     throw new ConfigError(
       'CONTRACT_ADDRESSES is empty. The listener requires at least one contract to monitor. ' +
-        'Add contract configurations or the service will not process any events.'
         'Add contract configurations or the service will not process any events.',
     );
   }
@@ -469,6 +468,8 @@ function parseScheduleRecoveryPolicy(): 'EXECUTE' | 'EXPIRE' | 'REQUIRE_INTERVEN
   throw new ConfigError(
     'SCHEDULE_RECOVERY_POLICY must be one of EXECUTE, EXPIRE, REQUIRE_INTERVENTION.',
   );
+}
+
 function loadEventBatchingConfig(): EventBatchingConfig {
   return {
     enabled: parseBooleanEnv('EVENT_BATCHING_ENABLED', false),
@@ -835,7 +836,6 @@ export function validateConfig(config: Config): void {
     if (config.scheduler.concurrency < 1) {
       errors.push(
         `WORKER_CONCURRENCY must be >= 1 (received: ${config.scheduler.concurrency}). ` +
-          'Set the number of notifications processed concurrently per poll cycle.'
           'Set the number of notifications processed concurrently per poll cycle.',
       );
     }
@@ -900,10 +900,6 @@ export function validateConfig(config: Config): void {
 
   // ── Retry policy (#842) ───────────────────────────────────────────────────
   if (config.retryPolicy) {
-    if (
-      config.retryPolicy.maxAttempts !== undefined &&
-      config.retryPolicy.maxAttempts < 1
-    ) {
     if (config.retryPolicy.maxAttempts !== undefined && config.retryPolicy.maxAttempts < 1) {
       errors.push(
         `RETRY_POLICY_MAX_ATTEMPTS must be >= 1 (received: ${config.retryPolicy.maxAttempts}). ` +
@@ -990,9 +986,6 @@ export function validateConfig(config: Config): void {
     }
   }
 
-  // ── Backfill ───────────────────────────────────────────────────────────────
-  if (config.backfill) {
-    if (config.backfill.maxLedgers < 0) {
   // ── Event queue ────────────────────────────────────────────────────────────
   if (config.eventQueue?.maxConcurrency !== undefined && config.eventQueue.maxConcurrency < 1) {
     errors.push(
